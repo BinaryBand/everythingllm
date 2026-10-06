@@ -83,6 +83,13 @@ def test_the_sync_worker_has_time_to_stop_between_steps():
     assert keys["StopTimeout"] == ["60"]
 
 
+def test_the_transcribe_worker_has_the_old_units_time_to_stop():
+    """podman's own 10 s would kill a pass still in a C call and leave transcribing.json,
+    which the next start blames on the episode."""
+    keys = container_keys(QUADLET / "podcasts-transcribe-worker.container.in")
+    assert int(keys["StopTimeout"][0]) >= 90
+
+
 def test_they_reach_public_hosts_and_nothing_else_of_ours():
     egress = egress_config.load(env={"PUBLIC_HOST": "host.example.ts.net"})
     profile = egress.profiles["podcasts"]

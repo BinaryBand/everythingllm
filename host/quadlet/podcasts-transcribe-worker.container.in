@@ -32,6 +32,11 @@ PidsLimit=256
 PodmanArgs=--memory=6g --cpus=4 --umask=0002
 RunInit=true
 Timezone=local
+# SIGTERM ends a pass at once (exit 143), but only once Python gets back from the C call
+# it's in (an encode, the VAD over a window, loading the model), which can take a while
+# at nice 19 on a busy machine; killed before that, transcribing.json stays and the next
+# start holds the episode to blame. So a stop gets the 90 s the old unit had.
+StopTimeout=90
 # egress-net only, at its address in egress.toml (profile podcasts: public hosts, which
 # huggingface.co and its CDN are).
 Network=egress-net:ip=10.89.79.15

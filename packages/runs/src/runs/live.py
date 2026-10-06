@@ -19,10 +19,16 @@ When a run starts, the service hands its caller a card line to paste (`Live.card
 
 A service subclasses Live and sets PATH, LABEL and its wording (`ended_line`, `body`). A run's
 id is the service's ID_PREFIX and 8 hex digits (RunService.new_run).
+
+Config (environment):
+  LIVE_HOST  the address to listen on (default 127.0.0.1). A service in a container sets
+             0.0.0.0: its port is published on the host's 127.0.0.1, and what comes
+             through arrives from the container's own address, not its loopback.
 """
 
 import asyncio
 import html
+import os
 import re
 import time
 from collections.abc import AsyncIterator
@@ -34,6 +40,7 @@ from chatimage import alt, link, live, progress
 from runs.runlog import find
 from runs.service import Run, RunService
 
+HOST = "127.0.0.1"  # where the cards listen unless LIVE_HOST says otherwise
 CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 
@@ -69,7 +76,8 @@ class Live:
         return f"[![{alt(f'{cls.LABEL}: {subject}')}]({link(page + '.png')})]({link(page)})"
 
     async def serve(self, port: int) -> asyncio.Server:
-        return await asyncio.start_server(self.handle, "127.0.0.1", port)
+        host = os.environ.get("LIVE_HOST") or HOST
+        return await asyncio.start_server(self.handle, host, port)
 
     async def handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter

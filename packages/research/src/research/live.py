@@ -3,7 +3,7 @@ own port, at https://<host>:8445/_live/research/<id>.png and its link. The link 
 report once it's published, and until then a page of the run's progress.
 
 Config (environment, from host.env and the unit):
-  RESEARCH_LIVE_PORT   port on 127.0.0.1 to listen on (default 8450)
+  RESEARCH_LIVE_PORT   port to listen on (default 8450), on LIVE_HOST (runs.live)
   PUBLIC_HOST          the tailnet name in the card's URLs (no card without it)
 """
 

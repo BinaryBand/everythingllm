@@ -39,6 +39,13 @@ own folders, puts the theme it names in place (the repo's from /system/themes, o
 workspace's from /shared/<it>/themes), and builds it. The runner copies the output into
 /public/<slug> (plain files only) and syncs, so a site goes live like any page.
 
+The system sites (news, research, status) are built the same way when their repo zola.toml
+names a theme with [extra.build] theme_from (op_build_system_site, which sites.build calls):
+their repo source and entries come in read-only, and the output goes, plain files only,
+into the pages site's `.<site>.new`, which sites.build marks and swaps in. The op takes only
+a site's name, and reads what to build from the repo itself: its socket is reachable from
+the AnythingLLM container.
+
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
                     this machine's storage directory and tailnet name, from host.env
@@ -48,6 +55,9 @@ Config (environment):
                     ~/.local/share/everythingllm/sandbox/workspaces);
                     run scripts go in its `.runs` folder
   SANDBOX_SYSTEM_THEMES  the themes mounted at /system/themes (default the repo's zola/themes)
+  SANDBOX_SITES_SOURCE   the system sites' sources (default the repo's zola/sites)
+  SANDBOX_SITES_CONTENT  their entries (default ~/.local/share/everythingllm/pages/entries,
+                         as sites.build's SITES_CONTENT)
   SANDBOX_SITE_DIR  the pages site's root, where pages are published (default
                     ~/.local/share/everythingllm/pages/public)
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
@@ -76,6 +86,7 @@ from urllib.parse import quote
 
 import hostrpc
 import linkcard
+import tomllib
 
 log = logging.getLogger("sandbox-runner")
 # Big enough for a run's output, which the runner caps well below this.
@@ -106,6 +117,9 @@ MEMORY = "1g"
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
 BUILD_TIMEOUT = 60  # a site build, assembling included
+SYSTEM_BUILD_TIMEOUT = (
+    40  # a system site's, as sites.build's; its callers give up after 55
+)
 SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
 MAX_PARALLEL = 2
 OUTPUT_BYTES = 20_000  # per stream of a run
@@ -196,6 +210,8 @@ class Config:
     system_themes: Path
     site_dir: Path
     site_url: str
+    sites_source: Path = REPO / "zola" / "sites"
+    sites_content: Path = Path("/nonexistent")
 
     @property
     def scripts(self) -> Path:
@@ -211,6 +227,10 @@ class Config:
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
             system_themes=Path(get("SANDBOX_SYSTEM_THEMES", REPO / "zola" / "themes")),
+            sites_source=Path(get("SANDBOX_SITES_SOURCE", REPO / "zola" / "sites")),
+            sites_content=Path(
+                get("SANDBOX_SITES_CONTENT", hostrpc.data_dir() / "pages" / "entries")
+            ),
             site_dir=Path(get("SANDBOX_SITE_DIR", hostrpc.site_dir())),
             site_url=get(
                 "SANDBOX_SITE_URL",
@@ -916,6 +936,99 @@ class Runner(hostrpc.Service):
             "zola": (out + err).strip()[-500:],  # zola reports on stderr
             "published": published,
         }
+
+    async def op_build_system_site(self, site: str) -> dict[str, Any]:
+        """Build a system site whose repo zola.toml names a theme with [extra.build]
+        theme_from into the pages site's `.<site>.new`, for sites.build to mark and swap in.
+        Answers with where it went; raises with zola's error if it didn't build."""
+        if not isinstance(site, str) or not SLUG_RE.fullmatch(site):
+            raise SandboxError(f"bad site '{site}'")
+        source = self.config.sites_source / site
+        try:
+            conf = tomllib.loads((source / "zola.toml").read_text())
+        except FileNotFoundError:
+            raise SandboxError(f"there's no system site '{site}'") from None
+        if not conf.get("extra", {}).get("build", {}).get("theme_from"):
+            raise SandboxError(
+                f"{site}'s zola.toml names no [extra.build] theme_from; it builds on the host"
+            )
+        name = f"sandbox-{secrets.token_hex(6)}"
+        run_dir = self.config.scripts / name
+        new = self.config.site_dir / f".{site}.new"
+        async with self.lock(f"site:{site}"):  # no workspace can be called that
+            try:
+                args = await asyncio.to_thread(
+                    self.prepare_system_build, name, site, run_dir
+                )
+                async with self._runs:
+                    exit_code, out, err, timed_out = await self.podman(
+                        [
+                            *args,
+                            "python",
+                            "/sandbox/sitebuild.py",
+                            "/site",
+                            f"{self.config.site_url.rstrip('/')}/{site}",
+                            "/entries",
+                        ],
+                        SYSTEM_BUILD_TIMEOUT,
+                        name,
+                    )
+                if timed_out:
+                    raise SandboxError(
+                        f"the build of {site} took over {SYSTEM_BUILD_TIMEOUT} s and was stopped"
+                    )
+                if exit_code != 0:
+                    raise SandboxError(
+                        f"zola build failed for {site}:\n{(err or out).strip()[-2000:]}"
+                    )
+                files = await asyncio.to_thread(
+                    self.copy_out, run_dir / "out" / "site", new
+                )
+            finally:
+                await self.podman(["rm", "-f", "--ignore", name], 60, None)
+                await asyncio.to_thread(shutil.rmtree, run_dir, True)
+        log.info("built system site %s in the sandbox: %d files", site, files)
+        return {"site": site, "path": str(new), "files": files}
+
+    def prepare_system_build(self, name: str, site: str, run_dir: Path) -> list[str]:
+        """A system site build's podman arguments: no network, its repo source and entries,
+        the repo's themes and every workspace's shared folder read-only, an empty /out."""
+        (run_dir / "code").mkdir(parents=True)
+        (run_dir / "out").mkdir()
+        entries = self.config.sites_content / site
+        if not entries.is_dir():
+            entries = run_dir / "no-entries"
+            entries.mkdir()
+        shutil.copyfile(SITEBUILD, run_dir / "code" / "sitebuild.py")
+        return [
+            *self.hardening(name),
+            "--network",
+            "none",
+            "-v",
+            f"{self.config.sites_source / site}:/site:{DATA_RO}",
+            "-v",
+            f"{entries}:/entries:{DATA_RO}",
+            *self.read_only_mounts(""),  # every workspace's shared folder, and /system
+            "-v",
+            f"{run_dir / 'out'}:/out:rw,noexec,nosuid,nodev",
+            "-v",
+            f"{run_dir / 'code'}:/sandbox:ro",
+            IMAGE,
+        ]
+
+    def copy_out(self, source: Path, dest: Path) -> int:
+        """A system site's built files into `dest` (replaced), plain files only."""
+        files, size = regular_files(source) if source.is_dir() else ([], 0)
+        if not files:
+            raise SandboxError("the build produced no files")
+        if size > PUBLISH_MAX_BYTES:
+            raise SandboxError(f"the built site is {size >> 20} MB, over the cap")
+        remove_path(dest)
+        for src, rel in files:
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            copy_regular(src, dest / rel)
+            (dest / rel).chmod(0o644)
+        return len(files)
 
     def prepare_build(self, name: str, scope: Scope, run_dir: Path) -> list[str]:
         """A build container's podman arguments: no network, the workspace's own folders

@@ -6,7 +6,8 @@ change. One request per connection, each way a single line of JSON:
   <- {"ok": true, "result": {...}}  or  {"ok": false, "error": "..."}
 
 The services serve with `Service` and `serve` (most through `run`); the MCP servers ask
-with `request` (most through `caller`). The agent skills speak the same protocol from node,
+with `request` (most through `caller`), and blocking code on the host (a site build in a
+worker thread or a command) with `request_sync`. The agent skills speak the same protocol from node,
 through anythingllm/agent-skills/_lib/hostrpc.js.
 
 It also holds the two file helpers every service needs: `atomic_write` and `env_values`.
@@ -22,6 +23,7 @@ import json
 import logging
 import os
 import signal
+import socket as socketlib
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -143,6 +145,39 @@ async def request(
         writer.close()
     if reply is None:
         raise RunnerError(f"The {name} closed the connection without answering.")
+    if not reply.get("ok"):
+        raise RunnerError(reply.get("error") or "unknown error")
+    return reply["result"]
+
+
+def request_sync(
+    socket: str | Path,
+    op: str,
+    args: dict[str, Any],
+    timeout: float,
+    *,
+    name: str = "runner",
+    limit: int = LIMIT,
+) -> Any:
+    """`request` for blocking code, which may run with or without an event loop of its own."""
+    try:
+        conn = socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM)
+        conn.settimeout(timeout)
+        conn.connect(str(socket))
+    except (FileNotFoundError, ConnectionRefusedError) as e:
+        raise RunnerError(
+            f"The {name} isn't running on the host ({type(e).__name__} on {socket})."
+        ) from e
+    try:
+        with conn, conn.makefile("rwb") as f:
+            f.write(json.dumps({"op": op, "args": args}).encode() + b"\n")
+            f.flush()
+            line = f.readline(limit + 1)
+    except TimeoutError as e:
+        raise RunnerError(f"The {name} didn't answer within {timeout:.0f}s.") from e
+    if not line:
+        raise RunnerError(f"The {name} closed the connection without answering.")
+    reply = json.loads(line)
     if not reply.get("ok"):
         raise RunnerError(reply.get("error") or "unknown error")
     return reply["result"]

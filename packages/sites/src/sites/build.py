@@ -16,6 +16,15 @@ is stopped, so it fails before the MCP tool call that asked for it gives up. A m
 without unprivileged user namespaces builds without the namespace; `sandboxed()` says which,
 and a Builder's `sandbox` asks it (tests give their own).
 
+A site whose zola.toml names its theme with `[extra.build] theme_from` ("system" for the
+repo's themes, or a sandbox workspace's name for one it shares) isn't built here: the
+sandbox runner builds it in a container (its op build_system_site, through `remote`), and
+it's swapped in here as any other. That's how a theme the agent wrote can style a system
+site without the host's zola ever running its templates, whose load_data could read local
+files. A Builder without `remote` (tests, which make their own) builds a theme_from="system"
+site here, since the repo's themes are no more than the repo's templates, and refuses any
+other.
+
 sites-runner builds a site after every write or delete; `make deploy` builds
 them all through the `sites-build` command, with host paths in the environment.
 """
@@ -34,6 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import hostrpc
+import tomllib
 
 from sites.store import site_url
 
@@ -73,6 +83,23 @@ def sandboxed() -> bool:
     return ok
 
 
+def sandbox_build(name: str) -> Path:
+    """Have the sandbox runner build a theme_from site; where its output went."""
+    try:
+        result = hostrpc.request_sync(
+            hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
+            "build_system_site",
+            {"site": name},
+            BUILD_SECONDS + 10,
+            name="sandbox runner",
+        )
+    except hostrpc.RunnerError as e:
+        raise BuildError(
+            f"zola build failed for {name} (in the sandbox): {e}"
+        ) from None
+    return Path(result["path"])
+
+
 @dataclass(frozen=True)
 class Builder:
     source: Path
@@ -81,6 +108,9 @@ class Builder:
     output: Path
     zola: str
     sandbox: Callable[[], bool] = sandboxed  # whether zola runs without a network
+    remote: Callable[[str], Path] | None = (
+        None  # builds theme_from sites; see the docstring
+    )
 
     @classmethod
     def from_env(cls) -> "Builder":
@@ -96,7 +126,14 @@ class Builder:
             content=content,
             output=Path(get("SITES_OUTPUT", hostrpc.site_dir())),
             zola=get("ZOLA", "/usr/local/bin/zola"),
+            remote=sandbox_build,
         )
+
+    def theme_from(self, name: str) -> str | None:
+        """Where the site's zola.toml takes its theme from, if it says ([extra.build])."""
+        conf = tomllib.loads((self.source / name / "zola.toml").read_text())
+        origin = conf.get("extra", {}).get("build", {}).get("theme_from")
+        return origin if isinstance(origin, str) and origin else None
 
     def site_names(self) -> list[str]:
         return sorted(
@@ -193,8 +230,22 @@ class Builder:
         for stale in (new, old):
             shutil.rmtree(stale, ignore_errors=True)
 
-        with tempfile.TemporaryDirectory(prefix=f"zola-{name}-") as tmp:
-            self._zola(name, self._assemble(name, Path(tmp)), new)
+        origin = self.theme_from(name)
+        if origin and self.remote is not None:
+            if (went := self.remote(name)) != new:
+                shutil.rmtree(went, ignore_errors=True)
+                raise BuildError(
+                    f"the sandbox built {name} into {went}, not {new}: SITES_OUTPUT and "
+                    "the sandbox runner's SANDBOX_SITE_DIR differ"
+                )
+        elif origin and origin != "system":
+            raise BuildError(
+                f"{name} takes its theme from {origin}'s shared folder, so only the "
+                "sandbox may build it"
+            )
+        else:
+            with tempfile.TemporaryDirectory(prefix=f"zola-{name}-") as tmp:
+                self._zola(name, self._assemble(name, Path(tmp)), new)
         (new / MARKER).write_text("Built by sites-build; replaced on every build.\n")
 
         if dest.exists():

@@ -6,8 +6,10 @@ import subprocess
 import threading
 from pathlib import Path
 
+import hostrpc
 import pytest
 import tomllib
+from sites import build
 from sites.build import BUILD_SECONDS, MARKER, Builder, BuildError, sandboxed
 from sites.store import SiteError, SiteStore, _split
 
@@ -689,3 +691,103 @@ def test_a_build_that_runs_too_long_is_stopped(tmp_path, monkeypatch):
     with pytest.raises(BuildError, match=f"took longer than {BUILD_SECONDS} s"):
         builder(tmp_path).build("news")
     assert list((tmp_path / "site").iterdir()) == []
+
+
+# --- sites whose theme comes from elsewhere are built in the sandbox ---
+
+
+def theme_from_site(tmp_path, origin):
+    """A copy of the repo's sites in which status takes its theme from `origin`."""
+    source = tmp_path / "src"
+    shutil.copytree(REPO_ZOLA / "sites", source)
+    toml = source / "status" / "zola.toml"
+    text = toml.read_text()
+    toml.write_text(
+        text.replace("[extra]", f'[extra.build]\ntheme_from = "{origin}"\n\n[extra]', 1)
+    )
+    (tmp_path / "content").mkdir(exist_ok=True)
+    (tmp_path / "site").mkdir(exist_ok=True)
+    return source
+
+
+def test_a_theme_from_site_is_built_by_the_sandbox_and_swapped_in_here(tmp_path):
+    source = theme_from_site(tmp_path, "education")
+    asked = []
+
+    def remote(name):
+        asked.append(name)
+        new = tmp_path / "site" / f".{name}.new"
+        new.mkdir()
+        (new / "index.html").write_text("built in the sandbox")
+        return new
+
+    b = Builder(
+        source,
+        REPO_ZOLA / "themes",
+        tmp_path / "content",
+        tmp_path / "site",
+        "no-zola-needed",
+        remote=remote,
+    )
+    assert b.theme_from("status") == "education" and b.theme_from("news") is None
+    [dest] = b.build("status")
+    assert asked == ["status"]
+    assert (dest / "index.html").read_text() == "built in the sandbox"
+    assert (dest / ".zola-site").exists()  # marked and swapped like any build
+    assert not (tmp_path / "site" / ".status.new").exists()
+
+
+def test_a_sandbox_build_that_fails_or_lands_elsewhere_changes_nothing(tmp_path):
+    source = theme_from_site(tmp_path, "system")
+    live = tmp_path / "site" / "status"
+    live.mkdir()
+    (live / ".zola-site").touch()
+    (live / "index.html").write_text("the last good build")
+
+    def failing(name):
+        raise BuildError(f"zola build failed for {name} (in the sandbox): boom")
+
+    def elsewhere(name):
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        return other
+
+    for remote, why in ((failing, "boom"), (elsewhere, "SANDBOX_SITE_DIR differ")):
+        b = Builder(
+            source,
+            REPO_ZOLA / "themes",
+            tmp_path / "content",
+            tmp_path / "site",
+            "zola",
+            remote=remote,
+        )
+        with pytest.raises(BuildError, match=why):
+            b.build("status")
+        assert (live / "index.html").read_text() == "the last good build"
+    assert not (tmp_path / "elsewhere").exists()
+
+
+def test_without_the_sandbox_only_a_repo_theme_builds_here(tmp_path):
+    source = theme_from_site(tmp_path, "education")
+    b = Builder(
+        source, REPO_ZOLA / "themes", tmp_path / "content", tmp_path / "site", "zola"
+    )
+    with pytest.raises(BuildError, match="only the sandbox may build it"):
+        b.build("status")
+    assert not (tmp_path / "site" / "status").exists()
+
+
+def test_from_env_builds_theme_from_sites_in_the_sandbox():
+    assert build.Builder.from_env().remote is build.sandbox_build
+
+
+def test_the_sandbox_build_turns_runner_errors_into_build_errors(monkeypatch):
+    def refuse(*a, **kw):
+        raise hostrpc.RunnerError("The sandbox runner isn't running on the host")
+
+    monkeypatch.setattr(build.hostrpc, "request_sync", refuse)
+    with pytest.raises(
+        BuildError,
+        match="status \\(in the sandbox\\): The sandbox runner isn't running",
+    ):
+        build.sandbox_build("status")

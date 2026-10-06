@@ -109,3 +109,24 @@ def test_a_site_builds_with_the_repos_theme(tmp_path):
         capture_output=True,
     )
     assert "https://pages.example/s" in (out / "index.html").read_text()
+
+
+def test_a_system_sites_entries_join_its_content_but_not_their_index_or_dotfiles(
+    tmp_path, roots
+):
+    site = tmp_path / "site"
+    (site / "content" / "reports").mkdir(parents=True)
+    (site / "content" / "reports" / "_index.md").write_text("from the repo")
+    (site / "zola.toml").write_text(
+        'theme = "agent-site"\n[extra.build]\ntheme_from = "system"\n'
+    )
+    entries = tmp_path / "entries"
+    (entries / "reports").mkdir(parents=True)
+    (entries / "reports" / "2026-10-06.md").write_text("a report")
+    (entries / "reports" / "_index.md").write_text("never this one")
+    (entries / ".build.lock").write_text("")
+    work = tmp_path / "work"
+    assemble(site, work, *roots, entries=entries)
+    assert (work / "content" / "reports" / "_index.md").read_text() == "from the repo"
+    assert (work / "content" / "reports" / "2026-10-06.md").read_text() == "a report"
+    assert not (work / "content" / ".build.lock").exists()

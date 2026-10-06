@@ -934,3 +934,70 @@ def test_what_a_build_refuses(cfg):
         with pytest.raises(runner.SandboxError, match=why):
             go(r.op_build_site(A, path, slug))
     assert r.podman.runs() == []
+
+
+# --- system sites ---
+
+
+def system_cfg(cfg, tmp_path, theme_from='theme_from = "system"'):
+    site = tmp_path / "sites" / "status"
+    site.mkdir(parents=True)
+    (site / "zola.toml").write_text(
+        f'theme = "agent-site"\n[extra.build]\n{theme_from}\n'
+    )
+    (tmp_path / "sites" / "news").mkdir()
+    (tmp_path / "sites" / "news" / "zola.toml").write_text('theme = "agent-site"\n')
+    (tmp_path / "entries" / "status" / "reports").mkdir(parents=True)
+    cfg.sites_source = tmp_path / "sites"
+    cfg.sites_content = tmp_path / "entries"
+    return cfg
+
+
+def test_a_system_site_builds_in_the_sandbox_into_its_staging_folder(cfg, tmp_path):
+    cfg = system_cfg(cfg, tmp_path)
+    r = make(cfg)
+    # A run first, so career's folders exist and its shared folder is mounted.
+    go(r.op_run(A, "bash", "true"))
+    r.podman.effect = built
+    res = go(r.op_build_system_site("status"))
+    new = cfg.site_dir / ".status.new"
+    assert res == {"site": "status", "path": str(new), "files": 2}
+    assert sorted(str(p.relative_to(new)) for p in new.rglob("*") if p.is_file()) == [
+        "index.html",
+        "notes/index.html",
+    ]  # the planted symlink is left out
+    args = r.podman.runs()[-1][0]
+    assert args[args.index("--network") + 1] == "none"
+    m = mounts(args)
+    assert m["/site"] == tmp_path / "sites" / "status"
+    assert m["/entries"] == tmp_path / "entries" / "status"
+    assert m["/shared/career"] == shared(cfg, A) and "/work" not in m
+    assert f"{tmp_path / 'entries' / 'status'}:/entries:ro,noexec,nosuid,nodev" in args
+    assert args[-5:] == [
+        "python",
+        "/sandbox/sitebuild.py",
+        "/site",
+        "https://pages.example/status",
+        "/entries",
+    ]
+
+
+def test_what_a_system_site_build_refuses(cfg, tmp_path):
+    cfg = system_cfg(cfg, tmp_path)
+    r = make(cfg)
+    for site, why in [
+        ("news", "names no \\[extra.build\\] theme_from; it builds on the host"),
+        ("nope", "no system site 'nope'"),
+        ("../status", "bad site"),
+        ("Status", "bad site"),
+    ]:
+        with pytest.raises(runner.SandboxError, match=why):
+            go(r.op_build_system_site(site))
+    assert r.podman.runs() == []
+    r = make(cfg, result=(1, "", "Error: Failed to render\n", False))
+    with pytest.raises(
+        runner.SandboxError,
+        match="zola build failed for status:\nError: Failed to render",
+    ):
+        go(r.op_build_system_site("status"))
+    assert not (cfg.site_dir / ".status.new").exists()

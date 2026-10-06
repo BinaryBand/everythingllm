@@ -13,7 +13,12 @@ A site picks its theme in zola.toml:
 
 Without `theme_from`, the site's own themes/ folder is used as it is.
 
-  python sitebuild.py <site folder> <base url>
+A system site (news, research, status: Runner.op_build_system_site) is its repo source plus
+its entries, which stay on the host and come in read-only; they're copied into its content/
+the way sites.build assembles it on the host (entries only: the sections' _index.md files
+come from the repo).
+
+  python sitebuild.py <site folder> <base url> [<entries folder>]
 """
 
 import re
@@ -60,9 +65,14 @@ def theme_source(
 
 
 def assemble(
-    source: Path, work: Path, system: Path = SYSTEM, shared: Path = SHARED
+    source: Path,
+    work: Path,
+    system: Path = SYSTEM,
+    shared: Path = SHARED,
+    entries: Path | None = None,
 ) -> None:
-    """Copy the site to `work` (leaving out .git and an old public/) with its theme in place."""
+    """Copy the site to `work` (leaving out .git and an old public/) with its theme in place,
+    and a system site's entries in its content/."""
     if not (source / "zola.toml").is_file():
         raise BuildError(f"{source} has no zola.toml, so it isn't a Zola site")
     try:
@@ -77,12 +87,20 @@ def assemble(
         dest = work / "themes" / theme.name
         shutil.rmtree(dest, ignore_errors=True)
         shutil.copytree(theme, dest, symlinks=True)
+    if entries is not None and entries.is_dir():
+        shutil.copytree(
+            entries,
+            work / "content",
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("_index.md", ".*"),
+        )
 
 
 def main() -> None:
     source, base_url = Path(sys.argv[1]), sys.argv[2]
+    entries = Path(sys.argv[3]) if len(sys.argv) > 3 else None
     try:
-        assemble(source, WORK)
+        assemble(source, WORK, entries=entries)
     except BuildError as e:
         print(e, file=sys.stderr)
         sys.exit(2)

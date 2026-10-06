@@ -13,6 +13,8 @@ Standard library only, like the modules it calls.
 """
 
 import inspect
+import ipaddress
+import json
 import os
 import shlex
 import subprocess
@@ -270,14 +272,45 @@ def sandbox_images() -> None:
 
 
 def internal_network(name: str, subnet: str, ip_range: str = "") -> None:
-    """Create a podman network with no route out and no DNS, unless it exists. `ip_range`
-    is where podman picks an address for a container that names none."""
-    if run("podman", "network", "exists", name, check=False):
-        run(
-            "podman", "network", "create", "--internal", "--disable-dns",
-            "--subnet", subnet, *(["--ip-range", ip_range] if ip_range else []),
-            name,
-        )  # fmt: skip
+    """Create a podman network with no route out and no DNS, unless it exists as asked.
+    `ip_range` is where podman picks an address for a container that names none, so one
+    can't take a stopped service's address and its egress profile: a network made without
+    it (or with another subnet) is made again, or, while a container uses it, refused."""
+    if not run("podman", "network", "exists", name, check=False):
+        if network_matches(name, subnet, ip_range):
+            return
+        print(
+            f"{name} isn't on {subnet} with addresses from {ip_range or 'all of it'}; making it again"
+        )
+        if run("podman", "network", "rm", name, check=False):
+            raise SystemExit(
+                f"{name} is in use; stop its containers, then run this again"
+            )
+    run(
+        "podman", "network", "create", "--internal", "--disable-dns",
+        "--subnet", subnet, *(["--ip-range", ip_range] if ip_range else []),
+        name,
+    )  # fmt: skip
+
+
+def network_matches(name: str, subnet: str, ip_range: str) -> bool:
+    """Whether podman's network `name` has the one subnet `subnet`, and gives out
+    addresses only from `ip_range` (all of the subnet when it's "")."""
+    out = subprocess.run(
+        ["podman", "network", "inspect", name, "--format", "json"],
+        capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    subnets = json.loads(out)[0].get("subnets") or []
+    if [s.get("subnet") for s in subnets] != [subnet]:
+        return False
+    lease = subnets[0].get("lease_range")
+    if not ip_range:
+        return not lease
+    pool = ipaddress.ip_network(ip_range)
+    return bool(lease) and all(
+        ipaddress.ip_address(lease.get(end, "0.0.0.0")) in pool
+        for end in ("start_ip", "end_ip")
+    )
 
 
 @command(
@@ -295,7 +328,8 @@ def service_images() -> None:
 
 
 @command(
-    "sites-build", "rebuild all Zola sites by hand (sites-runner does this on every write)"
+    "sites-build",
+    "rebuild all Zola sites by hand (sites-runner does this on every write)",
 )
 def sites_build() -> None:
     os.environ["ANYTHINGLLM_STORAGE"] = str(units.storage())  # stops here without it

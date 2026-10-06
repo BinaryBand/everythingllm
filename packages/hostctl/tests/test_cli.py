@@ -1,6 +1,7 @@
 """hostctl.cli: the commands `uv run hostctl` runs, with subprocesses and the other hostctl
 modules faked, so each test reads as the steps a command takes, in order."""
 
+import json
 import sys
 from types import SimpleNamespace
 
@@ -99,6 +100,43 @@ def test_service_images_builds_the_image_and_egress_net(ran):
             " --ip-range 10.89.79.128/25 egress-net"
         ),
     ]
+
+
+def egress_net(monkeypatch, subnets, rm=0):
+    """Fake podman with egress-net already there, inspected as `subnets`."""
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(" ".join(cmd))
+        out = json.dumps([{"subnets": subnets}]) if "inspect" in cmd else ""
+        return SimpleNamespace(returncode=rm if "rm" in cmd else 0, stdout=out)
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    return calls
+
+
+def test_service_images_leaves_an_egress_net_made_as_asked(monkeypatch):
+    lease = {"start_ip": "10.89.79.129", "end_ip": "10.89.79.254"}
+    calls = egress_net(monkeypatch, [{"subnet": "10.89.79.0/24", "lease_range": lease}])
+    cli.main(["service-images"])
+    assert not [c for c in calls if "network create" in c or "network rm" in c]
+
+
+def test_service_images_makes_again_an_egress_net_without_its_ip_range(monkeypatch):
+    """Made before ip_range was, podman would give a stray container any address, a
+    stopped service's among them, and with it that service's egress profile."""
+    calls = egress_net(monkeypatch, [{"subnet": "10.89.79.0/24"}])
+    cli.main(["service-images"])
+    assert calls[-2:] == [
+        "podman network rm egress-net",
+        (
+            "podman network create --internal --disable-dns --subnet 10.89.79.0/24"
+            " --ip-range 10.89.79.128/25 egress-net"
+        ),
+    ]
+    egress_net(monkeypatch, [{"subnet": "10.89.79.0/24"}], rm=2)  # in use
+    with pytest.raises(SystemExit, match="in use"):
+        cli.main(["service-images"])
 
 
 def test_import_takes_a_name_and_needs_one(ran):

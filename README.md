@@ -992,7 +992,9 @@ episode and by what, and the sync logs each episode's cuts to `sync.log`.
   stay in it while they are. One that can't be read goes out as it is, with the error in its
   record.
 - Reading an episode takes about 15 s an hour of audio and about 450 MB of memory an hour
-  of audio, in the sync worker (which has 4 GB). Video episodes aren't cut.
+  of audio, in the sync worker (which has 6 GB, and slows down past 5). An episode over
+  8 hours isn't looked at, so it can't run the worker out of memory at the same place on
+  every sync: it goes out as it is, with that in its record. Video episodes aren't cut.
 
 ### Transcripts
 

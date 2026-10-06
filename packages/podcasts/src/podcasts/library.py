@@ -68,7 +68,16 @@ from sites.store import slugify
 from podcasts.audio import GRACE, AudioStore, active
 from podcasts.files import _read_json, _write_json
 from podcasts.limits import DAILY_DOWNLOADS, DEFAULT_KEEP, KEEP_ALL, MAX_KEEP, AdWords
-from podcasts.rss import DERIVED, Episode, FeedError, Show, clock, parse, render
+from podcasts.rss import (
+    DERIVED,
+    Episode,
+    FeedError,
+    Show,
+    _seconds,
+    clock,
+    parse,
+    render,
+)
 from podcasts.rules import BATCH, RuleError, judge, user_tz
 from podcasts.scrub import Scrubber, ScrubError
 from podcasts.segments import (
@@ -764,6 +773,16 @@ class Library:
         assert scrubber is not None  # only called when cuts_ads()
         todo = [e for e in wanted if e.audio and not e.scrubbed and _scrubbable(e)]
         for ep in todo:
+            if (seconds := _seconds(ep.duration or "")) and seconds > MAX_SCRUB_SECONDS:
+                errors.append(
+                    f"{ep.title}: over {MAX_SCRUB_SECONDS // 3600} h, too long to look "
+                    "for ads in; published as it is"
+                )
+                ep.scrubbed = True
+        if any(e.scrubbed for e in todo):
+            publish("; ".join(errors))
+        todo = [e for e in todo if not e.scrubbed]
+        for ep in todo:
             if self.stopping():
                 return  # the rest wait for the next sync, out of the feed
             publish("; ".join(errors), f"{ep.title} (reading for ads)")
@@ -911,6 +930,12 @@ class Library:
 def key(ep: Episode) -> str:
     """What the episode's fingerprint and transcript are kept under: its original's hash."""
     return Path(ep.audio or "").stem
+
+
+# Looking for ads holds about 450 MB per hour of audio in the sync worker, whose
+# container has 6 GB (host/quadlet/podcasts-sync-worker.container.in): a longer episode
+# would get it killed at the same place on every sync, so it's published uncut.
+MAX_SCRUB_SECONDS = 8 * 3600
 
 
 def _scrubbable(ep: Episode) -> bool:

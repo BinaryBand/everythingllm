@@ -83,6 +83,18 @@ def test_the_sync_worker_has_time_to_stop_between_steps():
     assert keys["StopTimeout"] == ["60"]
 
 
+def test_the_sync_worker_holds_the_longest_episode_it_looks_for_ads_in():
+    from podcasts.library import MAX_SCRUB_SECONDS
+
+    template = QUADLET / "podcasts-sync-worker.container.in"
+    args = " ".join(container_keys(template)["PodmanArgs"])
+    limit = int(re.search(r"--memory=(\d+)g", args).group(1))
+    # About 450 MB an hour of audio, with a gigabyte for the rest.
+    assert MAX_SCRUB_SECONDS / 3600 * 0.45 + 1 <= limit
+    service = template.read_text().split("[Service]", 1)[1]
+    assert re.search(r"^MemoryHigh=\d+G$", service, re.MULTILINE)
+
+
 def test_the_transcribe_worker_has_the_old_units_time_to_stop():
     """podman's own 10 s would kill a pass still in a C call and leave transcribing.json,
     which the next start blames on the episode."""

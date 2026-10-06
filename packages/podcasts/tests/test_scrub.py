@@ -267,6 +267,24 @@ def test_episode_that_cannot_be_read_is_published_with_its_ads(lib, fake):
     assert fake.scrubbed == ["b"]
 
 
+def test_an_episode_too_long_to_look_at_is_published_with_its_ads(
+    lib, fake, monkeypatch
+):
+    """Past MAX_SCRUB_SECONDS, looking for ads would run the sync worker out of memory, at
+    the same place on every sync."""
+    from podcasts import library
+
+    monkeypatch.setattr(library, "MAX_SCRUB_SECONDS", SECONDS - 1)
+    subscribe(lib, Mp3Remote(feed(("a", "1"), ("b", "2"))))
+    rec = lib.record("the-show")
+    assert {(e.guid, e.scrubbed, e.ads_cut) for e in rec["show"].episodes} == {
+        ("a", True, 0.0),
+        ("b", True, 0.0),
+    }
+    assert "too long to look for ads in; published as it is" in rec["error"]
+    assert fake.printed == fake.scrubbed == []
+
+
 def test_nothing_to_compare_publishes_as_is(lib, fake):
     fake.scrub = lambda slug, key, audio: None
     subscribe(lib, Mp3Remote(feed(("a", "1"))))

@@ -22,8 +22,10 @@ DropCapability=ALL
 NoNewPrivileges=true
 UserNS=keep-id
 PidsLimit=256
-# Looking for ads reads an episode at about 450 MB an hour of audio, in one process.
-PodmanArgs=--memory=4g --cpus=2 --umask=0002
+# Looking for ads reads an episode at about 450 MB an hour of audio, in one process; an
+# episode over 8 h isn't looked at (podcasts.library.MAX_SCRUB_SECONDS), so 6 GB holds
+# the longest it is, with room for the rest.
+PodmanArgs=--memory=6g --cpus=2 --umask=0002
 RunInit=true
 Timezone=local
 # SIGTERM stops a sync at its next feed or scrub, or partway through a download, and asks
@@ -61,6 +63,8 @@ EnvironmentFile=@REPO@/host.env
 ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src:@REPO@/packages/apps/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/podcasts-sync-worker.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF
 # podman won't bind-mount what isn't there.
 ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/podcasts-sync-worker-ctr %h/.local/share/everythingllm/podcasts %h/.local/share/everythingllm/pages/public/podcasts
+# It slows down past 5 GB, before the container's 6 GB limit kills it.
+MemoryHigh=5G
 Restart=on-failure
 RestartSec=10
 

@@ -9,7 +9,7 @@ Work that's been looked into but not done yet. Remove an entry when it lands.
 
 | Package  | Time  | Where it goes                                                      |
 |----------|-------|--------------------------------------------------------------------|
-| podcasts | ~12 s | ~8 s in test bodies: two sync tests take 1 s each (`test_start_sync_*`), plus real audio work |
+| podcasts | ~12 s | ~8 s in test bodies: the real sync worker's test takes 2.5 s (`test_start_sync_reaches_the_real_worker`, its 2 s poll), plus real audio work |
 | splice   | ~10 s | ~7 s in teardown: 0.5 s per `test_splice_web` test                 |
 | sites    | ~7 s  | real zola builds and the article-web tests                         |
 | others   | <4 s each |                                                                |
@@ -17,8 +17,8 @@ Work that's been looked into but not done yet. Remove an entry when it lands.
 - **splice teardown.** `httpd.shutdown()` waits for `serve_forever()`'s next poll, which
   runs every 0.5 s by default. Pass `poll_interval=0.05` in the fixture
   (`packages/splice/tests/test_splice_web.py:45`). That should save about 6.5 s.
-- **podcasts.** Look at the 1 s waits in `test_library.py`'s sync tests and the audio
-  tests. There might be 3–4 s to cut.
+- **podcasts.** Look at the real sync worker's test in `test_library.py` (it waits for
+  the worker's next look at the queue) and the audio tests. There might be 3–4 s to cut.
 - **Parallel runs with pytest-xdist** (`-n auto`, 4 cores here): this might bring the suite
   to roughly 10–12 s. First look for timing-sensitive tests that flake under load, and check
   that no two tests share a fixed port or path.

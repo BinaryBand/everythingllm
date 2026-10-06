@@ -1,0 +1,22 @@
+[Unit]
+Description=Podcast sync worker: runs the syncs podcasts-runner asks for, and every feed's every 6 hours
+After=network.target
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Service]
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/podcasts
+# Takes the syncs asked for from ~/.local/share/everythingllm/podcasts/queue/ one at a
+# time, under sync.lock, and asks for every feed's itself at 00:00, 06:00, 12:00 and 18:00
+# (podcasts.sync). Each sync's output goes to ~/.local/share/everythingllm/podcasts/sync.log,
+# which list_podcasts points to; the worker's own lines to the journal.
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package podcasts --extra host podcasts-sync-worker
+# SIGTERM stops a sync at its next feed, download or scrub, and asks for it again; a
+# download that outlasts this is killed, and the next sync fetches that episode again.
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

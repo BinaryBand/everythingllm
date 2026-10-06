@@ -13,6 +13,10 @@ repo's path and @KEY@ with KEY from host.env:
            A change to comments alone restarts nothing. Either waits while it's a guarded
            runner with a run going (run_guard), and a container also while its local
            image or its network isn't there yet (its app's setup makes them).
+           A host unit this rendered whose template is gone (removed from host/systemd,
+           or moved to host/quadlet as a container) is retired: stopped and disabled, and
+           its installed copy moved to the backups. A container that took its name over is
+           started then, since the old copy would hide Quadlet's unit; `diff` lists them.
 
 Standard library only, like the rest of hostctl.
 """
@@ -38,6 +42,8 @@ ROOT = Path(__file__).resolve().parents[4]
 
 BACKUPS = run_guard.DATA / "backups"  # outside the repo, which the container mounts
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
+# The first line of a unit rendered here (and, before uv run hostctl, by `make units`).
+RENDERED = re.compile(r"# Rendered by `(uv run hostctl|make) units` from ")
 
 
 @dataclass
@@ -163,7 +169,7 @@ def planned(
             *(root / "host" / "systemd").glob("*.timer"),
         ]
     ):
-        # A template (podcasts-sync@.service) never runs itself; its instances pick it up when next started.
+        # A template (x@.service) never runs itself; its instances pick it up when next started.
         units.append(
             Unit(
                 t,
@@ -261,7 +267,7 @@ def missing(unit: Unit) -> list[str]:
     return [f"{kind} {name}" for kind, name in needs if not podman_has(kind, name)]
 
 
-def hold_back(restart: list[str], todo: list[Unit]) -> list[str]:
+def hold_back(restart: list[str], plan: list[Unit]) -> list[str]:
     """The units of `restart` to restart now. Left out, each with a word on why: a
     container podman can't start yet, and a guarded runner, host unit or container, with
     a run going that the restart would kill (run_guard asks, or FORCE=1)."""
@@ -269,7 +275,7 @@ def hold_back(restart: list[str], todo: list[Unit]) -> list[str]:
     for service in restart:
         app = apps.app_of(service)
         setup = f"`uv run hostctl {app.name if app else service}-setup`"
-        containers = [u for u in todo if u.always and u.service == service]
+        containers = [u for u in plan if u.always and u.service == service]
         lacking = [need for u in containers for need in missing(u)]
         if lacking:
             print(
@@ -280,6 +286,60 @@ def hold_back(restart: list[str], todo: list[Unit]) -> list[str]:
         else:
             now.append(service)
     return now
+
+
+def retired(plan: list[Unit], user: Path, root: Path = ROOT) -> list[Path]:
+    """Host units in `user` that this rendered, or linked into the repo's host/systemd the
+    old way, and that no template makes any more."""
+    planned_here = {u.dest for u in plan}
+    linked_from = root / "host" / "systemd"
+    old = []
+    for path in sorted([*user.glob("*.service"), *user.glob("*.timer")]):
+        if path in planned_here:
+            continue
+        if path.is_symlink():
+            ours = Path(os.readlink(path)).parent == linked_from
+        else:
+            try:
+                ours = bool(RENDERED.match(path.read_text()))
+            except OSError:
+                ours = False
+        if ours:
+            old.append(path)
+    return old
+
+
+def retire(
+    old: list[Path], plan: list[Unit], backup: Path
+) -> tuple[list[str], list[str]]:
+    """Stop and disable each, and move its installed copy to `backup`. Returns the
+    containers to start now that the host unit of their name is gone, and the units left
+    as they are: a guarded runner with a run going (run_guard asks), whose container
+    mustn't start beside it."""
+    containers = {u.service for u in plan if u.always}
+    start, left = [], []
+    for path in old:
+        name = path.name
+        if name in run_guard.GUARDED and not run_guard.ok_to_restart(name):
+            print(f"units: left {name} running; run `uv run hostctl units` again later")
+            left.append(name)
+            continue
+        # A template (x@.service) can't be stopped by its name; a running instance
+        # finishes, and nothing starts another.
+        if "@." not in name:
+            subprocess.run(
+                ["systemctl", "--user", "disable", "--now", name], check=False
+            )
+        saved = backup / path.parent.name / name
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        saved.write_text(path.read_text() if path.exists() else "")
+        path.unlink()
+        if name in containers:
+            start.append(name)
+            print(f"retired {path}: its container takes over")
+        else:
+            print(f"retired {path}: the repo has no template for it any more")
+    return start, left
 
 
 def active(service: str) -> bool:
@@ -302,7 +362,9 @@ def main(argv: list[str] | None = None) -> None:
     ).expanduser()
     user = Path(os.environ.get("UNITS_USER_DIR", "~/.config/systemd/user")).expanduser()
     values = {"REPO": str(ROOT), **host_settings(ROOT / "host.env")}
-    todo = changed(planned(values, containers, user))
+    plan = planned(values, containers, user)
+    todo = changed(plan)
+    old = retired(plan, user)
 
     if args.action == "diff":
         for unit in todo:
@@ -314,11 +376,13 @@ def main(argv: list[str] | None = None) -> None:
                     f"repo/{unit.source.relative_to(ROOT)}",
                 )
             )
-        if not todo:
+        for path in old:
+            print(f"retire {path}: no template makes it any more")
+        if not (todo or old):
             print("units: installed units match the repo")
         return
 
-    if not todo:
+    if not (todo or old):
         print("units: nothing to install")
         return
     if (
@@ -329,8 +393,11 @@ def main(argv: list[str] | None = None) -> None:
         )
     backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S") / "units"
     restart = install(todo, backup)
+    start, left = retire(old, plan, backup)
+    restart = [s for s in restart if s not in left]
+    restart += [s for s in start if s not in restart]
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    for service in hold_back(restart, todo):
+    for service in hold_back(restart, plan):
         subprocess.run(["systemctl", "--user", "restart", service], check=True)
         print(f"restarted {service}")
     if backup.exists():

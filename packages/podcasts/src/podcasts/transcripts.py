@@ -1,9 +1,14 @@
-"""`podcasts-transcribe`: transcripts of the downloaded episodes, and the ads they give away.
+"""podcasts-transcribe-worker: transcripts of the downloaded episodes, and the ads they give away.
 
-Whisper takes about 8 minutes an hour of audio here with every core, so this runs on its
-own timer, apart from the sync, at the lowest priority and on as many threads as
+Whisper takes about 8 minutes an hour of audio here with every core, so this is a
+long-running service of its own (podcasts-transcribe-worker.service), apart from the sync.
+Every 6 hours, half an hour after each scheduled sync (00:30, 06:30, …, local time; a slot
+missed while it was down as soon as it starts, as the timer it replaced did), when asked
+(`podcasts-transcribe`, which leaves queue/transcribe.json), and when it starts after a pass
+that died, it makes a pass: at the lowest priority and on as many threads as
 PODCASTS_TRANSCRIBE_THREADS gives for the time of day (see Schedule; default 1 of the 4
-cores, so the machine stays cool and its fans quiet; 2 got them going). After each episode
+cores, so the machine stays cool and its fans quiet; 2 got them going), read from host.env
+at every pass, so a change there needs no restart. After each episode
 it takes the newest one waiting, so a new episode goes ahead of a catalog's backlog. The
 original is transcribed, as downloaded (audio.py), so the times stay right whatever is cut
 from what is served; the served .vtt is shifted to match (Library.render).
@@ -19,19 +24,27 @@ possible_ads ("report"), or are ignored ("off"); then applying writes
   state/transcripts/<slug>/<key>.json the segments, in the original's times, for search_podcasts
   site/<slug>/<served stem>.vtt       linked from feed.xml as <podcast:transcript>
 
-One run at a time (transcribe.lock); a second exits at once. state/transcribing.json names
-the episode Whisper is hearing, and is removed when it stops, even on SIGTERM; a run that
-finds it left over marks that episode failed, since the last run died on it (killed, e.g.
-out of memory), rather than trying it again.
+One pass at a time (transcribe.lock); a second gives way at once. state/transcribing.json
+names the episode Whisper is hearing, and is removed when it stops, even on SIGTERM (the
+worker exits 143 then); a pass that finds it left over marks that episode failed, since the
+last one died on it (killed, e.g. out of memory), rather than trying it again.
+
+Config (environment, from host.env and the unit): PODCASTS_TRANSCRIBE_THREADS (above),
+PODCASTS_MODELS (the models, default ~/.local/share/everythingllm/podcasts/models), and
+PODCASTS_STATE, PODCASTS_DIR, PODCASTS_BASE_URL, PODCASTS_TZ and ANYTHINGLLM_STORAGE, as
+podcasts-runner reads them (tools.py).
 """
 
 import os
 import signal
 import sys
+import threading
+from collections.abc import Callable
 from datetime import datetime, time
 from functools import partial
 from pathlib import Path
 
+from hostrpc import env_values
 from llm import LLMError
 
 from podcasts.ad_reads import AdReadError, find_ad_reads
@@ -49,16 +62,27 @@ from podcasts.whisper import (
     load_whisper,
     transcribe,
 )
+from podcasts.worker import (
+    POLL_SECONDS,
+    TRANSCRIBE,
+    TRANSCRIBE_WORKER,
+    Every,
+    Queue,
+    heartbeat,
+)
 
 MODEL = ModelSize.BASE
+EVERY_HOURS, AT_MINUTE = 6, 30
+THREADS = "PODCASTS_TRANSCRIBE_THREADS"
+HOST_ENV = Path(__file__).resolve().parents[4] / "host.env"  # the repo's
 
 
 class Schedule:
     """How many threads to transcribe on at each time of day: PODCASTS_TRANSCRIBE_THREADS,
     either a number for all day or `HH:MM=threads` entries, each from that time until the
     next, e.g. `08:00=4,22:00=1` (the last one runs on past midnight). 0 threads pauses
-    transcribing until the next entry; a run that reaches one stops, and the timer starts
-    the next."""
+    transcribing until the next entry; a pass that reaches one stops, and the worker's next
+    pass starts again."""
 
     def __init__(self, text: str):
         text = text.strip() or "1"
@@ -279,41 +303,90 @@ class Worker:
             self.log(f"{slug}: possible ads in {ep.title} at {where}")
 
 
-def main() -> None:
-    os.nice(19)  # the LLM shares this CPU and answers people; it goes first
-    lib = Library.from_env()
+def threads_setting() -> str:
+    """PODCASTS_TRANSCRIBE_THREADS as host.env has it now, else as the worker started with."""
+    found = env_values(HOST_ENV, [THREADS], environ=False)
+    return found[THREADS] if THREADS in found else os.environ.get(THREADS, "")
+
+
+def transcribe_pass(log: Callable[[str], None]) -> None:
+    """One pass over everything waiting, under transcribe.lock (see Worker.run)."""
+    lib = Library.from_env()  # the settings of the moment: the model's key
     with lib.only_one("transcribe.lock") as got:
         if not got:
-            print("another transcription run is going", file=sys.stderr)
+            log("another transcription run is going")
             return
         try:
-            schedule = Schedule(os.environ.get("PODCASTS_TRANSCRIBE_THREADS", ""))
+            schedule = Schedule(threads_setting())
         except ValueError as e:
-            sys.exit(str(e))
+            log(f"{e}; no pass until it's fixed")
+            return
 
         def whisper(threads: int) -> WhisperTranscriber:
-            print(
-                f"loading Whisper on {threads} thread{'s' if threads != 1 else ''}",
-                flush=True,
-            )
+            log(f"loading Whisper on {threads} thread{'s' if threads != 1 else ''}")
             return WhisperTranscriber(
-                models_dir("whisper"),
-                lambda msg: print(msg, flush=True),
-                load=partial(load_whisper, threads=threads),
+                models_dir("whisper"), log, load=partial(load_whisper, threads=threads)
             )
 
         transcriber = Scheduled(schedule, whisper)
         worker = Worker(
             lib,
             transcriber,
-            log=lambda msg: print(msg, flush=True),
+            log=log,
             chat=lib.chat,
             paused=lambda: not transcriber.threads(),
         )
-        # A stop (systemctl, uv run hostctl units, a reboot) unwinds, so the marker goes with it;
-        # only a kill (out of memory) leaves it behind. 143 is 128 + SIGTERM.
-        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
-        print(f"transcribed {worker.run()} episodes", flush=True)
+        log(f"transcribed {worker.run()} episodes")
+
+
+def keep_transcribing(
+    state: Path,
+    run_pass: Callable[[], None],
+    stop: threading.Event,
+    poll: float = POLL_SECONDS,
+) -> None:
+    """Make a pass whenever one is due, asked for, or left unfinished by a worker that
+    died in it (its marker is still there), until `stop` is set; main never sets it, as
+    SIGTERM exits."""
+    queue = Queue(state)
+    every = Every(queue.folder / f"{TRANSCRIBE_WORKER}.last", EVERY_HOURS, AT_MINUTE)
+    died = (state / "transcribing.json").exists()
+    with heartbeat(queue, TRANSCRIBE_WORKER):
+        while not stop.is_set():
+            # Each is asked first, so that one pass answers all three.
+            due, asked = every.due(), queue.take(TRANSCRIBE)
+            if due or asked or died:
+                died = False
+                run_pass()
+            else:
+                stop.wait(poll)
+
+
+def main() -> None:
+    os.nice(19)  # the LLM shares this CPU and answers people; it goes first
+    # A bad config shows in the journal now; a bad PODCASTS_TRANSCRIBE_THREADS at each pass.
+    state = Library.from_env().state
+    # A stop (systemctl, uv run hostctl units, a reboot) unwinds, so the marker goes with it;
+    # only a kill (out of memory) leaves it behind. 143 is 128 + SIGTERM.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    print(f"transcribing every {EVERY_HOURS} hours at :{AT_MINUTE}", flush=True)
+    keep_transcribing(
+        state,
+        partial(transcribe_pass, lambda m: print(m, flush=True)),
+        threading.Event(),
+    )
+
+
+def ask() -> None:
+    """podcasts-transcribe: ask the worker for a pass now."""
+    queue = Queue(Library.from_env().state)
+    queue.ask(TRANSCRIBE)
+    print("asked for a transcription pass")
+    if not queue.alive(TRANSCRIBE_WORKER):
+        sys.exit(
+            "podcasts-transcribe: but the worker isn't running "
+            "(podcasts-transcribe-worker.service); the pass waits until it is"
+        )
 
 
 if __name__ == "__main__":

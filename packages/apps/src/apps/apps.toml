@@ -58,11 +58,9 @@ before = ["python3 -m hostctl service-images"]
 install = true
 
 [podcasts]
-summary = "podcasts-runner, podcasts-web (:8445/podcasts) and the 6-hourly sync and transcription timers"
+summary = "podcasts-runner, podcasts-web (:8445/podcasts), and the sync and transcription workers"
 runner = "podcasts-runner.service"
-units = { "podcasts-runner.service" = "podcasts runner", "podcasts-web.service" = "podcasts-web" }
-timers = ["podcasts-sync.timer", "podcasts-transcribe.timer"]
-watch = { "podcasts-sync@_all.service" = "podcast sync", "podcasts-transcribe.service" = "podcast transcripts" }
+units = { "podcasts-runner.service" = "podcasts runner", "podcasts-web.service" = "podcasts-web", "podcasts-sync-worker.service" = "podcast sync", "podcasts-transcribe-worker.service" = "podcast transcripts" }
 serve = [{ https = 8445, path = "/podcasts", port = 8449 }]
 health = { "podcasts-web" = "http://127.0.0.1:8449/health" }
 install = true

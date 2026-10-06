@@ -25,7 +25,7 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
         "static_agent.container",
         "log-filter.conf",
         "podcasts-web.service",
-        "podcasts-sync.timer",
+        "podcasts-sync-worker.service",
     } <= set(planned)
     for unit in planned.values():
         assert not units.PLACEHOLDER.search(unit.text), unit.source
@@ -295,3 +295,93 @@ def test_hold_back_leaves_a_guarded_runner_with_a_run_going(
         "x.service"
     ]
     assert "left research-runner.service running" in capsys.readouterr().out
+
+
+RENDERED = (
+    "# Rendered by `uv run hostctl units` from systemd/x in the EverythingLLM repo\n"
+)
+
+
+def test_a_rendered_unit_with_no_template_is_retired(tmp_path, monkeypatch, capsys):
+    """The podcasts' timers went when their workers came, and a runner's host unit goes
+    when its container comes: the installed copies would keep firing, or hide Quadlet's
+    unit of the same name. Only units this rendered (or linked the old way) count."""
+    ran = []
+    monkeypatch.setattr(
+        units.subprocess, "run", lambda cmd, **kw: ran.append(" ".join(cmd))
+    )
+    monkeypatch.setattr(run_guard, "ok_to_restart", lambda service: True)
+    user, containers = tmp_path / "user", tmp_path / "containers"
+    user.mkdir()
+    for name in ("old.timer", "old@.service", "gone-runner.service", "kept.service"):
+        (user / name).write_text(RENDERED + "[Unit]\n")
+    (user / "made.timer").write_text("# Rendered by `make units` from systemd/made\n")
+    (user / "theirs.service").write_text("[Unit]\nDescription=not ours\n")
+    (user / "linked.service").symlink_to(ROOT / "host" / "systemd" / "linked.service")
+    plan = [
+        unit(tmp_path, user / "kept.service", "x", "kept.service"),
+        unit(
+            tmp_path,
+            containers / "gone-runner.container",
+            "x",
+            "gone-runner.service",
+            True,
+        ),
+    ]
+    old = units.retired(plan, user)
+    assert [p.name for p in old] == [
+        "gone-runner.service",
+        "linked.service",
+        "made.timer",
+        "old.timer",
+        "old@.service",
+    ]
+    start, left = units.retire(old, plan, tmp_path / "backup")
+    assert (start, left) == (["gone-runner.service"], [])
+    # A template's instances can't be stopped by its name; they finish on their own.
+    assert ran == [
+        f"systemctl --user disable --now {name}"
+        for name in ("gone-runner.service", "linked.service", "made.timer", "old.timer")
+    ]
+    assert sorted(p.name for p in user.iterdir()) == ["kept.service", "theirs.service"]
+    assert (tmp_path / "backup" / "user" / "old.timer").read_text() == (
+        RENDERED + "[Unit]\n"
+    )
+    assert "gone-runner.service: its container takes over" in capsys.readouterr().out
+
+
+def test_a_guarded_runner_with_a_run_going_isnt_retired(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_guard, "ok_to_restart", lambda service: False)
+    monkeypatch.setattr(units.subprocess, "run", lambda *a, **kw: pytest.fail("ran"))
+    user = tmp_path / "user"
+    user.mkdir()
+    (user / "research-runner.service").write_text(RENDERED)
+    plan = [
+        unit(tmp_path, tmp_path / "r.container", "x", "research-runner.service", True)
+    ]
+    old = units.retired(plan, user)
+    assert units.retire(old, plan, tmp_path / "backup") == (
+        [],
+        ["research-runner.service"],
+    )
+    assert (user / "research-runner.service").is_file()
+
+
+def test_the_podcasts_timers_are_retired_and_their_workers_kept(tmp_path):
+    planned = plan(tmp_path)
+    user = tmp_path / "user"
+    user.mkdir()
+    for name in (
+        "podcasts-sync.timer",
+        "podcasts-sync@.service",
+        "podcasts-transcribe.service",
+        "podcasts-transcribe.timer",
+        "podcasts-sync-worker.service",
+    ):
+        (user / name).write_text(RENDERED)
+    assert [p.name for p in units.retired(planned, user)] == [
+        "podcasts-sync.timer",
+        "podcasts-sync@.service",
+        "podcasts-transcribe.service",
+        "podcasts-transcribe.timer",
+    ]

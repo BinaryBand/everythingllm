@@ -40,17 +40,26 @@ def test_serve_maps_only_whats_missing(ran):
     ]
 
 
-def test_setup_runs_its_steps_maps_restarts_and_starts_timers(ran, monkeypatch):
+def test_setup_runs_its_steps_maps_and_restarts(ran, monkeypatch):
     monkeypatch.setattr(appctl.run_guard, "ok_to_restart", lambda unit: True)
     registry = appctl.apps.load()
     appctl.setup(registry["podcasts"])
+    units = (
+        "podcasts-runner.service podcasts-web.service "
+        "podcasts-sync-worker.service podcasts-transcribe-worker.service"
+    )
     assert ran == [
         "tailscale serve status",
         "sudo tailscale serve --bg --https=8445 --set-path=/podcasts http://127.0.0.1:8449",
-        "systemctl --user enable podcasts-runner.service podcasts-web.service",
-        "systemctl --user restart podcasts-runner.service podcasts-web.service",
-        "systemctl --user enable --now podcasts-sync.timer podcasts-transcribe.timer",
+        f"systemctl --user enable {units}",
+        f"systemctl --user restart {units}",
     ]
+    ran.clear()
+    # No app of ours has a timer now (the podcasts' workers schedule themselves).
+    appctl.setup(
+        appctl.apps.App("x", "x", units={"x.service": "x"}, timers=("x.timer",))
+    )
+    assert ran[-1] == "systemctl --user enable --now x.timer"
     ran.clear()
     appctl.setup(registry["agents"])
     assert ran[0] == "python3 -m hostctl.agents_env"

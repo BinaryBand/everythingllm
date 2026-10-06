@@ -5,8 +5,9 @@ the last event it saw.
 
 `Relay` is built around an `answer` function (relay.upstream's, in production; the tests
 script their own) and an optional `notify` coroutine for finished runs. A run's body (what
-Nilson would send `stream-chat`, attachments and all) is kept only in memory, for that call;
-the store gets its message, or `/reset` for a reset, which isn't notified.
+Nilson would send `stream-chat`, attachments and all) and the client's API key, which the
+answer is asked with, are kept only in memory, for that call; the store gets its message, or
+`/reset` for a reset, which isn't notified.
 """
 
 import asyncio
@@ -27,8 +28,8 @@ PURGE_SECONDS = 3600.0
 RESET = "/reset"  # a reset run's question
 
 Event = tuple[str, dict[str, Any]]
-# answer(workspace, thread, body): the upstream answer's events.
-Answer = Callable[[str, str, dict[str, Any]], AsyncGenerator[Event]]
+# answer(workspace, thread, body, api_key): the upstream answer's events.
+Answer = Callable[[str, str, dict[str, Any], str], AsyncGenerator[Event]]
 # notify(run, question): told once a run is done or failed.
 Notify = Callable[[dict[str, Any], str], Awaitable[None]]
 
@@ -89,11 +90,16 @@ class Relay:
     # --- runs ---
 
     async def start(
-        self, client_id: str, workspace: str, thread: str, body: dict[str, Any]
+        self,
+        client_id: str,
+        workspace: str,
+        thread: str,
+        body: dict[str, Any],
+        api_key: str,
     ) -> tuple[dict[str, Any], bool]:
-        """Start a run of `body`, which has a message or is a reset; returns the run and
-        whether it's new. A client id already used returns that run and starts nothing; a
-        thread with a running run raises Busy."""
+        """Start a run of `body`, which has a message or is a reset, asking AnythingLLM with
+        `api_key`; returns the run and whether it's new. A client id already used returns
+        that run and starts nothing; a thread with a running run raises Busy."""
         if existing := self.store.by_client(client_id):
             return public(existing), False
         if self.store.running_on(workspace, thread):
@@ -105,21 +111,19 @@ class Relay:
         run_id = "r_" + secrets.token_hex(8)
         row = self.store.create(run_id, client_id, workspace, thread, mode, question)
         self.tasks[run_id] = asyncio.create_task(
-            self._run(run_id, workspace, thread, body, question, notify=not reset)
+            self._run(
+                run_id,
+                self.answer(workspace, thread, body, api_key),
+                question,
+                notify=not reset,
+            )
         )
         log.info("run %s started on %s/%s", run_id, workspace, thread)
         return public(row), True
 
     async def _run(
-        self,
-        run_id: str,
-        workspace: str,
-        thread: str,
-        body: dict[str, Any],
-        question: str,
-        notify: bool,
+        self, run_id: str, events: AsyncGenerator[Event], question: str, notify: bool
     ) -> None:
-        events = self.answer(workspace, thread, body)
         try:
             async for name, data in events:
                 await self._append(run_id, name, data)

@@ -1,12 +1,11 @@
 """relay: the Nilson relay's HTTP API, served by uvicorn on the host and reached over the
-tailnet through `tailscale serve` (https). Every route but /health needs the relay's token
-as a bearer token; see the README's "Nilson relay" for the routes. Under /api/v1/ it is
-AnythingLLM's developer API (`relay.proxy`), so the token serves as any client's API key.
+tailnet at `/everythingllm/` on AnythingLLM's own port, through `tailscale serve` (https),
+which strips that prefix; the routes answer with or without it. Every route but /health
+needs an AnythingLLM developer API key as a bearer token (`relay.auth`), the one the client
+gives AnythingLLM itself; see the README's "Nilson relay" for the routes.
 
 Config (environment; the unit reads host.env, then ~/.config/everythingllm/relay.env, which
-holds the secrets, outside the repo and the AnythingLLM container's reach):
-  ANYTHINGLLM_API_KEY  developer API key the relay calls AnythingLLM with (required)
-  RELAY_TOKEN          the token Nilson sends the relay (required)
+holds the ntfy settings, outside the repo and the AnythingLLM container's reach):
   ANYTHINGLLM_URL      AnythingLLM's base URL (default http://127.0.0.1:3001)
   DATABASE_PATH        the SQLite file (default ~/.local/share/everythingllm/relay/relay.db)
   NTFY_URL, NTFY_TOKEN the ntfy topic told about finished runs, and its token; no
@@ -16,7 +15,6 @@ holds the secrets, outside the repo and the AnythingLLM container's reach):
 """
 
 import contextlib
-import hmac
 import logging
 import os
 import sys
@@ -34,19 +32,22 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from relay import notify, upstream
-from relay.proxy import PREFIX, Proxy
+from relay.auth import KeyCheck, RequireKey
 from relay.runs import Answer, Busy, Notify, Relay
 from relay.store import STATUSES, Store, public
 
 log = logging.getLogger("relay")
 
 DATABASE = Path("~/.local/share/everythingllm/relay/relay.db").expanduser()
+# Where the relay is mounted beside AnythingLLM on the tailnet.
+PREFIX = "/everythingllm"
+# What GET /health tells a client, so it knows the relay is there: AnythingLLM answers an
+# unknown path with its web app's page and a 200.
+HEALTH = {"ok": True, "service": "everythingllm", "features": ["runs"]}
 
 
 @dataclass
 class Config:
-    api_key: str
-    token: str
     anythingllm_url: str = "http://127.0.0.1:3001"
     database: Path = DATABASE
     ntfy_url: str = ""
@@ -58,14 +59,7 @@ class Config:
     @classmethod
     def from_env(cls) -> "Config":
         get = os.environ.get
-        missing = [k for k in ("ANYTHINGLLM_API_KEY", "RELAY_TOKEN") if not get(k)]
-        if missing:
-            raise SystemExit(
-                f"relay: set {' and '.join(missing)} in ~/.config/everythingllm/relay.env"
-            )
         return cls(
-            api_key=get("ANYTHINGLLM_API_KEY", ""),
-            token=get("RELAY_TOKEN", ""),
             anythingllm_url=get("ANYTHINGLLM_URL") or cls.anythingllm_url,
             database=Path(get("DATABASE_PATH") or DATABASE).expanduser(),
             ntfy_url=get("NTFY_URL", ""),
@@ -80,22 +74,19 @@ def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-class RequireToken:
-    """Answers 401 to any HTTP request but /health without `Authorization: Bearer <token>`.
-    Plain ASGI, so streamed responses pass through untouched."""
+class StripPrefix:
+    """Takes the routes under `prefix` as they are at the root: `tailscale serve` strips its
+    mount path, and a proxy that doesn't reaches the same routes."""
 
-    def __init__(self, app: ASGIApp, token: str) -> None:
+    def __init__(self, app: ASGIApp, prefix: str) -> None:
         self.app = app
-        self.expected = f"Bearer {token}".encode()
+        self.prefix = prefix
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] != "/health":
-            given = dict(scope["headers"]).get(b"authorization", b"")
-            if not hmac.compare_digest(given, self.expected):
-                await error(401, "A valid relay token is required.")(
-                    scope, receive, send
-                )
-                return
+        if scope["type"] == "http" and (scope["path"] + "/").startswith(
+            self.prefix + "/"
+        ):
+            scope = {**scope, "path": scope["path"][len(self.prefix) :] or "/"}
         await self.app(scope, receive, send)
 
 
@@ -105,15 +96,13 @@ def create_app(
     notify_finished: Notify | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> Starlette:
-    """The API, with its relay at `app.state.relay`. The relay, the proxy and ntfy share one
-    HTTP client; a test passes its own `answer`, `notify_finished` and `client` instead.
+    """The API, with its relay at `app.state.relay`. The relay, the key check and ntfy share
+    one HTTP client; a test passes its own `answer`, `notify_finished` and `client` instead.
     The lifespan starts the relay and closes the client and the store."""
     client = client or httpx.AsyncClient()
     store = Store(config.database)
     if answer is None:
-        answer = partial(
-            upstream.answer, client, config.anythingllm_url, config.api_key
-        )
+        answer = partial(upstream.answer, client, config.anythingllm_url)
     if notify_finished is None and config.ntfy_url:
         notify_finished = notify.publisher(client, config.ntfy_url, config.ntfy_token)
     relay = Relay(store, answer, notify_finished, config.retention_days)
@@ -127,7 +116,7 @@ def create_app(
             store.close()
 
     async def health(_request: Request) -> Response:
-        return JSONResponse({"ok": True})
+        return JSONResponse(HEALTH)
 
     async def create_run(request: Request) -> Response:
         try:
@@ -155,7 +144,11 @@ def create_app(
             return error(400, "'body' needs a non-empty 'message', or 'reset': true.")
         try:
             run, created = await relay.start(
-                fields["clientId"], fields["workspace"], fields["thread"], chat
+                fields["clientId"],
+                fields["workspace"],
+                fields["thread"],
+                chat,
+                request.state.api_key,
             )
         except Busy:
             return error(409, "That thread already has an answer running.")
@@ -191,20 +184,19 @@ def create_app(
 
     routes = [
         Route("/health", health),
-        Route("/runs", create_run, methods=["POST"]),
-        Route("/runs", list_runs, methods=["GET"]),
-        Route("/runs/{id}", get_run, methods=["GET"]),
-        Route("/runs/{id}/events", events, methods=["GET"]),
-        Route("/runs/{id}/cancel", cancel, methods=["POST"]),
-        Route(
-            PREFIX + "{path:path}",
-            Proxy(client, config.anythingllm_url, config.api_key),
-        ),
+        Route("/v1/runs", create_run, methods=["POST"]),
+        Route("/v1/runs", list_runs, methods=["GET"]),
+        Route("/v1/runs/{id}", get_run, methods=["GET"]),
+        Route("/v1/runs/{id}/events", events, methods=["GET"]),
+        Route("/v1/runs/{id}/cancel", cancel, methods=["POST"]),
     ]
     app = Starlette(
         routes=routes,
         lifespan=lifespan,
-        middleware=[Middleware(RequireToken, token=config.token)],
+        middleware=[
+            Middleware(StripPrefix, prefix=PREFIX),
+            Middleware(RequireKey, check=KeyCheck(client, config.anythingllm_url)),
+        ],
     )
     app.state.relay = relay
     return app

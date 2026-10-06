@@ -1,9 +1,9 @@
 """One answer from AnythingLLM, as the relay's events: the call Nilson used to make itself,
 `POST /api/v1/workspace/{slug}/thread/{thread}/stream-chat`, read to the end.
 
-`answer()` posts Nilson's `stream-chat` body as it came and yields ("chunk", c) for each
-chunk AnythingLLM sends, unchanged and in order, then one terminal event: ("done", {}) once
-the response ends, or ("failed", {"error"}). The relay doesn't interpret the answer: an
+`answer()` posts Nilson's `stream-chat` body as it came, with the client's own API key, and
+yields ("chunk", c) for each chunk AnythingLLM sends, unchanged and in order, then one
+terminal event: ("done", {}) once the response ends, or ("failed", {"error"}). The relay doesn't interpret the answer: an
 agent's thoughts, the closing chunk and the sources after it are all handed back. Closing
 the generator closes the connection, which is how a run is cancelled; nothing else closes
 it early.
@@ -29,7 +29,7 @@ TIMEOUT = httpx.Timeout(connect=10, read=600, write=30, pool=10)
 def status_error(status: int) -> str:
     """A plain-language message for a non-2xx answer from AnythingLLM."""
     if status in (401, 403):
-        return "AnythingLLM refused the relay's API key."
+        return "AnythingLLM refused the API key."
     if status == 404:
         return "AnythingLLM doesn't know that workspace or thread."
     if status == 429:
@@ -53,10 +53,10 @@ def chunk(line: str) -> dict[str, Any] | None:
 async def answer(
     client: httpx.AsyncClient,
     base_url: str,
-    api_key: str,
     workspace: str,
     thread: str,
     body: dict[str, Any],
+    api_key: str,
 ) -> AsyncGenerator[tuple[str, dict[str, Any]]]:
     url = (
         f"{base_url.rstrip('/')}/api/v1/workspace/{quote(workspace, safe='')}"

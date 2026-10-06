@@ -1,15 +1,29 @@
 """hostctl.appctl: what `uv run hostctl <app>-setup` and `uv run hostctl serve-setup` run, with systemctl,
 tailscale and the guard faked."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
 from hostctl import appctl
 
-STATUS = """https://host:8445 (tailnet only)
-|-- /             proxy http://127.0.0.1:8445
-|-- /_live/research proxy http://127.0.0.1:8450
-"""
+# `tailscale serve status --json`: :8445's root and one path, and only a path on :3001.
+STATUS = json.dumps(
+    {
+        "TCP": {"8445": {"HTTPS": True}, "3001": {"HTTPS": True}},
+        "Web": {
+            "host.ts.net:8445": {
+                "Handlers": {
+                    "/": {"Proxy": "http://127.0.0.1:8445"},
+                    "/_live/research": {"Proxy": "http://127.0.0.1:8450"},
+                }
+            },
+            "host.ts.net:3001": {
+                "Handlers": {"/everythingllm": {"Proxy": "http://127.0.0.1:8446"}}
+            },
+        },
+    }
+)
 
 
 @pytest.fixture
@@ -30,14 +44,31 @@ def test_serve_maps_only_whats_missing(ran):
             appctl.apps.Mapping(8445, 8445),
             appctl.apps.Mapping(8445, 8450, "/_live/research"),
             appctl.apps.Mapping(8445, 8451, "/_live/agents"),
-            appctl.apps.Mapping(8446, 8446),
+            appctl.apps.Mapping(3001, 8446, "/everythingllm"),
+            appctl.apps.Mapping(3001, 3001),  # a path on the port isn't its root
+            # nor is the same path on another port
+            appctl.apps.Mapping(8447, 8447, "/_live/research"),
         ]
     )
     assert ran == [
-        "tailscale serve status",
+        "tailscale serve status --json",
         "sudo tailscale serve --bg --https=8445 --set-path=/_live/agents http://127.0.0.1:8451",
-        "sudo tailscale serve --bg --https=8446 http://127.0.0.1:8446",
+        "sudo tailscale serve --bg --https=3001 http://127.0.0.1:3001",
+        "sudo tailscale serve --bg --https=8447 --set-path=/_live/research http://127.0.0.1:8447",
     ]
+
+
+def test_serve_with_nothing_mapped_maps_everything(ran, monkeypatch):
+    def run(cmd, **kw):
+        ran.append(" ".join(cmd))
+        return SimpleNamespace(returncode=0, stdout="{}\n")
+
+    monkeypatch.setattr(appctl.subprocess, "run", run)
+    appctl.serve([appctl.apps.Mapping(3001, 8446, "/everythingllm")])
+    assert ran[-1] == (
+        "sudo tailscale serve --bg --https=3001 --set-path=/everythingllm"
+        " http://127.0.0.1:8446"
+    )
 
 
 def test_setup_runs_its_steps_maps_restarts_and_starts_timers(ran, monkeypatch):
@@ -45,7 +76,7 @@ def test_setup_runs_its_steps_maps_restarts_and_starts_timers(ran, monkeypatch):
     registry = appctl.apps.load()
     appctl.setup(registry["podcasts"])
     assert ran == [
-        "tailscale serve status",
+        "tailscale serve status --json",
         "sudo tailscale serve --bg --https=8445 --set-path=/podcasts http://127.0.0.1:8449",
         "systemctl --user enable podcasts-runner.service podcasts-web.service",
         "systemctl --user restart podcasts-runner.service podcasts-web.service",

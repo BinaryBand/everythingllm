@@ -160,6 +160,7 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     from agents.runner import Settings as AgentsSettings
     from gateway.app import Config as GatewayConfig
     from publicweb.pages import SEARXNG
+    from relay.app import PREFIX as RELAY_PREFIX
     from relay.app import Config as RelayConfig
     from research.job import Settings as ResearchSettings
     from sites import articles_web
@@ -168,7 +169,7 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     assert port_of("research", "/_live/research") == ResearchSettings.live_port
     assert port_of("agents", "/_live/agents") == AgentsSettings.live_port
     assert port_of("sites", "/news/write") == articles_web.PORT
-    assert port_of("relay") == RelayConfig.port
+    assert port_of("relay", RELAY_PREFIX) == RelayConfig.port
     assert port_of("gateway") == GatewayConfig.port
     pages = {m.port for app, m in apps.serve_mappings() if app == "pages"}
     assert PAGES_PORT in pages

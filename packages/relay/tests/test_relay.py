@@ -1,7 +1,7 @@
 """The handoff's acceptance list, against a scripted AnythingLLM: `Upstream` stands in for
-relay.upstream.answer (its events, when it's closed and how often it's called), and
-test_upstream.py covers the real one's parsing of stream-chat. Each test runs the app's
-own lifespan, as uvicorn would."""
+relay.upstream.answer (its events, when it's closed and how often it's called), `Allm` for
+the key check, and test_upstream.py covers the real answer's parsing of stream-chat. Each
+test runs the app's own lifespan, as uvicorn would."""
 
 import asyncio
 import base64
@@ -9,16 +9,17 @@ import contextlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import httpx
 import pytest
 from relay import upstream
-from relay.app import Config, create_app
+from relay.app import HEALTH, Config, create_app
+from relay.auth import REFUSED
 from relay.runs import RESET, RESTARTED
 from relay.store import VERSION, Store
 
 KEY = "allm-key-0123456789"
-TOKEN = "relay-token-abcdef"
 CHAT = {"message": "What's next?"}
 BODY = {"workspace": "planning", "thread": "t1", "clientId": "c_1", "body": CHAT}
 DONE = ("done", {})
@@ -35,6 +36,7 @@ class Upstream:
     def __init__(self, *script):
         self.script = list(script)
         self.bodies = []
+        self.keys = []
         self.closed = False
         self.finished = False
 
@@ -42,8 +44,9 @@ class Upstream:
     def calls(self):
         return len(self.bodies)
 
-    async def __call__(self, workspace, thread, body):
+    async def __call__(self, workspace, thread, body, api_key):
         self.bodies.append(body)
+        self.keys.append(api_key)
         try:
             for step in self.script:
                 if isinstance(step, asyncio.Event):
@@ -84,13 +87,32 @@ def parse(stream: str) -> list[tuple[int, str, dict]]:
     return out
 
 
+class Allm(list):
+    """AnythingLLM's GET /api/v1/auth, which takes KEY: records the keys it was asked
+    about, and raises `error` instead of answering when it's set."""
+
+    error = None
+
+    def __call__(self, request):
+        assert request.url.path == "/api/v1/auth"
+        self.append(request.headers.get("authorization"))
+        if self.error:
+            raise self.error
+        if request.headers.get("authorization") == f"Bearer {KEY}":
+            return httpx.Response(200, json={"authenticated": True})
+        return httpx.Response(403, json={"error": REFUSED})
+
+
 @contextlib.asynccontextmanager
-async def running(tmp_path, answer, notify_finished=None):
-    """The app started as uvicorn would, and a client that sends the relay's token."""
+async def running(tmp_path, answer, notify_finished=None, allm=None):
+    """The app started as uvicorn would, and a client that sends AnythingLLM's key."""
     app = create_app(
-        Config(api_key=KEY, token=TOKEN, database=tmp_path / "relay.db"),
+        Config(database=tmp_path / "relay.db"),
         answer,
         notify_finished,
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(Allm() if allm is None else allm)
+        ),
     )
     relay = app.state.relay
     relay.ping = 0.05
@@ -99,7 +121,7 @@ async def running(tmp_path, answer, notify_finished=None):
         httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://relay",
-            headers={"Authorization": f"Bearer {TOKEN}"},
+            headers={"Authorization": f"Bearer {KEY}"},
         ) as client,
     ):
         yield relay, client
@@ -111,7 +133,7 @@ async def finished(relay, run_id):
 
 
 async def post_run(client, **changes):
-    return await client.post("/runs", json={**BODY, **changes})
+    return await client.post("/v1/runs", json={**BODY, **changes})
 
 
 # 1
@@ -139,7 +161,7 @@ def test_a_run_streams_its_chunks_then_done(tmp_path):
                 None,
             )
             await finished(relay, run["id"])
-            r = await client.get(f"/runs/{run['id']}/events")
+            r = await client.get(f"/v1/runs/{run['id']}/events")
             assert r.headers["content-type"].startswith("text/event-stream")
             assert parse(r.text) == [
                 (1, *text("Hel")),
@@ -147,7 +169,7 @@ def test_a_run_streams_its_chunks_then_done(tmp_path):
                 (3, *close),
                 (4, *DONE),
             ]
-            got = (await client.get(f"/runs/{run['id']}")).json()
+            got = (await client.get(f"/v1/runs/{run['id']}")).json()
             assert got["status"] == "done" and got["finishedAt"]
 
     go(main())
@@ -194,10 +216,10 @@ def test_rejoining_with_last_event_id_gets_exactly_what_came_after(tmp_path):
             assert parse("".join(rest)) == [(3, *text("c")), (4, *DONE)]
             # Finished: through the API.
             r = await client.get(
-                f"/runs/{run['id']}/events", headers={"Last-Event-ID": "2"}
+                f"/v1/runs/{run['id']}/events", headers={"Last-Event-ID": "2"}
             )
             assert parse(r.text) == [(3, *text("c")), (4, *DONE)]
-            r = await client.get(f"/runs/{run['id']}/events")
+            r = await client.get(f"/v1/runs/{run['id']}/events")
             assert [e[0] for e in parse(r.text)] == [1, 2, 3, 4]
 
     go(main())
@@ -247,16 +269,16 @@ def test_cancel_closes_the_connection_and_ends_with_cancelled(tmp_path):
             run = (await post_run(client)).json()
             follower = relay.follow(run["id"])
             await anext(follower)
-            r = await client.post(f"/runs/{run['id']}/cancel")
+            r = await client.post(f"/v1/runs/{run['id']}/cancel")
             assert r.status_code == 200 and r.json()["status"] == "cancelled"
             assert answer.closed
             rest = [e async for e in follower if not e.startswith(":")]
             assert parse("".join(rest)) == [(2, "cancelled", {})]
             # On a run that has ended, cancel changes nothing.
-            again = await client.post(f"/runs/{run['id']}/cancel")
+            again = await client.post(f"/v1/runs/{run['id']}/cancel")
             assert again.status_code == 200 and again.json() == r.json()
             assert len(relay.store.events(run["id"])) == 2
-            assert (await client.post("/runs/r_nope/cancel")).status_code == 404
+            assert (await client.post("/v1/runs/r_nope/cancel")).status_code == 404
 
     go(main())
 
@@ -280,7 +302,7 @@ def test_an_upstream_failure_fails_the_run(tmp_path, event):
         ):
             run = (await post_run(client)).json()
             await finished(relay, run["id"])
-            r = await client.get(f"/runs/{run['id']}/events")
+            r = await client.get(f"/v1/runs/{run['id']}/events")
             assert parse(r.text)[-1] == (2, "failed", event[1])
             assert relay.store.get(run["id"])["status"] == "failed"
 
@@ -315,27 +337,25 @@ def test_a_restart_mid_run_fails_it_and_keeps_its_events(tmp_path):
 
     async def second_life():
         async with running(tmp_path, Upstream()) as (_, client):
-            run = (await client.get(f"/runs/{run_id}")).json()
+            run = (await client.get(f"/v1/runs/{run_id}")).json()
             assert run["status"] == "failed" and run["finishedAt"]
-            r = await client.get(f"/runs/{run_id}/events")
+            r = await client.get(f"/v1/runs/{run_id}/events")
             assert parse(r.text) == [
                 (1, *text("partial")),
                 (2, "failed", {"error": RESTARTED}),
             ]
-            assert (await client.get("/runs?status=running")).json() == []
+            assert (await client.get("/v1/runs?status=running")).json() == []
 
     go(second_life())
 
 
 # 9
-def test_no_body_or_log_line_carries_the_key_or_the_token(tmp_path, caplog):
+def test_no_body_or_log_line_carries_the_key(tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
     transport = httpx.MockTransport(lambda request: httpx.Response(401))
     allm = httpx.AsyncClient(transport=transport)
 
-    def answer_401(workspace, thread, body):
-        return upstream.answer(allm, "http://allm", KEY, workspace, thread, body)
-
+    answer_401 = partial(upstream.answer, allm, "http://allm")
     bodies = []
 
     async def main():
@@ -344,48 +364,109 @@ def test_no_body_or_log_line_carries_the_key_or_the_token(tmp_path, caplog):
             bodies.append(run.text)
             no_token = {"Authorization": ""}
             for r in [
-                await client.post("/runs", json=BODY, headers=no_token),
-                await client.post("/runs", json={"nope": 1}),
+                await client.post("/v1/runs", json=BODY, headers=no_token),
+                await client.post("/v1/runs", json={"nope": 1}),
                 await client.get(
-                    "/runs/r_x", headers={"Authorization": "Bearer wrong"}
+                    "/v1/runs/r_x", headers={"Authorization": "Bearer wrong"}
                 ),
             ]:
                 bodies.append(r.text)
             run_id = run.json()["id"]
             await finished(relay, run_id)
-            for path in (f"/runs/{run_id}", f"/runs/{run_id}/events", "/runs"):
+            for path in (f"/v1/runs/{run_id}", f"/v1/runs/{run_id}/events", "/v1/runs"):
                 bodies.append((await client.get(path)).text)
         await allm.aclose()
 
     go(main())
     assert upstream.status_error(401) in bodies[5]  # it did fail, with the message
     for text_ in [*bodies, caplog.text]:
-        assert KEY not in text_ and TOKEN not in text_
+        assert KEY not in text_
 
 
 # --- the rest of the API ---
 
 
-def test_every_route_but_health_needs_the_token(tmp_path):
+def test_every_route_but_health_needs_a_key_anythingllm_takes(tmp_path):
     async def main():
         async with running(tmp_path, Upstream()) as (_, client):
             del client.headers["Authorization"]
-            assert (await client.get("/health")).json() == {"ok": True}
+            assert (await client.get("/health")).json() == HEALTH
             for method, path in [
-                ("GET", "/runs"),
-                ("POST", "/runs"),
-                ("GET", "/runs/r_x"),
-                ("GET", "/runs/r_x/events"),
-                ("POST", "/runs/r_x/cancel"),
+                ("GET", "/v1/runs"),
+                ("POST", "/v1/runs"),
+                ("GET", "/v1/runs/r_x"),
+                ("GET", "/v1/runs/r_x/events"),
+                ("POST", "/v1/runs/r_x/cancel"),
             ]:
                 for headers in (
                     {},
+                    {"Authorization": "Bearer "},
                     {"Authorization": "Bearer nope"},
-                    {"Authorization": TOKEN},
+                    {"Authorization": KEY},
+                    {"Authorization": f"Basic {KEY}"},
                 ):
                     r = await client.request(method, path, headers=headers)
-                    assert r.status_code == 401, (method, path, headers)
-                    assert r.json() == {"error": "A valid relay token is required."}
+                    assert r.status_code == 403, (method, path, headers)
+                    assert r.json() == {"error": REFUSED}  # as AnythingLLM says it
+
+    go(main())
+
+
+def test_the_routes_answer_under_everythingllm_too(tmp_path):
+    answer = Upstream(DONE)
+
+    async def main():
+        async with running(tmp_path, answer) as (relay, client):
+            health = await client.get("/everythingllm/health", headers={})
+            assert health.json() == HEALTH
+            r = await client.post("/everythingllm/v1/runs", json=BODY)
+            assert r.status_code == 201
+            await finished(relay, r.json()["id"])
+            got = await client.get(f"/everythingllm/v1/runs/{r.json()['id']}")
+            assert got.json()["status"] == "done"
+            del client.headers["Authorization"]
+            assert (await client.get("/everythingllm/v1/runs")).status_code == 403
+            assert (await client.get("/everythingllmx/v1/runs")).status_code == 403
+
+    go(main())
+
+
+def test_a_run_asks_anythingllm_with_the_callers_key(tmp_path):
+    answer = Upstream(DONE)
+
+    async def main():
+        async with running(tmp_path, answer) as (relay, client):
+            r = await post_run(client)
+            await finished(relay, r.json()["id"])
+
+    go(main())
+    assert answer.keys == [KEY]
+
+
+def test_a_good_key_is_checked_once_a_minute_and_a_bad_one_every_time(tmp_path):
+    allm = Allm()
+
+    async def main():
+        async with running(tmp_path, Upstream(), allm=allm) as (_, client):
+            for _ in range(3):
+                assert (await client.get("/v1/runs")).status_code == 200
+            bad = {"Authorization": "Bearer nope"}
+            for _ in range(2):
+                assert (await client.get("/v1/runs", headers=bad)).status_code == 403
+
+    go(main())
+    assert allm == [f"Bearer {KEY}", "Bearer nope", "Bearer nope"]
+
+
+def test_an_unreachable_anythingllm_answers_502(tmp_path):
+    allm = Allm()
+    allm.error = httpx.ConnectError("refused")
+
+    async def main():
+        async with running(tmp_path, Upstream(), allm=allm) as (_, client):
+            r = await client.get("/v1/runs")
+            assert r.status_code == 502
+            assert r.json() == {"error": upstream.UNREACHABLE}
 
     go(main())
 
@@ -396,15 +477,15 @@ def test_listing_unknown_runs_and_bad_bodies(tmp_path):
         async with running(tmp_path, Upstream(gate, DONE)) as (relay, client):
             a = (await post_run(client)).json()
             b = (await post_run(client, clientId="c_2", thread="t2")).json()
-            running_ = (await client.get("/runs?status=running")).json()
+            running_ = (await client.get("/v1/runs?status=running")).json()
             assert [r["id"] for r in running_] == [a["id"], b["id"]]
-            assert (await client.get("/runs?status=odd")).status_code == 400
+            assert (await client.get("/v1/runs?status=odd")).status_code == 400
             gate.set()
             await finished(relay, a["id"])
             await finished(relay, b["id"])
-            assert (await client.get("/runs?status=running")).json() == []
-            assert len((await client.get("/runs")).json()) == 2
-            for path in ("/runs/r_nope", "/runs/r_nope/events"):
+            assert (await client.get("/v1/runs?status=running")).json() == []
+            assert len((await client.get("/v1/runs")).json()) == 2
+            for path in ("/v1/runs/r_nope", "/v1/runs/r_nope/events"):
                 r = await client.get(path)
                 assert r.status_code == 404 and r.json() == {"error": "No such run."}
             for body in (
@@ -416,12 +497,12 @@ def test_listing_unknown_runs_and_bad_bodies(tmp_path):
                 {k: v for k, v in BODY.items() if k != "body"},
                 ["x"],
             ):
-                r = await client.post("/runs", json=body)
+                r = await client.post("/v1/runs", json=body)
                 assert r.status_code == 400 and "error" in r.json(), body
             old = {k: v for k, v in BODY.items() if k != "body"}
-            r = await client.post("/runs", json={**old, **CHAT, "mode": "chat"})
+            r = await client.post("/v1/runs", json={**old, **CHAT, "mode": "chat"})
             assert r.status_code == 400 and "'body'" in r.json()["error"]
-            assert (await client.post("/runs", content=b"{")).status_code == 400
+            assert (await client.post("/v1/runs", content=b"{")).status_code == 400
 
     go(main())
 

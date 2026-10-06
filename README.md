@@ -1139,9 +1139,8 @@ and `run=…,workspace=…,thread=…` as its tags; never the answer. A reset is
 
 Its settings live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
 AnythingLLM container mounts: only the optional `NTFY_URL` and `NTFY_TOKEN`, which are
-secrets. `uv run hostctl relay-setup` makes the file (and notes an old `ANYTHINGLLM_API_KEY` or
-`RELAY_TOKEN` there, which nothing reads any more), maps `/everythingllm` on :3001 and
-starts the unit; `uv run hostctl relay-logs` follows it (any app's `<app>-logs`). `relay.app`'s docstring lists the rest of the
+secrets. `uv run hostctl relay-setup` makes the file, maps `/everythingllm` on :3001 and starts the
+unit; `uv run hostctl relay-logs` follows it (any app's `<app>-logs`). `relay.app`'s docstring lists the rest of the
 config. A client's key never appears in a response or a log line, and a test holds that.
 
 Where it differs from the original spec: the relay adds nothing to the body and doesn't

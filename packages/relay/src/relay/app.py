@@ -83,17 +83,10 @@ class StripPrefix:
         self.prefix = prefix
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        path = scope.get("path", "")
-        if scope["type"] == "http" and (
-            path == self.prefix or path.startswith(self.prefix + "/")
+        if scope["type"] == "http" and (scope["path"] + "/").startswith(
+            self.prefix + "/"
         ):
-            raw = scope.get("raw_path") or path.encode()
-            n = len(self.prefix.encode())
-            scope = {
-                **scope,
-                "path": path[len(self.prefix) :] or "/",
-                "raw_path": raw[n:] if raw.startswith(self.prefix.encode()) else raw,
-            }
+            scope = {**scope, "path": scope["path"][len(self.prefix) :] or "/"}
         await self.app(scope, receive, send)
 
 

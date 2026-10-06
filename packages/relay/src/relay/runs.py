@@ -111,22 +111,19 @@ class Relay:
         run_id = "r_" + secrets.token_hex(8)
         row = self.store.create(run_id, client_id, workspace, thread, mode, question)
         self.tasks[run_id] = asyncio.create_task(
-            self._run(run_id, workspace, thread, body, api_key, question, not reset)
+            self._run(
+                run_id,
+                self.answer(workspace, thread, body, api_key),
+                question,
+                notify=not reset,
+            )
         )
         log.info("run %s started on %s/%s", run_id, workspace, thread)
         return public(row), True
 
     async def _run(
-        self,
-        run_id: str,
-        workspace: str,
-        thread: str,
-        body: dict[str, Any],
-        api_key: str,
-        question: str,
-        notify: bool,
+        self, run_id: str, events: AsyncGenerator[Event], question: str, notify: bool
     ) -> None:
-        events = self.answer(workspace, thread, body, api_key)
         try:
             async for name, data in events:
                 await self._append(run_id, name, data)

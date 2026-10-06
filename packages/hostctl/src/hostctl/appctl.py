@@ -40,13 +40,14 @@ def systemctl(*args: str) -> None:
 
 
 def mapped() -> set[tuple[int, str]]:
-    """(tailnet https port, path) for each of `tailscale serve`'s mappings."""
+    """(tailnet https port, path) for each of `tailscale serve`'s mappings, with the root
+    as "", as the registry has it."""
     status = subprocess.run(
         ["tailscale", "serve", "status", "--json"], capture_output=True, text=True, check=True
     ).stdout
-    web = (json.loads(status) if status.strip() else {}).get("Web") or {}
+    web = json.loads(status).get("Web") or {}
     return {
-        (int(host.rpartition(":")[2]), path)
+        (int(host.rpartition(":")[2]), "" if path == "/" else path)
         for host, server in web.items()
         for path in (server.get("Handlers") or {})
     }
@@ -59,7 +60,7 @@ def serve(mappings: list[apps.Mapping]) -> None:
         return
     have = mapped()
     for m in mappings:
-        if (m.https, m.path or "/") in have:
+        if (m.https, m.path) in have:
             continue
         path = [f"--set-path={m.path}"] if m.path else []
         cmd = ["sudo", "tailscale", "serve", "--bg", f"--https={m.https}", *path, m.target]

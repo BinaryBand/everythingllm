@@ -9,6 +9,7 @@ import contextlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import httpx
 import pytest
@@ -354,9 +355,7 @@ def test_no_body_or_log_line_carries_the_key(tmp_path, caplog):
     transport = httpx.MockTransport(lambda request: httpx.Response(401))
     allm = httpx.AsyncClient(transport=transport)
 
-    def answer_401(workspace, thread, body, api_key):
-        return upstream.answer(allm, "http://allm", workspace, thread, body, api_key)
-
+    answer_401 = partial(upstream.answer, allm, "http://allm")
     bodies = []
 
     async def main():

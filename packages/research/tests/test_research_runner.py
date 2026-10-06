@@ -138,6 +138,9 @@ def test_a_run_nobody_waits_on_counts_the_chat_as_closed(served, monkeypatch):
         run_id = (await call(socket, "start", question="q"))["result"]["run_id"]
         await asyncio.sleep(0.2)
         gate.go.set()
+        # Let the run ask before waiting on it, which would count as the chat being open.
+        while not gate.closed:
+            await asyncio.sleep(0.01)
         while not (await call(socket, "wait", run_id=run_id))["result"]["done"]:
             pass
         server.cancel()

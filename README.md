@@ -29,7 +29,6 @@ Then it does the following:
    `.env`, SearXNG answering, a workspace, the built-in skills to turn off, Gmail.
 
 Every step only changes what's out of date, so running it again is safe.
-`make claude-rc-setup` (Claude Remote Control) is optional and not part of it.
 
 ## Host config
 
@@ -170,9 +169,7 @@ through its UI.
 - `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`make units`);
   each one's `Description=` says what it does, and its `make <name>-setup` target installs it.
   `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
-  to cut MCP payloads from AnythingLLM's log. `claude-rc.service` runs `claude
-  remote-control` in this repo for the Claude app's Code tab and claude.ai/code (environment
-  "everythingllm"); edits are auto-accepted, shell commands still ask in the app.
+  to cut MCP payloads from AnythingLLM's log.
 - Pages live in `/srv/anythingllm/storage/site`; the `static_agent` Caddy container
   mounts just that directory read-only and serves it on 127.0.0.1:8445
 - `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
@@ -885,7 +882,7 @@ suggests a fix per finding. Its tools:
   Fail and warn come in full; info is trimmed to the 5 a report keeps (taken an area, then
   a title, at a time), one line each:
   - logs: error-like lines from AnythingLLM, SearXNG, the pages Caddy,
-    claude-rc and the host services (`WATCHED` in `audit/services.py`) in the host journal, grouped with counts (SearXNG's per-engine errors become
+    and the host services (`WATCHED` in `audit/services.py`) in the host journal, grouped with counts (SearXNG's per-engine errors become
     counts per engine; known noise is skipped, see `NOISE` in `checks.py`);
   - search: a test query to SearXNG, and which engines refuse it;
   - services: every host service in `RUNNERS` (`audit/services.py`) answers `ping` on its

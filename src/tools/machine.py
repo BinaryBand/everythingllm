@@ -158,7 +158,6 @@ def checklist() -> list[tuple[bool | None, str]]:
         workspaces = len(api("GET", "/workspaces")["workspaces"])
     except (urllib.error.URLError, OSError, KeyError, ValueError):
         workspaces = 0
-    claude = shutil.which("claude") is not None
     return [
         (
             keys.get("LLM_PROVIDER", False),
@@ -197,16 +196,6 @@ def checklist() -> list[tuple[bool | None, str]]:
         (
             None,
             "Connect Gmail (Agent Skills page) if you want the email tools the system prompt describes.",
-        ),
-        *(
-            [
-                (
-                    None,
-                    "Optional: Claude Remote Control for this repo: log in with `claude`, then `make claude-rc-setup`.",
-                )
-            ]
-            if claude
-            else []
         ),
     ]
 

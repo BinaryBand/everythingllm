@@ -8,7 +8,7 @@ STORAGE = $(or $(ANYTHINGLLM_STORAGE),$(error no ANYTHINGLLM_STORAGE: copy host.
 # The sites package follows ANYTHINGLLM_STORAGE; naming it here stops a target without host.env.
 HOST_SITES_ENV = ANYTHINGLLM_STORAGE=$(STORAGE)
 
-.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync claude-rc-logs sites-build serve-setup claude-rc-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup relay-setup
+.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build serve-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup relay-setup
 
 help:            ## list the targets
 	@awk -F':.*## ' '/^[a-z%-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -75,9 +75,6 @@ mcp-sync:        ## install/refresh the MCP servers' deps inside the AnythingLLM
 	  mode=--inexact; done
 
 
-claude-rc-logs:  ## follow the Claude Remote Control service (host, systemd user unit)
-	journalctl --user -fu claude-rc.service
-
 # $(call enable-restart,units): enable user units and (re)start them.
 enable-restart = systemctl --user enable $(1) && systemctl --user restart $(1)
 
@@ -96,8 +93,6 @@ sandbox-setup: units ## build the sandbox images and network, enable and (re)sta
 sandbox-logs:    ## follow the sandbox runner and its proxy (host, systemd user units)
 	journalctl --user -fu sandbox-runner.service -u sandbox-proxy.service
 
-claude-rc-setup: units ## optional: enable Claude Remote Control for this repo (log in with `claude` first)
-	$(call enable-restart,claude-rc.service)
 
 serve-setup:     ## map this setup's tailnet HTTPS ports with tailscale serve (other mappings are left alone)
 	tailscale serve status | grep -q ':8445 ' || sudo tailscale serve --bg --https=8445 http://127.0.0.1:8445

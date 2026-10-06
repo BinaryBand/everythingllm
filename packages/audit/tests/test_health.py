@@ -26,6 +26,8 @@ def test_units_come_from_the_audits_watch_list():
     units = health.units()
     assert len(units) == len(WATCHED)
     assert "anythingllm.service" in units and "sandbox-runner.service" in units
+    assert "egress-proxy.service" in units  # a container of ours: Quadlet's unit
+    assert WATCHED["systemd-egress-proxy"] == ("CONTAINER_NAME", "egress proxy")
     assert all(u.endswith(".service") and not u.startswith("systemd-") for u in units)
 
 

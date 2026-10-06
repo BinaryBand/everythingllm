@@ -20,6 +20,7 @@ import sys
 from collections.abc import Callable
 
 import apps  # the registry's reader, standard library only
+import tomllib
 
 from hostctl import appctl, machine, units
 
@@ -34,6 +35,13 @@ SANDBOX_IMAGES = {
 }
 # A podman network with no route out and no DNS: (name, subnet).
 SANDBOX_NET = ("sandbox-net", "10.89.77.0/24")
+# The service containers' image, and their network, whose only way out is the egress proxy:
+# its name and subnet are egress.toml's (packages/egress), with the addresses on it.
+SERVICE_IMAGE = (
+    "localhost/everythingllm-service",
+    ROOT / "host" / "containers" / "service",
+)
+EGRESS_TOML = ROOT / "packages" / "egress" / "src" / "egress" / "egress.toml"
 # The MCP servers' venv and uv cache inside the AnythingLLM container.
 MCP = "/app/server/storage/everythingllm/mcp"
 EXPORTED = ("PUBLIC_HOST", "ANYTHINGLLM_STORAGE")
@@ -250,12 +258,30 @@ def serve_setup() -> None:
 def sandbox_images() -> None:
     for image, containerfile in SANDBOX_IMAGES.items():
         run("podman", "build", "-t", image, "-f", str(SANDBOX / containerfile), str(SANDBOX))
-    name, subnet = SANDBOX_NET
+    internal_network(*SANDBOX_NET)
+
+
+def internal_network(name: str, subnet: str) -> None:
+    """Create a podman network with no route out and no DNS, unless it exists."""
     if run("podman", "network", "exists", name, check=False):
         run(
             "podman", "network", "create", "--internal", "--disable-dns",
             "--subnet", subnet, name,
         )  # fmt: skip
+
+
+@command(
+    "service-images",
+    "build the service containers' image and egress-net, their network (egress-setup runs this first)",
+)
+def service_images() -> None:
+    image, folder = SERVICE_IMAGE
+    run(
+        "podman", "build", "-t", image, "-f", str(folder / "Containerfile"), str(folder)
+    )
+    with EGRESS_TOML.open("rb") as f:
+        network = tomllib.load(f)["network"]
+    internal_network(network["name"], network["subnet"])
 
 
 @command(

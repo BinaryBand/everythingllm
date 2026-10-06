@@ -1,0 +1,26 @@
+# The image every service container runs from (README, "Service containers"): Python 3.12
+# and uv, and nothing of ours. The repo is mounted read-only at its host path, and each
+# container runs `uv run --frozen --no-dev --project <repo> --package <name> <script>`
+# into a venv of its own in the data dir, so a code change needs only a restart.
+# Built as localhost/everythingllm-service by `uv run hostctl service-images`.
+#
+# It runs as the host user (UserNS=keep-id) on a read-only root, so nothing here may
+# expect to write outside /tmp and the folders a unit mounts.
+FROM docker.io/library/python:3.12-slim
+
+# uv, the host's version. Copied from its own image rather than pip-installed.
+COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /uvx /usr/local/bin/
+
+# tzdata (already in the base image) for Timezone=local; the fonts chatimage draws with
+# (DejaVu Sans, Liberation Sans); CA certificates for httpx and uv.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tzdata fonts-dejavu-core fonts-liberation ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# uv uses this Python and never downloads one. A unit sets UV_PROJECT_ENVIRONMENT and
+# UV_CACHE_DIR to its own folder in the data dir; the cache default here is only for a
+# container run by hand, whose /tmp is all it can write.
+ENV UV_PYTHON=/usr/local/bin/python3.12 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_CACHE_DIR=/tmp/uv-cache \
+    PYTHONUNBUFFERED=1

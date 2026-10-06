@@ -9,7 +9,7 @@ from hostctl import cli
 
 # The commands that aren't per app.
 TARGETS = """install units diff deploy skills skills-check restart logs status health test
-test-skills mcp-sync apps serve-setup sandbox-images sites-build""".split()
+test-skills mcp-sync apps serve-setup sandbox-images service-images sites-build""".split()
 
 
 @pytest.fixture
@@ -84,6 +84,16 @@ def test_sandbox_images_creates_the_network_only_when_missing(ran):
     assert ran[-2:] == [
         "podman network exists sandbox-net",
         "podman network create --internal --disable-dns --subnet 10.89.77.0/24 sandbox-net",
+    ]
+
+
+def test_service_images_builds_the_image_and_egress_net(ran):
+    cli.main(["service-images"])
+    folder = cli.ROOT / "host" / "containers" / "service"
+    assert ran == [
+        f"podman build -t localhost/everythingllm-service -f {folder}/Containerfile {folder}",
+        "podman network exists egress-net",
+        "podman network create --internal --disable-dns --subnet 10.89.79.0/24 egress-net",
     ]
 
 

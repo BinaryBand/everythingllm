@@ -292,3 +292,19 @@ def test_web_retry_clears_a_failure_and_redirects_back(store):
         )
     finally:
         httpd.shutdown()
+
+
+def test_the_writer_listens_on_loopback_unless_told_otherwise(monkeypatch):
+    monkeypatch.delenv("ARTICLES_HOST", raising=False)
+    assert web.address() == ("127.0.0.1", web.PORT)
+    monkeypatch.setenv("ARTICLES_HOST", "0.0.0.0")  # in a container
+    assert web.address() == ("0.0.0.0", web.PORT)
+
+
+def test_the_writer_searches_the_searxng_its_told(monkeypatch):
+    from publicweb import pages
+
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
+    assert pages.searxng_url() == pages.SEARXNG == "http://127.0.0.1:8888/search"
+    monkeypatch.setenv("SEARXNG_URL", "https://host.example:8888/search")
+    assert pages.searxng_url() == "https://host.example:8888/search"

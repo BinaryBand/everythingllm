@@ -3,6 +3,14 @@ report, add it to the workspace, write the run log, and say what to tell the use
 
 research-runner runs these for the skill; `research-run` runs one by hand:
     research-run "Why is the sky blue?" --depth quick
+
+Config (environment, from host.env and the unit; Settings.from_env):
+  ANYTHINGLLM_STORAGE  storage directory (hostrpc.storage)
+  ANYTHINGLLM_ENV      AnythingLLM's .env, for the model keys (default <storage>/.env)
+  ANYTHINGLLM_API      AnythingLLM's internal API, for embedding (default ANYTHINGLLM_API,
+                       the host's loopback)
+  SEARXNG_URL          the SearXNG to search (default the host's; publicweb.pages)
+  RESEARCH_LIVE_PORT   where the live cards listen (default 8450)
 """
 
 import argparse
@@ -16,7 +24,7 @@ from pathlib import Path
 
 import hostrpc
 from llm import provider_for
-from publicweb.pages import SEARXNG, make_search, searxng_client
+from publicweb.pages import make_search, searxng_client, searxng_url
 from runs.runlog import RunLog
 from sites import cards
 from sites.build import Builder
@@ -29,6 +37,9 @@ from research.llm import LLM
 from research.pipeline import Context, research
 from research.web import make_reader, page_client
 
+# AnythingLLM's internal API on the host's loopback; a service container uses
+# https://<PUBLIC_HOST>:3001/api through the egress proxy instead (ANYTHINGLLM_API).
+ANYTHINGLLM_API = "http://127.0.0.1:3001/api"
 OFF = re.compile(r"^(no|off|none|false|0)$", re.IGNORECASE)
 
 
@@ -50,8 +61,8 @@ class Settings:
         storage = hostrpc.storage()
         return cls(
             storage=storage,
-            searxng_url=SEARXNG,
-            api="http://127.0.0.1:3001/api",
+            searxng_url=searxng_url(),
+            api=get("ANYTHINGLLM_API") or ANYTHINGLLM_API,
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
             runlogs=hostrpc.data_dir() / "research" / "runs",
             pages_url=pages_url(Builder.from_env().source),

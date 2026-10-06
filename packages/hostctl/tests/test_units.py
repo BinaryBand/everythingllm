@@ -214,3 +214,84 @@ def test_restart_asks_while_a_delegation_runs(tmp_path, monkeypatch, capsys):
     assert (
         "Delegations going (1)" in err and "compare" in err and "agents-runner" in err
     )
+
+
+QUADLET = Path("/usr/libexec/podman/quadlet")  # podman-user-generator links to it
+
+
+@pytest.mark.skipif(not QUADLET.exists(), reason="no podman Quadlet generator here")
+def test_quadlet_takes_every_container_template(tmp_path):
+    """Quadlet refuses keys it doesn't know (Memory= and Umask= in podman 5.4, for one), and
+    a unit it can't convert just isn't there: render them all as `units` would, and
+    convert them without installing anything."""
+    import subprocess
+
+    containers = tmp_path / "containers"
+    for u in plan(tmp_path):
+        if u.dest.is_relative_to(containers):
+            u.dest.parent.mkdir(parents=True, exist_ok=True)
+            u.dest.write_text(u.text)
+    done = subprocess.run(
+        [str(QUADLET), "-dryrun", "-user"],
+        env={"QUADLET_UNIT_DIRS": str(containers), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    for template in (ROOT / "host" / "quadlet").glob("*.container.in"):
+        name = template.name.removesuffix(".container.in")
+        assert f"---{name}.service---" in done.stdout, done.stderr
+
+
+def test_hold_back_waits_for_a_containers_image_and_network(
+    tmp_path, monkeypatch, capsys
+):
+    have = {("network", "egress-net")}
+    monkeypatch.setattr(units, "podman_has", lambda kind, name: (kind, name) in have)
+    proxy = unit(
+        tmp_path,
+        tmp_path / "egress-proxy.container",
+        "[Container]\nImage=localhost/everythingllm-service\n"
+        "Network=egress-net:ip=10.89.79.2\nNetwork=podman\n",
+        "egress-proxy.service",
+        True,
+    )
+    other = unit(
+        tmp_path,
+        tmp_path / "static_agent.container",
+        "[Container]\nImage=docker.io/library/caddy:2-alpine\n",
+        "static_agent.service",
+        True,
+    )
+    assert units.missing(proxy) == ["image localhost/everythingllm-service"]
+    assert units.missing(other) == []
+    todo = [proxy, other]
+    assert units.hold_back(["egress-proxy.service", "static_agent.service"], todo) == [
+        "static_agent.service"
+    ]
+    assert (
+        "not starting egress-proxy.service: no image localhost/everythingllm-service yet; "
+        "`uv run hostctl egress-setup` makes them" in capsys.readouterr().out
+    )
+    have.add(("image", "localhost/everythingllm-service"))
+    assert units.hold_back(["egress-proxy.service"], todo) == ["egress-proxy.service"]
+
+
+def test_hold_back_leaves_a_guarded_runner_with_a_run_going(
+    tmp_path, monkeypatch, capsys
+):
+    # A runner in a container is held back as a host unit is: research's, once it's one.
+    monkeypatch.setattr(units, "podman_has", lambda kind, name: True)
+    monkeypatch.setattr(run_guard, "ok_to_restart", lambda service: False)
+    runner = unit(
+        tmp_path,
+        tmp_path / "research-runner.container",
+        "[Container]\nImage=localhost/everythingllm-service\n",
+        "research-runner.service",
+        True,
+    )
+    assert units.hold_back(["research-runner.service", "x.service"], [runner]) == [
+        "x.service"
+    ]
+    assert "left research-runner.service running" in capsys.readouterr().out

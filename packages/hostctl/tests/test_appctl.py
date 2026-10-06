@@ -68,6 +68,37 @@ def test_a_guarded_app_with_a_run_going_isnt_restarted(ran, monkeypatch):
     assert not any("restart" in c for c in ran)
 
 
+def test_a_container_is_restarted_not_enabled(ran, monkeypatch):
+    # Quadlet generates its unit and enables it from [Install]; `systemctl enable` refuses.
+    monkeypatch.setattr(appctl.run_guard, "ok_to_restart", lambda unit: True)
+    appctl.setup(appctl.apps.load()["egress"])
+    assert ran == [
+        "python3 -m hostctl service-images",
+        "systemctl --user restart egress-proxy.service",
+    ]
+    ran.clear()
+    appctl.setup(appctl.apps.load()["searxng"])  # deployed by something else
+    assert not any("systemctl" in c for c in ran)
+
+
+def test_a_guarded_container_with_a_run_going_isnt_restarted(ran, monkeypatch):
+    asked = []
+    monkeypatch.setattr(
+        appctl.run_guard, "ok_to_restart", lambda unit: asked.append(unit) or False
+    )
+    research = appctl.apps.App(
+        "research",
+        "x",
+        runner="research-runner.service",
+        container={"systemd-research-runner": "deep-research runner"},
+        guard=appctl.apps.Guard("research/runs", "Deep-research runs"),
+    )
+    with pytest.raises(SystemExit, match="left research-runner.service running"):
+        appctl.setup(research)
+    assert asked == ["research-runner.service"]
+    assert not any("systemctl" in c for c in ran)
+
+
 def test_a_failing_step_stops_the_setup(monkeypatch):
     calls = []
 

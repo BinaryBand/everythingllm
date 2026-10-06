@@ -56,7 +56,8 @@ container that variable isn't set, and storage is `/app/server/storage`. Tests i
 
 ### Containers and tailnet ports
 
-This repo owns the two containers the setup runs, as templates in `host/quadlet/`:
+This repo owns the containers the setup runs, as templates in `host/quadlet/`; besides
+the service containers (see "Service containers"), these two:
 
 - `anythingllm.container`: AnythingLLM, pinned by digest, because the log filter depends on
   its internals
@@ -90,7 +91,9 @@ templates too. `uv run hostctl units` renders all of them:
 It fills in `@REPO@` (the checkout's path) and the `host.env` settings, and saves older
 versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and restarts what changed: a container
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
-restarts nothing. Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
+restarts nothing. A guarded runner with a run going is left running, and a container whose
+image of ours or network isn't there yet isn't started: its app's setup makes them (see
+"Service containers"). Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
 
 Run it from the main checkout. It refuses to run in a worktree, since the units run the
 repo they were rendered from. Edit the templates, never the installed copies; `uv run hostctl diff`
@@ -108,9 +111,10 @@ for a run (the guard), its health checks, the steps its setup runs first, and wh
 `packages/apps` (standard library only, like `hostctl`);
 app code never does. `uv run hostctl apps` lists the apps; for each:
 
-- `uv run hostctl <app>-setup` runs its `before` steps (the sandbox's image build, the agents, relay
-  and gateway key files), maps its tailnet paths, enables and (re)starts its units, asking first while
-  a guarded one has a run going (`FORCE=1` doesn't ask), and starts its timers
+- `uv run hostctl <app>-setup` runs its `before` steps (the sandbox's and the service
+  containers' image builds, the agents, relay and gateway key files), maps its tailnet paths,
+  enables and (re)starts its units and (re)starts its containers, asking first while a
+  guarded one has a run going (`FORCE=1` doesn't ask), and starts its timers
   (`hostctl.appctl`).
 - `uv run hostctl <app>-logs` follows its units and the ones it watches.
 - `uv run hostctl serve-setup` maps every app's tailnet paths that aren't mapped yet with
@@ -229,6 +233,8 @@ through its UI.
     which the agent shows as Markdown images: link cards for published pages (see "Code
     sandbox"), deep research's live progress cards, and the server push that keeps a live one
     current (see "Deep research")
+- `packages/egress/` — the egress proxy, the service containers' only way out, and
+  `egress.toml`, their addresses and what each may reach (see "Service containers")
 - `packages/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
   AnythingLLM's agent; also a workspace member (see "Nilson relay")
 - `packages/gateway/` — the MCP gateway, a host service that serves the fronts' tools over
@@ -244,6 +250,7 @@ through its UI.
 
       venvs/<name>/        the host services' venvs (agents, audit, gateway, podcasts,
                            relay, research, sandbox, sites, splice)
+      venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/)
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
@@ -259,7 +266,10 @@ through its UI.
   `documents/`).
 - The `static_agent` Caddy container mounts just `pages/public/` read-only and serves it on
   127.0.0.1:8445
-- `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`uv run hostctl units`)
+- `host/quadlet/` — the Quadlet units, as templates (`uv run hostctl units`): AnythingLLM,
+  the pages site and the service containers
+- `host/containers/` — the images we build: the sandbox's (`uv run hostctl sandbox-images`) and
+  the service containers' (`uv run hostctl service-images`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
 - `packages/hostctl` — `uv run hostctl <command>`, everything that sets up, syncs and checks
   the host (`cli`, the commands; `uv run` installs it into the dev venv first, so a fresh clone
@@ -458,7 +468,9 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
   `tools.py` (`packages/podcasts` is the example), a `<name>-runner` console script, a unit
   `host/systemd/<name>-runner.service` with its own venv in `~/.local/share/everythingllm/`, and
   an app `<name>` in `apps.toml` with `runner` naming that unit (see "The apps"). Its socket
-  is `storage/everythingllm/<name>/runner.sock`, where `hostrpc.caller` looks.
+  is `storage/everythingllm/<name>/runner.sock`, where `hostrpc.caller` looks. A runner may
+  be a container instead (see "Service containers"): its `runner` is then the container's
+  `<x>.service`.
 
 Code edits go live the next time AnythingLLM starts the server (restart it from the
 Agent Skills > MCP Servers page, `uv run hostctl restart`, or `uv run hostctl deploy`, which restarts). Note
@@ -466,6 +478,113 @@ that this runs whatever is in the working tree, committed or not. Requires `mcp`
 
 `tailscale serve` maps tailnet HTTPS :8445 to the pages site and :8447 to the workspace pages
 site.
+
+### Service containers
+
+A host service can run in a container of its own instead of as a host unit, hardened like
+the sandbox's containers and with one way out, the egress proxy. Each service moves over
+on its own: its template goes from `host/systemd/<x>.service` to
+`host/quadlet/<x>.container.in`, and its app's `runner` and journal key follow (`apps.toml`'s
+`container`, `systemd-<x>`).
+
+**The image.** Every service container runs `localhost/everythingllm-service`
+(`host/containers/service/Containerfile`): `python:3.12-slim`, the host's uv copied from its
+own image, tzdata, the DejaVu and Liberation fonts chatimage draws with, and CA
+certificates. It holds none of our code. `uv run hostctl service-images` builds it and
+creates `egress-net`; the `egress` app's setup runs it first.
+
+**The paths are the host's.** The repo is mounted read-only at its own path (`@REPO@`), and
+the container runs `uv run --frozen --no-dev --project @REPO@ --package <pkg> [--extra host]
+<script>` with `HOME=%h`. Everything else it mounts (its folders in the data dir and in
+storage, its socket folder, the sandbox's socket) is mounted at its host path too, so a path
+means the same inside and out: what the sandbox's `build_system_site` hands back, what a
+runner tells the container, what lands in a run log. `host.env` comes in through
+`EnvironmentFile=`. Each container has one folder of its own,
+`~/.local/share/everythingllm/venvs/<x>-ctr/`, with its venv (`UV_PROJECT_ENVIRONMENT=…/venv`)
+and its uv cache (`UV_CACHE_DIR=…/uv-cache`) in it: one mount, so uv can hardlink, and no
+container can touch another's packages. The first start syncs the venv from PyPI through
+the proxy (a minute or three); later ones find it synced.
+
+**A code change reaches a container by a restart**, as it does a host unit: `uv run hostctl
+<app>-setup`, or `systemctl --user restart <x>.service`. `<app>-setup` restarts an app's
+containers (it doesn't enable them: Quadlet's `[Install]` does), asking first while a
+guarded runner has a run going, as for a host unit. `uv run hostctl units` starts a changed
+container, except a guarded one with a run going, and one whose image or network isn't
+there yet, which waits for its app's setup.
+
+**Hardening.** Every service container's template has these Quadlet keys
+(`packages/egress/tests/test_quadlet.py` holds them to it):
+
+    Image=localhost/everythingllm-service
+    ReadOnly=true                 # the root filesystem; /tmp is a tmpfs
+    Tmpfs=/tmp
+    DropCapability=ALL
+    NoNewPrivileges=true
+    UserNS=keep-id                # it runs as the host user, so files and sockets are theirs
+    GroupAdd=keep-groups          # only one that writes in storage: the anythingllm group
+    PidsLimit=256
+    PodmanArgs=--memory=<n> --cpus=<n> --umask=0002
+    RunInit=true                  # a PID 1 that passes on SIGTERM
+    Timezone=local
+    Network=egress-net:ip=<its address in egress.toml>
+    Environment=HTTPS_PROXY=http://10.89.79.2:3128   # and HTTP_PROXY, EGRESS_PROXY
+    PublishPort=127.0.0.1:<port>:<port>              # one with an HTTP port
+
+Quadlet in podman 5.4 has no `Memory=` or `Umask=`; `PodmanArgs` carries them, and
+`hostctl`'s tests convert every template with `/usr/libexec/podman/quadlet -dryrun`, which
+refuses a key it doesn't know. A template never sets `ContainerName=`: Quadlet's
+`systemd-<x>` is the name the audit and `<app>-logs` find its journal by. Inside, the
+`anythingllm` group shows as `nogroup` (65534): access through it works, but code can't
+chgrp to it or look it up by name; storage's setgid folders give new files the group
+anyway.
+
+**Ports and addresses.** A service's HTTP port is published on the host's `127.0.0.1`, so
+`apps.toml`'s `serve` and health checks are unchanged. What comes through arrives from the
+container's own address, not its loopback, so a server in a container listens on `0.0.0.0`:
+`LIVE_HOST` (the live cards, `runs.live`) and `ARTICLES_HOST` (the article writer) say so
+in its template, and default to `127.0.0.1` on the host. Listening on `0.0.0.0` also lets
+every other container on egress-net reach that port. Each of those ports is already on the
+tailnet through `tailscale serve`, so a container gets no more than any tailnet device
+does; this is accepted rather than split into a network per service. A container can't reach the
+host's loopback either, so it reaches AnythingLLM and SearXNG by their tailnet names
+through the proxy: `ANYTHINGLLM_API=https://<PUBLIC_HOST>:3001/api` (research) and
+`SEARXNG_URL=https://<PUBLIC_HOST>:8888/search` (research, the article writer). Both default
+to the host's loopback.
+
+**The egress proxy** (`packages/egress`, the `egress` app) is egress-net's only way out.
+`egress-net` is an internal podman network (`10.89.79.0/24`; `sandbox-net` is
+`10.89.77.0/24`), with no route and no DNS. `egress-proxy` runs in a container of the same
+image, on egress-net at `10.89.79.2` and on podman's default network for its own way out,
+and listens at `10.89.79.2:3128`. It takes `CONNECT host:port` (https) and absolute-form
+plain-http requests, and judges each by the caller's address on egress-net and the host and
+port asked for:
+
+- `packages/egress/src/egress/egress.toml` gives each container its address (`ips`) and
+  each service a profile: `public` (any host whose addresses are all public, on ports 80 and
+  443) and `allow`, `host:port` exceptions reached whatever their address. Every profile
+  also allows `pypi.org:443` and `files.pythonhosted.org:443`, for uv. `@PUBLIC_HOST@` and
+  `@NTFY_HOST@` (default `ntfy.sh`) come from the proxy's environment.
+
+  | profile  | containers (address)                                        | public | allow                         |
+  |----------|-------------------------------------------------------------|--------|-------------------------------|
+  | relay    | relay (.10)                                                 | no     | `PUBLIC_HOST:3001`, ntfy :443 |
+  | research | research-runner (.11)                                       | yes    | `PUBLIC_HOST:3001`, `:8888`   |
+  | sites    | sites-runner (.12)                                          | yes    | `PUBLIC_HOST:8888`            |
+  | podcasts | podcasts-runner, -sync-worker, -transcribe-worker (.13–.15) | yes    | —                             |
+
+- A public host must resolve to public addresses only, all of them: the rule is
+  `publicweb.public_address`, the one the services use on the host, so loopback, the LAN,
+  link-local, the tailnet's CGNAT range and IPv4-mapped forms of them are all refused. The
+  proxy resolves each name once and connects to the address it checked, so a name that
+  answers differently the second time (DNS rebinding) gets nowhere.
+- Anything else is refused with a 403 that says why, as is a connection from an address no
+  profile has. Each connection logs its profile, method, `host:port` and verdict, never a
+  path or a query (`uv run hostctl egress-logs`).
+
+In a container, `EGRESS_PROXY` puts `publicweb.public_client` in proxy mode: every request
+goes to the proxy, which makes the address check, and the client checks only the scheme.
+Other clients (httpx, uv) follow `HTTPS_PROXY` and `HTTP_PROXY`. On the host none of these
+is set, and nothing changes.
 
 ## Code sandbox
 

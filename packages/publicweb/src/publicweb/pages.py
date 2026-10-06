@@ -1,7 +1,13 @@
 """Reading a web page's main text (a client that looks like a browser, a capped download
 and trafilatura's extraction) and searching our SearXNG. The article writer and deep
-research read and search with it."""
+research read and search with it.
 
+Config (environment):
+  SEARXNG_URL  the SearXNG search endpoint (default SEARXNG, the host's loopback; a
+               service container, which can't reach it, uses https://<PUBLIC_HOST>:8888/search)
+"""
+
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -60,6 +66,11 @@ def read_html(
 Search = Callable[[str], list[dict]]
 # The host's SearXNG, on its loopback (the container goes through tailscale serve).
 SEARXNG = "http://127.0.0.1:8888/search"
+
+
+def searxng_url() -> str:
+    """The SearXNG to search: SEARXNG_URL, or the host's own."""
+    return os.environ.get("SEARXNG_URL") or SEARXNG
 
 
 class SearchError(RuntimeError):

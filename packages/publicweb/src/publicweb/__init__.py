@@ -3,6 +3,13 @@ download capped in size and time to use it with.
 
 The servers that use it fetch whatever URLs the agent or the web handed them, and they
 run next to AnythingLLM's API and the router, so a URL must not be able to reach those.
+`public_address` is that rule; the egress proxy (packages/egress) applies the same one.
+
+Config (environment):
+  EGRESS_PROXY  the egress proxy (http://<ip>:<port>) a service container goes out
+                through. Set, public_client sends everything through it and checks only
+                the scheme: the proxy checks the address it connects to. Unset (on the
+                host), the client checks and connects itself.
 """
 
 import ipaddress
@@ -23,8 +30,11 @@ def host_name(url: str) -> str:
     return (urlsplit(url).hostname or url).removeprefix("www.")
 
 
-def _public_address(host: str, port: int, error: type[Exception]) -> str:
-    """An address `host` resolves to, or `error` unless all of them are public."""
+def public_address(
+    host: str, port: int, error: type[Exception] = PermissionError
+) -> str:
+    """An address `host` resolves to, or `error` unless all of them are public. Connect to
+    the address it returns, not to `host`: a second lookup may answer something else."""
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:
@@ -40,13 +50,20 @@ def _public_address(host: str, port: int, error: type[Exception]) -> str:
     return str(infos[0][4][0])  # an IPv4 or IPv6 address
 
 
+def check_scheme(
+    request: httpx.Request, error: type[Exception] = PermissionError
+) -> None:
+    """Raise `error` unless the request goes over http(s)."""
+    if request.url.scheme not in ("http", "https"):
+        raise error(f"only http and https URLs are allowed: {request.url}")
+
+
 def check_public(
     request: httpx.Request, error: type[Exception] = PermissionError
 ) -> None:
     """Raise `error` unless the request goes over http(s) to a host with only public addresses."""
-    if request.url.scheme not in ("http", "https"):
-        raise error(f"only http and https URLs are allowed: {request.url}")
-    _public_address(request.url.host, request.url.port or 443, error)
+    check_scheme(request, error)
+    public_address(request.url.host, request.url.port or 443, error)
 
 
 class PublicBackend(httpcore.NetworkBackend):
@@ -65,7 +82,7 @@ class PublicBackend(httpcore.NetworkBackend):
     def connect_tcp(
         self, host, port, timeout=None, local_address=None, socket_options=None
     ):
-        address = _public_address(host, port, self.error)
+        address = public_address(host, port, self.error)
         return self.inner.connect_tcp(
             address, port, timeout, local_address, socket_options
         )
@@ -78,20 +95,29 @@ def public_client(
     and connects only to the address it checked.
 
     Proxy settings from the environment are ignored: through a proxy, the address checked
-    here wouldn't be the one connected to.
+    here wouldn't be the one connected to. The exception is EGRESS_PROXY, the egress
+    proxy, which makes the same check itself and connects to the address it checked; with
+    it set, every request goes through it and only the scheme is checked here.
     """
-    if transport is None:  # tests pass a MockTransport
-        transport = httpx.HTTPTransport()
-        # httpx has no setting for the network backend, so swap it into the pool it built
-        # (pinned to httpx 0.28 / httpcore 1 in pyproject; test_connects_only_to_the_checked_address guards it).
-        pool = transport._pool
-        assert isinstance(pool, httpcore.ConnectionPool)  # no proxy, so a plain pool
-        pool._network_backend = PublicBackend(error)
+    proxy = os.environ.get("EGRESS_PROXY")
+    if proxy:
+        check = check_scheme
+        if transport is None:  # tests pass a MockTransport
+            transport = httpx.HTTPTransport(proxy=proxy)
+    else:
+        check = check_public
+        if transport is None:
+            transport = httpx.HTTPTransport()
+            # httpx has no setting for the network backend, so swap it into the pool it built
+            # (pinned to httpx 0.28 / httpcore 1 in pyproject; test_connects_only_to_the_checked_address guards it).
+            pool = transport._pool  # no proxy, so a plain pool
+            assert isinstance(pool, httpcore.ConnectionPool)
+            pool._network_backend = PublicBackend(error)
     return httpx.Client(
         transport=transport,
         follow_redirects=True,
         trust_env=False,
-        event_hooks={"request": [lambda request: check_public(request, error)]},
+        event_hooks={"request": [lambda request: check(request, error)]},
         **kwargs,
     )
 

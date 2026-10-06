@@ -270,3 +270,22 @@ def test_the_callers_split_reaches_the_pipeline(tmp_path, published):
         result["status"] == "ok" and result["title"] == "Alpha and Beta, split by hand"
     )
     assert the_line(s)["stats"]["plan"] == "caller"
+
+
+def test_settings_reach_the_hosts_loopback_unless_told_otherwise(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
+    for key in ("ANYTHINGLLM_API", "SEARXNG_URL"):
+        monkeypatch.delenv(key, raising=False)
+    s = job.Settings.from_env()
+    assert (s.api, s.searxng_url) == (
+        "http://127.0.0.1:3001/api",
+        "http://127.0.0.1:8888/search",
+    )
+    # A container reaches both through the egress proxy, by the tailnet name.
+    monkeypatch.setenv("ANYTHINGLLM_API", "https://host.example:3001/api")
+    monkeypatch.setenv("SEARXNG_URL", "https://host.example:8888/search")
+    s = job.Settings.from_env()
+    assert (s.api, s.searxng_url) == (
+        "https://host.example:3001/api",
+        "https://host.example:8888/search",
+    )

@@ -11,12 +11,17 @@ It listens on 127.0.0.1:8448 (PORT; tailscale serve maps :8445/news/write to it)
 searches the host's SearXNG.
 
 Config (environment, from host.env and sites-runner's unit):
+  ARTICLES_HOST    the address to listen on (default 127.0.0.1). In a container, 0.0.0.0:
+                   its port is published on the host's 127.0.0.1, and what comes through
+                   arrives from the container's own address
+  SEARXNG_URL      the SearXNG to search (default the host's; publicweb.pages)
   SITES_SOURCE, ZOLA, ANYTHINGLLM_STORAGE   as for sites-build, with host paths
   DEEPSEEK_API_KEY or else read from ANYTHINGLLM_ENV (default .env in ANYTHINGLLM_STORAGE,
                    from host.env), as is the model that writes (DEEPSEEK_MODEL_PREF)
 """
 
 import html
+import os
 import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,13 +29,14 @@ from urllib.parse import urlsplit
 
 import hostrpc
 from llm import deepseek, settings
-from publicweb.pages import SEARXNG
+from publicweb.pages import searxng_url
 
 from sites.articles import Newsroom, NotFound, Story, find_story, page_gatherer
 from sites.build import Builder
 from sites.store import SiteError, SiteStore
 
 PORT = 8448
+HOST = "127.0.0.1"  # unless ARTICLES_HOST says otherwise
 
 REFRESH_SECONDS = 4
 
@@ -168,8 +174,15 @@ def server() -> ThreadingHTTPServer:
         raise SiteError(f"no site named {site} in {builder.source}")
     config = store.config(site)
     Handler.configure(
-        Newsroom(store, site, deepseek(key, model), page_gatherer(SEARXNG), model),
+        Newsroom(
+            store, site, deepseek(key, model), page_gatherer(searxng_url()), model
+        ),
         urlsplit(news.url).path,
         config["extra"]["article_writer"],
     )
-    return ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    return ThreadingHTTPServer(address(), Handler)
+
+
+def address() -> tuple[str, int]:
+    """Where the article writer listens: ARTICLES_HOST (default HOST) and PORT."""
+    return os.environ.get("ARTICLES_HOST") or HOST, PORT

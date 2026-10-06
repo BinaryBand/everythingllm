@@ -1,0 +1,39 @@
+[Unit]
+Description=Egress proxy: the service containers' only way out of egress-net (packages/egress)
+
+[Container]
+Image=localhost/everythingllm-service
+Exec=uv run --frozen --no-dev --project @REPO@ --package egress egress-proxy
+# The service containers' hardening (README, "Service containers"). It has no storage
+# mounts, so it doesn't keep the host user's groups.
+ReadOnly=true
+Tmpfs=/tmp
+DropCapability=ALL
+NoNewPrivileges=true
+UserNS=keep-id
+PidsLimit=256
+PodmanArgs=--memory=512m --cpus=1 --umask=0002
+RunInit=true
+Timezone=local
+# It listens on egress-net, at the address egress.toml gives it, and goes out over
+# podman's default network, which resolves the tailnet's names too.
+Network=egress-net:ip=10.89.79.2
+Network=podman
+# The repo at its host path, read-only; its venv and uv's cache in one folder of the data
+# dir (one mount, so uv can hardlink from the cache).
+Volume=@REPO@:@REPO@:ro
+Volume=%h/.local/share/everythingllm/venvs/egress-proxy-ctr:%h/.local/share/everythingllm/venvs/egress-proxy-ctr
+Environment=HOME=%h
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/egress-proxy-ctr/venv
+Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/egress-proxy-ctr/uv-cache
+# PUBLIC_HOST (and NTFY_HOST, if set) for egress.toml's exceptions.
+EnvironmentFile=@REPO@/host.env
+
+[Service]
+# podman won't bind-mount a folder that isn't there.
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/egress-proxy-ctr
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -4,7 +4,15 @@ import time
 import httpcore
 import httpx
 import pytest
-from publicweb import PublicBackend, check_public, public_client, read, save, stream
+from publicweb import (
+    PublicBackend,
+    check_public,
+    public_address,
+    public_client,
+    read,
+    save,
+    stream,
+)
 
 
 @pytest.mark.parametrize(
@@ -67,6 +75,67 @@ def test_proxy_environment_ignored(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://10.0.0.1:3128")
     with public_client(PermissionError) as client:
         assert not client._mounts
+
+
+def test_the_egress_proxy_carries_everything_and_checks_the_address(monkeypatch):
+    # In a service container, the egress proxy makes the address check (packages/egress):
+    # the client sends every request to it, plain http and https alike, and only refuses
+    # what isn't http(s).
+    monkeypatch.setenv("EGRESS_PROXY", "http://10.89.79.2:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://10.0.0.1:3128")  # still ignored
+    with public_client(PermissionError) as client:
+        assert not client._mounts
+        pool = client._transport._pool
+        assert isinstance(pool, httpcore.HTTPProxy)
+        assert pool._proxy_url.host == b"10.89.79.2" and pool._proxy_url.port == 3128
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200)
+
+    with public_client(PermissionError, transport=httpx.MockTransport(handler)) as c:
+        c.get("http://10.0.0.5/x")  # the proxy's to refuse, not the client's
+        with pytest.raises(PermissionError, match="only http"):
+            c.get("ftp://example.com/x")
+    assert seen == ["http://10.0.0.5/x"]
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",
+        "10.1.2.3",
+        "172.16.0.1",
+        "192.168.0.29",
+        "169.254.1.2",  # link-local: host.containers.internal
+        "100.89.16.22",  # CGNAT: the tailnet
+        "0.0.0.0",
+        "::1",
+        "fe80::1",
+        "fc00::1",
+        "::ffff:127.0.0.1",  # IPv4-mapped loopback
+        "::ffff:10.0.0.1",
+    ],
+)
+def test_public_address_refuses_whatever_isnt_public(monkeypatch, address):
+    fake_dns(monkeypatch, address)
+    with pytest.raises(PermissionError, match="private or local"):
+        public_address("anything.example", 443)
+
+
+def test_public_address_wants_every_answer_public(monkeypatch):
+    def getaddrinfo(host, port, *args, **kwargs):
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", port)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    with pytest.raises(PermissionError, match="private or local"):
+        public_address("mixed.example", 443)
+    fake_dns(monkeypatch, "2606:4700::1")
+    assert public_address("v6.example", 443) == "2606:4700::1"
 
 
 class Inner(httpcore.NetworkBackend):

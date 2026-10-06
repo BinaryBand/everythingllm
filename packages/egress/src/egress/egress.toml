@@ -1,0 +1,48 @@
+# The egress proxy's network and profiles: what each service container may reach, read by
+# egress.config (the proxy), `uv run hostctl service-images` (the network) and the tests
+# that hold the Quadlet templates to the addresses here. README, "Service containers".
+#
+# @KEY@ in an `allow` entry is KEY from the proxy's environment (host.env, through its
+# unit's EnvironmentFile=), else from [defaults]; the proxy won't start with one unset.
+
+[network]
+# An internal podman network (no route out, no DNS): the proxy is its only way out.
+# sandbox-net is 10.89.77.0/24 and the old browser-net 10.89.78.0/24.
+name = "egress-net"
+subnet = "10.89.79.0/24"
+proxy = "10.89.79.2"  # egress-proxy's address, where it listens
+port = 3128
+# Every profile may reach these: uv syncing a container's venv from PyPI on its first start.
+allow = ["pypi.org:443", "files.pythonhosted.org:443"]
+
+[defaults]
+NTFY_HOST = "ntfy.sh"  # the ntfy server in relay's NTFY_URL
+
+# [profiles.<name>]
+# public  true: any host whose addresses are all public, on ports 80 and 443 (publicweb's
+#         rule, checked by the proxy, which then connects to the address it checked)
+# allow   host:port it may reach whatever the host's addresses are: the tailnet's
+#         AnythingLLM (:3001) and SearXNG (:8888) are on a CGNAT address, not a public one
+# ips     container (host/quadlet/<container>.container.in) -> its address on the network,
+#         by which the proxy knows which profile a connection is. Each address is one
+#         container's; a connection from any other address is refused.
+
+[profiles.relay]
+public = false
+allow = ["@PUBLIC_HOST@:3001", "@NTFY_HOST@:443"]
+ips = { relay = "10.89.79.10" }
+
+[profiles.research]
+public = true
+allow = ["@PUBLIC_HOST@:3001", "@PUBLIC_HOST@:8888"]
+ips = { research-runner = "10.89.79.11" }
+
+[profiles.sites]
+public = true
+allow = ["@PUBLIC_HOST@:8888"]
+ips = { sites-runner = "10.89.79.12" }
+
+[profiles.podcasts]
+public = true
+allow = []
+ips = { podcasts-runner = "10.89.79.13", podcasts-sync-worker = "10.89.79.14", podcasts-transcribe-worker = "10.89.79.15" }

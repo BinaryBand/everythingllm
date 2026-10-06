@@ -55,7 +55,7 @@ class Guard:
 class App:
     name: str
     summary: str
-    runner: str | None = None  # serves storage/everythingllm/<name>/runner.sock
+    runner: str | None = None  # serves <name>/runner.sock: a unit, or a container's
     units: dict[str, str] = field(default_factory=dict)  # unit -> label
     timers: tuple[str, ...] = ()
     watch: dict[str, str] = field(default_factory=dict)  # unit -> label
@@ -77,15 +77,15 @@ class App:
         return out
 
     @property
+    def container_units(self) -> list[str]:
+        """The units Quadlet generates for its containers: <x>.service for systemd-<x>."""
+        return [f"{c.removeprefix('systemd-')}.service" for c in self.container]
+
+    @property
     def all_units(self) -> list[str]:
         """Every unit that belongs to it: its units, timers and watched units, and its
-        container's generated <x>.service."""
-        return [
-            *self.units,
-            *self.timers,
-            *self.watch,
-            *(f"{c.removeprefix('systemd-')}.service" for c in self.container),
-        ]
+        containers' generated <x>.service."""
+        return [*self.units, *self.timers, *self.watch, *self.container_units]
 
 
 def _app(name: str, raw: dict) -> App:

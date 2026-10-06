@@ -119,3 +119,17 @@ def test_a_card_that_fails_to_draw_answers_500_instead_of_hanging(tmp_path):
         server.close()
 
     asyncio.run(main())
+
+
+def test_cards_listen_on_loopback_unless_told_otherwise(tmp_path, monkeypatch):
+    async def bound():
+        server = await ThingLive(Things(), tmp_path, "").serve(0)
+        host = server.sockets[0].getsockname()[0]
+        server.close()
+        await server.wait_closed()
+        return host
+
+    monkeypatch.delenv("LIVE_HOST", raising=False)
+    assert asyncio.run(bound()) == "127.0.0.1"
+    monkeypatch.setenv("LIVE_HOST", "0.0.0.0")  # in a container
+    assert asyncio.run(bound()) == "0.0.0.0"

@@ -31,10 +31,10 @@ def events(*, status=200, body="", error=None, seen=None, chat=None):
                 async for e in upstream.answer(
                     client,
                     "http://allm/",
-                    KEY,
                     "my space",
                     "t/1",
                     chat or {"message": "Hi?"},
+                    KEY,
                 )
             ]
 

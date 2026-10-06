@@ -108,13 +108,15 @@ for a run (the guard), its health checks, the steps its setup runs first, and wh
 `packages/apps` (standard library only, like `hostctl`);
 app code never does. `uv run hostctl apps` lists the apps; for each:
 
-- `uv run hostctl <app>-setup` runs its `before` steps (the sandbox's image build, the agents, relay
-  and gateway key files), maps its tailnet paths, enables and (re)starts its units, asking first while
+- `uv run hostctl <app>-setup` runs its `before` steps (the sandbox's image build, the agents and
+  gateway key files, the relay's settings file), maps its tailnet paths, enables and (re)starts its units, asking first while
   a guarded one has a run going (`FORCE=1` doesn't ask), and starts its timers
   (`hostctl.appctl`).
 - `uv run hostctl <app>-logs` follows its units and the ones it watches.
 - `uv run hostctl serve-setup` maps every app's tailnet paths that aren't mapped yet with
-  `sudo tailscale serve`, and leaves other mappings on the machine alone.
+  `sudo tailscale serve` (by port and path, from `tailscale serve status --json`, so the
+  relay's path on :3001 doesn't pass for AnythingLLM's root), and leaves other mappings on the
+  machine alone, including ones an app no longer declares.
 - `uv run hostctl health` checks every app's units, health URLs and sockets.
 
 Adding an app: its code, its unit template in `host/`, and one entry in `apps.toml`.
@@ -134,12 +136,13 @@ So it gets a password (Settings > Security > Password protection; long and rando
 Our callers of that API log in with it: `hostctl.sync` and `hostctl.machine` through
 `units.anythingllm_headers`, the audit and research's workspace embedding through
 `hostrpc.anythingllm_headers`. Each logs in once per process (a login lasts 30 days and is
-logged) and once more after a 401; with no password set they send nothing. The relay uses the
-developer API key and doesn't log in. `uv run hostctl health` and the audit's `security` check fail when
+logged) and once more after a 401; with no password set they send nothing. The relay holds no
+key and doesn't log in: it checks each client's developer API key with `/api/v1/auth` and asks
+with that. `uv run hostctl health` and the audit's `security` check fail when
 `/api/scheduled-jobs` answers without a login.
 
 What a password doesn't close: `/api/request-token` has no rate limit, so the password has to
-be long; a developer API key (the relay's) still has full `/api/v1` access, `update-env`
+be long; a developer API key (any client's, Nilson's included) still has full `/api/v1` access, `update-env`
 included; the agent's websocket needs only an invocation's id.
 
 Not in this repo, so a new machine needs them first: rootless podman with Quadlet, systemd
@@ -1090,35 +1093,41 @@ client disconnects and saves it to the thread only when the stream completes, so
 whose app closes, sleeps or loses its network is lost. On 2026-10-06, with AnythingLLM
 1.16.2, an answer cut off after 15 chunks was missing from the thread three minutes later.
 
-The relay (`packages/relay`, `relay.service`, 127.0.0.1:8446, tailnet https :8446) makes that
-one call for Nilson and owns the answer. Each run streams from AnythingLLM to the end in its
-own task, which no follower owns; the relay never closes the upstream connection because a
-follower left, only when the run ends or is cancelled.
+The relay (`packages/relay`, `relay.service`, 127.0.0.1:8446) makes that one call for Nilson
+and owns the answer. Each run streams from AnythingLLM to the end in its own task, which no
+follower owns; the relay never closes the upstream connection because a follower left, only
+when the run ends or is cancelled.
 
-For everything else (workspaces, threads, history, documents, settings) the relay is
-AnythingLLM's developer API: `/api/v1/...` is passed through to AnythingLLM (`relay.proxy`)
-with the relay's token swapped for the developer API key. So any AnythingLLM client, of any
-version, can be pointed at the relay with `RELAY_TOKEN` as its API key, and the key itself
-stays on the host. The request and the answer go through as they are (method, path, query,
-body, headers, status, streamed and still-encoded body) but for the hop-by-hop headers; the
-`Authorization` header is replaced, not passed on. AnythingLLM being unreachable is a 502
-with the usual `{"error"}`; a client that leaves closes its call, so a `stream-chat` made
-through the proxy still dies with its client; only a run outlives it. Nothing outside
-`/api/v1/` (AnythingLLM's own web UI and its internal `/api/...`) is proxied. The token
-therefore grants all the developer API key does, admin endpoints included.
+It sits beside AnythingLLM on AnythingLLM's own tailnet origin: `tailscale serve` maps
+`https://<PUBLIC_HOST>:3001/` to AnythingLLM as before and `/everythingllm/` on the same port
+to the relay (`uv run hostctl relay-setup`), stripping that prefix; the relay answers with or
+without it, so a proxy that doesn't strip it can map `/everythingllm/` to `127.0.0.1:8446` as
+well. Everything else on :3001 (the web UI, both APIs, the websockets) is AnythingLLM's, so a
+native AnythingLLM client notices nothing, and Nilson needs one address and one key for both:
 
-Every route but `/health` needs `Authorization: Bearer <RELAY_TOKEN>`; errors are
-`{"error": "..."}`.
+- Every route but `/health` takes the AnythingLLM developer API key the client gives
+  AnythingLLM itself, as `Authorization: Bearer <key>`. The relay holds no key: it asks
+  AnythingLLM's `GET /api/v1/auth`, remembers a key it took for a minute (by its hash), and
+  starts a run's `stream-chat` with the caller's key, which stays in that run's memory and
+  never reaches the database or a log. A missing or refused key gets AnythingLLM's own
+  answer, 403 `{"error": "No valid api key found."}`; an AnythingLLM that can't be reached
+  is a 502.
+- AnythingLLM's developer keys are all alike (each has the whole `/api/v1`), so any key
+  sees and can cancel every run, as it could read every thread.
+- `GET /everythingllm/health` is how a client tells the relay is there: its JSON names the
+  service and its features. AnythingLLM answers a path it doesn't know with its web app's
+  page and a 200, so look at the body, not the status.
+
+Errors are `{"error": "..."}`. The routes, under `/everythingllm`:
 
 | Route | Does |
 | --- | --- |
-| `POST /runs` | `{"workspace", "thread", "clientId", "body"}` starts a run: 201 with the run. `body` is what the client would send `stream-chat` (a non-empty `message`, or `"reset": true` to clear the thread; `mode` and `attachments` as AnythingLLM takes them), forwarded as it came: without `mode` the workspace's own mode answers, `automatic` included. The body is held only in memory for the call, so attachments never reach the database, and no size limit is set (a 20 MB attachment goes through). A `clientId` already used answers 200 with that run and starts nothing; a thread with a running run answers 409. |
-| `GET /runs?status=running` | runs with that status (`running`, `done`, `failed`, `cancelled`), oldest first; every kept run without `status` |
-| `GET /runs/{id}` | the run (`id`, `clientId`, `workspace`, `thread`, `mode` (the body's, or null), `status`, `createdAt`, `finishedAt`); 404 when unknown or expired |
-| `GET /runs/{id}/events` | server-sent events: `chunk` with each chunk AnythingLLM sent, as it came and in order (an agent's `agentThought`s, the closing chunk and the `finalizeResponseStream` with its sources included), then one of `done` `{}`, `failed` `{"error"}` (for a non-2xx answer, an `error` or `abort` chunk, which isn't passed on, or a broken connection), `cancelled` `{}`, and the stream closes. Ids count from 1; `Last-Event-ID: n` starts after n. `: ping` every 15 s while live. Any number of followers. |
-| `POST /runs/{id}/cancel` | closes the upstream connection and ends the run `cancelled`; a run that has ended is left as it is |
-| `/api/v1/...` (any method) | AnythingLLM's developer API, through the relay with its key |
-| `GET /health` | 200, no token |
+| `POST /v1/runs` | `{"workspace", "thread", "clientId", "body"}` starts a run: 201 with the run. `body` is what the client would send `stream-chat` (a non-empty `message`, or `"reset": true` to clear the thread; `mode` and `attachments` as AnythingLLM takes them), forwarded as it came: without `mode` the workspace's own mode answers, `automatic` included. The body is held only in memory for the call, so attachments never reach the database, and no size limit is set (a 20 MB attachment goes through). A `clientId` already used answers 200 with that run and starts nothing; a thread with a running run answers 409. |
+| `GET /v1/runs?status=running` | runs with that status (`running`, `done`, `failed`, `cancelled`), oldest first; every kept run without `status` |
+| `GET /v1/runs/{id}` | the run (`id`, `clientId`, `workspace`, `thread`, `mode` (the body's, or null), `status`, `createdAt`, `finishedAt`); 404 when unknown or expired |
+| `GET /v1/runs/{id}/events` | server-sent events: `chunk` with each chunk AnythingLLM sent, as it came and in order (an agent's `agentThought`s, the closing chunk and the `finalizeResponseStream` with its sources included), then one of `done` `{}`, `failed` `{"error"}` (for a non-2xx answer, an `error` or `abort` chunk, which isn't passed on, or a broken connection), `cancelled` `{}`, and the stream closes. Ids count from 1; `Last-Event-ID: n` starts after n. `: ping` every 15 s while live. Any number of followers. |
+| `POST /v1/runs/{id}/cancel` | closes the upstream connection and ends the run `cancelled`; a run that has ended is left as it is |
+| `GET /health` | `{"ok": true, "service": "everythingllm", "features": ["runs"]}`, no key |
 
 Runs and their events are in SQLite (`~/.local/share/everythingllm/relay/relay.db`, mode 600),
 written as each event arrives. A restart fails the runs it cut short with "The relay
@@ -1128,13 +1137,12 @@ older database deletes its runs. With `NTFY_URL` set, a finished or failed run p
 ready" or "Answer failed" to that ntfy topic, with the question's first 120 characters
 and `run=…,workspace=…,thread=…` as its tags; never the answer. A reset isn't notified.
 
-The secrets live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
-AnythingLLM container mounts: `ANYTHINGLLM_API_KEY` (a developer API key), `RELAY_TOKEN`,
-and optionally `NTFY_URL` and `NTFY_TOKEN`. `uv run hostctl relay-setup` makes the file with a fresh
-token, refuses to go on until the API key is filled in, then maps the tailnet port and
+Its settings live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
+AnythingLLM container mounts: only the optional `NTFY_URL` and `NTFY_TOKEN`, which are
+secrets. `uv run hostctl relay-setup` makes the file (and notes an old `ANYTHINGLLM_API_KEY` or
+`RELAY_TOKEN` there, which nothing reads any more), maps `/everythingllm` on :3001 and
 starts the unit; `uv run hostctl relay-logs` follows it (any app's `<app>-logs`). `relay.app`'s docstring lists the rest of the
-config. Neither the key nor the token appears in a response or a log line, and a test holds
-that.
+config. A client's key never appears in a response or a log line, and a test holds that.
 
 Where it differs from the original spec: the relay adds nothing to the body and doesn't
 interpret the answer (no `mode` default, no pieces or citations of its own); a

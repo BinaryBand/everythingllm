@@ -15,6 +15,7 @@ Standard library only, like the rest of hostctl.
 """
 
 import argparse
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -38,15 +39,27 @@ def systemctl(*args: str) -> None:
     subprocess.run(["systemctl", "--user", *args], check=True)
 
 
+def mapped() -> set[tuple[int, str]]:
+    """(tailnet https port, path) for each of `tailscale serve`'s mappings."""
+    status = subprocess.run(
+        ["tailscale", "serve", "status", "--json"], capture_output=True, text=True, check=True
+    ).stdout
+    web = (json.loads(status) if status.strip() else {}).get("Web") or {}
+    return {
+        (int(host.rpartition(":")[2]), path)
+        for host, server in web.items()
+        for path in (server.get("Handlers") or {})
+    }
+
+
 def serve(mappings: list[apps.Mapping]) -> None:
-    """Map what isn't mapped yet; mappings made by hand or by others are left alone."""
+    """Map what isn't mapped yet, by port and path, so an app's path on a port doesn't hide
+    that the port's root is unmapped; mappings made by hand or by others are left alone."""
     if not mappings:
         return
-    status = subprocess.run(
-        ["tailscale", "serve", "status"], capture_output=True, text=True, check=True
-    ).stdout
+    have = mapped()
     for m in mappings:
-        if (m.path in status) if m.path else (f":{m.https} " in status):
+        if (m.https, m.path or "/") in have:
             continue
         path = [f"--set-path={m.path}"] if m.path else []
         cmd = ["sudo", "tailscale", "serve", "--bg", f"--https={m.https}", *path, m.target]

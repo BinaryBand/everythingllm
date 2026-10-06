@@ -90,12 +90,12 @@ units = { "audit-runner.service" = "audit runner" }
 install = true
 
 [relay]
-summary = "the Nilson relay (tailnet https :8446)"
+summary = "the Nilson relay, beside AnythingLLM at tailnet https :3001/everythingllm/"
 units = { "relay.service" = "Nilson relay" }
 before = ["python3 -m hostctl.relay_env"]
-serve = [{ https = 8446, port = 8446 }]
+serve = [{ https = 3001, path = "/everythingllm", port = 8446 }]
 health = { "Nilson relay" = "http://127.0.0.1:8446/health" }
-why_not_installed = "it's only for the Nilson app, and its secrets file needs an AnythingLLM API key first"
+why_not_installed = "it's only for the Nilson app"
 
 [gateway]
 summary = "the MCP gateway: the runners' MCP tools for clients other than AnythingLLM (tailnet https :8452)"

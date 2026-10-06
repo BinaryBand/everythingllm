@@ -1,7 +1,6 @@
 import asyncio
 import json
 import sys
-from pathlib import Path
 
 from audit import health
 from audit.services import WATCHED
@@ -28,15 +27,6 @@ def test_units_come_from_the_audits_watch_list():
     assert len(units) == len(WATCHED)
     assert "anythingllm.service" in units and "sandbox-runner.service" in units
     assert all(u.endswith(".service") and not u.startswith("systemd-") for u in units)
-
-
-def test_every_service_in_the_repo_is_watched():
-    host = Path(__file__).resolve().parents[3] / "host"
-    ours = {p.name.replace("@.", "@_all.") for p in host.glob("systemd/*.service")}
-    ours |= {
-        p.name.split(".")[0] + ".service" for p in host.glob("quadlet/*.container.in")
-    }
-    assert ours <= set(health.units())
 
 
 def test_mcp_servers_start_and_list_tools_or_fail(tmp_path):

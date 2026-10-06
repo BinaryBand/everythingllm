@@ -98,6 +98,7 @@ name = "audit"
 version = "0.1.0"
 source = { editable = "packages/audit" }
 dependencies = [
+    { name = "apps" },
     { name = "hostrpc" },
     { name = "mcp" },
     { name = "pydantic" },
@@ -106,6 +107,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "apps", editable = "packages/apps" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "mcp", specifier = ">=2.2,<3" },
     { name = "pydantic", specifier = ">=2" },

@@ -31,6 +31,9 @@ from pathlib import Path
 import run_guard
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packages" / "apps" / "src"))
+import apps  # the registry's reader, standard library only
+
 BACKUPS = run_guard.DATA / "backups"  # outside the repo, which the container mounts
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
 
@@ -277,7 +280,8 @@ def main() -> None:
     for guarded in run_guard.GUARDED:
         if guarded in restart and not run_guard.ok_to_restart(guarded):
             restart.remove(guarded)
-            setup = guarded.removesuffix("-runner.service")
+            app = apps.app_of(guarded)
+            setup = app.name if app else guarded
             print(
                 f"units: left {guarded} running; `make {setup}-setup` applies its new unit later"
             )

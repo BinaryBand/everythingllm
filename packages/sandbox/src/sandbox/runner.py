@@ -926,7 +926,7 @@ class Runner(hostrpc.Service):
             )
         if origin != "system":
             # A system site pins a workspace's theme rather than following its live folder
-            # (docs/shared-sites.md, Decision 2), and pinning isn't built yet.
+            # (docs/.proposals/shared-sites.md, Decision 2), and pinning isn't built yet.
             raise SandboxError(
                 f"{site} takes its theme from {origin!r}, but a system site can only use "
                 "'system' until workspace themes can be pinned"

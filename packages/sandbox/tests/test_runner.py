@@ -926,7 +926,7 @@ def test_what_a_system_site_build_refuses(cfg, tmp_path):
 
 
 def test_a_system_site_cannot_follow_a_workspace_theme(cfg, tmp_path):
-    # Until a workspace's theme can be pinned (docs/shared-sites.md, Decision 2), a system
+    # Until a workspace's theme can be pinned (docs/.proposals/shared-sites.md, Decision 2), a system
     # site never builds from a workspace's live /shared.
     cfg = system_cfg(cfg, tmp_path, theme_from='theme_from = "career"')
     r = make(cfg)

@@ -504,7 +504,7 @@ refused until the agent deletes something with `write-file`, and the refusal nam
 biggest files and folders, since no run can look for them. A run warns past 4 GB. Runs in
 one workspace take turns, since they share `/project`; while one is going, a write or
 publish from any of the workspace's chats fails at once rather than waiting. Runs in
-different workspaces overlap. `docs/shared-sites.md` has the design.
+different workspaces overlap. `docs/.proposals/shared-sites.md` (kept out of git) has the design.
 
 **The lab site** is the one site the agent controls entirely: templates, stylesheets,
 `zola.toml` and content, in education's `/shared/education/sites/lab/`, where other

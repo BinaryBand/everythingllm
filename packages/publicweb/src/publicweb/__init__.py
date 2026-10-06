@@ -6,10 +6,11 @@ run next to AnythingLLM's API and the router, so a URL must not be able to reach
 `public_address` is that rule; the egress proxy (packages/egress) applies the same one.
 
 Config (environment):
-  EGRESS_PROXY  the egress proxy (http://<ip>:<port>) a service container goes out
-                through. Set, public_client sends everything through it and checks only
-                the scheme: the proxy checks the address it connects to. Unset (on the
-                host), the client checks and connects itself.
+  EGRESS_PROXY  the egress proxy's public port (http://<ip>:<port>), which a service
+                container goes out through. Set, public_client sends everything through
+                it and checks only the scheme: the proxy checks the address it connects
+                to, and on that port takes none of the container's exceptions. Unset (on
+                the host), the client checks and connects itself.
 """
 
 import ipaddress

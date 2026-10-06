@@ -22,10 +22,11 @@ def loaded(**env) -> Config:
 
 def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
     config = loaded()
-    assert (config.network, config.subnet, config.url) == (
+    assert (config.network, config.subnet, config.url, config.public_url) == (
         "egress-net",
         "10.89.79.0/24",
         "http://10.89.79.2:3128",
+        "http://10.89.79.2:3129",
     )
     assert config.ips() == {
         "relay": "10.89.79.10",
@@ -59,6 +60,9 @@ def test_a_profile_without_its_host_doesnt_load(tmp_path):
     bad.write_text(text.replace('"10.89.79.12"', '"10.89.80.12"'))
     with pytest.raises(ValueError, match="isn't in 10.89.79.0/24"):
         egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})
+    bad.write_text(text.replace("public_port = 3129", "public_port = 3128"))
+    with pytest.raises(ValueError, match="port and public_port are the same"):
+        egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})
 
 
 def test_judging_a_host_and_port():
@@ -73,6 +77,12 @@ def test_judging_a_host_and_port():
     assert relay.judge("example.com", 443) is None  # relay has no public access
     assert relay.judge(TAILNET, 3001) == "allow"
     assert relay.judge("pypi.org", 443) == "allow"
+    # On the public port no exception counts, the network's included.
+    assert research.judge(TAILNET, 8888, public_only=True) is None
+    assert research.judge(TAILNET, 3001, public_only=True) is None
+    assert research.judge("pypi.org", 443, public_only=True) == "public"
+    assert research.judge("example.com", 443, public_only=True) == "public"
+    assert relay.judge(TAILNET, 3001, public_only=True) is None
 
 
 def test_a_connection_is_known_by_its_address():
@@ -184,10 +194,12 @@ class Upstream:
         self.port = self.server.sockets[0].getsockname()[1]
 
 
-async def through(config: Config, upstream: Upstream, *sends: bytes) -> bytes:
+async def through(
+    config: Config, upstream: Upstream, *sends: bytes, public_only: bool = False
+) -> bytes:
     """Send `sends` through the proxy, one after another, and read until it closes."""
     await upstream.start()
-    p = proxy.Proxy(config, upstream.opener)
+    p = proxy.Proxy(config, upstream.opener, public_only)
     server = await asyncio.start_server(
         p.handle, "127.0.0.1", 0, limit=proxy.HEAD_LIMIT
     )
@@ -203,8 +215,8 @@ async def through(config: Config, upstream: Upstream, *sends: bytes) -> bytes:
     return answer
 
 
-def run(*args) -> bytes:
-    return asyncio.run(through(*args))
+def run(*args, **kwargs) -> bytes:
+    return asyncio.run(through(*args, **kwargs))
 
 
 def test_plain_http_is_forwarded_to_the_address_checked(monkeypatch, caplog):
@@ -319,6 +331,40 @@ def test_the_profiles_exceptions_reach_the_tailnet(monkeypatch):
     up = Upstream()
     answer = run(config_for(), up, f"CONNECT {TAILNET}:443 HTTP/1.1\r\n\r\n".encode())
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
+
+
+def test_the_public_port_takes_no_exceptions(monkeypatch, caplog):
+    """public_client's fetches (EGRESS_PROXY) come in on the public port: a page that links
+    or redirects to the tailnet's AnythingLLM or SearXNG gets nothing, as on the host,
+    even from research, whose own clients may reach both on the other port."""
+    caplog.set_level(logging.INFO, "egress")
+    for port in (3001, 8888):
+        fake_dns(monkeypatch, TAILNET_IP)
+        up = Upstream()
+        answer = run(
+            config_for(),
+            up,
+            f"CONNECT {TAILNET}:{port} HTTP/1.1\r\n\r\n".encode(),
+            public_only=True,
+        )
+        assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
+    assert "on the public port" in caplog.text
+    fake_dns(monkeypatch, TAILNET_IP)
+    up = Upstream()
+    answer = run(
+        config_for(),
+        up,
+        f"GET http://{TAILNET}:8888/search HTTP/1.1\r\n\r\n".encode(),
+        public_only=True,
+    )
+    assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
+    # A public host is as it is on the other port.
+    fake_dns(monkeypatch, PUBLIC)
+    up = Upstream(answer=b"tls")
+    answer = run(
+        config_for(), up, b"CONNECT example.com:443 HTTP/1.1\r\n\r\n", public_only=True
+    )
+    assert answer.endswith(b"tls") and up.connected == [(PUBLIC, 443)]
 
 
 def test_a_profile_without_public_access_gets_only_its_exceptions(monkeypatch):

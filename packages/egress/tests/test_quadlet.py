@@ -91,8 +91,11 @@ def test_a_service_container_goes_out_only_through_the_proxy(template, egress):
     ips = egress.ips()
     assert name in ips, f"{name} has no address in egress.toml"
     assert keys["Network"] == [f"{egress.network}:ip={ips[name]}"]
-    for key in ("HTTPS_PROXY", "HTTP_PROXY", "EGRESS_PROXY"):
+    for key in ("HTTPS_PROXY", "HTTP_PROXY"):
         assert env.get(key) == egress.url, (name, key)
+    # publicweb.public_client's fetches, of URLs from the web, take the public port, where
+    # none of the container's exceptions (the tailnet's AnythingLLM, SearXNG) apply.
+    assert env.get("EGRESS_PROXY") == egress.public_url, name
 
 
 @pytest.mark.parametrize("template", services(), ids=lambda t: t.name)

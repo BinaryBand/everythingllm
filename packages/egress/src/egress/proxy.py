@@ -2,14 +2,17 @@
 network with no route anywhere else. It runs in its own container, on egress-net and on
 podman's default network (host/quadlet/egress-proxy.container.in).
 
-Each container's HTTPS_PROXY, HTTP_PROXY and EGRESS_PROXY point here. A connection is
-judged by its source address, which names the container and so its profile
-(egress.config, egress.toml), and by the host and port it asks for:
+Each container's HTTPS_PROXY and HTTP_PROXY point here, at egress.toml's `port`, and its
+EGRESS_PROXY (publicweb.public_client's fetches of URLs from the web) at `public_port`. A
+connection is judged by its source address, which names the container and so its profile
+(egress.config, egress.toml), by the port it came in on, and by the host and port it asks
+for:
 
 - `CONNECT host:port` opens a tunnel (https); an absolute-form `GET http://host/...` is
   sent on, with its head rewritten to the origin form and `Connection: close`.
 - A host in the profile's `allow` exceptions is resolved and connected to whatever it is
-  (the tailnet's AnythingLLM and SearXNG, PyPI). Otherwise, for a `public` profile on port
+  (the tailnet's AnythingLLM and SearXNG, PyPI), but never on the public port. Otherwise,
+  for a `public` profile on port
   80 or 443, the host must resolve to public addresses only: publicweb.public_address,
   the same rule the services apply on the host. Either way the name is resolved once, here,
   and the connection goes to that address, so a name can't answer differently in between.
@@ -169,9 +172,15 @@ async def pipe(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
 
 
 class Proxy:
-    def __init__(self, config: Config, opener: Opener = asyncio.open_connection):
+    def __init__(
+        self,
+        config: Config,
+        opener: Opener = asyncio.open_connection,
+        public_only: bool = False,
+    ):
         self.config = config
         self.opener = opener  # tests connect elsewhere than the address checked
+        self.public_only = public_only  # the public port: no allow exceptions
         self.active = 0
 
     async def handle(
@@ -213,11 +222,12 @@ class Proxy:
         try:
             if profile is None:
                 raise Refused("not a known container on egress-net")
-            how = profile.judge(request.host, request.port)
+            how = profile.judge(request.host, request.port, self.public_only)
             if how is None:
                 raise Refused(
                     f"{request.where} isn't allowed for {profile.name}"
                     + (" (public hosts on ports 80 and 443)" if profile.public else "")
+                    + (" on the public port" if self.public_only else "")
                 )
             if how == "allow":
                 address = await asyncio.to_thread(resolve, request.host, request.port)
@@ -262,11 +272,13 @@ class Proxy:
             up_writer.close()
 
 
-async def serve(config: Config, host: str, port: int | None = None) -> asyncio.Server:
-    proxy = Proxy(config)
-    return await asyncio.start_server(
-        proxy.handle, host, config.port if port is None else port, limit=HEAD_LIMIT
-    )
+async def serve(
+    config: Config, host: str, port: int | None = None, public_only: bool = False
+) -> asyncio.Server:
+    proxy = Proxy(config, public_only=public_only)
+    if port is None:
+        port = config.public_port if public_only else config.port
+    return await asyncio.start_server(proxy.handle, host, port, limit=HEAD_LIMIT)
 
 
 def main() -> None:
@@ -276,14 +288,16 @@ def main() -> None:
 
     async def run() -> None:
         server = await serve(config, host)
+        public = await serve(config, host, public_only=True)
         log.info(
-            "egress-proxy on %s:%d for %s",
+            "egress-proxy on %s:%d (and :%d, public hosts only) for %s",
             host,
             config.port,
+            config.public_port,
             ", ".join(f"{c} ({ip})" for c, ip in config.ips().items()),
         )
-        async with server:
-            await server.serve_forever()
+        async with server, public:
+            await asyncio.gather(server.serve_forever(), public.serve_forever())
 
     asyncio.run(run())
 

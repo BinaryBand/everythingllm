@@ -12,6 +12,11 @@ name = "egress-net"
 subnet = "10.89.79.0/24"
 proxy = "10.89.79.2"  # egress-proxy's address, where it listens
 port = 3128
+# The port publicweb.public_client goes through (EGRESS_PROXY): the fetches of URLs that
+# came from the web or the agent. Only `public` counts there, never an `allow` exception,
+# so a page or a redirect can't reach the tailnet's AnythingLLM or SearXNG, or PyPI.
+# HTTPS_PROXY and HTTP_PROXY (the services' own clients, and uv) use `port`.
+public_port = 3129
 # Every profile may reach these: uv syncing a container's venv from PyPI on its first start.
 allow = ["pypi.org:443", "files.pythonhosted.org:443"]
 

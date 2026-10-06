@@ -560,7 +560,8 @@ there yet, which waits for its app's setup.
     RunInit=true                  # a PID 1 that passes on SIGTERM
     Timezone=local
     Network=egress-net:ip=<its address in egress.toml>
-    Environment=HTTPS_PROXY=http://10.89.79.2:3128   # and HTTP_PROXY, EGRESS_PROXY
+    Environment=HTTPS_PROXY=http://10.89.79.2:3128   # and HTTP_PROXY
+    Environment=EGRESS_PROXY=http://10.89.79.2:3129  # the public port, for public_client
     PublishPort=127.0.0.1:<port>:<port>              # one with an HTTP port
 
 Quadlet in podman 5.4 has no `Memory=` or `Umask=`; `PodmanArgs` carries them, and
@@ -592,7 +593,7 @@ to the host's loopback.
 `egress-net` is an internal podman network (`10.89.79.0/24`; `sandbox-net` is
 `10.89.77.0/24`), with no route and no DNS. `egress-proxy` runs in a container of the same
 image, on egress-net at `10.89.79.2` and on podman's default network for its own way out,
-and listens at `10.89.79.2:3128`. It takes `CONNECT host:port` (https) and absolute-form
+and listens at `10.89.79.2:3128`, and at `:3129`, its public port (below). It takes `CONNECT host:port` (https) and absolute-form
 plain-http requests, and judges each by the caller's address on egress-net and the host and
 port asked for:
 
@@ -620,8 +621,13 @@ port asked for:
 
 In a container, `EGRESS_PROXY` puts `publicweb.public_client` in proxy mode: every request
 goes to the proxy, which makes the address check, and the client checks only the scheme.
-Other clients (httpx, uv) follow `HTTPS_PROXY` and `HTTP_PROXY`. On the host none of these
-is set, and nothing changes.
+It names the proxy's public port, `:3129` (`public_port` in egress.toml), where only
+`public` counts and no `allow` exception does, PyPI's included: `public_client` fetches
+URLs that came from the web or the agent, and on the host it refuses the tailnet, so a page
+or a redirect mustn't reach AnythingLLM or SearXNG through the container's exceptions
+either. Other clients (the services' own httpx clients for AnythingLLM, SearXNG, DeepSeek
+and ntfy, and uv) follow `HTTPS_PROXY` and `HTTP_PROXY`, on `:3128`. On the host none of
+these is set, and nothing changes.
 
 **sites-runner** is one (`host/quadlet/sites-runner.container.in`, the `sites` app, journal
 `systemd-sites-runner`), with the article writer in the same process. Besides the repo and

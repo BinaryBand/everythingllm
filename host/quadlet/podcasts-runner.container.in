@@ -27,7 +27,7 @@ Timezone=local
 Network=egress-net:ip=10.89.79.13
 Environment=HTTPS_PROXY=http://10.89.79.2:3128
 Environment=HTTP_PROXY=http://10.89.79.2:3128
-Environment=EGRESS_PROXY=http://10.89.79.2:3128
+Environment=EGRESS_PROXY=http://10.89.79.2:3129
 # Everything at its host path. The repo, read-only.
 Volume=@REPO@:@REPO@:ro
 # Its venv and uv's cache, in one folder (one mount, so uv can hardlink from the cache).

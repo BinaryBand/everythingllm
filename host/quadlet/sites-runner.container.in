@@ -25,7 +25,7 @@ Timezone=local
 Network=egress-net:ip=10.89.79.12
 Environment=HTTPS_PROXY=http://10.89.79.2:3128
 Environment=HTTP_PROXY=http://10.89.79.2:3128
-Environment=EGRESS_PROXY=http://10.89.79.2:3128
+Environment=EGRESS_PROXY=http://10.89.79.2:3129
 # The article writer, on the host's 127.0.0.1:8448 as before (apps.toml's serve and
 # health); in here it listens on every address, since what's published arrives from the
 # container's own.

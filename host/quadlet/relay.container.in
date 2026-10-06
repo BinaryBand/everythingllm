@@ -35,7 +35,7 @@ Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/relay-ctr
 Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/relay-ctr/uv-cache
 Environment=HTTPS_PROXY=http://10.89.79.2:3128
 Environment=HTTP_PROXY=http://10.89.79.2:3128
-Environment=EGRESS_PROXY=http://10.89.79.2:3128
+Environment=EGRESS_PROXY=http://10.89.79.2:3129
 # The host's loopback isn't the container's: AnythingLLM by its tailnet name, which the
 # proxy lets the relay reach.
 Environment=ANYTHINGLLM_URL=https://@PUBLIC_HOST@:3001

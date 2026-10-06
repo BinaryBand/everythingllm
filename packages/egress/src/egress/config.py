@@ -3,7 +3,8 @@ rule each connection is judged by (`Profile.judge`).
 
 A profile is what one service may reach: public hosts on ports 80 and 443 (if `public`),
 plus its `allow` exceptions, plus the network's `allow` (PyPI) that every profile has. The
-proxy knows a connection's profile by its source address on egress-net (`ips`).
+proxy knows a connection's profile by its source address on egress-net (`ips`). On the
+network's `public_port`, which public_client's fetches use, only `public` counts.
 
 Config (environment):
   any @KEY@ in egress.toml's allow entries (PUBLIC_HOST, NTFY_HOST), else its [defaults]
@@ -47,11 +48,11 @@ class Profile:
     ]  # the network's and its own, placeholders filled in
     ips: Mapping[str, str]  # container -> address on the network
 
-    def judge(self, host: str, port: int) -> str | None:
+    def judge(self, host: str, port: int, public_only: bool = False) -> str | None:
         """How (host, port) may be reached: "allow" (an exception: connect to whatever it
         resolves to), "public" (only if every address it resolves to is public), or None
-        (refused)."""
-        if (normal_host(host), port) in self.allow:
+        (refused). `public_only` (the public port) leaves the exceptions out."""
+        if not public_only and (normal_host(host), port) in self.allow:
             return "allow"
         if self.public and port in PORTS:
             return "public"
@@ -65,11 +66,17 @@ class Config:
     proxy: str  # the proxy's address on it
     port: int
     profiles: dict[str, Profile]
+    public_port: int = 0  # where only `public` counts; none when 0
 
     @property
     def url(self) -> str:
-        """What a container's HTTPS_PROXY, HTTP_PROXY and EGRESS_PROXY say."""
+        """What a container's HTTPS_PROXY and HTTP_PROXY say."""
         return f"http://{self.proxy}:{self.port}"
+
+    @property
+    def public_url(self) -> str:
+        """What a container's EGRESS_PROXY says: the public port."""
+        return f"http://{self.proxy}:{self.public_port}"
 
     def ips(self) -> dict[str, str]:
         """Every container's address on the network: container -> address."""
@@ -124,7 +131,16 @@ def load(path: Path = FILE, env: Mapping[str, str] | None = None) -> Config:
             frozenset(host_port(e) for e in allow),
             dict(p.get("ips", {})),
         )
-    config = Config(net["name"], str(subnet), net["proxy"], int(net["port"]), profiles)
+    config = Config(
+        net["name"],
+        str(subnet),
+        net["proxy"],
+        int(net["port"]),
+        profiles,
+        int(net["public_port"]),
+    )
+    if config.public_port == config.port:
+        raise ValueError("egress.toml: port and public_port are the same")
     taken = [config.proxy, *config.ips().values()]
     if len(set(taken)) != len(taken):
         raise ValueError("egress.toml: an address is used twice")

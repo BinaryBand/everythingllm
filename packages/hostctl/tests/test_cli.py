@@ -66,7 +66,7 @@ def test_diff_checks_the_skills_first(ran):
 
 def test_an_app_setup_installs_the_units_first(ran):
     cli.main(["podcasts-setup"])
-    assert ran == ["units install", "appctl setup podcasts"]
+    assert ran == ["units install podcasts", "appctl setup podcasts"]
 
 
 def test_install_keeps_going_past_a_failed_health_check(ran, monkeypatch):

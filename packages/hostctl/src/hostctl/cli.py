@@ -236,7 +236,9 @@ def list_apps() -> None:
     "set an app up: its steps, tailnet paths, units (restarted; asks first while one of its runs is going, FORCE=1 doesn't) and timers",
 )
 def setup_app(app: str) -> None:
-    install_units()
+    # Only its own units: another app's host runner gives way to its container in its
+    # own setup (or `units <app>`), one at a time, not as a side effect of this one.
+    install_units(app)
     appctl.main(["setup", app])
 
 

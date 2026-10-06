@@ -121,7 +121,9 @@ for a run (the guard), its health checks, the steps its setup runs first, and wh
 `packages/apps` (standard library only, like `hostctl`);
 app code never does. `uv run hostctl apps` lists the apps; for each:
 
-- `uv run hostctl <app>-setup` runs its `before` steps (the sandbox's and the service
+- `uv run hostctl <app>-setup` installs its own units (`uv run hostctl units <app>`, so
+  another app's runner never moves into its container on the side), runs its `before`
+  steps (the sandbox's and the service
   containers' image builds, the agents and gateway key files, the relay's settings file),
   maps its tailnet paths, enables and (re)starts its units and (re)starts its containers,
   asking first while a guarded one has a run going (`FORCE=1` doesn't ask), and starts its

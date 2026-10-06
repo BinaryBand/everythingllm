@@ -1,0 +1,16 @@
+{# One story written in full by the article writer (sites.articles) from the pages that reported it. #}
+{% extends "base.html" %}
+{% block title %}{{ page.title }} · {{ config.title }}{% endblock title %}
+{% block content %}
+<article class="story">
+<p class="kicker">{{ page.extra.desk }} · <time datetime="{{ page.date }}">{{ page.date | date(format="%B %-d, %Y") }}</time></p>
+<h1>{{ page.title }}</h1>
+{{ page.content | safe }}
+<footer class="credit">
+{% set sources = page.extra.sources | default(value=[]) %}
+{% if sources %}<p>Based on reporting by {% for s in sources %}<a href="{{ s.url }}">{{ s.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+<p>Written by the news bot from those pages; it can get things wrong, so check them before relying on it.</p>
+</footer>
+</article>
+<nav class="pager"><a href="{{ config.base_url }}/editions/{{ page.extra.edition }}/">← Daily News, {{ page.date | date(format="%B %-d") }}</a><span></span></nav>
+{% endblock content %}

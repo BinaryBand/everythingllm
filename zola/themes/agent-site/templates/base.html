@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ config.title }}{% endblock title %}</title>
+{% if config.description %}<meta name="description" content="{{ config.description }}">{% endif %}
+<link rel="stylesheet" href="{{ get_url(path='agent-site.css') }}">
+{% for sheet in config.extra.stylesheets | default(value=[]) %}<link rel="stylesheet" href="{{ get_url(path=sheet) }}">
+{% endfor %}
+{% if config.generate_feeds %}<link rel="alternate" type="application/atom+xml" title="{{ config.title }}" href="{{ get_url(path='atom.xml', trailing_slash=false) }}">{% endif %}
+{% block head %}{% endblock head %}
+</head>
+<body>
+<header class="site">
+<a class="brand" href="{{ config.base_url }}/">{{ config.title }}</a>
+<nav>
+{% for link in config.extra.nav | default(value=[]) %}<a href="{{ get_url(path=link.path) }}">{{ link.name }}</a>
+{% endfor %}
+{% if config.generate_feeds %}<a href="{{ get_url(path='atom.xml', trailing_slash=false) }}">Feed</a>{% endif %}
+</nav>
+</header>
+<main>
+{% block content %}{% endblock content %}
+</main>
+<footer class="site">{% block footer %}<p>{{ config.extra.footer | default(value="") }}</p>{% endblock footer %}</footer>
+</body>
+</html>

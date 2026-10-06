@@ -1,0 +1,10 @@
+[project]
+name = "linkcard"
+version = "0.1.0"
+description = "Link cards for the chat: a picture of a published page's title and site, saved on the pages site, that the agent shows as a big clickable link"
+requires-python = ">=3.12"
+dependencies = ["pillow>=11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

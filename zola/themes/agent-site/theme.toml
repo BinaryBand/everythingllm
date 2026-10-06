@@ -1,0 +1,10 @@
+name = "agent-site"
+description = "Shared theme for the agent-fed sites: no JavaScript or inline styles, so it works under the pages site's CSP"
+license = "MIT"
+min_version = "0.23.0"
+
+[extra]
+# Extra stylesheets a site adds after the theme's, as paths under its static/.
+stylesheets = []
+# Links shown in the header, as [{ name, path }] with paths like "@/editions/_index.md".
+nav = []

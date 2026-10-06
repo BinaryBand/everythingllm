@@ -1,0 +1,26 @@
+[project]
+name = "podcasts"
+version = "0.1.0"
+description = "MCP server that downloads podcast episodes, cuts their ads, and serves them as a private feed on the pages site"
+requires-python = ">=3.12"
+# Only what the MCP server in the container imports; the host's units add `--extra host`.
+dependencies = ["mcp>=2.2,<3", "pydantic>=2", "hostrpc"]
+
+[project.optional-dependencies]
+# podcasts.avio, podcasts.whisper and podcasts.speech bring PyAV, Whisper and Kokoro; podcasts.cli typer.
+host = ["httpx>=0.27", "publicweb", "sites", "llm", "splice", "numpy>=2", "av>=14", "typer>=0.12",
+        "faster-whisper>=1.1", "huggingface_hub>=0.30", "kokoro-onnx>=0.4"]
+
+[project.scripts]
+podcasts-mcp = "podcasts.server:mcp.run"
+podcasts-runner = "podcasts.tools:main"
+podcasts-sync = "podcasts.sync:main"
+podcasts-transcribe = "podcasts.transcripts:main"
+news-audio = "podcasts.news_audio:main"
+spot = "podcasts.cli:spot_main"
+transcribe = "podcasts.cli:transcribe_main"
+speak = "podcasts.cli:speak_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

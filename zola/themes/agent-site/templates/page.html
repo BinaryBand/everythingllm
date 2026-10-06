@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} · {{ config.title }}{% endblock title %}
+{% block content %}
+<article>
+<h1>{{ page.title }}</h1>
+{% if page.date %}<p class="meta"><time datetime="{{ page.date }}">{{ page.date | date(format="%B %-d, %Y") }}</time></p>{% endif %}
+{{ page.content | safe }}
+</article>
+{% if page.lower or page.higher %}
+<nav class="pager">
+{# With sort_by = "date", higher is the older page and lower the newer one. #}
+{% if page.higher %}<a href="{{ page.higher.permalink }}">← {{ page.higher.title }}</a>{% else %}<span></span>{% endif %}
+{% if page.lower %}<a href="{{ page.lower.permalink }}">{{ page.lower.title }} →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock content %}

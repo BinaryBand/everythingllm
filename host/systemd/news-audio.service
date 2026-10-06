@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily News read aloud: add the newest edition to the private daily-news podcast
+After=network.target
+
+[Service]
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/podcasts-venv
+# The edition comes from the news site: the repo's sources, storage's entries, the host's zola.
+Type=oneshot
+# Does nothing if the newest edition is already read aloud, so it can run twice a day.
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package podcasts --extra host news-audio
+Nice=19

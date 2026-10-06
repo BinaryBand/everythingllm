@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ section.title | default(value=config.title) }}</h1>
+{{ section.content | safe }}
+{% for path in section.subsections %}{% set sub = get_section(path=path) %}
+<section>
+<h2><a href="{{ sub.permalink }}">{{ sub.title }}</a></h2>
+{{<EntryList pages={sub.pages[0:10]} />}}
+</section>
+{% endfor %}
+{% endblock content %}

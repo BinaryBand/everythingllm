@@ -1,0 +1,86 @@
+{
+  "active": true,
+  "hubId": "deep-research",
+  "name": "Deep Research",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Run an in-depth, multi-source web research project on a question and publish a long cited report to the research site. Use only when the user asks for deep or thorough research, a report, a literature or market review, or a comparison that needs many sources; it takes several minutes. For quick facts or current news, use web search instead.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "setup_args": {
+    "PLANNER_MODEL": {
+      "type": "string",
+      "required": false,
+      "input": {
+        "type": "text",
+        "default": "glm-5.3",
+        "placeholder": "glm-5.3",
+        "hint": "Model that plans, checks for gaps, writes and fact-checks: glm-* runs on Z.AI, anything else on DeepSeek."
+      }
+    },
+    "WORKER_MODEL": {
+      "type": "string",
+      "required": false,
+      "input": {
+        "type": "text",
+        "default": "deepseek-flash",
+        "placeholder": "deepseek-flash",
+        "hint": "Model for the parallel search-and-read workers, run with thinking off (so a DeepSeek model: glm-5.3 can't turn thinking off)."
+      }
+    },
+    "PLANNER_FALLBACK_MODEL": {
+      "type": "string",
+      "required": false,
+      "input": {
+        "type": "text",
+        "default": "deepseek-flash",
+        "placeholder": "deepseek-flash",
+        "hint": "DeepSeek model the planner switches to for the rest of a run when Z.AI says the GLM plan's usage is spent (429 or 1113); 'off' lets the run go on without it."
+      }
+    },
+    "SITE": {
+      "type": "string",
+      "required": false,
+      "input": {
+        "type": "text",
+        "default": "research",
+        "placeholder": "research",
+        "hint": "Zola site the reports are published to (section 'reports')."
+      }
+    },
+    "EMBED_IN_WORKSPACE": {
+      "type": "string",
+      "required": false,
+      "input": {
+        "type": "text",
+        "default": "yes",
+        "placeholder": "yes",
+        "hint": "Also add each report to the workspace's documents so later chats can search it; 'no' turns this off. Reports are always saved to the agent's files (research/)."
+      }
+    }
+  },
+  "examples": [
+    {
+      "prompt": "Do deep research on how heat pumps perform in Nordic winters",
+      "call": "{\"question\": \"How do air-source heat pumps perform in Nordic winters: efficiency at low temperatures, real-world field data, and costs compared with alternatives?\", \"depth\": \"standard\"}"
+    },
+    {
+      "prompt": "Write me a quick research report comparing Zola, Hugo and Eleventy",
+      "call": "{\"question\": \"How do the static site generators Zola, Hugo and Eleventy compare in features, performance, templating and ecosystem?\", \"depth\": \"quick\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "question": {
+        "description": "The full research question, self-contained and specific: include the scope, time frame and what to compare, since the researchers can't see the chat.",
+        "type": "string"
+      },
+      "depth": {
+        "description": "How deep to go: \"quick\" (a few minutes), \"standard\" (default, about 5-10 minutes) or \"thorough\" (10-20 minutes, only when the user asks for thorough or exhaustive research). Use quick only when the user asks for something fast.",
+        "type": "string"
+      }
+    }
+  }
+}

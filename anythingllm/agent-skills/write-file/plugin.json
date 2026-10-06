@@ -1,0 +1,38 @@
+{
+  "active": true,
+  "hubId": "write-file",
+  "name": "Write File",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Write a text file into the sandbox (e.g. data, a module or a page for run-code to use or publish), or delete a file or folder there. Paths are sandbox paths: /work/... (this chat's scratch) or /project/... (the workspace's, kept); a relative path is under /work. Deleting /work or /project empties it. Deleting works even when the sandbox is over its size limit.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "Save these figures as a CSV we can use later",
+      "call": "{\"path\": \"/project/figures.csv\", \"content\": \"year,value\\n2024,10\\n2025,12\\n\"}"
+    },
+    {
+      "prompt": "Clear out the scratch files",
+      "call": "{\"path\": \"/work\", \"delete\": true}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "path": {
+        "description": "The file's path in the sandbox, e.g. '/project/data/in.csv'.",
+        "type": "string"
+      },
+      "content": {
+        "description": "The whole file (at most 1 MB). Leave out when deleting.",
+        "type": "string"
+      },
+      "delete": {
+        "description": "Set true to delete the file or folder at path instead of writing it.",
+        "type": "boolean"
+      }
+    }
+  }
+}

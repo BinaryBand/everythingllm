@@ -1,0 +1,61 @@
+/* agent-site theme. The pages site's CSP blocks inline styles and scripts, so all
+   styling lives in files like this one. Sites add their own sheets via
+   config.extra.stylesheets. */
+:root {
+  color-scheme: light dark;
+  --fg: #16181c;
+  --muted: #5d636e;
+  --rule: #d9dce1;
+  --link: #0b5cad;
+  --bg: #fbfbf9;
+  --serif: Georgia, "Times New Roman", serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e7e8ea;
+    --muted: #9aa0aa;
+    --rule: #33373e;
+    --link: #79b6ff;
+    --bg: #131417;
+  }
+}
+body {
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 1.25rem 1rem 3rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: 1rem/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: var(--link); }
+h1 { font: 700 2rem/1.15 var(--serif); margin: 1.5rem 0 .5rem; }
+h2 { font: 600 1.3rem/1.25 var(--serif); margin: 2rem 0 .5rem; }
+header.site {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: .75rem;
+  border-bottom: 1px solid var(--rule);
+}
+header.site .brand { font: 700 1.1rem var(--serif); color: var(--fg); text-decoration: none; }
+header.site nav { display: flex; gap: 1rem; font-size: .9rem; }
+.meta, time { color: var(--muted); font-size: .9rem; }
+ul.entries { list-style: none; padding: 0; }
+ul.entries li { padding: .45rem 0; border-bottom: 1px solid var(--rule); }
+ul.entries time { margin-left: .5rem; }
+nav.pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+  font-size: .9rem;
+}
+header.masthead { margin: 1.5rem 0 1rem; padding-bottom: 1rem; border-bottom: 3px double var(--rule); }
+header.masthead h1 { margin: .2rem 0; }
+header.masthead p { margin: 0; color: var(--muted); font-size: .9rem; }
+section.earlier { margin-top: 3rem; }
+footer.site { margin-top: 3rem; color: var(--muted); font-size: .8rem; }

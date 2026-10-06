@@ -1,0 +1,39 @@
+{# Components are global in Tera 2: any template can use {{<EntryList pages={...} />}}. #}
+
+{% component EntryList(pages) %}
+<ul class="entries">
+{% for p in pages %}<li><a href="{{ p.permalink }}">{{ p.title }}</a>{% if p.date %} <time datetime="{{ p.date }}">{{ p.date | date(format="%B %-d, %Y") }}</time>{% endif %}</li>
+{% endfor %}
+</ul>
+{% endcomponent EntryList %}
+
+{# Pages grouped by year, newest first: the archive layout. #}
+{% component Archive(pages) %}
+{% for year, year_pages in pages | group_by(attribute="year") %}
+<h2>{{ year }}</h2>
+<ul class="entries">
+{% for p in year_pages %}<li><a href="{{ p.permalink }}">{{ p.title }}</a> <time datetime="{{ p.date }}">{{ p.date | date(format="%B %-d") }}</time></li>
+{% endfor %}
+</ul>
+{% endfor %}
+{% endcomponent Archive %}
+
+{# A dated page's links to the one before and after it, and to its section's archive. #}
+{% component Pager(page, archive) %}
+<nav class="pager">
+{% if page.higher %}<a href="{{ page.higher.permalink }}">← {{ page.higher.date | date(format="%B %-d") }}</a>{% else %}<span></span>{% endif %}
+<a href="{{ get_url(path=archive) }}">Archive</a>
+{% if page.lower %}<a href="{{ page.lower.permalink }}">{{ page.lower.date | date(format="%B %-d") }} →</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endcomponent Pager %}
+
+{# On a home page that shows the newest entry: the next few, and the archive. #}
+{% component Earlier(section, title) %}
+{% if section.pages | length > 1 %}
+<section class="earlier">
+<h2>{{ title }}</h2>
+{{<EntryList pages={section.pages[1:8]} />}}
+<p><a href="{{ section.permalink }}">Full archive</a></p>
+</section>
+{% endif %}
+{% endcomponent Earlier %}

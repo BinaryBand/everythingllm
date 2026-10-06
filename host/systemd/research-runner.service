@@ -1,0 +1,18 @@
+[Unit]
+Description=Deep research for the AnythingLLM skill (socket in storage/research/)
+After=network.target
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Service]
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/research-venv
+# The sites package's storage paths follow ANYTHINGLLM_STORAGE; the repo and zola are the host's.
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package research research-runner
+# A run is mostly waiting on the models; what CPU it takes (page parsing) can give way.
+Nice=10
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,22 @@
+{# The stories of one edition; used by the home page and by each archived edition.
+   Headlines go to the article writer (sites.articles), which writes the story in full
+   on the first click and then redirects to it under articles/. #}
+{% component Stories(page, writer) %}
+{% for s in page.extra.sections | default(value=[]) %}{% set desk = loop.index %}
+<section class="desk">
+<h2>{{ s.name }}</h2>
+{% if s.stories | default(value=[]) %}
+<ol>
+{% for t in s.stories %}<li>
+<h3><a href="{{ writer }}/{{ page.slug }}/{{ desk }}/{{ loop.index }}">{{ t.headline }}</a></h3>
+{% if t.summary %}<p>{{ t.summary }}</p>{% endif %}
+{% if t.source %}<p class="source">{{ t.source }}</p>{% endif %}
+</li>
+{% endfor %}
+</ol>
+{% else %}
+<p class="none">No items retrieved today.</p>
+{% endif %}
+</section>
+{% endfor %}
+{% endcomponent Stories %}

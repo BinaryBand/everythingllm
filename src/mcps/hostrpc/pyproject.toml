@@ -1,0 +1,10 @@
+[project]
+name = "hostrpc"
+version = "0.1.0"
+description = "How AnythingLLM's MCP servers and skills talk to the services on the host: one line of JSON each way over a Unix socket in storage"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

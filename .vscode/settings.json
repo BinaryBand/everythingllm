@@ -1,0 +1,75 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": [
+    "src/mcps"
+  ],
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "files.exclude": {
+    "**/*.class": true,
+    "**/*.egg-info": true,
+    "**/*.iml": true,
+    "**/*.ipr": true,
+    "**/*.iws": true,
+    "**/*.swp": true,
+    "**/.DS_Store": true,
+    "**/.cache": true,
+    "**/.coverage": true,
+    "**/.dart_tool": true,
+    "**/.eslintcache": true,
+    "**/.flutter-plugins": true,
+    "**/.flutter-plugins-dependencies": true,
+    "**/.gradle": true,
+    "**/.grimp_cache": true,
+    "**/.history": true,
+    "**/.hypothesis": true,
+    "**/.idea": true,
+    "**/.import_linter_cache": true,
+    "**/.ipynb_checkpoints": true,
+    "**/.mypy_cache": true,
+    "**/.next": true,
+    "**/.nox": true,
+    "**/.parcel-cache": true,
+    "**/.pub": true,
+    "**/.pub-cache": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/.swiftpm": true,
+    "**/.tox": true,
+    "**/.turbo": true,
+    "**/Thumbs.db": true,
+    "**/__pycache__": true,
+    "**/build": true,
+    "**/coverage": true,
+    "**/coverage.xml": true,
+    "**/dist": true,
+    "**/ephemeral": true,
+    "**/htmlcov": true,
+    "**/migrate_working_dir": true,
+    "**/node_modules": true,
+    "**/target": true,
+    ".hypothesis": true,
+    ".import_linter_cache": true
+  },
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features",
+    "editor.formatOnSave": true
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features",
+    "editor.formatOnSave": true
+  },
+  "[markdown]": {
+    "editor.unicodeHighlight.ambiguousCharacters": true,
+    "editor.unicodeHighlight.invisibleCharacters": true,
+    "editor.defaultFormatter": "DavidAnson.vscode-markdownlint",
+    "editor.formatOnSave": true
+  }
+}

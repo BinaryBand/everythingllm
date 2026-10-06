@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync podcasts every 6 hours
+
+[Timer]
+# Every feed: the instance chat starts for refresh_podcasts with no slug.
+Unit=podcasts-sync@_all.service
+OnCalendar=00/6:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

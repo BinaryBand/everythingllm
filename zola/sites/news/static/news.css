@@ -1,0 +1,31 @@
+/* Daily News, on top of the agent-site theme. */
+header.masthead p { letter-spacing: .04em; }
+header.masthead h1 { font-size: 2.4rem; }
+section.desk h2 {
+  margin: 2rem 0 .75rem;
+  padding-bottom: .25rem;
+  border-bottom: 1px solid var(--rule);
+  font: 600 .85rem system-ui, sans-serif;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+section.desk ol { padding-left: 1.4rem; }
+section.desk li { margin-bottom: 1.1rem; }
+section.desk li::marker { color: var(--muted); }
+section.desk h3 { margin: 0 0 .2rem; font: 600 1.1rem/1.3 var(--serif); }
+section.desk h3 a { color: inherit; text-decoration-color: var(--rule); }
+section.desk h3 a:hover { color: var(--link); }
+section.desk p { margin: 0; }
+section.desk .source { font-size: .85rem; color: var(--muted); }
+section.desk .none { color: var(--muted); }
+article.story .kicker {
+  margin: 1.5rem 0 0;
+  font: 600 .8rem system-ui, sans-serif;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+article.story h1 { margin: .3rem 0 1.2rem; }
+article.story footer.credit { margin-top: 2rem; padding-top: .75rem; border-top: 1px solid var(--rule); font-size: .85rem; color: var(--muted); }
+article.story footer.credit p { margin: .3rem 0; }

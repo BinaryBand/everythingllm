@@ -1,0 +1,16 @@
+[Unit]
+Description=Serves the podcasts: feeds, and episodes put together from their originals (tailnet via tailscale serve :8445/podcasts)
+After=network.target
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Service]
+# splice-web finds the podcasts' folders under ANYTHINGLLM_STORAGE.
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/splice-venv
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package splice splice-web --port 8449
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

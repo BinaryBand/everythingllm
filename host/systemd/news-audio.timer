@@ -1,0 +1,10 @@
+[Unit]
+Description=Read the Daily News aloud after the edition job (18:00 UTC), and again later in case it ran late
+
+[Timer]
+OnCalendar=*-*-* 18:45:00 UTC
+OnCalendar=*-*-* 20:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

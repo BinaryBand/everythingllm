@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "charliermarsh.ruff",
+    "astral-sh.ty",
+    "DavidAnson.vscode-markdownlint",
+    "emeraldwalk.RunOnSave"
+  ]
+}

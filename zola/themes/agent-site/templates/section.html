@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ section.title }} · {{ config.title }}{% endblock title %}
+{% block content %}
+<h1>{{ section.title }}</h1>
+{{ section.content | safe }}
+{% if section.pages %}{{<Archive pages={section.pages} />}}{% else %}<p>Nothing here yet.</p>{% endif %}
+{% endblock content %}

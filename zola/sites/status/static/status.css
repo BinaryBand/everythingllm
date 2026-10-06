@@ -1,0 +1,30 @@
+/* System Status, on top of the agent-site theme. */
+:root { --ok: #1f7a3a; --warn: #9a5b00; --fail: #b3261e; --tint: rgba(0, 0, 0, .04); }
+@media (prefers-color-scheme: dark) {
+  :root { --ok: #6fd08c; --warn: #f0b45a; --fail: #ff8a80; --tint: rgba(255, 255, 255, .05); }
+}
+header.masthead h1 { font-size: 2.2rem; }
+p.overall { display: inline-block; margin: 0 0 .5rem; padding: .25rem .7rem; border-radius: 999px;
+  font: 600 .85rem system-ui, sans-serif; letter-spacing: .04em; background: var(--tint); }
+p.overall.ok { color: var(--ok); }
+p.overall.warn { color: var(--warn); }
+p.overall.fail { color: var(--fail); }
+p.summary { margin: .25rem 0 1.5rem; }
+section.findings h2 { margin: 2rem 0 .75rem; padding-bottom: .25rem; border-bottom: 1px solid var(--rule);
+  font: 600 .85rem system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+section.findings.fail h2 { color: var(--fail); }
+section.findings.warn h2 { color: var(--warn); }
+section.findings.info h2 { color: var(--muted); }
+section.findings ul { list-style: none; padding: 0; }
+section.findings li { margin-bottom: 1.1rem; padding-left: .8rem; border-left: 3px solid var(--rule); }
+section.findings.fail li { border-left-color: var(--fail); }
+section.findings.warn li { border-left-color: var(--warn); }
+section.findings h3 { margin: 0 0 .2rem; font: 600 1.05rem/1.3 var(--serif); overflow-wrap: anywhere; }
+section.findings .area { font: 600 .75rem system-ui, sans-serif; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); margin-right: .3rem; }
+section.findings .severity { font: 600 .75rem system-ui, sans-serif; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--fail); margin-right: .3rem; }
+section.findings p { margin: 0 0 .2rem; overflow-wrap: anywhere; }
+section.findings .suggestion { color: var(--muted); }
+section.findings .suggestion::before { content: "Suggestion: "; font-weight: 600; }
+p.none { color: var(--muted); }

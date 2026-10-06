@@ -1,0 +1,14 @@
+[Unit]
+Description=Code sandbox and page publisher for AnythingLLM's run-code, write-file and publish skills (socket in storage/sandbox/)
+After=sandbox-proxy.service
+Wants=sandbox-proxy.service
+
+[Service]
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/sandbox-venv
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package sandbox sandbox-runner
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

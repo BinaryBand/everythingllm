@@ -1,0 +1,26 @@
+# The pages site (static_agent, quadlet/static_agent.container.in), on 127.0.0.1:8445.
+# script-src 'none' is load-bearing: the agent publishes pages from its sandbox.
+# default-src 'self' keeps every fetch on this host, so CSS can't send anything elsewhere.
+# form-action and base-uri 'none': default-src doesn't cover them, and nothing here needs a
+# form, so markup the agent writes can't post anywhere or repoint the page's relative links.
+{
+  auto_https off
+  admin off
+}
+:8445 {
+  root * /srv/site
+  # A directory the sandbox published as a page (sandbox.runner, PAGE_MARKER) may carry its
+  # own CSS, in <style> and style="". Everything else keeps inline styles blocked: the Zola
+  # sites, the podcasts, and anything new nobody marked.
+  @page file /{path.0}/.page
+  # In a route, so the page header is set after the default (outside one, Caddy would run
+  # the unmatched header last and undo it).
+  route {
+    header Content-Security-Policy "default-src 'self'; script-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+    header @page Content-Security-Policy "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+  }
+  header X-Content-Type-Options nosniff
+  file_server {
+    hide .page .zola-site
+  }
+}

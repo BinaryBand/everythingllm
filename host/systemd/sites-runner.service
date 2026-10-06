@@ -1,0 +1,16 @@
+[Unit]
+Description=Sites runner: does what the sites MCP server's tools ask, zola builds included (socket in storage/sites/), and writes Daily News articles (tailnet via tailscale serve :8445/news/write)
+After=network.target
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Service]
+# The article writer's model key comes from AnythingLLM's .env in storage (sites.articles_web).
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/sites-venv
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package sites --extra host sites-runner
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

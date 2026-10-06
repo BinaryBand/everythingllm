@@ -1,0 +1,15 @@
+[Unit]
+Description=Podcast sync of %i: download new episodes and cut their ads
+After=network.target
+
+[Service]
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/podcasts-venv
+Type=oneshot
+# %i is a feed's slug, or _all for every feed (what the timer starts); podcasts-runner
+# starts either for chat. Takes
+# storage/podcasts/sync.lock itself and exits at once if a sync is already running.
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package podcasts --extra host podcasts-sync %i
+# list_podcasts and the runner read the end of it; `make podcasts-logs` follows it.
+StandardOutput=append:@ANYTHINGLLM_STORAGE@/podcasts/sync.log
+StandardError=append:@ANYTHINGLLM_STORAGE@/podcasts/sync.log

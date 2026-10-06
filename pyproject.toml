@@ -1,0 +1,33 @@
+# uv workspace for the MCP servers and host services: one member per src/mcps/ subdirectory, all
+# locked in uv.lock. `uv sync --all-packages` puts the dev venv at .venv, where editors look.
+[tool.uv.workspace]
+members = ["src/mcps/*"]
+exclude = ["src/mcps/.*", "src/mcps/__pycache__"]
+
+# For every member: a member that others depend on is found here, in the workspace, and
+# pytest comes with the dev group (splice adds its test-only dependencies to it).
+[tool.uv.sources]
+hostrpc = { workspace = true }
+linkcard = { workspace = true }
+llm = { workspace = true }
+publicweb = { workspace = true }
+sandbox = { workspace = true }
+sites = { workspace = true }
+splice = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.16.10",
+    "ty>=0.0.84",
+]
+
+# Makes the repo root pytest's rootdir however tests are picked (`pytest src/mcps/sites`, a
+# single file), so src/mcps/conftest.py, which keeps host.env out of the tests, always loads.
+[tool.pytest.ini_options]
+testpaths = ["src/mcps"]
+
+# An MCP server's tools are signatures whose bodies hostrpc.forwarder supplies.
+[[tool.ty.overrides]]
+include = ["src/mcps/*/src/*/server.py"]
+rules = { empty-body = "ignore" }

@@ -1,0 +1,20 @@
+# Overridden on every build with https://<PUBLIC_HOST>:8445/research from host.env (see sites.build).
+base_url = "http://127.0.0.1:8445/research"
+title = "Research"
+description = "In-depth research reports, written from cited web sources by the deep-research skill."
+theme = "agent-site"
+compile_sass = false
+build_search_index = false
+generate_feeds = true
+feed_filenames = ["atom.xml"]
+
+[extra]
+nav = [{ name = "Reports", path = "@/reports/_index.md" }]
+footer = "Researched and written automatically; every claim cites the page it came from."
+
+# Shown to the agent by the sites MCP server's list_sites.
+agent_help = """
+Reports are written by the deep-research skill; don't write entries here by hand.
+Section "reports": slug from the title (no date prefix; Zola would strip it), the report as Markdown body, and in extra:
+{"question": "...", "depth": "quick|standard|thorough", "models": {...}, "stats": {...}}.
+"""

@@ -1,0 +1,22 @@
+# The image every sandbox run starts from. The root filesystem is mounted read-only; /work
+# is the thread's scratch folder and /project the workspace's, so pip installs land in
+# /project/.local and last as long as the workspace.
+# The only way out is sandbox-proxy at 10.89.77.2 (host/systemd/sandbox-proxy.service).
+FROM docker.io/library/python:3.13-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends bash coreutils curl git procps \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir numpy pandas matplotlib requests
+
+ENV HOME=/work \
+    PYTHONUSERBASE=/project/.local \
+    PIP_USER=1 \
+    PIP_CACHE_DIR=/tmp/pip \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    MPLCONFIGDIR=/tmp/matplotlib \
+    MPLBACKEND=Agg \
+    http_proxy=http://10.89.77.2:8888 \
+    https_proxy=http://10.89.77.2:8888 \
+    PATH=/project/.local/bin:/usr/local/bin:/usr/bin:/bin
+WORKDIR /work

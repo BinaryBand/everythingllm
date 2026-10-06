@@ -1,0 +1,6 @@
+{% extends "page.html" %}
+{% block content %}
+{{<Masthead page={page} link="" />}}
+{{<Report page={page} />}}
+{{<Pager page={page} archive="@/reports/_index.md" />}}
+{% endblock content %}

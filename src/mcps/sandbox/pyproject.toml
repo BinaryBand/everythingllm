@@ -1,0 +1,13 @@
+[project]
+name = "sandbox"
+version = "0.1.0"
+description = "Host daemon that runs the agent's code in podman sandboxes and publishes what it makes to the pages site"
+requires-python = ">=3.12"
+dependencies = ["hostrpc", "linkcard"]
+
+[project.scripts]
+sandbox-runner = "sandbox.runner:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

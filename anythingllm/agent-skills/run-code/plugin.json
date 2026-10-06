@@ -1,0 +1,39 @@
+{
+  "active": true,
+  "hubId": "run-code",
+  "name": "Run Code",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Run Python or bash in an isolated Linux sandbox and return its output: for arithmetic beyond the trivial, data, files, charts, or anything you'd otherwise estimate. The working folder /work is this chat's scratch (kept for a week after the chat's last run); /project is the workspace's folder, shared by all its chats and kept, so move what should last there (mv /work/x /project/). pip installs go to /project and last too. /pages holds this workspace's published pages, read-only. Send a whole script per call. numpy, pandas, matplotlib and requests are installed; PyPI is reachable but nothing else on the network. Use bash to list, read, move and delete files.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "What's 17% compound interest on 2,400 over 9 years, year by year?",
+      "call": "{\"language\": \"python\", \"code\": \"p = 2400\\nfor y in range(1, 10):\\n    p *= 1.17\\n    print(y, round(p, 2))\"}"
+    },
+    {
+      "prompt": "What files do we have for this project?",
+      "call": "{\"language\": \"bash\", \"code\": \"ls -la /project /work /pages\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "language": {
+        "description": "\"python\" (Python 3.13) or \"bash\" (Debian with coreutils, git and curl).",
+        "type": "string",
+        "enum": ["python", "bash"]
+      },
+      "code": {
+        "description": "A complete script. It runs in /work.",
+        "type": "string"
+      },
+      "timeout": {
+        "description": "Seconds before the run is killed: 60 if not given, at most 300.",
+        "type": "integer"
+      }
+    }
+  }
+}

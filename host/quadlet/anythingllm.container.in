@@ -1,0 +1,21 @@
+[Unit]
+Description=AnythingLLM document chat server
+
+[Container]
+# Pinned (the multi-arch index): the log filter depends on AnythingLLM's internals.
+# To upgrade, change the digest, then `make units`, `make deploy` and `make health`.
+Image=docker.io/mintplexlabs/anythingllm@sha256:480b0f105efd6a4c8a4cde82713fe81348d75c979a24a38e9ed8e236bed0fd17
+UserNS=keep-id:uid=1000,gid=1000
+AddCapability=SYS_ADMIN
+Volume=@ANYTHINGLLM_STORAGE@:/app/server/storage:Z
+Volume=@ANYTHINGLLM_STORAGE@/.env:/app/server/.env:Z
+# The repo, read-only: MCP servers, the log filter, site sources and host.env.
+Volume=@REPO@:/mcp:ro
+Environment=STORAGE_DIR=/app/server/storage
+PublishPort=127.0.0.1:3001:3001
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

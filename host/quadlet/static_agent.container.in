@@ -1,0 +1,15 @@
+[Unit]
+Description=Read-only static site for agent-published pages
+
+[Container]
+Image=docker.io/library/caddy:2-alpine
+Volume=@ANYTHINGLLM_STORAGE@/site:/srv/site:ro,z
+# Its CSP is what keeps the pages the agent publishes from running scripts.
+Volume=@REPO@/host/caddy/pages.Caddyfile:/etc/caddy/Caddyfile:ro,z
+PublishPort=127.0.0.1:8445:8445
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

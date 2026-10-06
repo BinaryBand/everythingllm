@@ -1,0 +1,7 @@
+{
+  "name": "System Audit",
+  "schedule": "0 16 * * *",
+  "tools": [
+    "@@mcp_audit"
+  ]
+}

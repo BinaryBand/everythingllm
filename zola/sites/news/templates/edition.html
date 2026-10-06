@@ -1,0 +1,10 @@
+{% extends "page.html" %}
+{% block content %}
+<header class="masthead">
+<p>US · Sweden · World</p>
+<h1>Daily News</h1>
+<p><time datetime="{{ page.date }}">{{ page.date | date(format="%A, %B %-d, %Y") }}</time></p>
+</header>
+{{<Stories page={page} writer={config.extra.article_writer} />}}
+{{<Pager page={page} archive="@/editions/_index.md" />}}
+{% endblock content %}

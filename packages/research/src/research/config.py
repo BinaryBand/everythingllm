@@ -34,7 +34,6 @@ LIMITS = {"llm": 8, "fetch": 4}
 SEARCH_GAP = 2.0  # seconds
 
 PAGE_CHARS = 12_000  # page text handed to the extraction call
-CHECK_CHARS = 400_000  # page text a quote is looked for in (the agents engine)
 NOTES_PER_WORKER = 30
 FINDINGS_PER_PAGE = 8
 RESULTS_PER_SEARCH = 8

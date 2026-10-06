@@ -150,27 +150,3 @@ Reply with JSON only:
         ),
         user(f"Notes by source:\n\n{findings}\n\n--- report ---\n{report}"),
     ]
-
-
-def agent_worker(
-    question: str, goal: str, queries: list[str], today: str, pages: int, max: int
-) -> str:
-    """A worker's instructions in the agents engine (research.recipe): AnythingLLM's agent
-    searches and reads with its own web tools, then reports findings the recipe checks."""
-    start = (
-        "Searches to start with: " + "; ".join(f'"{q}"' for q in queries) + "\n"
-        if queries
-        else ""
-    )
-    return f"""You are researching one part of a larger research question. Today is {today}.
-Overall question: {question}
-Your part: {goal}
-{start}
-Search the web with your web-browsing tool and read pages with your web-scraping tool. Prefer primary and authoritative sources (official sites, papers, filings, reputable outlets) and recent ones when timing matters. Read the pages; don't rely on search snippets. Read at least 3 pages from different sites and at most {pages}. Look for disagreement between sources.
-
-End your reply with your findings as one JSON object in a ```json block, with nothing after it:
-{{"summary": "two or three sentences on what you found", "findings": [{{"claim": "...", "quote": "...", "url": "..."}}]}}
-- claim: one fact in your own words, with its numbers, dates, names and who said what.
-- quote: one or two sentences copied exactly, character for character, from the page at url, that support the claim. Every quote is checked against its page, and a finding whose quote isn't on its page is thrown away.
-- url: the page the quote is from, exactly as you read it.
-Give at most {max} findings, and an empty list if you found nothing relevant."""

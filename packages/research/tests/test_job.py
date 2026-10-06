@@ -8,8 +8,6 @@ from research.llm import LLM
 from sites.build import Builder
 from sites.store import Entry
 from test_pipeline import PAGES, Scripted
-from test_recipe import PAGES as CHECKED_PAGES
-from test_recipe import FakeRunner
 
 
 def settings(tmp_path) -> job.Settings:
@@ -172,8 +170,6 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
         "deep-research/alpha-x.json",
     )
     assert line["stats"]["findings"] == 2 and "chat_closed" not in line
-    assert line["engine"] == "pipeline" and line["stats"]["engine"] == "pipeline"
-    assert set(line["stats"]["tokens_by_model"]) == {"glm-5.3", "deepseek-flash"}
     assert (line["run_id"], line["card"]) == ("dr-0123abcd", req.card)
     assert any(e[1].startswith("Planning quick research") for e in line["events"])
 
@@ -254,46 +250,23 @@ def test_a_missing_key_fails_the_run_before_any_call(tmp_path):
     assert "failed:" in result["reply"] and "_API_KEY is not set" in result["reply"]
 
 
-def test_the_agents_engine_written_to_a_folder_publishes_nothing(tmp_path, published):
-    from research.web import make_checker
-
-    s = settings(tmp_path)
-    out = tmp_path / "cmp"
-    result = job.run(
-        job.Request("Tell me about Alpha and Beta", "standard", engine="agents"),
-        s,
-        lambda m: None,
-        builder=builder(tmp_path, site="elsewhere"),  # no research site: not needed
-        out=out,
-        delegate=FakeRunner(),
-        check=make_checker(fetch=CHECKED_PAGES.get),
-    )
-    assert result["status"] == "ok" and result["url"] is None
-    assert published == []
-    assert result["reply"].startswith(
-        f'Research report "Alpha and Beta" written to {out / "alpha-and-beta.md"}.'
-    )
-    assert (out / "alpha-and-beta.md").read_text().startswith("# Alpha and Beta")
-    data = json.loads((out / "alpha-and-beta.json").read_text())
-    assert (data["engine"], data["stats"]["engine"], data["depth"]) == (
-        "agents",
-        "agents",
-        "standard",
-    )
-    assert data["models"] == {"planner": "agents-planner", "worker": "agents-worker"}
-    assert len(data["sources"]) == 2
-    line = the_line(s)
-    assert (line["engine"], line["out"], line["status"]) == ("agents", str(out), "ok")
-    assert "published" not in line
-
-
-def test_an_unknown_engine_fails_before_anything_runs(tmp_path):
+def test_the_callers_split_reaches_the_pipeline(tmp_path, published):
     s = settings(tmp_path)
     result = job.run(
-        job.Request("q", engine="magic"),
+        job.Request.of(
+            "Tell me about Alpha and Beta",
+            depth="quick",
+            sub_questions=["Alpha finances", "Beta background"],
+            title="Alpha and Beta, split by hand",
+        ),
         s,
         lambda m: None,
         builder=builder(tmp_path),
+        llm=LLM(Scripted()),
+        search=search,
+        read=PAGES.get,
     )
-    assert result["status"] == "failed"
-    assert "no research engine 'magic'" in result["error"]
+    assert (
+        result["status"] == "ok" and result["title"] == "Alpha and Beta, split by hand"
+    )
+    assert the_line(s)["stats"]["plan"] == "caller"

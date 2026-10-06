@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import threading
 
 import pytest
@@ -82,7 +83,13 @@ def test_a_run_starts_reports_progress_and_finishes(served):
         server = await start()
         assert socket.stat().st_mode & 0o777 == 0o660
         started = await call(
-            socket, "start", question="  Bitcoin?  ", depth="quick", workspace="career"
+            socket,
+            "start",
+            question="  Bitcoin?  ",
+            depth="quick",
+            workspace="career",
+            sub_questions=["Price history", {"goal": "Energy use", "queries": ["btc"]}],
+            title="Bitcoin",
         )
         assert started["ok"] and started["result"]["queued"] == 0
         run_id = started["result"]["run_id"]
@@ -90,7 +97,6 @@ def test_a_run_starts_reports_progress_and_finishes(served):
         assert first == {
             "events": ["researching Bitcoin?"],
             "done": False,
-            "fraction": 0.5,
             "result": None,
         }
         # Nothing new: the wait times out with no events.
@@ -108,6 +114,11 @@ def test_a_run_starts_reports_progress_and_finishes(served):
 
     asyncio.run(go())
     assert gate.closed == [False], "someone was waiting, so the chat was open"
+    [req] = gate.reqs
+    assert req.title == "Bitcoin" and req.sub_questions == [
+        "Price history",
+        {"goal": "Energy use", "queries": ["btc"]},
+    ]
 
 
 def test_two_runs_go_at_once_and_a_third_waits_its_turn(served):
@@ -170,9 +181,21 @@ def test_bad_requests_get_errors(served):
             in (await call(socket, "wait", run_id="dr-nope"))["error"]
         )
         assert (await call(socket, "explode"))["error"] == "unknown op 'explode'"
-        assert (await call(socket, "start", question="q", engine="magic"))[
-            "error"
-        ] == "No research engine 'magic': it's one of pipeline, agents."
+        for args, why in [
+            ({"sub_questions": []}, "a list of 1 to 8 parts"),
+            ({"sub_questions": "a, b"}, "a list of 1 to 8 parts"),
+            ({"sub_questions": ["a"] * 9}, "a list of 1 to 8 parts"),
+            (
+                {"sub_questions": ["a", {"queries": ["x"]}]},
+                r"sub_questions\[2\] must be a goal",
+            ),
+            ({"sub_questions": [" "]}, r"sub_questions\[1\] must be a goal"),
+            ({"sub_questions": ["x" * 501]}, "over 500 characters"),
+            ({"title": "t" * 121}, "at most 120 characters"),
+            ({"title": 7}, "at most 120 characters"),
+        ]:
+            error = (await call(socket, "start", question="q", **args))["error"]
+            assert re.search(why, error), (args, error)
         assert (
             "bad arguments for start"
             in (await call(socket, "start", question="q", colour="red"))["error"]

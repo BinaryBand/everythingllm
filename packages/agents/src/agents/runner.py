@@ -28,16 +28,24 @@ and, when it's done, its results.
 
 Holding runs and waiting on them is runs.service's (RunService).
 
+A delegation that reads a lot of pages costs real money (each agent step sends every page
+read so far again), and a running task can't be stopped, so a new delegation is refused
+once the delegations of the last 24 hours have cost DAILY_USD. That counts what the run log
+has: delegations still running (at most MAX_RUNS) count once they end, and the planner's
+GLM, which AnythingLLM doesn't price, not at all.
+
 Config (environment, from host.env and agents.env through the unit):
   AGENTS_SOCKET       socket to listen on (default <storage>/everythingllm/agents/runner.sock)
   AGENTS_LIVE_PORT    port on 127.0.0.1 for the live cards (default 8451)
   AGENTS_SLOTS        tasks running at once, across delegations (default 3)
+  AGENTS_DAILY_USD    what delegations may cost in 24 hours, in USD (default 1; 0 = no cap)
   PUBLIC_HOST         the tailnet name in the cards' URLs (no card without it)
   and what agents.anythingllm reads (ANYTHINGLLM_URL, ANYTHINGLLM_API_KEY).
 """
 
 import asyncio
 import html
+import json
 import logging
 import math
 import os
@@ -50,7 +58,7 @@ from typing import Any, ClassVar
 import hostrpc
 from hostrpc import RunnerError
 from runs import live
-from runs.runlog import RunLog, sweep_interrupted
+from runs.runlog import RunLog, iso, month_file, sweep_interrupted
 from runs.service import Meter, Progress, Run, RunService
 
 from agents.anythingllm import AnythingLLM, AnythingLLMError
@@ -82,6 +90,7 @@ class Settings:
     pages_url: str = ""
     live_port: int = 8451
     slots: int = 3
+    daily_usd: float = 1.0  # 0: no cap
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -91,7 +100,28 @@ class Settings:
             pages_url=f"https://{host}:8445/" if host else "",
             live_port=int(os.environ.get("AGENTS_LIVE_PORT", "8451")),
             slots=int(os.environ.get("AGENTS_SLOTS", "3")),
+            daily_usd=float(os.environ.get("AGENTS_DAILY_USD", "1")),
         )
+
+
+def spent(runlogs: Path, now: float | None = None) -> float:
+    """What the delegations that started in the last 24 hours cost, from the run log."""
+    now = time.time() if now is None else now
+    since = iso(now - 24 * 3600)
+    total = 0.0
+    for file in sorted({month_file(runlogs, since), month_file(runlogs, iso(now))}):
+        try:
+            lines = file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                record = json.loads(line)
+                if str(record.get("started") or "") >= since:
+                    total += float(record.get("cost") or 0)
+            except (ValueError, TypeError, AttributeError):
+                continue  # a torn or odd line doesn't stop the count
+    return total
 
 
 @dataclass(frozen=True)
@@ -300,6 +330,15 @@ class Runner(RunService):
         ):
             raise RunnerError(
                 f"the tasks' material is over {MAX_MATERIAL_TOTAL} characters in all"
+            )
+        cap = self.settings.daily_usd
+        if (
+            cap > 0
+            and (cost := await asyncio.to_thread(spent, self.settings.runlogs)) >= cap
+        ):
+            raise RunnerError(
+                f"Delegation's daily budget (${cap:.2f}) is spent (${cost:.2f} in the last 24 "
+                "hours). Tell the user, or do the work yourself."
             )
         client = self.anythingllm()
         run = self.new_run(goal)

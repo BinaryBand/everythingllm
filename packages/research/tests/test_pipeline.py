@@ -166,10 +166,50 @@ def test_a_quick_run_plans_researches_writes_fact_checks_and_cites():
         r"## Sources\n\n1\. \[(Alpha news|Beta about)\]", report["markdown"]
     )
     assert any(line.startswith("Planning quick research") for line in lines)
+    assert report["stats"]["plan"] == "planner"
     assert any(
         re.search(r"read a\.example: 1 findings kept, 1 dropped", line)
         for line in lines
     )
+
+
+def test_the_callers_sub_questions_take_the_planners_place():
+    systems = []
+    ctx, lines = context(
+        Scripted(
+            on_create=lambda m, messages, t: systems.append(messages[0]["content"])
+        )
+    )
+    report = research(
+        "Tell me about Alpha and Beta",
+        "quick",
+        ctx,
+        sub_questions=[
+            {"goal": "Alpha finances", "queries": ["alpha revenue"]},
+            "Beta background",
+            "  ",
+            "Gamma",
+            "Delta",  # over quick's 3 workers
+        ],
+        title="  Alpha, Beta ",
+    )
+    assert not any("planning a web research project" in s for s in systems)
+    assert report["title"] == "Alpha, Beta" and report["stats"]["plan"] == "caller"
+    assert [w["goal"] for w in report["stats"]["workers_detail"]] == [
+        "Alpha finances",
+        "Beta background",
+        "Gamma",
+    ]
+    assert report["stats"]["findings"] == 2
+    assert (
+        "Plan (from the caller): 1) Alpha finances 2) Beta background 3) Gamma" in lines
+    )
+    untitled = research(
+        "Tell me about Alpha", "quick", context()[0], ["Alpha finances"]
+    )
+    assert untitled["title"] == "Tell me about Alpha"
+    with pytest.raises(RuntimeError, match="sub_questions had no goals"):
+        research("q", "quick", context()[0], [" ", {"goal": ""}])
 
 
 def test_workers_use_flash_without_thinking_the_planner_uses_pro():

@@ -848,6 +848,9 @@ again, and an old chat's card still opens the report.
 A run, step by step:
 
 1. **Plan** — the planner model splits the question into sub-questions with search queries.
+   The calling agent can make the split itself instead: the skill's `sub_questions` (each a
+   goal, or `{goal, queries}`, at most the depth's workers) and an optional `title` skip
+   this step, and the run log's `stats.plan` says `caller`.
 2. **Research** — one worker per sub-question, all in parallel. Each searches SearXNG
    (`http://127.0.0.1:8888/search` on the host), reads pages with
    publicweb's page reader, as the article writer does (`publicweb.pages`: browser-like
@@ -889,33 +892,6 @@ balance"), the planner switches to `PLANNER_FALLBACK_MODEL` (`deepseek-flash`, w
 on; `off` turns this off) for the rest of the run; the chat's progress says so, and the run log's
 `stats.fallbacks` records it. The planner was `deepseek-v4-pro` until 2026-10-04, when that was V4.1-Flash
 underneath (see below).
-
-**Two engines.** The steps above are the `pipeline` engine (`research.pipeline`), the
-default. The `agents` engine (`research.recipe`, stage 3 of `docs/.proposals/agents.md`)
-does the same steps as delegations to `agents-runner` (see "Delegation"), with AnythingLLM's
-own agents:
-- the plan, gap checks, writing and fact-check are `agents-planner` tasks, sent as plain
-  chats with the notes as their material
-- each sub-question is an `agents-worker` task. It searches and reads with AnythingLLM's web
-  tools, and ends with its findings as JSON.
-
-Research's guarantees stay in code:
-- research-runner fetches every cited page itself (`research.web.make_checker`), and keeps
-  a finding only if its quote is in the page's main text or anywhere else on it
-  (`publicweb.pages.read_page`)
-- the sources are numbered here
-- the fact-check's edits and the citations are applied as in the pipeline
-
-What it gives up: the run-wide search budget and pacing (searches go through AnythingLLM's
-tool, and a worker is held to its own tool-call limit), the planner's quota fallback, and
-the counts of searches and pages read. The run log's `engine`, and `stats.engine`, say which
-engine ran a report. Both engines' stats have `tokens_by_model`; the agents engine's also
-have `cost` (what AnythingLLM could price: not the planner's GLM) and `delegations`.
-
-The skill's `ENGINE` setup arg picks the engine (`pipeline` until the two are compared), and
-`research-run --engine agents` runs one by hand. `--out DIR` writes the report and its stats
-(`<slug>.md`, `<slug>.json`) there instead of publishing it, for comparing the engines on the
-same questions.
 
 DeepSeek notes, found while building it:
 - Don't use JSON mode (`response_format`): with it, flash often replies with the wrong keys
@@ -979,21 +955,16 @@ To run one by hand, in this process rather than the runner (it logs and publishe
     set -a && . ./host.env && set +a && \
       uv run --package research research-run "Why is the sky blue?" --depth quick
 
-Through the agents engine, to a folder rather than the research site:
-
-    set -a && . ./host.env && set +a && uv run --package research research-run \
-      "Why is the sky blue?" --depth quick --engine agents --out /tmp/research-cmp
-
 ## Delegation
 
 `agents-runner` (`packages/agents`, `host/systemd/agents-runner.service`, its own venv in
 `~/.local/share/everythingllm/venvs/agents`) runs **delegations**: a set of tasks the
 caller defines, each done by AnythingLLM's own agent, headless, and an optional `then` task
-that gets their replies. It's stage 2 of `docs/.proposals/agents.md` (kept out of git):
-deep research is to become a recipe on it, and the `delegate` skill is offered to the main
-agent then. Until that, `delegate` is deployed turned off (a deploy keeps the live
-`active` flag, so it's switched on in AnythingLLM's skill settings), and `agents-run`
-starts a delegation by hand:
+that gets their replies (`docs/.proposals/agents.md`, kept out of git). The main agent
+starts one with the `delegate` skill, for work that splits into parts that each need their
+own searching or reading; reports stay with deep research, whose pipeline did the same job
+for a hundredth of the cost when the two were compared. `agents-run` starts a delegation by
+hand:
 
     set -a && . ./host.env && set +a && uv run --package agents agents-run \
       "Compare two heat pumps" --task a:worker:"Find the COP of model A, with sources" \
@@ -1030,6 +1001,12 @@ unused).
   that allows nothing but the page's own CSS (`runs.live`).
 - **The run log** is `~/.local/share/everythingllm/agents/runs/` (`runs.runlog`, as
   research's). The audit doesn't read it yet.
+- **The daily budget.** AnythingLLM's agent sends every page a task has read again with
+  each step, so a task that reads a lot costs real money ($0.20-0.60 for one that read
+  eight pages), and a running task can't be stopped. agents-runner refuses a new delegation
+  once those that started in the last 24 hours cost `AGENTS_DAILY_USD` (default 1; 0 turns
+  it off), counted from the run log: the planner's GLM isn't priced, and running
+  delegations count once they end. The worker prompt asks for few page reads.
 - **The key.** agents-runner calls AnythingLLM with a developer API key of its own, in
   `~/.config/everythingllm/agents.env` (`ANYTHINGLLM_API_KEY`, mode 600, put there by hand);
   `make agents-setup` checks it. Like research-runner, it isn't restarted by `make units`

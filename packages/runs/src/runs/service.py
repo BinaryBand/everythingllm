@@ -7,7 +7,7 @@ call from a worker thread, and returns the run's result (a dict; "title" and "ur
 are shown on the live card). The service then answers:
 
   wait(run_id, since=0)  up to WAIT seconds for news: {events (from `since` on), done,
-                         fraction (the meter's, or None), result once done}
+                         result once done}
   runs()                 the runs it holds: {run_id, <SUBJECT_KEY>, started, done}
 
 A run belongs to the service, not to a chat: it carries on when its caller goes away. At
@@ -165,7 +165,6 @@ class RunService(hostrpc.Service):
         return {
             "events": run.events[since:],
             "done": run.done,
-            "fraction": run.fraction,
             "result": run.result if run.done else None,
         }
 

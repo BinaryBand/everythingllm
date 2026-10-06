@@ -1,8 +1,7 @@
 // Delegate: hands a piece of work, split into tasks by the calling agent, to agents-runner on
 // the host (packages/agents), which runs each task as AnythingLLM's own agent in the
-// workspace of its role and answers at once with the delegation's live card. Shipped
-// inactive until deep research runs on delegation (docs/.proposals/agents.md, stage 4).
-// A delegated task can't delegate again: _lib/delegated.js refuses it.
+// workspace of its role and answers at once with the delegation's live card. A delegated
+// task can't delegate again: _lib/delegated.js refuses it.
 
 const hostrpc = require("../_lib/hostrpc");
 const { delegatedRefusal } = require("../_lib/delegated");

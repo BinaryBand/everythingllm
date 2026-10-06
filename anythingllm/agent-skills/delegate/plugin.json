@@ -1,10 +1,10 @@
 {
-  "active": false,
+  "active": true,
   "hubId": "delegate",
   "name": "Delegate",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Hand a piece of work to other agents to do in parallel, when it splits into parts that each take searching or reading of their own (compare several options, check several claims, survey several sources). You decide the split: give each task a short name, a profile ('worker' searches and reads; 'planner' plans, reviews and writes up) and complete, self-contained instructions, since the task sees nothing of this chat. Optionally give `then`, one more task that gets every task's reply and combines them. It answers at once with a live card; the work runs on the server for a few minutes and the card shows the results when it's done. The tasks can only read: say in your instructions what they should report back, not do.",
+  "description": "Hand a piece of work to other agents to do in parallel, when it splits into parts that each take searching or reading of their own (compare several options, check several claims, survey several sources). You decide the split: give each task a short name, a profile ('worker' searches and reads; 'planner' plans, reviews and writes up) and complete, self-contained instructions, since the task sees nothing of this chat. Optionally give `then`, one more task that gets every task's reply and combines them. It answers at once with a live card; the work runs on the server for a few minutes and the card shows the results when it's done. The tasks can only read: say in your instructions what they should report back, not do. For a cited research report use Deep Research instead, and for one quick fact search yourself. Keep it small (2-4 tasks): tasks that read many pages cost real money, and delegation has a daily budget.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

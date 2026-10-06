@@ -27,13 +27,16 @@ def clean(s) -> str:
 
 
 def tasks_from(items, max: int) -> list[dict]:
+    """Sub-questions as worker tasks: each {goal, queries}, or just its goal as text."""
     if not isinstance(items, list):
         return []
     tasks = []
-    for t in items:
+    for item in items:
+        t = {"goal": item} if isinstance(item, str) else item
         if not isinstance(t, dict) or not clean(t.get("goal")):
             continue
-        queries = t.get("queries") if isinstance(t.get("queries"), list) else []
+        queries = t.get("queries")
+        queries = queries if isinstance(queries, list) else []
         tasks.append(
             {
                 "goal": clean(t["goal"]),
@@ -79,8 +82,16 @@ class Counts:
         return max(0, self.search_budget - self.searches)
 
 
-def research(question: str, depth: str | None, ctx: Context) -> dict:
-    """Research a question and return a finished, cited Markdown report."""
+def research(
+    question: str,
+    depth: str | None,
+    ctx: Context,
+    sub_questions: list | None = None,
+    title: str | None = None,
+) -> dict:
+    """Research a question and return a finished, cited Markdown report. With
+    `sub_questions` (the caller's split of it), the planner doesn't plan: they're the
+    workers' goals, at most as many as the depth has workers."""
     llm, models, progress = ctx.llm, ctx.models, ctx.progress
     question = clean(question)
     if not question:
@@ -91,17 +102,31 @@ def research(question: str, depth: str | None, ctx: Context) -> dict:
     counts = Counts(search_budget=preset["searches"])
 
     ctx.meter(0.03)
+    if sub_questions is not None:
+        planned_by = "caller"
+        tasks = tasks_from(sub_questions, preset["workers"])
+        if not tasks:
+            raise RuntimeError("The sub_questions had no goals.")
+        title = clean(title)[:120] or question[:120]
+        progress(
+            f"{preset['name'].capitalize()} research: {len(tasks)} parallel workers, up to {preset['steps']} steps each."
+        )
+    else:
+        planned_by = "planner"
+        progress(
+            f"Planning {preset['name']} research: {preset['workers']} parallel workers, up to {preset['steps']} steps each."
+        )
+        plan = llm.json(
+            models["planner"], prompts.plan(question, ctx.today, preset["workers"])
+        )
+        title = clean(plan.get("title"))[:120] or question[:120]
+        tasks = tasks_from(plan.get("sub_questions"), preset["workers"])
+        if not tasks:
+            raise RuntimeError("The planner returned no sub-questions.")
     progress(
-        f"Planning {preset['name']} research: {preset['workers']} parallel workers, up to {preset['steps']} steps each."
+        ("Plan (from the caller): " if planned_by == "caller" else "Plan: ")
+        + " ".join(f"{i + 1}) {t['goal']}" for i, t in enumerate(tasks))
     )
-    plan = llm.json(
-        models["planner"], prompts.plan(question, ctx.today, preset["workers"])
-    )
-    title = clean(plan.get("title"))[:120] or question[:120]
-    tasks = tasks_from(plan.get("sub_questions"), preset["workers"])
-    if not tasks:
-        raise RuntimeError("The planner returned no sub-questions.")
-    progress("Plan: " + " ".join(f"{i + 1}) {t['goal']}" for i, t in enumerate(tasks)))
 
     def run_round(batch: list[dict], label: str) -> list[dict]:
         with ThreadPoolExecutor(
@@ -213,7 +238,7 @@ def research(question: str, depth: str | None, ctx: Context) -> dict:
         "sources": used,
         "summary": summary_bullets(markdown),
         "stats": {
-            "engine": "pipeline",
+            "plan": planned_by,
             "seconds": round(time.monotonic() - started),
             "workers": len(results),
             "workers_detail": [r["detail"] for r in results],
@@ -231,7 +256,6 @@ def research(question: str, depth: str | None, ctx: Context) -> dict:
             "tokens": {
                 k: llm.usage[k] for k in ("prompt", "cached", "completion", "reasoning")
             },
-            "tokens_by_model": {m: dict(t) for m, t in llm.by_model.items()},
         },
     }
 

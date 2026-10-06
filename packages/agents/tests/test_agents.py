@@ -506,3 +506,32 @@ def test_delegations_starting_together_set_the_profiles_up_once(fake, tmp_path):
         assert fake.created == ["agents-planner", "agents-worker"]
 
     asyncio.run(main())
+
+
+def test_delegation_stops_at_its_daily_budget(fake, tmp_path):
+    import time
+
+    from runs.runlog import append_line, iso
+
+    runs = tmp_path / "runs"
+    now = time.time()
+    for hours_ago, cost in [(30, 5.0), (2, 0.6), (1, 0.5)]:
+        started = iso(now - hours_ago * 3600)
+        append_line(runs, started, {"started": started, "cost": cost})
+    (runs / f"{iso(now)[:7]}.jsonl").open("a").write("not json\n")
+    assert runner.spent(runs, now) == pytest.approx(1.1)  # the 30-hour-old line is out
+    ok = [{"name": "a", "profile": "worker", "instructions": "x"}]
+
+    async def main():
+        r = make(fake, tmp_path)  # its default cap is $1
+        with pytest.raises(
+            RunnerError, match=r"daily budget \(\$1\.00\) is spent \(\$1\.10"
+        ):
+            await r.op_delegate("g", ok)
+        assert r.runs == {}
+        r.settings.daily_usd = 2.0
+        assert (await r.op_delegate("g", ok))["run_id"].startswith("dg-")
+        r.settings.daily_usd = 0  # no cap
+        await r.op_delegate("g", ok)
+
+    asyncio.run(main())

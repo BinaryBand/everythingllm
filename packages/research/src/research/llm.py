@@ -53,8 +53,6 @@ class LLM:
             "completion": 0,
             "reasoning": 0,
         }
-        # model -> {prompt, completion}, as the agents engine reports it, for comparing them
-        self.by_model: dict[str, dict[str, int]] = {}
         self.clients: list[Completions] = []  # the ones for_models made, for close()
         self._slots = threading.BoundedSemaphore(LIMITS["llm"])
         self._lock = threading.Lock()
@@ -113,9 +111,6 @@ class LLM:
             self.usage["prompt"] += usage.get("prompt_tokens") or 0
             self.usage["cached"] += cached_tokens(usage)
             self.usage["completion"] += usage.get("completion_tokens") or 0
-            mine = self.by_model.setdefault(model, {"prompt": 0, "completion": 0})
-            mine["prompt"] += usage.get("prompt_tokens") or 0
-            mine["completion"] += usage.get("completion_tokens") or 0
             self.usage["reasoning"] += (
                 usage.get("completion_tokens_details") or {}
             ).get("reasoning_tokens") or 0

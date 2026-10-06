@@ -9,6 +9,7 @@
 
 const hostrpc = require("../_lib/hostrpc");
 const { delegatedRefusal } = require("../_lib/delegated");
+const { asObject } = require("../_lib/runner");
 
 const { Down } = hostrpc;
 const OFF = /^(no|off|false|0)$/i;
@@ -19,7 +20,7 @@ function call(op, args) {
 }
 
 module.exports.runtime = {
-  handler: async function ({ question, depth }) {
+  handler: async function ({ question, depth, sub_questions, title }) {
     const refused = delegatedRefusal(this);
     if (refused) return refused;
     const args = this.runtimeArgs || {};
@@ -38,7 +39,8 @@ module.exports.runtime = {
         embed,
         workspace: workspace?.slug || null,
         workspace_name: workspace?.name || null,
-        engine: String(args.ENGINE ?? "").trim().toLowerCase() || null,
+        sub_questions: asObject(sub_questions),
+        title: title || null,
       });
     } catch (e) {
       this.logger?.(`deep-research couldn't start a run: ${e?.message || e}`);

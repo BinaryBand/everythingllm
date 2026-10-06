@@ -21,11 +21,11 @@ research, Code sandbox, System audit, …) before changing it.
   old code until `make <name>-setup` or `systemctl --user restart <unit>`. Code shared
   across packages (e.g. `sites.store`) is loaded by several services (`sites-runner`,
   `audit-runner`, `research-runner`). Don't restart `research-runner` or `agents-runner`
-  while a run is going (`tools/run_guard.py` asks; `guard` in the apps registry says which).
+  while a run is going (`hostctl.run_guard` asks; `guard` in the apps registry says which).
 - Dropped ideas (browser, quiz, whatsapp-mcp) and the history before this repo went public
   are kept in a private archive, not here. Don't recreate them from memory.
 - Machine settings come from `host.env` (git-ignored; see `host.env.example`). Unit
-  templates use `@KEY@` placeholders, which `tools/units.py` fills in; systemd doesn't
+  templates use `@KEY@` placeholders, which `hostctl.units` fills in; systemd doesn't
   expand `${VAR}` in `Environment=`.
 
 ## Commands
@@ -81,7 +81,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   - A front's package keeps its base dependencies to what the front imports, and puts the
     rest (Whisper, PyAV, …) in a `host` extra that the units run with.
   - Every app (its units, socket, tailnet mappings, guard, health checks, setup steps) is
-    declared once in `packages/apps/src/apps/apps.toml`, which the tools and the audit read
+    declared once in `packages/apps/src/apps/apps.toml`, which hostctl and the audit read
     through `packages/apps`; app code never does. Adding one: its code, its unit template
     and an entry there; `packages/apps/tests/test_apps.py` says what's missing (README, "The apps").
 - MCP tools only read (or, like `refresh_podcasts`, only start background work). An op that
@@ -92,7 +92,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   `make skills` generates its `plugin.json` and `handler.js` (`hostrpc.skillgen`); edit the
   declaration, never those files. `make diff` and `make deploy` refuse stale ones.
 - Every MCP server is a thin front; nothing it serves runs in the container. Not every
-  member is an MCP server: `publicweb`, `llm`, `chatimage` and `hostrpc` are libraries, and
+  member is an MCP server: `publicweb`, `llm`, `chatimage` and `hostrpc` are libraries, `hostctl` is what make runs, and
   `splice`, `research` and `sandbox` are host-only services. `relay` is a host HTTP service
   for the Nilson app, not the agent; its secrets are in `~/.config/everythingllm/relay.env`,
   never in the repo.
@@ -143,4 +143,5 @@ is 3.13. Keep code 3.12-compatible, and check with
   `Config (environment):`. Keep them current when you add or change an env var.
 - Commit subjects are plain sentences saying what changed and why (e.g. "Decode episodes
   as they're heard, and only hold Whisper's deaths against one"), with no type prefixes.
-- `tools/sync.py` uses only the standard library and runs with the system `python3`.
+- `packages/hostctl` (what make runs on the host) uses only the standard library and runs with
+  the system `python3`, through the Makefile's `PY`; `hostctl.skills` is the one exception.

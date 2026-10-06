@@ -1,4 +1,4 @@
-"""`python -m audit.health`: the checks behind `make health` (tools/health.sh).
+"""`python -m audit.health`: the checks behind `make health` (packages/hostctl/health.sh).
 
 units      print the host units to check, one per line (from services.WATCHED)
 sockets    on the host: every host service the container talks to answers `ping` on its

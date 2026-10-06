@@ -6,7 +6,7 @@ anythingllm/agent-skills/<op, with - for _>/: a plugin.json with the docstring a
 parameters' descriptions and types, from the same JSON schema the MCP server would give
 the op, and a handler.js that hands the call to `forwardSkill` (_lib/runner.js). Both are
 committed, as AnythingLLM reads the repo's files as they are; `make skills` writes them and
-`tools/skills.py --check` (run by make diff and deploy) says when they're stale.
+`hostctl.skills --check` (run by make diff and deploy) says when they're stale.
 
 Run in the dev venv (`uv run --all-packages`): it imports every front, and mcp.
 """

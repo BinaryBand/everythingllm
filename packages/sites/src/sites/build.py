@@ -115,7 +115,7 @@ class Builder:
     @classmethod
     def from_env(cls) -> "Builder":
         """Paths from the environment, with the host's defaults: builds run on the host, from
-        entries in hostrpc.data_dir()/pages/entries into the pages site (hostrpc.site_dir()), with its zola (tools/machine.py checks it's there),
+        entries in hostrpc.data_dir()/pages/entries into the pages site (hostrpc.site_dir()), with its zola (hostctl.machine checks it's there),
         from the sites in the repo this package is in."""
         get = os.environ.get
         source = Path(get("SITES_SOURCE", REPO_SITES))

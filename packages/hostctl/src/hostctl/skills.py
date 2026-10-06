@@ -1,10 +1,10 @@
 """Write the agent skills that forward one op to a host service, from the fronts' `skills`.
 
-    uv run --all-packages python tools/skills.py           # write them (make skills)
-    uv run --all-packages python tools/skills.py --check   # exit 1 if they're stale
+    uv run --all-packages python -m hostctl.skills           # write them (make skills)
+    uv run --all-packages python -m hostctl.skills --check   # exit 1 if they're stale
 
 See hostrpc.skillgen. Not standard-library only (it imports the fronts), so it runs in the
-dev venv rather than with the system python3, unlike tools/sync.py.
+dev venv rather than with the system python3, unlike the rest of hostctl.
 """
 
 import argparse
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from hostrpc import skillgen
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[4]
 
 
 def main() -> None:

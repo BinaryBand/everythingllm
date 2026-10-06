@@ -75,8 +75,9 @@ def test_setup_steps_exist_and_install_says_why_not():
     makefile = (REPO / "Makefile").read_text()
     for app in apps.load().values():
         for step in app.before:
-            if script := re.fullmatch(r"python3 (tools/\S+\.py)", step):
-                assert (REPO / script[1]).is_file(), step
+            if module := re.fullmatch(r"python3 -m hostctl\.(\w+)", step):
+                hostctl = REPO / "packages" / "hostctl" / "src" / "hostctl"
+                assert (hostctl / f"{module[1]}.py").is_file(), step
             elif target := re.fullmatch(r"make .*?(\S+)", step):
                 assert re.search(rf"^{target[1]}:", makefile, re.MULTILINE), step
             else:

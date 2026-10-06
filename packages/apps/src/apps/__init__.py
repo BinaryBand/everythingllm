@@ -1,9 +1,9 @@
 """The registry of the apps this repo runs (apps.toml, next to this file), read into records.
 
 Each app's units, socket, tailnet mappings, restart guard, health checks and setup steps are
-declared there once; the tools and the audit ask this module rather than keep copies or work
-them out from unit names. App code doesn't read it. Standard library only, so the tools run
-with the system python3 can import it by path (sys.path gets packages/apps/src).
+declared there once; hostctl and the audit ask this module rather than keep copies or work
+them out from unit names. App code doesn't read it. Standard library only, so hostctl, run
+with the system python3, can import it (the Makefile's PY puts packages/apps/src on PYTHONPATH).
 
     apps = load()                 # name -> App, in the file's order
     watched(), runners(), guarded(), app_of(unit), serve_mappings(), health_checks()

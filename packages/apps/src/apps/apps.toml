@@ -1,6 +1,6 @@
-# The apps this repo runs, and everything the tools need to know to deploy, restart, map,
-# check and follow them. tools/units.py, tools/run_guard.py, tools/appctl.py (make
-# <app>-setup, <app>-logs, serve-setup, install, health) and the audit read it through
+# The apps this repo runs, and everything hostctl needs to know to deploy, restart, map,
+# check and follow them. hostctl's units, run_guard and appctl (make <app>-setup,
+# <app>-logs, serve-setup, install, health) and the audit read it through
 # apps.load(); app code never does. Test: packages/apps/tests/test_apps.py.
 #
 # [<app>]                 the app's name: also its socket folder (storage/everythingllm/<app>/)
@@ -15,7 +15,7 @@
 # container               a Quadlet container: journal name (systemd-<x>) -> label; its
 #                         template is host/quadlet/<x>.container.in
 # managed = false         deployed by something else (no template here)
-# before                  commands setup runs first, from the repo's root
+# before                  commands setup runs first, from the repo's root with hostctl on PYTHONPATH
 # guard                   restarts wait while a run is going: {runs (under the data dir), noun}
 # serve                   tailnet HTTPS mappings: {https, port, path?} -> http://127.0.0.1:<port>
 # health                  name -> URL that should answer below 500
@@ -69,7 +69,7 @@ install = true
 summary = "agents-runner, which runs delegations (live cards at :8445/_live/agents)"
 runner = "agents-runner.service"
 units = { "agents-runner.service" = "delegation runner" }
-before = ["python3 tools/agents_env.py"]
+before = ["python3 -m hostctl.agents_env"]
 guard = { runs = "agents/runs", noun = "Delegations" }
 serve = [{ https = 8445, path = "/_live/agents", port = 8451 }]
 health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-00000000.png" }
@@ -92,7 +92,7 @@ install = true
 [relay]
 summary = "the Nilson relay (tailnet https :8446)"
 units = { "relay.service" = "Nilson relay" }
-before = ["python3 tools/relay_env.py"]
+before = ["python3 -m hostctl.relay_env"]
 serve = [{ https = 8446, port = 8446 }]
 health = { "Nilson relay" = "http://127.0.0.1:8446/health" }
 why_not_installed = "it's only for the Nilson app, and its secrets file needs an AnythingLLM API key first"

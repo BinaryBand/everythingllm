@@ -9,7 +9,7 @@ serve-setup`, `make apps`, and the parts of `make install` and `make health` tha
   setup --installed  the same for every app `make install` sets up
   serve              map every app's tailnet paths that aren't mapped yet (sudo tailscale serve)
   logs APP           follow the app's units and the ones it watches
-  health             `name|url` for each HTTP check, for tools/health.sh
+  health             `name|url` for each HTTP check, for health.sh
 
 Standard library only, run with the system `python3`, like units.py.
 """
@@ -17,14 +17,15 @@ Standard library only, run with the system `python3`, like units.py.
 import argparse
 import os
 import subprocess
-import sys
 from pathlib import Path
 
-import run_guard
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "packages" / "apps" / "src"))
 import apps  # the registry's reader, standard library only
+
+from hostctl import run_guard
+
+ROOT = Path(__file__).resolve().parents[4]
+# What make puts on PYTHONPATH for the system python3; `before` steps run with it too.
+PYTHONPATH = f"{ROOT}/packages/hostctl/src:{ROOT}/packages/apps/src"
 
 
 def app_named(registry: dict[str, apps.App], name: str) -> apps.App:
@@ -57,7 +58,8 @@ def setup(app: apps.App) -> None:
     print(f"== {app.name}", flush=True)
     for step in app.before:
         print(step, flush=True)
-        if (code := subprocess.run(step, shell=True, cwd=ROOT).returncode) != 0:
+        env = {**os.environ, "PYTHONPATH": PYTHONPATH}
+        if (code := subprocess.run(step, shell=True, cwd=ROOT, env=env).returncode) != 0:
             raise SystemExit(code)
     serve(list(app.serve))
     if app.units:

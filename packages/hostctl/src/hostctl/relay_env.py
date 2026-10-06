@@ -5,7 +5,7 @@ an empty ANYTHINGLLM_API_KEY, and exits 1 until that key is filled in, so the un
 started into a crash loop. The file stays outside the repo, which the AnythingLLM container
 mounts. Standard library only, run with the system python3.
 
-    python3 tools/relay_env.py [path]
+    python3 -m hostctl.relay_env [path]   # with hostctl and apps on PYTHONPATH, as make does
 """
 
 import os
@@ -13,7 +13,7 @@ import secrets
 import sys
 from pathlib import Path
 
-from units import env_file
+from hostctl.units import env_file
 
 DEFAULT = Path("~/.config/everythingllm/relay.env").expanduser()
 

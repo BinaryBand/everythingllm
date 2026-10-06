@@ -3,7 +3,7 @@
 # anything failed. Meant for after a reboot, or whenever something seems off. The unit list
 # and the in-container checks live in packages/audit (audit.health), next to the audit's own.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 CONTAINER=systemd-anythingllm
 VENV_PY=/app/server/storage/everythingllm/mcp/venv/bin/python
@@ -36,7 +36,7 @@ while IFS='|' read -r name url; do
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url")
   # Any answer below 500 means the server is up; some roots are a 404 by design.
   if [ "$code" != 000 ] && [ "$code" -lt 500 ]; then ok "$name ($code)"; else fail "$name ($url: ${code/000/no answer})"; fi
-done < <(python3 tools/appctl.py health)
+done < <(PYTHONPATH=packages/hostctl/src:packages/apps/src python3 -m hostctl.appctl health)
 # Without a password, AnythingLLM's internal API answers anyone who reaches :3001 (the tailnet).
 case "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/api/scheduled-jobs)" in
   401) ok "AnythingLLM asks for a login" ;;

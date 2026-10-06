@@ -42,7 +42,7 @@ up, copy `host.env.example` and fill it in:
 These read it:
 
 - the Makefile, which exports both values
-- `tools/sync.py`, for `ANYTHINGLLM_STORAGE`
+- `hostctl.sync`, for `ANYTHINGLLM_STORAGE`
 - the host's systemd units, through `EnvironmentFile=@REPO@/host.env` (filled in by `make units`)
 - the site builds, which read `PUBLIC_HOST` from it and pass zola
   `--base-url https://<PUBLIC_HOST>:8445/<site>`, so `zola.toml` doesn't name the host.
@@ -104,14 +104,14 @@ It must leave them alone now, or its next run undoes `make units`.
 Every app this repo runs is declared once, in `packages/apps/src/apps/apps.toml`: its units
 and the audit's label for each, its socket, its tailnet mappings, whether its restarts wait
 for a run (the guard), its health checks, the steps its setup runs first, and whether
-`make install` sets it up (and if not, why). The tools and the audit read it through
-`packages/apps` (standard library only, so the system `python3` tools import it by path);
+`make install` sets it up (and if not, why). hostctl and the audit read it through
+`packages/apps` (standard library only, so `hostctl` can import it under the system `python3`);
 app code never does. `make apps` lists the apps; for each:
 
 - `make <app>-setup` runs its `before` steps (the sandbox's image build, the agents and relay
   key files), maps its tailnet paths, enables and (re)starts its units, asking first while
   a guarded one has a run going (`FORCE=1` doesn't ask), and starts its timers
-  (`tools/appctl.py`).
+  (`hostctl.appctl`).
 - `make <app>-logs` follows its units and the ones it watches.
 - `make serve-setup` maps every app's tailnet paths that aren't mapped yet with
   `sudo tailscale serve`, and leaves other mappings on the machine alone.
@@ -131,7 +131,7 @@ So it gets a password (Settings > Security > Password protection; long and rando
 `[a-zA-Z0-9_-!@$%^&*();]`), which AnythingLLM keeps in plain text as `AUTH_TOKEN` in storage's
 `.env`, beside a `JWT_SECRET` it makes.
 
-Our callers of that API log in with it: `tools/sync.py` and `tools/machine.py` through
+Our callers of that API log in with it: `hostctl.sync` and `hostctl.machine` through
 `units.anythingllm_headers`, the audit and research's workspace embedding through
 `hostrpc.anythingllm_headers`. Each logs in once per process (a login lasts 30 days and is
 logged) and once more after a 401; with no password set they send nothing. The relay uses the
@@ -259,11 +259,19 @@ through its UI.
   127.0.0.1:8445
 - `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
-- `tools/sync.py` — diff/deploy/import between this repo and live storage; standard
-  library only, run with the system `python3`
-- `tools/units.py` — renders and installs `host/quadlet/` and `host/systemd/` (`make units`)
-- `tools/machine.py` — `make install`'s checks, its wait for AnythingLLM, the web search
-  setting and the closing checklist
+- `packages/hostctl` — what make runs on the host, before any venv exists: standard library
+  only, run with the system `python3` (the Makefile's `PY` puts it and `packages/apps` on
+  `PYTHONPATH`). `hostctl.skills` is the exception: it imports the fronts, so it runs in the
+  dev venv.
+  - `sync` — diff/deploy/import between this repo and live storage
+  - `units` — renders and installs `host/quadlet/` and `host/systemd/` (`make units`)
+  - `machine` — `make install`'s checks, its wait for AnythingLLM, the web search setting
+    and the closing checklist
+  - `appctl` — the apps' setup, logs and tailnet mappings, from the registry
+  - `run_guard` — asks before a runner with a live run restarts
+  - `agents_env`, `relay_env` — the agents and relay setups' key file checks
+  - `skills` — writes the generated skills (`make skills`)
+  - `health.sh` — `make health`
 
 ## Workflow
 
@@ -315,7 +323,7 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
   the container.
 - After `uv.lock` changes, run `make mcp-sync` (or `make deploy`, which runs it) so the
   container's venv catches up. It installs exactly the members `mcp_servers.json` runs
-  (`tools/sync.py mcp-packages`), and removes anything else.
+  (`hostctl.sync mcp-packages`), and removes anything else.
 
 ## Zola sites
 
@@ -945,7 +953,7 @@ for its `stale_ms` (3 minutes) reads as interrupted to the audit, and a fresh on
 so the agent can tell the user what happened instead of finding no such run.
 `make research-setup` and `make units` (when the unit changed) list the live runs and ask
 before restarting the runner; with no terminal to ask they stop, unless `FORCE=1`
-(`tools/run_guard.py`). `make restart` and `make deploy` restart AnythingLLM only,
+(`hostctl.run_guard`). `make restart` and `make deploy` restart AnythingLLM only,
 so they don't need to ask. The runner runs the code it started with: after changing
 `packages/research`, `make research-setup` puts it live.
 
@@ -1022,7 +1030,7 @@ unused).
 - **The key.** agents-runner calls AnythingLLM with a developer API key of its own, in
   `~/.config/everythingllm/agents.env` (`ANYTHINGLLM_API_KEY`, mode 600, put there by hand);
   `make agents-setup` checks it. Like research-runner, it isn't restarted by `make units`
-  while a delegation is going (`tools/run_guard.py`).
+  while a delegation is going (`hostctl.run_guard`).
 
 ## Nilson relay
 

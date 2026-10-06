@@ -12,6 +12,7 @@ members = [
     "apps",
     "audit",
     "chatimage",
+    "hostctl",
     "hostrpc",
     "llm",
     "podcasts",
@@ -600,6 +601,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/98/b7/8c59a66d15205024662f1d66968136f13893f96df1ddc5087e2e281fc95f/hf_xet-1.6.0-cp38-abi3-win_amd64.whl", hash = "sha256:fb4fadde1b2b70bf4c0c14a6dccbe7194b1c28947fefd5bbe3fed9d940676c3b", size = 4033128, upload-time = "2026-08-03T22:33:10.171Z" },
     { url = "https://files.pythonhosted.org/packages/73/63/ca511b6f802f28cf3489b280fe77475bcca8de85e81a6299d7916b5b5555/hf_xet-1.6.0-cp38-abi3-win_arm64.whl", hash = "sha256:3dc3e35441ba395006af5aaacc40ef2e603c51ef46c3530b9156185f00935ea3", size = 3859359, upload-time = "2026-08-03T22:33:11.725Z" },
 ]
+
+[[package]]
+name = "hostctl"
+version = "0.1.0"
+source = { editable = "packages/hostctl" }
+dependencies = [
+    { name = "apps" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "apps", editable = "packages/apps" }]
 
 [[package]]
 name = "hostrpc"

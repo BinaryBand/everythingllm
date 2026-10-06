@@ -6,13 +6,13 @@ This exits 1 (so the unit isn't started into a crash loop) while the file or the
 missing, and makes the file private (mode 600). It never prints the key. Standard library
 only, run with the system python3.
 
-    python3 tools/agents_env.py [path]
+    python3 -m hostctl.agents_env [path]   # with hostctl and apps on PYTHONPATH, as make does
 """
 
 import sys
 from pathlib import Path
 
-from units import env_file
+from hostctl.units import env_file
 
 DEFAULT = Path("~/.config/everythingllm/agents.env").expanduser()
 

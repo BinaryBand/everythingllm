@@ -2,17 +2,17 @@
 it without its result (a run writes its log line only at the end), so this lists live runs
 and asks.
 
-  python3 tools/run_guard.py <service>   exit 0 to go ahead, 1 to stop
+  python3 -m hostctl.run_guard <service>   exit 0 to go ahead, 1 to stop
 
 The apps registry (packages/apps, `guard`) says which services hold runs and where their
 run logs are; GUARDED is that, by unit. A run is live while
 its marker in <run log>/running/ has been touched within the marker's stale_ms (see
 packages/runs/src/runs/runlog.py). With no terminal to ask, it stops unless FORCE=1. Used
-by tools/appctl.py (`make <app>-setup`) and units.py. AnythingLLM's own restarts
+by appctl.py (`make <app>-setup`) and units.py. AnythingLLM's own restarts
 don't need it: the runs live in the services, not in AnythingLLM.
 
 Standard library only, run with the system `python3`, like sync.py; the registry's reader
-is too, so it's imported from packages/apps/src.
+is too.
 """
 
 import json
@@ -21,7 +21,6 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages" / "apps" / "src"))
 import apps  # the registry's reader, standard library only
 
 DATA = Path.home() / ".local" / "share" / "everythingllm"  # hostrpc.data_dir()

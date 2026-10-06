@@ -28,11 +28,11 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-import run_guard
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "packages" / "apps" / "src"))
 import apps  # the registry's reader, standard library only
+
+from hostctl import run_guard
+
+ROOT = Path(__file__).resolve().parents[4]
 
 BACKUPS = run_guard.DATA / "backups"  # outside the repo, which the container mounts
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")

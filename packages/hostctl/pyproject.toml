@@ -1,0 +1,10 @@
+[project]
+name = "hostctl"
+version = "0.1.0"
+description = "What make runs to set up, sync and check this machine: units, deploys, app setup, the restart guard (standard library only, run with the system python3; skills is the exception)"
+requires-python = ">=3.12"
+dependencies = ["apps"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

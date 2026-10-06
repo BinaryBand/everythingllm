@@ -20,8 +20,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from units import ROOT, anythingllm_headers, env_file, host_settings
+from hostctl.units import ROOT, anythingllm_headers, env_file, host_settings
 
 API = "http://127.0.0.1:3001/api"
 EXAMPLE_HOST = "machine.tailnet-name.ts.net"

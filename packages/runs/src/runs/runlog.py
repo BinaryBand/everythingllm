@@ -8,7 +8,7 @@ touches the marker every minute while the run is alive. A restart of the service
 its runs without letting them write their lines, so the service, when it starts, moves
 every marker into the log as an "interrupted" line (none of them can be its own). A marker
 quiet for stale_ms belongs to a run that's gone too; the audit (checks.py) and
-tools/run_guard.py read it so, taking stale_ms from the marker.
+hostctl.run_guard read it so, taking stale_ms from the marker.
 """
 
 import json

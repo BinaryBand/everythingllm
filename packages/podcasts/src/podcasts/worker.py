@@ -25,7 +25,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 
 from hostrpc import atomic_write
@@ -174,14 +174,25 @@ def heartbeat(queue: Queue, worker: str, every: float = BEAT_SECONDS):
 class Every:
     """A systemd timer's OnCalendar=00/<hours>:<minute> with Persistent=true, kept in
     `file`: due once in each slot (local time), and at once when a slot passed while the
-    worker wasn't running. With no file yet, the first is the next slot, as a new timer's."""
+    worker wasn't running. With no file yet, the first is the next slot, as a new timer's.
 
-    def __init__(self, file: Path, hours: int, minute: int = 0):
+    Slots are compared on the wall clock, in `tz` (default this machine's zone), not as
+    instants: when the clocks go back an hour, the slot that already ran is still the
+    latest one, rather than coming an hour later in UTC and running twice."""
+
+    def __init__(
+        self, file: Path, hours: int, minute: int = 0, tz: tzinfo | None = None
+    ):
         assert 24 % hours == 0, hours
-        self.file, self.hours, self.minute = file, hours, minute
+        self.file, self.hours, self.minute, self.tz = file, hours, minute, tz
+
+    def wall(self, at: datetime) -> datetime:
+        """`at` on the wall clock: its local date and time, without an offset."""
+        return at.astimezone(self.tz).replace(tzinfo=None)
 
     def slot(self, now: datetime) -> datetime:
-        """The latest slot at or before `now` (local time, with its offset)."""
+        """The latest slot at or before `now`, on the wall clock."""
+        now = self.wall(now)
         at = now.replace(
             hour=now.hour - now.hour % self.hours,
             minute=self.minute,
@@ -209,7 +220,7 @@ class Every:
         if last is None:  # first start (or a file that can't be read): wait for a slot
             self.ran(now)
             return False
-        if self.slot(now) <= last:
+        if self.slot(now) <= self.wall(last):
             return False
         self.ran(now)
         return True

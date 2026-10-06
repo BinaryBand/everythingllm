@@ -8,7 +8,8 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -81,9 +82,10 @@ def at(text: str, day: int = 6) -> datetime:
 
 def test_every_comes_due_once_a_slot_like_its_timer(tmp_path):
     every = Every(tmp_path / "x.last", 6, 30)
-    assert every.slot(at("06:10")) == at("00:30")
-    assert every.slot(at("06:30")) == at("06:30")
-    assert every.slot(at("00:10")) == at("18:30", day=5)
+    wall = every.wall
+    assert every.slot(at("06:10")) == wall(at("00:30"))
+    assert every.slot(at("06:30")) == wall(at("06:30"))
+    assert every.slot(at("00:10")) == wall(at("18:30", day=5))
     # First start: the next slot, not now.
     assert not every.due(at("05:00"))
     assert not every.due(at("06:29"))
@@ -101,6 +103,24 @@ def test_every_runs_a_slot_missed_while_down_at_once(tmp_path):
     assert again.due(at("13:00")) and not again.due(at("13:01"))
     (tmp_path / "x.last").write_text("not a time")
     assert not again.due(at("13:02"))  # read as a first start
+
+
+def test_every_runs_a_slot_once_when_the_clocks_go_back(tmp_path):
+    """25 October 2026 in Stockholm: 03:00 CEST becomes 02:00 CET. The 00:00 sync ran
+    at 22:00 UTC; at 02:30 CET the latest slot is still that one, not 23:00 UTC."""
+    stockholm = ZoneInfo("Europe/Stockholm")
+    every = Every(tmp_path / "x.last", 6, tz=stockholm)
+    every.ran(datetime(2026, 10, 25, 0, 0, 5, tzinfo=stockholm))
+    after = datetime(2026, 10, 25, 1, 30, tzinfo=timezone.utc)  # 02:30 CET
+    assert after.astimezone(stockholm).utcoffset() == timedelta(hours=1)
+    assert not every.due(after)
+    assert every.due(datetime(2026, 10, 25, 6, 0, 1, tzinfo=stockholm))
+    # And when they go forward (29 March 2026, 02:00 CET becomes 03:00 CEST), 06:00 still
+    # comes once.
+    every.ran(datetime(2026, 3, 29, 0, 0, 5, tzinfo=stockholm))
+    assert not every.due(datetime(2026, 3, 29, 3, 30, tzinfo=stockholm))
+    assert every.due(datetime(2026, 3, 29, 6, 0, 1, tzinfo=stockholm))
+    assert not every.due(datetime(2026, 3, 29, 6, 30, tzinfo=stockholm))
 
 
 class Worker(SyncWorker):

@@ -295,3 +295,47 @@ def test_hold_back_leaves_a_guarded_runner_with_a_run_going(
         "x.service"
     ]
     assert "left research-runner.service running" in capsys.readouterr().out
+
+
+def test_a_host_unit_a_container_replaced_is_retired(tmp_path, monkeypatch, capsys):
+    # research-runner was a host unit; left in the user folder, it would shadow the
+    # research-runner.service Quadlet generates, and keep running instead.
+    user = tmp_path / "user"
+    user.mkdir()
+    ours = user / "research-runner.service"
+    ours.write_text(
+        "# Rendered by `uv run hostctl units` from systemd/research-runner.service in "
+        "the EverythingLLM repo, with this\n[Service]\nExecStart=/usr/local/bin/uv run\n"
+    )
+    (user / "gateway.service").write_text(ours.read_text())  # still a host unit
+    planned = plan(tmp_path)
+    assert units.superseded(planned, user) == [ours]
+
+    containers = tmp_path / "containers"
+    (user / "linked.service").symlink_to(tmp_path / "linked.service")  # the old way
+    (tmp_path / "linked.service").write_text("[Service]\n")
+    (user / "made-by-hand.service").write_text("[Service]\n")  # not ours: left alone
+    more = [
+        unit(tmp_path, containers / f"{n}.container", "", f"{n}.service", True)
+        for n in ("linked", "made-by-hand")
+    ]
+    old = units.superseded([*planned, *more], user)
+    assert old == [ours, user / "linked.service"]
+
+    ran = []
+    monkeypatch.setattr(units.subprocess, "run", lambda cmd, **kw: ran.append(cmd))
+    backup = tmp_path / "backup"
+    assert units.retire(old, backup) == ["research-runner.service", "linked.service"]
+    assert ran == [
+        ["systemctl", "--user", "disable", "research-runner.service"],
+        ["systemctl", "--user", "disable", "linked.service"],
+    ]
+    assert not ours.exists() and not (user / "linked.service").is_symlink()
+    assert (
+        (backup / "user" / "research-runner.service")
+        .read_text()
+        .startswith(units.HEADER)
+    )
+    assert (tmp_path / "linked.service").exists()  # what it linked to is left alone
+    assert (user / "made-by-hand.service").exists()
+    assert "retired " in capsys.readouterr().out

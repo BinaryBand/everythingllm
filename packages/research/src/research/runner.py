@@ -1,4 +1,5 @@
-"""research-runner: the host daemon that runs deep research for the AnythingLLM skill.
+"""research-runner: the daemon that runs deep research for the AnythingLLM skill, in its
+service container (host/quadlet/research-runner.container.in).
 
 The skill (anythingllm/agent-skills/deep-research) asks over its socket (hostrpc):
 

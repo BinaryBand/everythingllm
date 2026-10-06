@@ -93,7 +93,8 @@ versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
 restarts nothing. A guarded runner with a run going is left running, and a container whose
 image of ours or network isn't there yet isn't started: its app's setup makes them (see
-"Service containers"). Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
+"Service containers"). A host unit whose service has moved into a container is disabled and
+moved to the backups, so the container's unit takes its name (see "Moving a service over"). Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
 
 Run it from the main checkout. It refuses to run in a worktree, since the units run the
 repo they were rendered from. Edit the templates, never the installed copies; `uv run hostctl diff`
@@ -221,7 +222,8 @@ through its UI.
     together from the untouched download and the stretches to leave out (see "Originals,
     cuts and podcasts-web" below)
   - `packages/research/` — not an MCP server: `research-runner` runs the deep-research skill's
-    runs on the host, and `research-run` runs one by hand (see "Deep research")
+    runs, in a service container of its own, and `research-run` runs one by hand (see "Deep
+    research")
   - `packages/agents/` — not an MCP server: `agents-runner` runs delegations, tasks done by
     AnythingLLM's own agents, and `agents-run` starts one by hand (see "Delegation")
   - `packages/runs/` — a library, not a server: what research-runner and agents-runner share
@@ -249,8 +251,9 @@ through its UI.
   laid out by kind:
 
       venvs/<name>/        the host services' venvs (agents, audit, gateway, podcasts,
-                           relay, research, sandbox, sites, splice)
-      venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/)
+                           relay, sandbox, sites, splice)
+      venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/):
+                           egress-proxy, research-runner
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
@@ -511,6 +514,14 @@ containers (it doesn't enable them: Quadlet's `[Install]` does), asking first wh
 guarded runner has a run going, as for a host unit. `uv run hostctl units` starts a changed
 container, except a guarded one with a run going, and one whose image or network isn't
 there yet, which waits for its app's setup.
+
+**Moving a service over.** The host unit's rendered copy in `~/.config/systemd/user/` would
+shadow the `<x>.service` Quadlet generates (systemd prefers that folder), so `uv run hostctl
+units` retires it: when `host/quadlet/<x>.container.in` exists and the user folder still
+has our `<x>.service`, it disables that, moves it to the backups and restarts
+`<x>.service`, which is the container now (held back as above while a run is going). The
+old venv in `venvs/<name>/` is left behind; delete it once the container works. So far
+`research-runner` has moved (see "Deep research").
 
 **Hardening.** Every service container's template has these Quadlet keys
 (`packages/egress/tests/test_quadlet.py` holds them to it):
@@ -959,8 +970,9 @@ and read-only. Without a DeepSeek key, `sites-runner` logs that and serves the t
 agent itself is capped at 40 tool calls per reply, `AGENT_MAX_TOOL_CALLS` in `.env`, so the
 work happens outside the agent). The skill (`anythingllm/agent-skills/deep-research/`) is a
 thin front: it hands the question, its setup args and the workspace to `research-runner`
-on the host (`packages/research`, `host/systemd/research-runner.service`, its own venv in
-`~/.local/share/everythingllm/venvs/research`), and answers at once with the run's live
+(`packages/research`), which runs in a service container of its own
+(`host/quadlet/research-runner.container.in`, see "Its container" below and "Service
+containers"), and answers at once with the run's live
 progress card, so the chat is free while the run goes. They talk over a Unix socket the
 container sees, `storage/everythingllm/research/runner.sock` (see "Services on the host"):
 `start` returns a run id and its card, `wait(run_id, since)` long-polls up to 45 s for new
@@ -969,7 +981,7 @@ progress lines and the result, `runs` lists what the runner holds.
 **The live card.** `start`'s `card` is a Markdown image in a link,
 `[![Deep research: <question>](…/_live/research/<id>.png)](…/_live/research/<id>)`, which the
 agent pastes as it does a link card. research-runner serves both on 127.0.0.1:8450
-(`RESEARCH_LIVE_PORT`, `research.live`), which `uv run hostctl serve-setup` maps to
+(`RESEARCH_LIVE_PORT`, `research.live`; its container publishes the port there), which `uv run hostctl serve-setup` maps to
 `https://<PUBLIC_HOST>:8445/_live/research/` with `tailscale serve`. The image is
 `multipart/x-mixed-replace` (server push, `chatimage.live`): the browser keeps showing the
 newest frame of the connection, so the card's bar, its minutes and its latest progress line
@@ -992,7 +1004,8 @@ A run, step by step:
    goal, or `{goal, queries}`, at most the depth's workers) and an optional `title` skip
    this step, and the run log's `stats.plan` says `caller`.
 2. **Research** — one worker per sub-question, all in parallel. Each searches SearXNG
-   (`http://127.0.0.1:8888/search` on the host), reads pages with
+   (`SEARXNG_URL`: `https://<PUBLIC_HOST>:8888/search` from the container,
+   `http://127.0.0.1:8888/search` on the host), reads pages with
    publicweb's page reader, as the article writer does (`publicweb.pages`: browser-like
    headers, trafilatura, public hosts only, redirects included, HTML only, so PDFs are
    skipped) and extracts findings as claim + verbatim quote. Findings whose quote isn't actually on the page are dropped.
@@ -1089,6 +1102,33 @@ published, its stats (including `tokens`, with `cached` the input the provider s
 its prefix cache, `fact_check` and per-worker `workers_detail` with why
 each stopped: `done`, `budget`, `wasted`, `search-down`, `notes-full`) and every progress
 line. AnythingLLM keeps only a chat's final reply, so this is the record the audit reads.
+
+**Its container.** research-runner runs in `localhost/everythingllm-service`, hardened as
+every service container is (see "Service containers"), with 2 GB, 2 CPUs and 256 PIDs (two
+runs of a few dozen threads each) and `Nice=10`, which podman passes on to it. Its venv is
+`venvs/research-runner-ctr/`; the first start syncs it from PyPI through the egress proxy,
+so the socket and the live cards come up a few minutes later that once. It sees, each at its
+host path:
+
+- the repo, read-only: the code, the sites' sources and `host.env`
+- in the data dir: `research/` (the run log); `pages/entries/research/` and
+  `pages/entries/.build.lock`, the lock every site build holds, so its builds and
+  sites-runner's still take turns; and `pages/public/` whole, since the sandbox builds the
+  research site into `.research.new` there and the rename into place must stay within one
+  mount (the link cards go in its `_cards/`)
+- in storage: its socket folder; the sandbox's, read-only (connecting needs no more), for
+  `build_system_site`: the research site has `theme_from = "system"`, so no zola runs in the
+  container; AnythingLLM's `.env`, read-only, for the model keys and its password;
+  `anythingllm-fs/research/` and `documents/deep-research/`
+
+It goes out only through the egress proxy, with the `research` profile: any public host
+(the pages it reads, DeepSeek and Z.AI), and AnythingLLM and SearXNG by the tailnet name
+(`ANYTHINGLLM_API=https://<PUBLIC_HOST>:3001/api`, `SEARXNG_URL`). A page the proxy refuses
+(a LAN or tailnet address) is skipped as any unreadable page is. Only the research site's
+entries are mounted, so a `SITE` setup arg naming another site can't publish there: the
+report is still saved to the agent's files, and the reply says why. `.env` is mounted as one
+file, so if AnythingLLM ever replaced it rather than writing it in place, the runner would
+read the old one until it restarts.
 
 To run one by hand, in this process rather than the runner (it logs and publishes as usual):
 

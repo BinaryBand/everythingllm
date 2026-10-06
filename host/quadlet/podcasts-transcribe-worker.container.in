@@ -1,0 +1,78 @@
+[Unit]
+Description=Podcast transcripts worker, in its service container: transcribes downloaded episodes and looks for sponsor reads, every 6 hours
+# Its only way out (Whisper's model on first use, DeepSeek for ad reads), which its venv's
+# first sync needs too.
+Wants=egress-proxy.service
+After=egress-proxy.service
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Container]
+Image=localhost/everythingllm-service
+# A pass at 00:30, 06:30, 12:30 and 18:30, half an hour after each scheduled sync, or when
+# asked (podcasts-transcribe); one at a time, under
+# ~/.local/share/everythingllm/podcasts/transcribe.lock (podcasts.transcripts).
+# PODCASTS_TRANSCRIBE_THREADS is read from host.env (in the repo, mounted below) again at
+# every pass, so a change there needs no restart; unset, it is 1 thread.
+Exec=uv run --frozen --no-dev --project @REPO@ --package podcasts --extra host podcasts-transcribe-worker
+# The service containers' hardening (README, "Service containers"). It writes only in the
+# data dir, which is the host user's, so it needs none of their other groups.
+ReadOnly=true
+Tmpfs=/tmp
+DropCapability=ALL
+NoNewPrivileges=true
+UserNS=keep-id
+PidsLimit=256
+# Whisper hears episodes in 20-minute windows, decoded as they're heard, so a pass holds
+# about one window's audio and features whatever the episode's length (it peaked at 3.5 GB
+# on an 8 h one with the whole episode decoded at once). Past 6 GB the kernel kills the
+# worker, not the rest of the host; it starts again, and its first pass marks that episode
+# failed (transcribing.json) and goes on with the rest. Up to 4 threads, all the cores
+# PODCASTS_TRANSCRIBE_THREADS may give it.
+PodmanArgs=--memory=6g --cpus=4 --umask=0002
+RunInit=true
+Timezone=local
+# egress-net only, at its address in egress.toml (profile podcasts: public hosts, which
+# huggingface.co and its CDN are).
+Network=egress-net:ip=10.89.79.15
+Environment=HTTPS_PROXY=http://10.89.79.2:3128
+Environment=HTTP_PROXY=http://10.89.79.2:3128
+Environment=EGRESS_PROXY=http://10.89.79.2:3128
+# Everything at its host path. The repo, read-only (the code, and host.env for the threads).
+Volume=@REPO@:@REPO@:ro
+# Its venv and uv's cache, in one folder (one mount, so uv can hardlink from the cache).
+Volume=%h/.local/share/everythingllm/venvs/podcasts-transcribe-worker-ctr:%h/.local/share/everythingllm/venvs/podcasts-transcribe-worker-ctr
+Environment=HOME=%h
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/podcasts-transcribe-worker-ctr/venv
+Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/podcasts-transcribe-worker-ctr/uv-cache
+# The podcasts' state (PODCASTS_STATE): the queue, transcribe.lock and its marker, the
+# records and originals, the transcripts it saves, and Whisper's model in models/
+# (PODCASTS_MODELS' default).
+Volume=%h/.local/share/everythingllm/podcasts:%h/.local/share/everythingllm/podcasts
+# The served folder (PODCASTS_DIR): each transcript's .vtt and the feed that links it.
+Volume=%h/.local/share/everythingllm/pages/public/podcasts:%h/.local/share/everythingllm/pages/public/podcasts
+# AnythingLLM's .env, read-only: the DeepSeek key and model that find ad reads.
+Volume=@ANYTHINGLLM_STORAGE@/.env:@ANYTHINGLLM_STORAGE@/.env:ro
+# huggingface_hub keeps its own bits (a token, if any; its download cache) under HF_HOME,
+# which would be ~/.cache, read-only here; the model itself goes to models/.
+Environment=HF_HOME=/tmp/huggingface
+# ANYTHINGLLM_STORAGE, PUBLIC_HOST (the private feeds' URLs) and PODCASTS_*.
+EnvironmentFile=@REPO@/host.env
+
+[Service]
+# podman won't bind-mount what isn't there.
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/podcasts-transcribe-worker-ctr %h/.local/share/everythingllm/podcasts %h/.local/share/everythingllm/pages/public/podcasts
+# Whisper takes every core it's given; anything else goes first. The container's processes
+# inherit it from podman (and the worker asks for 19 itself).
+Nice=19
+# It slows down past 5 GB, before the container's 6 GB limit kills it.
+MemoryHigh=5G
+# On SIGTERM (a stop, a restart by `uv run hostctl units`, a reboot) a pass removes
+# transcribing.json and the worker exits 143: not a failure, and not held against the
+# episode.
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

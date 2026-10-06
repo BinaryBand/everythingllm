@@ -253,8 +253,8 @@ through its UI.
   (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's
   laid out by kind:
 
-      venvs/<name>/        the host services' venvs (agents, audit, gateway, podcasts,
-                           relay, research, sandbox, sites, splice)
+      venvs/<name>/        the host services' venvs (agents, audit, gateway, relay,
+                           research, sandbox, sites, splice)
       venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/)
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
@@ -752,13 +752,30 @@ a show found only in such an app has no public feed.
 - Use an app that fetches feeds from the phone itself (AntennaPod, Podcast Addict), with
   Tailscale on. Apps that fetch through their own servers (Pocket Casts, Overcast, Apple
   Podcasts' sync) can't reach a tailnet address.
-- The MCP server in the container only forwards each tool call to `podcasts-runner` on the
-  host (`packages/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
-  own venv in `~/.local/share/everythingllm/venvs/podcasts`, socket `storage/everythingllm/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
-  see "Services on the host"), which runs the tool and sends back its text.
-  The feeds, the model's key and the audio stack never touch the container: the sync
-  and transcription run on the host too, from the same venv, in two long-running workers,
-  `podcasts-sync-worker.service` and `podcasts-transcribe-worker.service`.
+- The MCP server in the container only forwards each tool call to `podcasts-runner`
+  (`packages/podcasts/src/podcasts/tools.py`, socket `storage/everythingllm/podcasts/runner.sock`;
+  the rest of its data is in `~/.local/share/everythingllm/podcasts/`; see "Services on the
+  host"), which runs the tool and sends back its text. The feeds, the model's key and the
+  audio stack never touch AnythingLLM's container: the sync and transcription run in two
+  long-running workers, `podcasts-sync-worker` and `podcasts-transcribe-worker`.
+- The runner and both workers run in service containers of their own (see "Service
+  containers"; `host/quadlet/podcasts-{runner,sync-worker,transcribe-worker}.container.in`,
+  each with its venv in `~/.local/share/everythingllm/venvs/<name>-ctr/`), at
+  `10.89.79.13`–`.15` on egress-net, all three in egress.toml's `podcasts` profile: public
+  hosts on ports 80 and 443 (feeds and episodes, Apple's directory, DeepSeek, and Hugging
+  Face for Whisper's model), nothing of ours. A feed or an episode on a private address is
+  refused by the proxy rather than by `publicweb`, so its error reads `403 Forbidden`; one
+  on another port is refused too. Each mounts only what it uses, at its host path: the
+  state folder (`~/.local/share/everythingllm/podcasts/`, with the queue and `models/`) and
+  the served folder (`pages/public/podcasts/`), plus the runner's socket folder (the only
+  one that writes in storage, so the only one with `GroupAdd=keep-groups`) or AnythingLLM's
+  `.env` read-only (the workers', for DeepSeek); the repo, read-only, gives the
+  transcription worker `host.env`. Locks (`sync.lock`, `transcribe.lock`, `feeds.lock`)
+  work across them, as they're all on the host's filesystem. `podcasts-web` stays a host
+  unit: it only reads what they write. Each first start syncs its venv (the `host` extra:
+  Whisper, PyAV, onnxruntime, about 500 MB installed) through the proxy, which took about
+  10 minutes here; until then the runner's socket isn't there and the tools say the
+  service isn't running.
 - MCP tool calls time out after 60 s, so the runner only asks for the sync and returns. It
   leaves a request in `~/.local/share/everythingllm/podcasts/queue/`
   (`sync-<slug>.json`, or `sync-_all.json` for every feed), and the sync worker
@@ -892,7 +909,7 @@ episode and by what, and the sync logs each episode's cuts to `sync.log`.
   stay in it while they are. One that can't be read goes out as it is, with the error in its
   record.
 - Reading an episode takes about 15 s an hour of audio and about 450 MB of memory an hour
-  of audio, in the sync on the host. Video episodes aren't cut.
+  of audio, in the sync worker (which has 4 GB). Video episodes aren't cut.
 
 ### Transcripts
 
@@ -922,12 +939,14 @@ few lines of each other.
   transcribed. A second pass
   gives way at once while one is going (`~/.local/share/everythingllm/podcasts/transcribe.lock`); its output is in
   the journal (`uv run hostctl podcasts-logs`).
-- Its unit caps it at 6 GB (`MemoryMax`; it slows down past 5 GB, `MemoryHigh`). Past that
-  the kernel kills the worker, not the rest of the host; it starts again, and its first
+- Its container caps it at 6 GB (`--memory=6g`; its unit slows it down past 5 GB,
+  `MemoryHigh`). Past that the kernel kills the worker, not the rest of the host; it
+  starts again, and its first
   pass marks the episode it died on failed (`transcribing.json` names it) and goes on with
   the rest. A stop, by contrast, removes `transcribing.json`, so it isn't held against the
   episode, and the worker exits 143, which the unit counts as success.
-- The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/podcasts/models/whisper/base`.
+- The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/podcasts/models/whisper/base`,
+  from Hugging Face through the egress proxy (`HF_HOME` is in the container's `/tmp`).
 - **Ad reads.** Audio fingerprints miss an ad heard for the first time, or one the host
   reads in their own words, so AnythingLLM's default model (DeepSeek, key and model from
   AnythingLLM's `.env`, through the shared `llm` package) reads each new transcript, half an hour at a time, and names

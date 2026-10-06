@@ -58,9 +58,11 @@ before = ["python3 -m hostctl service-images"]
 install = true
 
 [podcasts]
-summary = "podcasts-runner, podcasts-web (:8445/podcasts), and the sync and transcription workers"
+summary = "podcasts-runner and the sync and transcription workers, in service containers, and podcasts-web (:8445/podcasts)"
 runner = "podcasts-runner.service"
-units = { "podcasts-runner.service" = "podcasts runner", "podcasts-web.service" = "podcasts-web", "podcasts-sync-worker.service" = "podcast sync", "podcasts-transcribe-worker.service" = "podcast transcripts" }
+units = { "podcasts-web.service" = "podcasts-web" }
+container = { "systemd-podcasts-runner" = "podcasts runner", "systemd-podcasts-sync-worker" = "podcast sync", "systemd-podcasts-transcribe-worker" = "podcast transcripts" }
+before = ["python3 -m hostctl service-images"]
 serve = [{ https = 8445, path = "/podcasts", port = 8449 }]
 health = { "podcasts-web" = "http://127.0.0.1:8449/health" }
 install = true

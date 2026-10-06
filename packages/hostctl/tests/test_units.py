@@ -25,7 +25,7 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
         "static_agent.container",
         "log-filter.conf",
         "podcasts-web.service",
-        "podcasts-sync-worker.service",
+        "podcasts-sync-worker.container",
     } <= set(planned)
     for unit in planned.values():
         assert not units.PLACEHOLDER.search(unit.text), unit.source
@@ -367,21 +367,33 @@ def test_a_guarded_runner_with_a_run_going_isnt_retired(tmp_path, monkeypatch):
     assert (user / "research-runner.service").is_file()
 
 
-def test_the_podcasts_timers_are_retired_and_their_workers_kept(tmp_path):
+def test_the_podcasts_host_units_are_retired_and_their_containers_started(
+    tmp_path, monkeypatch
+):
+    """From timers to workers to containers: on a machine with any of the podcasts' host
+    units installed, each goes, the containers take over the runner's and the workers'
+    names, and podcasts-web stays."""
+    monkeypatch.setattr(units.subprocess, "run", lambda *a, **kw: None)
     planned = plan(tmp_path)
     user = tmp_path / "user"
     user.mkdir()
-    for name in (
-        "podcasts-sync.timer",
-        "podcasts-sync@.service",
-        "podcasts-transcribe.service",
-        "podcasts-transcribe.timer",
+    old = [
+        "podcasts-runner.service",
         "podcasts-sync-worker.service",
-    ):
-        (user / name).write_text(RENDERED)
-    assert [p.name for p in units.retired(planned, user)] == [
         "podcasts-sync.timer",
         "podcasts-sync@.service",
+        "podcasts-transcribe-worker.service",
         "podcasts-transcribe.service",
         "podcasts-transcribe.timer",
     ]
+    for name in [*old, "podcasts-web.service"]:
+        (user / name).write_text(RENDERED)
+    retired = units.retired(planned, user)
+    assert [p.name for p in retired] == old
+    start, left = units.retire(retired, planned, tmp_path / "backup")
+    assert start == [
+        "podcasts-runner.service",
+        "podcasts-sync-worker.service",
+        "podcasts-transcribe-worker.service",
+    ]
+    assert left == [] and [p.name for p in user.iterdir()] == ["podcasts-web.service"]

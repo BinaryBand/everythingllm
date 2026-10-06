@@ -51,10 +51,10 @@ PAGES_PORT = 8445  # the pages site, which serves every built site under /<name>
 
 
 def host_file(source: Path) -> Path:
-    """host.env at the root of the repo that holds the sites (<repo>/zola/sites). The
+    """host.env at the root of the repo that holds the sites (<repo>/packages/sites/zola/sites). The
     container sees it at /mcp/host.env, which matters for builders that get none of our
     environment, such as sites-write run from a script."""
-    return source.parent.parent / "host.env"
+    return source.parents[3] / "host.env"
 
 
 def pages_url(source: Path) -> str:

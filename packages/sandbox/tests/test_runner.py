@@ -746,7 +746,7 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
     assert config.root == data / "sandbox" / "workspaces"
     assert config.public_root == data / "sandbox" / "public"
     assert config.public_url == "https://box.tail.ts.net:8447/"
-    assert config.system_themes == runner.REPO / "zola" / "themes"
+    assert config.system_themes == runner.SYSTEM_ZOLA / "themes"
     assert (config.system_themes / "agent-site" / "theme.toml").is_file()
 
 

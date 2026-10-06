@@ -54,8 +54,8 @@ SANDBOX = ("unshare", "--user", "--map-root-user", "--net")
 
 log = logging.getLogger(__name__)
 REPO_SITES = (
-    Path(__file__).resolve().parents[4] / "zola" / "sites"
-)  # <repo>/packages/sites/src/sites/
+    Path(__file__).resolve().parents[2] / "zola" / "sites"
+)  # <repo>/packages/sites/zola/sites; this file is in <repo>/packages/sites/src/sites/
 
 
 class BuildError(RuntimeError):

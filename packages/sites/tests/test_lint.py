@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from sites import lint
 
-REPO_ZOLA = Path(__file__).resolve().parents[3] / "zola"
+REPO_ZOLA = Path(__file__).resolve().parents[1] / "zola"
 
 
 def test_every_repo_template_passes_the_checks():

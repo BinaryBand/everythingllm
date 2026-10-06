@@ -56,8 +56,9 @@ Config (environment):
   SANDBOX_ROOT      workspace folders, host-only (default
                     ~/.local/share/everythingllm/sandbox/workspaces);
                     run scripts go in its `.runs` folder
-  SANDBOX_SYSTEM_THEMES  the themes mounted at /system/themes (default the repo's zola/themes)
-  SANDBOX_SITES_SOURCE   the system sites' sources (default the repo's zola/sites)
+  SANDBOX_SYSTEM_THEMES  the themes mounted at /system/themes (default the repo's
+                         packages/sites/zola/themes)
+  SANDBOX_SITES_SOURCE   the system sites' sources (default packages/sites/zola/sites)
   SANDBOX_SITES_CONTENT  their entries (default ~/.local/share/everythingllm/pages/entries,
                          as sites.build's SITES_CONTENT)
   SANDBOX_PUBLIC    every workspace's /public, as <workspace>/ (default
@@ -115,6 +116,7 @@ SLUG_RE = re.compile(
 DATA_RW = "rw,noexec,nosuid,nodev"
 DATA_RO = "ro,noexec,nosuid,nodev"
 REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/sandbox/src/sandbox/
+SYSTEM_ZOLA = REPO / "packages" / "sites" / "zola"  # the system sites and their themes
 MEMORY = "1g"
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
@@ -214,7 +216,7 @@ class Config:
     site_url: str
     public_root: Path = Path("/nonexistent")
     public_url: str = "http://127.0.0.1:8447/"
-    sites_source: Path = REPO / "zola" / "sites"
+    sites_source: Path = SYSTEM_ZOLA / "sites"
     sites_content: Path = Path("/nonexistent")
 
     @property
@@ -230,8 +232,8 @@ class Config:
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
-            system_themes=Path(get("SANDBOX_SYSTEM_THEMES", REPO / "zola" / "themes")),
-            sites_source=Path(get("SANDBOX_SITES_SOURCE", REPO / "zola" / "sites")),
+            system_themes=Path(get("SANDBOX_SYSTEM_THEMES", SYSTEM_ZOLA / "themes")),
+            sites_source=Path(get("SANDBOX_SITES_SOURCE", SYSTEM_ZOLA / "sites")),
             sites_content=Path(
                 get("SANDBOX_SITES_CONTENT", hostrpc.data_dir() / "pages" / "entries")
             ),

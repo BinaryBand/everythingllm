@@ -82,7 +82,7 @@ def test_assemble_copies_the_site_with_its_theme_but_not_git_or_old_output(
 
 @pytest.mark.skipif(not shutil.which("zola"), reason="zola isn't installed here")
 def test_a_site_builds_with_the_repos_theme(tmp_path):
-    system = sitebuild.Path(__file__).resolve().parents[3] / "zola" / "themes"
+    system = sitebuild.Path(__file__).resolve().parents[2] / "sites" / "zola" / "themes"
     site = tmp_path / "site"
     (site / "content").mkdir(parents=True)
     (site / "zola.toml").write_text(

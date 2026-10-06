@@ -166,13 +166,13 @@ through its UI.
   AnythingLLM API and matched by command. Typing the command in chat swaps in the prompt, and whatever
   follows it stays after the prompt; a prompt that starts with `@agent` runs in agent mode.
   - `deep-research/` — `/deep-research <question>` runs the deep-research skill on it
-- `zola/` — static sites built with Zola from entries the agent writes (see below)
 - `packages/` — MCP servers we write: members of the uv workspace at the repo root
   (`pyproject.toml`, `uv.lock`), one per subdirectory
   - `packages/sites/` — the Zola sites on the tailnet pages site (:8445): list/write/get/delete
     their entries and build them; and `headlines(section)`, the last 30 hours' stories for
     the Daily News job from the feeds in `FEEDS` (`sites/feeds.py`), each with its own link.
-    The MCP server forwards to `sites-runner` on the host, which does the work
+    The MCP server forwards to `sites-runner` on the host, which does the work. The sites'
+    sources are in `packages/sites/zola/` (see below)
   - `packages/audit/` — health checks over this setup, for the System Audit job (see below); the
     MCP server forwards to `audit-runner` on the host, which runs them
   - `packages/sandbox/` — not an MCP server: `sandbox-runner` runs the agent's Python and bash
@@ -295,9 +295,9 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
 ## Zola sites
 
 For sites an agent keeps adding to, the agent writes entries, not HTML, and Zola does the
-rest. `zola/themes/agent-site/` is the shared theme (layout, entry lists, a year-grouped
+rest. `packages/sites/zola/themes/agent-site/` is the shared theme (layout, entry lists, a year-grouped
 archive, Atom feed; no scripts or inline styles, so it passes the CSP). Each
-`zola/sites/<name>/` is one site: `zola.toml` (its `base_url` is `…:8445/<name>`), section
+`packages/sites/zola/sites/<name>/` is one site: `zola.toml` (its `base_url` is `…:8445/<name>`), section
 `_index.md` files, and any templates or `static/` CSS it overrides or adds. Templates are
 Tera 2: reusable pieces are `{% component %}`s (global, no import), not macros.
 
@@ -320,7 +320,7 @@ Built sites carry a `.zola-site` marker; the build won't replace a directory wit
 and the sandbox won't publish over a directory that isn't its own page.
 
 **Built in the sandbox.** A site whose repo `zola.toml` names its theme's origin,
-`[extra.build] theme_from = "system"` (the repo's `zola/themes`) or a sandbox workspace's
+`[extra.build] theme_from = "system"` (the repo's `packages/sites/zola/themes`) or a sandbox workspace's
 name (its `/shared/<name>/themes/<theme>`), isn't built by the host's zola. `sites.build`
 asks `sandbox-runner` (`build_system_site`), which builds it in a container with no
 network: the site's repo source and its entries mounted read-only, the theme put in place
@@ -373,7 +373,7 @@ A section can set two things under `[extra]` in its `content/<section>/_index.md
   entry is older), and `required`, paths every entry's fields must have, e.g.
   `"sections[].stories[].url"` for the news `editions`.
 
-A new site: add `zola/sites/<name>/` with `theme = "agent-site"`, its sections and an
+A new site: add `packages/sites/zola/sites/<name>/` with `theme = "agent-site"`, its sections and an
 `agent_help`, run `make deploy`, and point a job or chat at the `sites` server.
 
 ## MCP servers in AnythingLLM
@@ -496,7 +496,7 @@ Each run mounts:
   change what other workspaces use; reading another workspace's folder is still trusting
   its content, which the skills and system prompt tell the agent to treat as data. Shared
   folders are mounted `noexec,nosuid,nodev` and are never on `PATH`.
-- `/system/themes`: the repo's Zola themes (`zola/themes`), read-only, for sites the agent
+- `/system/themes`: the repo's Zola themes (`packages/sites/zola/themes`), read-only, for sites the agent
   builds.
 - `/public`: the workspace's pages on the web (see "Pages are `/public`").
 

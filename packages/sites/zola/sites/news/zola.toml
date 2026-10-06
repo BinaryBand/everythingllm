@@ -27,6 +27,6 @@ Section "articles" is filled in by the article writer when a reader opens a stor
 """
 
 # Built in the sandbox with this theme (see sites.build): "system" is the repo's
-# zola/themes; a sandbox workspace's name takes the theme from its /shared/<name>/themes.
+# packages/sites/zola/themes; a sandbox workspace's name takes the theme from its /shared/<name>/themes.
 [extra.build]
 theme_from = "system"

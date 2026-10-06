@@ -24,6 +24,6 @@ because the stylesheet can restyle the page but not the browser tab or the feed)
 """
 
 # Built in the sandbox with this theme (see sites.build): "system" is the repo's
-# zola/themes; a sandbox workspace's name takes the theme from its /shared/<name>/themes.
+# packages/sites/zola/themes; a sandbox workspace's name takes the theme from its /shared/<name>/themes.
 [extra.build]
 theme_from = "system"

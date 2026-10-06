@@ -116,7 +116,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   and served as it is by Caddy on :8447 under `/<workspace>/`, with no copy or sync.
   That port is an origin of its own; its scripts are off, and the Caddyfile's `@scripts`
   is the switch for one workspace.
-- Sites live in `zola/sites/<name>/` and share the `zola/themes/agent-site/` theme
+- Sites live in `packages/sites/zola/sites/<name>/` and share the `packages/sites/zola/themes/agent-site/` theme
   (Tera 2 `{% component %}`s, not macros). Each site documents its fields for the agent in
   `agent_help` in its `zola.toml`.
 - The pages site is served by Caddy (`host/caddy/pages.Caddyfile`) under a strict CSP: no

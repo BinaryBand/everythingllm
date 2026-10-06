@@ -13,7 +13,7 @@ from sites import build
 from sites.build import BUILD_SECONDS, MARKER, Builder, BuildError, sandboxed
 from sites.store import SiteError, SiteStore, _split
 
-REPO_ZOLA = Path(__file__).resolve().parents[3] / "zola"
+REPO_ZOLA = Path(__file__).resolve().parents[1] / "zola"
 
 CONFIG = """base_url = "https://pages.example/news"
 title = "Daily News"
@@ -599,7 +599,9 @@ def test_host_env_is_found_at_the_repo_root(monkeypatch):
     monkeypatch.undo()  # the conftest points host_file elsewhere
     from sites import store as store_mod
 
-    assert store_mod.host_file(Path("/mcp/zola/sites")) == Path("/mcp/host.env")
+    assert store_mod.host_file(Path("/mcp/packages/sites/zola/sites")) == Path(
+        "/mcp/host.env"
+    )
 
 
 def test_build_passes_the_public_url_to_zola(tmp_path, monkeypatch):

@@ -113,7 +113,10 @@ is 3.13. Keep code 3.12-compatible, and check with
 - The pages site is served by Caddy (`host/caddy/pages.Caddyfile`) under a strict CSP: no
   scripts, nothing from other hosts, no forms. Templates must work without scripts or
   inline styles, and pass `sites.lint`; a test holds every repo template to it.
-- zola always builds without a network (`unshare --net`), with a 40 s limit (`sites.build`).
+- zola always builds without a network (`unshare --net`), with a 40 s limit (`sites.build`). A
+  site whose `zola.toml` has `[extra.build] theme_from` (news, research and status do) is
+  built in a sandbox container instead (`build_system_site`), and only there may a theme
+  from a workspace's `/shared` be used.
 - Templates, stylesheets, `zola.toml` and sections change only in the repo; the agent has
   no tool for them, and `make deploy` rebuilds the sites. The exception is the lab site, an
   experiment the agent owns whole in education's sandbox folder (`/shared/education/sites/lab/`)

@@ -18,3 +18,8 @@ Reports are written by the deep-research skill; don't write entries here by hand
 Section "reports": slug from the title (no date prefix; Zola would strip it), the report as Markdown body, and in extra:
 {"question": "...", "depth": "quick|standard|thorough", "models": {...}, "stats": {...}}.
 """
+
+# Built in the sandbox with this theme (see sites.build): "system" is the repo's
+# zola/themes; a sandbox workspace's name takes the theme from its /shared/<name>/themes.
+[extra.build]
+theme_from = "system"

@@ -288,6 +288,9 @@ def run_sites_write(monkeypatch, capsys, tmp_path, request, zola="zola"):
 
     from sites import write
 
+    # Built here with the host's zola, as a Builder without the sandbox builds a site
+    # whose theme is the repo's.
+    monkeypatch.setattr(build, "sandbox_build", None)
     (tmp_path / "content").mkdir(exist_ok=True)
     (tmp_path / "site").mkdir(exist_ok=True)
     for name, value in {
@@ -702,9 +705,8 @@ def theme_from_site(tmp_path, origin):
     shutil.copytree(REPO_ZOLA / "sites", source)
     toml = source / "status" / "zola.toml"
     text = toml.read_text()
-    toml.write_text(
-        text.replace("[extra]", f'[extra.build]\ntheme_from = "{origin}"\n\n[extra]', 1)
-    )
+    assert 'theme_from = "system"' in text
+    toml.write_text(text.replace('theme_from = "system"', f'theme_from = "{origin}"'))
     (tmp_path / "content").mkdir(exist_ok=True)
     (tmp_path / "site").mkdir(exist_ok=True)
     return source
@@ -729,7 +731,7 @@ def test_a_theme_from_site_is_built_by_the_sandbox_and_swapped_in_here(tmp_path)
         "no-zola-needed",
         remote=remote,
     )
-    assert b.theme_from("status") == "education" and b.theme_from("news") is None
+    assert (b.theme_from("status"), b.theme_from("news")) == ("education", "system")
     [dest] = b.build("status")
     assert asked == ["status"]
     assert (dest / "index.html").read_text() == "built in the sandbox"

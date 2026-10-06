@@ -22,3 +22,8 @@ because the stylesheet can restyle the page but not the browser tab or the feed)
  "findings": [{"severity": "fail" | "warn" | "info", "area": "logs|search|sandbox|llm|jobs|research|sites|services",
    "title": "...", "detail": "what was observed", "suggestion": "likely cause and what to do"}]}
 """
+
+# Built in the sandbox with this theme (see sites.build): "system" is the repo's
+# zola/themes; a sandbox workspace's name takes the theme from its /shared/<name>/themes.
+[extra.build]
+theme_from = "system"

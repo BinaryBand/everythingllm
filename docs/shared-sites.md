@@ -1,7 +1,10 @@
 # Plan: per-workspace sharing and publishing, shared themes, and sites the agent designs
 
-Status: stages 0–2 done 2026-10-06 (per-workspace `shared/`, `/system/themes`, `public/`
-synced to the pages site, and `build-site`); stage 3 not started. Replaces an earlier draft
+Status: all stages done 2026-10-06. News, research and status are built in the sandbox
+with `theme_from = "system"`; none uses a workspace's theme yet, so Decision 2 (pinning) is
+still open and matters only once one does. As built, the switch is `[extra.build]
+theme_from` in each site's repo `zola.toml`, the same setting `build-site` reads, rather
+than a separate setting. Replaces an earlier draft
 built on one global `/shared` with a manifest of write zones (see "Rejected").
 
 ## Goal

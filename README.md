@@ -276,15 +276,29 @@ only host services read or write them; the AnythingLLM container never needs the
 Built sites carry a `.zola-site` marker; the build won't replace a directory without one,
 and the sandbox won't publish over a directory that isn't its own page.
 
-The sites MCP server's builds run on the host, in `sites-runner`, and the audit's report
-builds in `audit-runner`, both with the host's zola, as every other writer's do; nothing
-in the container builds. Other writers use the
+**Built in the sandbox.** A site whose repo `zola.toml` names its theme's origin,
+`[extra.build] theme_from = "system"` (the repo's `zola/themes`) or a sandbox workspace's
+name (its `/shared/<name>/themes/<theme>`), isn't built by the host's zola. `sites.build`
+asks `sandbox-runner` (`build_system_site`), which builds it in a container with no
+network: the site's repo source and its entries mounted read-only, the theme put in place
+by the repo's `sitebuild.py`, and the output copied (plain files only) into
+`pages/public/.<name>.new`, which `sites.build` marks and swaps in as before. News,
+research and status are all built that way, with `theme_from = "system"`, so they look and
+build exactly as they did; pointing one at a workspace's theme is a one-line change to its
+`zola.toml`, after which that workspace's theme edits restyle the site at its next build.
+Their entries stay on the host and are written exactly as below; no host service reads or
+writes a sandbox folder. The operation takes only a site's name and reads the rest from
+the repo, since its socket is reachable from the AnythingLLM container. With
+`sandbox-runner` down, those sites can't build, so their writes fail and are undone.
+
+The sites MCP server's builds are started on the host, in `sites-runner`, and the audit's
+report in `audit-runner`, as every other writer's are; nothing in the container builds. Other writers use the
 `sites-write` command (entry as JSON on stdin; it saves, builds and prints the URL, or
 exits 1 with `{"error"}` and keeps nothing when the site doesn't build), so the
 entry format has one implementation. The Python writers (the article writer, research-runner)
 call `SiteStore` directly instead.
 Templates, stylesheets, `zola.toml` and sections change only in the repo; the agent has no
-tool for them. `make deploy` rebuilds every site on the host (`make sites-build`), so
+tool for them, except through a theme a site takes from a workspace (above). `make deploy` rebuilds every site on the host (`make sites-build`), so
 changes go live with it. A test holds every template to `sites.lint` (no `load_data` or
 `get_env`, no scripts, forms, frames, `<base>`, `style=` or event handlers, and `| safe`
 only on page or section content), on top of the CSP and the network-free build.

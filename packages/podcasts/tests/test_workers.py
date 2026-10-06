@@ -183,7 +183,7 @@ def test_a_crash_is_recorded_and_the_worker_goes_on(lib):
     assert lib.last_sync()["error"] == ""
 
 
-def test_a_stop_ends_the_sync_between_downloads_and_asks_for_it_again(lib):
+def test_a_stop_ends_the_sync_mid_download_and_asks_for_it_again(lib):
     remote = Remote(feed(("a", "1"), ("b", "2"), ("c", "3")))
     slug = subscribed(lib, remote)
     w = Worker(lib, remote)
@@ -198,10 +198,38 @@ def test_a_stop_ends_the_sync_between_downloads_and_asks_for_it_again(lib):
     remote.handler = stop_after_one_download
     lib.queue.ask_sync(slug)
     w.step()
-    assert len(lib.record(slug)["show"].episodes) == 1  # c, then it stopped
+    # c's download is cut off where it was (the worker's stop timeout is short), and it
+    # waits for the next sync, as b and a do.
+    assert lib.record(slug)["show"].episodes == []
+    assert not list(lib.audio.dir.glob(".dl-*"))  # nor a half-written download
     assert lib.last_sync()["stopped"] and lib.last_sync()["finished"]
     assert lib.queue.syncs() == [slug]  # for the next start
+    assert lib.queue.held() is None
     assert w.lines[-1] == "synced the-show (stopped part-way)"
+
+
+def test_a_sync_the_worker_didnt_live_through_is_asked_for_again(lib):
+    """Killed after its stop timeout, out of memory, or a crash before the sync's own
+    try: its request was taken, but it's held until done, and the next start asks again."""
+    remote = Remote(feed(("a", "1")))
+    slug = subscribed(lib, remote)
+    w = Worker(lib, remote)
+    w.every.ran(datetime.now().astimezone())
+    lib.queue.ask_sync(slug)
+
+    def dies() -> Library:
+        raise MemoryError
+
+    w.library = dies
+    with pytest.raises(MemoryError):
+        w.step()
+    assert lib.queue.syncs() == [] and lib.queue.held() == slug
+    again = Worker(lib, remote)
+    again.resume()
+    assert lib.queue.syncs() == [slug] and lib.queue.held() is None
+    assert "didn't finish" in again.lines[-1]
+    again.drain()
+    assert lib.record(slug)["show"].episodes and lib.queue.held() is None
 
 
 def test_the_worker_loop_stops_when_told(lib):

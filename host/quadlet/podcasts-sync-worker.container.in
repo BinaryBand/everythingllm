@@ -26,8 +26,9 @@ PidsLimit=256
 PodmanArgs=--memory=4g --cpus=2 --umask=0002
 RunInit=true
 Timezone=local
-# SIGTERM stops a sync at its next feed, download or scrub, and asks for it again; a
-# download that outlasts this is killed, and the next sync fetches that episode again.
+# SIGTERM stops a sync at its next feed or scrub, or partway through a download, and asks
+# for it again; one killed after this anyway is asked for again at the next start
+# (queue/running-sync.json).
 StopTimeout=60
 # egress-net only, at its address in egress.toml (profile podcasts: public hosts).
 Network=egress-net:ip=10.89.79.14

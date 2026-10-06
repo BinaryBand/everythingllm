@@ -50,6 +50,7 @@ import json
 import os
 import shutil
 import traceback
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -116,6 +117,10 @@ def clean_url(text: str) -> str:
     stop or bracket come along too."""
     url = text.strip().strip("<>").split("](", 1)[0]
     return url.lstrip("[(<").rstrip(".,;:)]>")
+
+
+class Stopped(Exception):
+    """A download cut off because the sync is stopping; the episode waits for the next."""
 
 
 class LibraryError(ValueError):
@@ -655,6 +660,8 @@ class Library:
             try:
                 if problem := self._download(client, slug, ep):
                     errors.append(f"{ep.title}: {problem}")
+            except Stopped:  # the episode waits for the next sync
+                break
             except (FeedError, httpx.HTTPError, httpx.InvalidURL, OSError) as e:
                 errors.append(f"{ep.title}: {e}")
             else:
@@ -818,6 +825,14 @@ class Library:
             self._publish(slug, rec["show"], sub["url"])
         return True
 
+    def _until_stopped(self, body: Iterator[bytes]) -> Iterator[bytes]:
+        """`body` until `stopping()` says so, then Stopped: a long download ends within
+        the worker's stop timeout instead of being killed with its request."""
+        for chunk in body:
+            if self.stopping():
+                raise Stopped
+            yield chunk
+
     def _download(self, client: httpx.Client, slug: str, ep: Episode) -> str:
         """Download `ep` into the audio store and serve it as it is (for now); a problem
         rendering it, or ""."""
@@ -833,7 +848,7 @@ class Library:
                     f"not a known audio or video type ({ep.type or ctype or 'none given'})"
                 )
             tmp = self.audio.temp(stem, ext)
-            save(body, tmp)
+            save(self._until_stopped(body), tmp)
         ep.type = ep.type if ep.type in TYPE_EXT else EXT_TYPE[ext]
         ep.audio, ep.stem = self.audio.add(tmp, ext), stem
         return self.render(slug, ep)

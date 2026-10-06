@@ -905,11 +905,14 @@ a show found only in such an app has no public feed.
   while it was down comes at once when it starts, as `Persistent=true` did for the timer it
   replaced, which in turn replaced a scheduled job that only called `refresh_podcasts`; no
   agent is involved). Stopping it (a reboot, `uv run hostctl podcasts-setup`, or `uv run
-  hostctl units` changing its unit) stops a sync at its next feed, download or scrub and
-  asks for it again, so the next start finishes it; `list_podcasts` says so meanwhile.
-  Episodes downloaded but not yet looked at for ads stay out of the feed and are
-  downloaded again then, as are those of a sync killed outright (a download that outlasts
-  the 60 s stop timeout), and a day later that cleans up what was left.
+  hostctl units` changing its unit) stops a sync at its next feed or scrub, or partway
+  through a download, and asks for it again, so the next start finishes it;
+  `list_podcasts` says so meanwhile. A sync it has taken is held in
+  `queue/running-sync.json` until it's done, so one the worker didn't live through (killed
+  after the 60 s stop timeout, out of memory, a crash) is asked for again when it next
+  starts. Episodes downloaded but not yet looked at for ads stay out of the feed and are
+  downloaded again then, as is one whose download was cut off, and a day later that cleans
+  up what was left.
 - Our feed is built from scratch from the show's title, art and episode details, not
   copied, so `itunes:new-feed-url` and the like can't send the app back to the public feed.
 - When a show moves its feed, the sync follows: after a permanent redirect (301/308), or to

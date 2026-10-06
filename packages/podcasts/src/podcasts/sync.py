@@ -12,8 +12,11 @@ transcript being saved) is asked for again and tried after the next look. Its ou
 to sync.log, as the unit's did, and a crash to last_sync.json, so list_podcasts can tell;
 the worker carries on with the next.
 
-SIGTERM stops it between steps: idle, at once; in a sync, at the next feed, download or
-scrub, after which the sync is asked for again so that the next start finishes it.
+SIGTERM stops it between steps: idle, at once; in a sync, at the next feed or scrub, or
+partway through a download, after which the sync is asked for again so that the next start
+finishes it. A sync is held (worker.Queue.hold) from when it's taken until it's done, so
+one the worker didn't live through (killed after its stop timeout, out of memory, a crash)
+is asked for again when the worker next starts.
 
   podcasts-sync [slug]   asks for a sync by hand (every feed without a slug)
 
@@ -93,7 +96,15 @@ class SyncWorker:
         ran = self.sync(target)
         if not ran or self.stop.is_set():
             self.queue.ask_sync(target)  # for the next look, or the next start
+        self.queue.done()
         return ran
+
+    def resume(self) -> None:
+        """Ask again for the sync a worker before this one took and didn't finish."""
+        if (target := self.queue.held()) is not None:
+            self.queue.ask_sync(target)
+            self.log(f"asked again for the sync of {target}, which didn't finish")
+        self.queue.done()
 
     def sync(self, target: str) -> bool:
         """Run a sync of `target`; False if another held sync.lock."""
@@ -120,6 +131,7 @@ class SyncWorker:
 
     def run(self) -> None:
         """Until `stop` is set."""
+        self.resume()
         with heartbeat(self.queue, SYNC_WORKER):
             while not self.stop.is_set():
                 if not self.step():

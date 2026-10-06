@@ -5,6 +5,9 @@ them through, their schedules and their heartbeats.
                                 sync-_all.json, of every feed (refresh_podcasts with no
                                 slug, and the sync worker's own schedule)
   state/queue/transcribe.json   a transcription pass now (podcasts-transcribe, by hand)
+  state/queue/running-sync.json the sync the worker has taken and not finished: asked for
+                                again when the worker starts, so one cut short by a kill,
+                                an OOM or a crash runs again rather than being lost
   state/queue/<worker>.alive    touched every few seconds while the worker runs
   state/queue/<worker>.last     when its schedule last came due, so a slot missed while
                                 it wasn't running comes due as it starts (a timer's
@@ -29,6 +32,7 @@ ALL_FEEDS = "_all"  # every feed's sync; no slug has an underscore
 SYNC_WORKER = "sync-worker"
 TRANSCRIBE_WORKER = "transcribe-worker"
 TRANSCRIBE = "transcribe"
+RUNNING = "running-sync"  # not sync-*, so never taken for a feed's request
 BEAT_SECONDS = 5  # how often a worker touches its heartbeat
 STALE_SECONDS = 60  # a heartbeat older than this: the worker isn't running
 POLL_SECONDS = 2  # how often an idle worker looks at the queue
@@ -77,16 +81,38 @@ class Queue:
     def take_sync(self) -> str | None:
         """The next sync to run, taken: every feed's if it was asked for, which takes the
         ones of single feeds waiting too, since it syncs them; else the longest-waiting
-        feed's. None when none waits. What is asked for after this waits for the next."""
+        feed's. None when none waits. What is asked for after this waits for the next.
+        It's held (running-sync.json) before its request goes, until `done`."""
         waiting = self.syncs()
         if ALL_FEEDS in waiting:
+            self.hold(ALL_FEEDS)
             for target in waiting:
                 self.take(f"sync-{target}")
             return ALL_FEEDS
         for target in waiting:
+            self.hold(target)
             if self.take(f"sync-{target}"):
                 return target
+        self.done()
         return None
+
+    def hold(self, target: str) -> None:
+        self.folder.mkdir(parents=True, exist_ok=True)
+        atomic_write(self._file(RUNNING), json.dumps({"target": target}) + "\n")
+
+    def held(self) -> str | None:
+        """The sync taken and not done, if one is: a worker that stopped mid-sync."""
+        try:
+            target = json.loads(self._file(RUNNING).read_text()).get("target", "")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return (
+            target if isinstance(target, str) and TARGET_RE.fullmatch(target) else None
+        )
+
+    def done(self) -> None:
+        """The held sync finished, or was asked for again."""
+        self._file(RUNNING).unlink(missing_ok=True)
 
     def _alive(self, worker: str) -> Path:
         return self.folder / f"{worker}.alive"

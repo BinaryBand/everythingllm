@@ -8,6 +8,10 @@ an episode without a manifest) is served as a file from the root, like Caddy wou
 the pages site's headers. Range requests work for both, so podcast apps can seek and
 resume.
 
+It runs on the host, but the podcasts' containers write all three folders, so a file is
+only ever opened through its folder's fd with O_NOFOLLOW at every step (`Inside`): a
+symlink planted there can't make it serve a file of the host's.
+
 Config (command line, defaults under ~/.local/share/everythingllm):
   --root       the served folder      (pages/public/podcasts)
   --manifests  manifests by slug      (podcasts/manifests)
@@ -20,6 +24,7 @@ import mimetypes
 import os
 import re
 import stat
+from dataclasses import dataclass
 from email.utils import formatdate, parsedate_to_datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -57,6 +62,55 @@ class NotFound(Exception):
     pass
 
 
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+@dataclass(frozen=True)
+class Inside:
+    """A plain file at `names` under `folder`, opened without following a symlink, at
+    `folder` itself or anywhere below it."""
+
+    folder: Path
+    names: tuple[str, ...]
+
+    def open(self) -> int:
+        """An fd of the file; OSError if a step is missing, a symlink or not a folder, or
+        the end isn't a plain file."""
+        fd = os.open(self.folder, DIR_FLAGS)
+        try:
+            for name in self.names[:-1]:
+                inner = os.open(name, DIR_FLAGS, dir_fd=fd)
+                os.close(fd)
+                fd = inner
+            f = os.open(
+                self.names[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd
+            )
+        finally:
+            os.close(fd)
+        if not stat.S_ISREG(os.fstat(f).st_mode):
+            os.close(f)
+            raise IsADirectoryError(self.names[-1])
+        return f
+
+    def stat(self) -> os.stat_result:
+        """The file's stat; NotFound unless it opens."""
+        try:
+            fd = self.open()
+        except OSError:
+            raise NotFound from None
+        try:
+            return os.fstat(fd)
+        finally:
+            os.close(fd)
+
+    def is_file(self) -> bool:
+        try:
+            self.stat()
+        except NotFound:
+            return False
+        return True
+
+
 class Unsatisfiable(Exception):
     """The range asked for lies past the end."""
 
@@ -89,7 +143,7 @@ class Handler(BaseHTTPRequestHandler):
     audio: Path
     prefix: str  # where tailscale serve mounts this server, e.g. /podcasts
     # Seeking asks for the same manifest again and again: {file: (mtime_ns, manifest, parts)}.
-    cache: dict[Path, tuple[int, Manifest, list[tuple]]]
+    cache: dict[Inside, tuple[int, Manifest, list[tuple]]]
 
     @classmethod
     def configure(
@@ -156,17 +210,18 @@ class Handler(BaseHTTPRequestHandler):
     ) -> tuple[int, Manifest, list[tuple]] | None:
         """(mtime_ns, manifest, its parts ready to send) for `slug/name`, read once until it
         changes; None if there's no manifest there."""
-        file = self.manifests / slug / f"{name}.json"
+        file = Inside(self.manifests, (slug, f"{name}.json"))
         try:
             mtime = file.stat().st_mtime_ns
-        except (FileNotFoundError, NotADirectoryError):
+        except NotFound:
             return None
         if (cached := self.cache.get(file)) and cached[0] == mtime:
             return cached
         try:
-            manifest = Manifest.from_json(file.read_text())
+            with os.fdopen(file.open(), encoding="utf-8") as f:
+                manifest = Manifest.from_json(f.read())
             found = (mtime, manifest, [self.part(p) for p in manifest.parts])
-        except FileNotFoundError:
+        except OSError:
             return None
         except (ValueError, KeyError, TypeError, IndexError):
             raise NotFound from None
@@ -181,23 +236,15 @@ class Handler(BaseHTTPRequestHandler):
             return ("bytes", base64.b64decode(p[1]))
         if not NAME_RE.fullmatch(p[1]):
             raise NotFound
-        return ("file", self.audio / p[1], int(p[2]), int(p[3]))
+        return ("file", Inside(self.audio, (p[1],)), int(p[2]), int(p[3]))
 
     def static(self, names: list[str], body: bool) -> None:
-        target = self.root
-        for n in names:
-            target = target / n
-            try:
-                st = os.lstat(target)
-            except OSError:
-                raise NotFound from None
-            if stat.S_ISLNK(st.st_mode):  # never out of the root
-                raise NotFound
-        if not stat.S_ISREG(st.st_mode):
-            raise NotFound
+        target = Inside(self.root, tuple(names))  # never out of the root
+        st = target.stat()
+        name = Path(names[-1])
         ctype = (
-            TYPES.get(target.suffix.lower())
-            or mimetypes.guess_type(target.name)[0]
+            TYPES.get(name.suffix.lower())
+            or mimetypes.guess_type(name.name)[0]
             or "application/octet-stream"
         )
         etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
@@ -276,7 +323,12 @@ class Handler(BaseHTTPRequestHandler):
                 if p[0] == "bytes":
                     self.wfile.write(p[1][lo - at : hi - at])
                 else:
-                    with open(p[1], "rb") as f:
+                    try:
+                        fd = p[1].open()
+                    except OSError:  # gone, or swapped for a link, since the headers
+                        self.close_connection = True
+                        return
+                    with os.fdopen(fd, "rb") as f:
                         self.connection.sendfile(f, p[2] + lo - at, hi - lo)
             at += n
             if at > end:

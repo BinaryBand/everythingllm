@@ -145,6 +145,29 @@ def test_nothing_outside_the_root(base, dirs):
     assert httpx.get(f"{base}/podcasts/show/missing.mp3").status_code == 404
 
 
+def test_a_manifest_never_reaches_through_a_symlink(base, dirs, tmp_path):
+    """The podcasts' containers write the audio and manifests folders; this runs on the
+    host, so a link planted there must not serve a host file."""
+    root, manifests, audio = dirs
+    secret = tmp_path / "secret"
+    m = Manifest("audio/mpeg", [["file", "x.mp3", 0, 2]])
+    (manifests / "show" / "leak.mp3.json").write_text(m.to_json())
+    (audio / "x.mp3").symlink_to(secret)
+    assert httpx.get(f"{base}/podcasts/show/leak.mp3").status_code == 404
+    # A manifest that's a link, or in a linked folder, isn't read either.
+    (manifests / "show" / "linked.mp3.json").symlink_to(
+        manifests / "show" / "ep.mp3.json"
+    )
+    (manifests / "other").symlink_to(manifests / "show")
+    assert httpx.get(f"{base}/podcasts/show/linked.mp3").status_code == 404
+    assert httpx.get(f"{base}/podcasts/other/ep.mp3").status_code == 404
+    # Nor the audio folder swapped for a link to somewhere else.
+    real = tmp_path / "real-audio"
+    audio.rename(real)
+    audio.symlink_to(real)
+    assert httpx.get(f"{base}/podcasts/show/ep.mp3").status_code == 404
+
+
 def test_a_manifest_pointing_at_a_missing_file_is_404(base, dirs):
     (dirs[2] / "abc.mp3").unlink()
     assert httpx.get(f"{base}/podcasts/show/ep.mp3").status_code == 404

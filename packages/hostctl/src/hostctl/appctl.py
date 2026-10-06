@@ -1,17 +1,17 @@
-"""The make steps that depend on which apps there are, from the apps registry
-(packages/apps/src/apps/apps.toml): `make <app>-setup`, `make <app>-logs`, `make
-serve-setup`, `make apps`, and the parts of `make install` and `make health` that list apps.
+"""The hostctl commands that depend on which apps there are, from the apps registry
+(packages/apps/src/apps/apps.toml): `uv run hostctl <app>-setup`, `uv run hostctl <app>-logs`, `make
+serve-setup`, `uv run hostctl apps`, and the parts of `uv run hostctl install` and `uv run hostctl health` that list apps.
 
-  list               the apps: what each is, and whether `make install` sets it up (or why not)
+  list               the apps: what each is, and whether `uv run hostctl install` sets it up (or why not)
   setup APP...       for each app: run its `before` steps, map its tailnet paths, enable and
                      (re)start its units (asking first while a guarded one has a run going;
                      FORCE=1 doesn't ask), and enable and start its timers
-  setup --installed  the same for every app `make install` sets up
+  setup --installed  the same for every app `uv run hostctl install` sets up
   serve              map every app's tailnet paths that aren't mapped yet (sudo tailscale serve)
   logs APP           follow the app's units and the ones it watches
   health             `name|url` for each HTTP check, for health.sh
 
-Standard library only, run with the system `python3`, like units.py.
+Standard library only, like the rest of hostctl.
 """
 
 import argparse
@@ -24,7 +24,7 @@ import apps  # the registry's reader, standard library only
 from hostctl import run_guard
 
 ROOT = Path(__file__).resolve().parents[4]
-# What make puts on PYTHONPATH for the system python3; `before` steps run with it too.
+# hostctl and the registry's reader, so a `before` step's python3 finds them whichever it is.
 PYTHONPATH = f"{ROOT}/packages/hostctl/src:{ROOT}/packages/apps/src"
 
 
@@ -91,9 +91,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "list":
         for app in registry.values():
             how = (
-                "make install"
+                "uv run hostctl install"
                 if app.install
-                else app.why_not_installed and f"not in make install: {app.why_not_installed}"
+                else app.why_not_installed and f"not in uv run hostctl install: {app.why_not_installed}"
             )
             print(f"  {app.name:12} {app.summary}" + (f"\n  {'':12} ({how})" if how else ""))
     elif args.cmd == "setup":

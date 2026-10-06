@@ -5,7 +5,7 @@ When a run starts, the service hands its caller a card line to paste (`Live.card
     [![<LABEL>: <subject>](https://<host>:8445<PATH><id>.png)](https://<host>:8445<PATH><id>)
 
 `tailscale serve` maps https://<host>:8445<PATH> to the service's port (see
-`make serve-setup`) and strips that prefix on the way, so paths are taken with or without it.
+`uv run hostctl serve-setup`) and strips that prefix on the way, so paths are taken with or without it.
 
 - `<id>.png` is the card: a chatimage.progress frame, pushed again whenever the run moves
   on (chatimage.live), at most one every GAP seconds, until the run ends or MAX_STREAM

@@ -32,7 +32,7 @@ async function withSandbox(self, work) {
   } catch (e) {
     self.logger?.(`sandbox: ${e?.message || e}`);
     if (e instanceof Down)
-      return `The sandbox isn't running on the server (${e.message}). Tell the user it needs \`make sandbox-setup\`.`;
+      return `The sandbox isn't running on the server (${e.message}). Tell the user it needs \`uv run hostctl sandbox-setup\`.`;
     if (e instanceof Refused) return `Error: ${e.message}`;
     return `The sandbox failed: ${e?.message || e}`;
   }

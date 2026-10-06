@@ -55,7 +55,7 @@ class AnythingLLM:
         if not key:
             raise AnythingLLMError(
                 "no ANYTHINGLLM_API_KEY: make one in AnythingLLM's settings and put it in "
-                "~/.config/everythingllm/agents.env (make agents-setup checks it)."
+                "~/.config/everythingllm/agents.env (uv run hostctl agents-setup checks it)."
             )
         return cls(os.environ.get("ANYTHINGLLM_URL", "http://127.0.0.1:3001"), key)
 

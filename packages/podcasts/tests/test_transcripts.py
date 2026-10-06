@@ -229,7 +229,7 @@ class Stopped(FakeTranscriber):
 
 
 def test_a_stopped_run_takes_its_marker_with_it(lib):
-    """A stop (systemctl, make units, a reboot) isn't a death: the episode waits as before."""
+    """A stop (systemctl, uv run hostctl units, a reboot) isn't a death: the episode waits as before."""
     w = worker(lib, transcriber=Stopped())
     with pytest.raises(SystemExit):
         w.run()

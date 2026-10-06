@@ -76,7 +76,7 @@ async def headlines(
 
 
 # Writing and deleting entries are skills (anythingllm/agent-skills/write-entry, delete-entry,
-# generated from these by `make skills`), not tools here: they can refuse a delegated task.
+# generated from these by `uv run hostctl skills`), not tools here: they can refuse a delegated task.
 
 
 @skills.add

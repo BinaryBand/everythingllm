@@ -1,12 +1,12 @@
-"""`make agents-setup`'s first step: is agents-runner's secrets file there and private?
+"""`uv run hostctl agents-setup`'s first step: is agents-runner's secrets file there and private?
 
 ~/.config/everythingllm/agents.env holds ANYTHINGLLM_API_KEY, a developer API key made in
 AnythingLLM's Settings > Developer API and put there by hand; the agent never writes it.
 This exits 1 (so the unit isn't started into a crash loop) while the file or the key is
 missing, and makes the file private (mode 600). It never prints the key. Standard library
-only, run with the system python3.
+only, like the rest of hostctl.
 
-    python3 -m hostctl.agents_env [path]   # with hostctl and apps on PYTHONPATH, as make does
+    python3 -m hostctl.agents_env [path]   # with hostctl and apps on PYTHONPATH, as appctl does
 """
 
 import sys
@@ -22,12 +22,12 @@ def main() -> None:
     if not path.exists():
         sys.exit(
             f"agents: make {path} (mode 600) with ANYTHINGLLM_API_KEY=<a developer API key from "
-            "AnythingLLM's Settings > Developer API>, then run make agents-setup again"
+            "AnythingLLM's Settings > Developer API>, then run uv run hostctl agents-setup again"
         )
     path.chmod(0o600)
     if not env_file(path).get("ANYTHINGLLM_API_KEY"):
         sys.exit(
-            f"agents: fill in ANYTHINGLLM_API_KEY in {path}, then run make agents-setup again"
+            f"agents: fill in ANYTHINGLLM_API_KEY in {path}, then run uv run hostctl agents-setup again"
         )
     print(f"{path} has what agents-runner needs")
 

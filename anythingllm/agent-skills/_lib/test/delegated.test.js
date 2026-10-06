@@ -83,7 +83,7 @@ test("forward sends the op and its args to the service and gives back its text",
   process.env.PODCASTS_SOCKET = "/nonexistent/podcasts.sock";
   try {
     const addPodcast = require("../../add-podcast/handler").runtime;
-    assert.match(await addPodcast.handler.call(agent("career"), { url: "https://x/feed" }), /podcasts service isn't running.*make podcasts-setup/);
+    assert.match(await addPodcast.handler.call(agent("career"), { url: "https://x/feed" }), /podcasts service isn't running.*uv run hostctl podcasts-setup/);
   } finally {
     delete process.env.PODCASTS_SOCKET;
   }

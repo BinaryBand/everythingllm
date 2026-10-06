@@ -924,7 +924,7 @@ def _stale_build(content: Path, output: Path, site: str) -> list[Finding]:
             "sites",
             f"{site}: entries changed since the last build",
             f"Last built {built:%Y-%m-%d %H:%M} UTC; a later write saved but didn't rebuild, "
-            "so the published site is out of date. Any write to the site or `make deploy` rebuilds it.",
+            "so the published site is out of date. Any write to the site or `uv run hostctl deploy` rebuilds it.",
             [f"{newest.parent.name}/{newest.stem} saved {changed:%Y-%m-%d %H:%M} UTC"],
         )
     ]

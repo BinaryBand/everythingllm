@@ -1,9 +1,12 @@
 [project]
 name = "hostctl"
 version = "0.1.0"
-description = "What make runs to set up, sync and check this machine: units, deploys, app setup, the restart guard (standard library only, run with the system python3; skills is the exception)"
+description = "uv run hostctl <command>: set up, sync and check this machine (units, deploys, app setup, the restart guard; standard library only, skills is the exception)"
 requires-python = ">=3.12"
 dependencies = ["apps"]
+
+[project.scripts]
+hostctl = "hostctl.cli:main"
 
 [build-system]
 requires = ["hatchling"]

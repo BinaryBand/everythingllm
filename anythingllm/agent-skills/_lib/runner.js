@@ -22,7 +22,7 @@ async function forward(self, { service, env, op, args, timeoutMs = 120_000, repl
   } catch (e) {
     self.logger?.(`${op}: ${e?.message || e}`);
     if (e instanceof Down)
-      return `The ${service} service isn't running on the server (${e.message}). Tell the user it needs \`make ${service}-setup\`.`;
+      return `The ${service} service isn't running on the server (${e.message}). Tell the user it needs \`uv run hostctl ${service}-setup\`.`;
     if (e instanceof Refused) return `Error: ${e.message}`;
     return `${op} failed: ${e?.message || e}`;
   }

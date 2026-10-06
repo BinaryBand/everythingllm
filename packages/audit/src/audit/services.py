@@ -1,4 +1,4 @@
-"""The services the audit and `make health` look at, from the apps registry
+"""The services the audit and `uv run hostctl health` look at, from the apps registry
 (packages/apps). Nothing else is imported here, so the MCP server in the container can
 name them without loading the checks."""
 

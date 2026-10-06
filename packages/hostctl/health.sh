@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `make health`: is everything this repo runs up? Prints OK/FAIL per check and exits 1 if
+# `uv run hostctl health`: is everything this repo runs up? Prints OK/FAIL per check and exits 1 if
 # anything failed. Meant for after a reboot, or whenever something seems off. The unit list
 # and the in-container checks live in packages/audit (audit.health), next to the audit's own.
 set -u
@@ -30,7 +30,7 @@ done
   && ok "linger (user units start at boot)" || fail "linger is off: loginctl enable-linger $USER"
 
 echo "HTTP"
-# AnythingLLM takes a little while to listen after a restart (as after `make deploy`).
+# AnythingLLM takes a little while to listen after a restart (as after `uv run hostctl deploy`).
 for _ in $(seq 30); do curl -s -o /dev/null --max-time 2 http://127.0.0.1:3001/api/ping && break; sleep 2; done
 while IFS='|' read -r name url; do
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url")

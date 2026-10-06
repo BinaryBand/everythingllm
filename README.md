@@ -10,20 +10,20 @@ On a new machine, or to bring this one up to date:
 
     git clone <repo> && cd everythingllm         # any folder; the units are rendered with its path
     cp host.env.example host.env && $EDITOR host.env
-    make install
+    uv run hostctl install
 
-`make install` first checks the machine and stops with a list of what's missing. It checks
+`uv run hostctl install` first checks the machine and stops with a list of what's missing. It checks
 `host.env`, the tools the units run (podman, uv and zola at fixed paths), lingering,
 tailscale, and the storage folder, creating the folders the containers mount inside it.
 Then it does the following:
 
-1. renders and starts the units (`make units`)
+1. renders and starts the units (`uv run hostctl units`)
 2. waits for AnythingLLM
-3. deploys (`make deploy`)
+3. deploys (`uv run hostctl deploy`)
 4. points web search at SearXNG
 5. runs every setup target: tailnet ports, sandbox, podcast
    timers, research, sites and audit runners
-6. runs `make health`
+6. runs `uv run hostctl health`
 7. ends with a checklist of what only AnythingLLM's UI can do. Each item is ticked when
    it's already done: the chat model and embedder, a DeepSeek key, the agent limits in the
    `.env`, SearXNG answering, a workspace, the built-in skills to turn off, Gmail.
@@ -41,9 +41,9 @@ up, copy `host.env.example` and fill it in:
 
 These read it:
 
-- the Makefile, which exports both values
+- hostctl, which passes both on to what it runs
 - `hostctl.sync`, for `ANYTHINGLLM_STORAGE`
-- the host's systemd units, through `EnvironmentFile=@REPO@/host.env` (filled in by `make units`)
+- the host's systemd units, through `EnvironmentFile=@REPO@/host.env` (filled in by `uv run hostctl units`)
 - the site builds, which read `PUBLIC_HOST` from it and pass zola
   `--base-url https://<PUBLIC_HOST>:8445/<site>`, so `zola.toml` doesn't name the host.
   They find the file at the root of the repo the sites are in, and the container sees it at
@@ -81,7 +81,7 @@ This repo owns the two containers the setup runs, as templates in `host/quadlet/
   otherwise just render without it.
 
 The host's own units in `host/systemd/` (services, timers, and the AnythingLLM drop-in) are
-templates too. `make units` renders all of them:
+templates too. `uv run hostctl units` renders all of them:
 
 - `host/quadlet/*.container.in` goes to `~/.config/containers/systemd/`
 - `host/systemd/*.container.d/` goes next to it
@@ -90,32 +90,32 @@ templates too. `make units` renders all of them:
 It fills in `@REPO@` (the checkout's path) and the `host.env` settings, and saves older
 versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and restarts what changed: a container
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
-restarts nothing. Enabling a host unit is up to its app's `make <app>-setup` (see "The apps" below).
+restarts nothing. Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
 
 Run it from the main checkout. It refuses to run in a worktree, since the units run the
-repo they were rendered from. Edit the templates, never the installed copies; `make diff`
+repo they were rendered from. Edit the templates, never the installed copies; `uv run hostctl diff`
 shows where the two differ.
 
 An Ansible playbook used to install the two containers' units and `/srv/static-agent-config/`.
-It must leave them alone now, or its next run undoes `make units`.
+It must leave them alone now, or its next run undoes `uv run hostctl units`.
 
 ### The apps
 
 Every app this repo runs is declared once, in `packages/apps/src/apps/apps.toml`: its units
 and the audit's label for each, its socket, its tailnet mappings, whether its restarts wait
 for a run (the guard), its health checks, the steps its setup runs first, and whether
-`make install` sets it up (and if not, why). hostctl and the audit read it through
-`packages/apps` (standard library only, so `hostctl` can import it under the system `python3`);
-app code never does. `make apps` lists the apps; for each:
+`uv run hostctl install` sets it up (and if not, why). hostctl and the audit read it through
+`packages/apps` (standard library only, like `hostctl`);
+app code never does. `uv run hostctl apps` lists the apps; for each:
 
-- `make <app>-setup` runs its `before` steps (the sandbox's image build, the agents and relay
+- `uv run hostctl <app>-setup` runs its `before` steps (the sandbox's image build, the agents and relay
   key files), maps its tailnet paths, enables and (re)starts its units, asking first while
   a guarded one has a run going (`FORCE=1` doesn't ask), and starts its timers
   (`hostctl.appctl`).
-- `make <app>-logs` follows its units and the ones it watches.
-- `make serve-setup` maps every app's tailnet paths that aren't mapped yet with
+- `uv run hostctl <app>-logs` follows its units and the ones it watches.
+- `uv run hostctl serve-setup` maps every app's tailnet paths that aren't mapped yet with
   `sudo tailscale serve`, and leaves other mappings on the machine alone.
-- `make health` checks every app's units, health URLs and sockets.
+- `uv run hostctl health` checks every app's units, health URLs and sockets.
 
 Adding an app: its code, its unit template in `host/`, and one entry in `apps.toml`.
 `packages/apps/tests/test_apps.py` says what's missing: a template no app owns, a unit
@@ -135,7 +135,7 @@ Our callers of that API log in with it: `hostctl.sync` and `hostctl.machine` thr
 `units.anythingllm_headers`, the audit and research's workspace embedding through
 `hostrpc.anythingllm_headers`. Each logs in once per process (a login lasts 30 days and is
 logged) and once more after a 401; with no password set they send nothing. The relay uses the
-developer API key and doesn't log in. `make health` and the audit's `security` check fail when
+developer API key and doesn't log in. `uv run hostctl health` and the audit's `security` check fail when
 `/api/scheduled-jobs` answers without a login.
 
 What a password doesn't close: `/api/request-token` has no rate limit, so the password has to
@@ -160,9 +160,9 @@ through its UI.
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
     to its runner (`forwardSkill` in `_lib/runner.js`). They're generated: each is declared
     in its front's `server.py` like a tool, a signature with a docstring and no body, under
-    `@skills.add` (`hostrpc.Skills`), and `make skills` writes its `plugin.json` and
+    `@skills.add` (`hostrpc.Skills`), and `uv run hostctl skills` writes its `plugin.json` and
     `handler.js` from that (`hostrpc.skillgen`), so edit the declaration, not those files.
-    `make diff` and `make deploy` stop when they're stale. A param the agent leaves out is
+    `uv run hostctl diff` and `uv run hostctl deploy` stop when they're stale. A param the agent leaves out is
     left out of the op's args, so the op's own default applies; a test holds a declaration's
     parameters and defaults to its op's.
   - `_lib/` — what the skills share (no `plugin.json`, so AnythingLLM doesn't load it as
@@ -231,8 +231,8 @@ through its UI.
     current (see "Deep research")
 - `packages/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
   AnythingLLM's agent; also a workspace member (see "Nilson relay")
-- `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`make units`);
-  each one's `Description=` says what it does, and its app's `make <app>-setup` (see "The
+- `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`uv run hostctl units`);
+  each one's `Description=` says what it does, and its app's `uv run hostctl <app>-setup` (see "The
   apps") enables it.
   `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
   to cut MCP payloads from AnythingLLM's log.
@@ -257,33 +257,34 @@ through its UI.
   `documents/`).
 - The `static_agent` Caddy container mounts just `pages/public/` read-only and serves it on
   127.0.0.1:8445
-- `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
+- `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`uv run hostctl units`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
-- `packages/hostctl` — what make runs on the host, before any venv exists: standard library
-  only, run with the system `python3` (the Makefile's `PY` puts it and `packages/apps` on
-  `PYTHONPATH`). `hostctl.skills` is the exception: it imports the fronts, so it runs in the
-  dev venv.
+- `packages/hostctl` — `uv run hostctl <command>`, everything that sets up, syncs and checks
+  the host (`cli`, the commands; `uv run` installs it into the dev venv first, so a fresh clone
+  needs only uv). Standard library only, so `health.sh` and the apps' `before` steps run its
+  modules with any `python3`. `hostctl.skills` is the exception: it imports the fronts, so it
+  runs in the whole workspace's venv.
   - `sync` — diff/deploy/import between this repo and live storage
-  - `units` — renders and installs `host/quadlet/` and `host/systemd/` (`make units`)
-  - `machine` — `make install`'s checks, its wait for AnythingLLM, the web search setting
+  - `units` — renders and installs `host/quadlet/` and `host/systemd/` (`uv run hostctl units`)
+  - `machine` — `uv run hostctl install`'s checks, its wait for AnythingLLM, the web search setting
     and the closing checklist
   - `appctl` — the apps' setup, logs and tailnet mappings, from the registry
   - `run_guard` — asks before a runner with a live run restarts
   - `agents_env`, `relay_env` — the agents and relay setups' key file checks
-  - `skills` — writes the generated skills (`make skills`)
-  - `health.sh` — `make health`
+  - `skills` — writes the generated skills (`uv run hostctl skills`)
+  - `health.sh` — `uv run hostctl health`
 
 ## Workflow
 
-`make help` lists every target. Day to day: `make diff` shows what would change live,
-`make deploy` copies it into storage (old files go to
+`uv run hostctl` lists every command. Day to day: `uv run hostctl diff` shows what would change live,
+`uv run hostctl deploy` copies it into storage (old files go to
 `~/.local/share/everythingllm/backups/`), refreshes the MCP deps
-and restarts AnythingLLM, `make test` runs every test and `make health` checks every unit,
-port, host service and MCP server. `make import-skill NAME=<hubId>` (and `import-job`,
+and restarts AnythingLLM, `uv run hostctl test` runs every test and `uv run hostctl health` checks every unit,
+port, host service and MCP server. `uv run hostctl import-skill <hubId>` (and `import-job`,
 `import-command`) brings something made in the UI under the repo.
 
 Skill handlers are re-required on each load, so skill changes don't need a restart, but
-`make deploy` also runs `make mcp-sync` and `make restart`, so AnythingLLM and every MCP
+`uv run hostctl deploy` also runs `uv run hostctl mcp-sync` and `uv run hostctl restart`, so AnythingLLM and every MCP
 server it starts run the code and deps that were just deployed.
 On deploy, a skill's `active` flag and any setup_args `value` saved through the UI
 are kept from the live `plugin.json` unless the repo sets a `value` itself.
@@ -297,7 +298,7 @@ and console scripts, all locked together in `uv.lock`. Run these from the repo r
 venv is `.venv` there, which is the interpreter `.vscode/settings.json` points at.
 
     uv sync --all-packages                     # install every member + dev deps into .venv
-    uv run --all-packages --all-extras pytest -q   # all tests (what `make test` runs)
+    uv run --all-packages --all-extras pytest -q   # all tests (what `uv run hostctl test` runs)
     uv run --package podcasts --extra host pytest packages/podcasts -q   # one member's tests
 
     uv run --package sites sites-mcp           # an MCP server over stdio (waits on stdin)
@@ -321,7 +322,7 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
   units run with `--extra host`. AnythingLLM starts each front with `uv run --package`,
   which installs that member's base dependencies, so Whisper and PyAV stay out of
   the container.
-- After `uv.lock` changes, run `make mcp-sync` (or `make deploy`, which runs it) so the
+- After `uv.lock` changes, run `uv run hostctl mcp-sync` (or `uv run hostctl deploy`, which runs it) so the
   container's venv catches up. It installs exactly the members `mcp_servers.json` runs
   (`hostctl.sync mcp-packages`), and removes anything else.
 
@@ -374,7 +375,7 @@ exits 1 with `{"error"}` and keeps nothing when the site doesn't build), so the
 entry format has one implementation. The Python writers (the article writer, research-runner)
 call `SiteStore` directly instead.
 Templates, stylesheets, `zola.toml` and sections change only in the repo; the agent has no
-tool for them, except through a theme a site takes from a workspace (above). `make deploy` rebuilds every site on the host (`make sites-build`), so
+tool for them, except through a theme a site takes from a workspace (above). `uv run hostctl deploy` rebuilds every site on the host (`uv run hostctl sites-build`), so
 changes go live with it. A test holds every template to `sites.lint` (no `load_data` or
 `get_env`, no scripts, forms, frames, `<base>`, `style=` or event handlers, and `| safe`
 only on page or section content), on top of the CSP and the network-free build.
@@ -407,7 +408,7 @@ A section can set two things under `[extra]` in its `content/<section>/_index.md
   `"sections[].stories[].url"` for the news `editions`.
 
 A new site: add `packages/sites/zola/sites/<name>/` with `theme = "agent-site"`, its sections and an
-`agent_help`, run `make deploy`, and point a job or chat at the `sites` server.
+`agent_help`, run `uv run hostctl deploy`, and point a job or chat at the `sites` server.
 
 ## MCP servers in AnythingLLM
 
@@ -434,7 +435,7 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
   sandbox), running one that isn't a coroutine in a thread; a `hostrpc.RunnerError` becomes
   the error the caller sees, as does that of the service's own `errors` (sites-runner's
   `SiteError`); anything else is logged and reported as `runner error: …`. Every service answers `ping`, which
-  `make health` and the audit ask. `hostrpc.serve` serves one on its socket and removes the
+  `uv run hostctl health` and the audit ask. `hostrpc.serve` serves one on its socket and removes the
   socket on SIGTERM, or when a `stop` event is set; `hostrpc.run` is a runner's `main()`
   around it, and `hostrpc.serving` serves one for the length of a test.
 - `hostrpc.request(socket, op, args, timeout, name=…)` asks one, raising `RunnerError`
@@ -444,7 +445,7 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
   alone: calling it sends every argument as the op of its name. The skills speak the same
   protocol from node (`anythingllm/agent-skills/_lib/hostrpc.js`); an op that writes or acts
   is declared the same way under a front's `hostrpc.Skills` and becomes a generated skill
-  (`make skills`, see "Layout").
+  (`uv run hostctl skills`, see "Layout").
 - AnythingLLM gives up on a tool call after 60 s, so an op answers within 45 s, and work
   that takes longer carries on in the service (a run id to wait on) or in a unit of its own.
 - The container maps the host user (`UserNS=keep-id`), so what a service writes in storage
@@ -456,7 +457,7 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
   is `storage/everythingllm/<name>/runner.sock`, where `hostrpc.caller` looks.
 
 Code edits go live the next time AnythingLLM starts the server (restart it from the
-Agent Skills > MCP Servers page, `make restart`, or `make deploy`, which restarts). Note
+Agent Skills > MCP Servers page, `uv run hostctl restart`, or `uv run hostctl deploy`, which restarts). Note
 that this runs whatever is in the working tree, committed or not. Requires `mcp` 2.x (`MCPServer`, not `FastMCP`).
 
 `tailscale serve` maps tailnet HTTPS :8445 to the pages site and :8447 to the workspace pages
@@ -595,7 +596,7 @@ also on the default network and lets through only the hosts in
 install` works, and the internet, the LAN, the tailnet (AnythingLLM's API, Ollama, …)
 and the host's own ports don't. `upload.pypi.org` stays blocked, so code can't push
 data out through a package upload either. To allow another host, add an anchored regex to
-`allowlist` and run `make sandbox-setup`, which rebuilds the proxy image.
+`allowlist` and run `uv run hostctl sandbox-setup`, which rebuilds the proxy image.
 
 The `logs` and `services` audit checks cover both units and ping the runner.
 
@@ -667,9 +668,9 @@ a show found only in such an app has no public feed.
     every episode), the feed's record says so, downloaded episodes stay, and new ones wait
     for the next sync, along with anything older: an old episode fetched in the meantime
     would only be pruned once the newer one is judged.
-- `podcasts-sync.timer` runs the sync every 6 hours (`make podcasts-setup`; it replaced
+- `podcasts-sync.timer` runs the sync every 6 hours (`uv run hostctl podcasts-setup`; it replaced
   a scheduled job that only called `refresh_podcasts`, so no agent is involved). A sync
-  killed midway (a reboot, or `make units` changing its unit while it runs) leaves its
+  killed midway (a reboot, or `uv run hostctl units` changing its unit while it runs) leaves its
   episode for the next one to download again, and a day later that cleans up what the killed
   one left.
 - Our feed is built from scratch from the show's title, art and episode details, not
@@ -720,7 +721,7 @@ changed or undone, and nothing is stored twice.
   requests, `HEAD`, `ETag`/`If-Range` and `sendfile`. Anything else under
   `~/.local/share/everythingllm/pages/public/podcasts/` (feeds, transcripts, the index) it serves as a file, with the
   pages site's CSP and `nosniff`, never following a symlink or leaving that folder.
-  `make health` checks it, and the audit reads its journal.
+  `uv run hostctl health` checks it, and the audit reads its journal.
 - Episodes downloaded before this kept only their cut file. The first sync after the change
   moves each into `audio/` as its original, with the time already cut noted as `legacy_cut`,
   and keeps its served name, so podcast apps see no change.
@@ -774,7 +775,7 @@ few lines of each other.
   result, but only if the episode's original and served file are still the ones it
   transcribed. A second run
   exits at once while one is going (`~/.local/share/everythingllm/podcasts/transcribe.lock`); its output is in
-  the journal (`make podcasts-logs`).
+  the journal (`uv run hostctl podcasts-logs`).
 - The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/podcasts/models/whisper/base`.
 - **Ad reads.** Audio fingerprints miss an ad heard for the first time, or one the host
   reads in their own words, so AnythingLLM's default model (DeepSeek, key and model from
@@ -787,7 +788,7 @@ few lines of each other.
   picks what happens to them. `cut` (the default) makes them active `ad-read` cuts, left out
   of what's served and of the transcript. `report` keeps them as inactive cuts, which
   `list_podcasts` lists as possible sponsor reads. `off` ignores them. Every read
-  found is logged with its opening words (`make podcasts-logs`), to check what was cut.
+  found is logged with its opening words (`uv run hostctl podcasts-logs`), to check what was cut.
 - `add-podcast(transcribe=false)` turns transcripts off for a show. An episode that can't be
   transcribed gets the error in its record and isn't tried again.
 
@@ -822,7 +823,7 @@ and read-only. Without a DeepSeek key, `sites-runner` logs that and serves the t
   or refuses if none do. Its key and model are read from AnythingLLM's `.env`, and only
   those.
 - The article is an ordinary `sites` entry in the `articles` section, saved and built from
-  the host like `make sites-build`. It ends with "Based on reporting by …", linking the
+  the host like `uv run hostctl sites-build`. It ends with "Based on reporting by …", linking the
   pages it used. It's rewritten only if the edition's story changes.
 - A failure (nothing readable, no page about the story, an API error) shows a page with
   the error, a link to the original and "try again". Without that it's retried
@@ -845,7 +846,7 @@ progress lines and the result, `runs` lists what the runner holds.
 **The live card.** `start`'s `card` is a Markdown image in a link,
 `[![Deep research: <question>](…/_live/research/<id>.png)](…/_live/research/<id>)`, which the
 agent pastes as it does a link card. research-runner serves both on 127.0.0.1:8450
-(`RESEARCH_LIVE_PORT`, `research.live`), which `make serve-setup` maps to
+(`RESEARCH_LIVE_PORT`, `research.live`), which `uv run hostctl serve-setup` maps to
 `https://<PUBLIC_HOST>:8445/_live/research/` with `tailscale serve`. The image is
 `multipart/x-mixed-replace` (server push, `chatimage.live`): the browser keeps showing the
 newest frame of the connection, so the card's bar, its minutes and its latest progress line
@@ -940,7 +941,7 @@ A run doesn't stop when its chat closes, or when AnythingLLM restarts: it belong
 runner, which publishes and embeds the report as usual. A run nobody was watching (its
 card, or a `wait`) when it finished gets `chat_closed: true` in the run log. To
 find the report, ask in that workspace or open the research site. A run can't be
-cancelled from the chat: `make research-setup FORCE=1` restarts the runner, which kills
+cancelled from the chat: `FORCE=1 uv run hostctl research-setup` restarts the runner, which kills
 every run in it. Runs are bounded by their search budget either way. At most 2 run at once;
 another waits its turn, and its progress says so.
 
@@ -951,11 +952,11 @@ log as status `interrupted`, since none of them can be its own; until then, a ma
 for its `stale_ms` (3 minutes) reads as interrupted to the audit, and a fresh one as
 `running`. The audit's `research_run(question=...)` finds a run by words from its question,
 so the agent can tell the user what happened instead of finding no such run.
-`make research-setup` and `make units` (when the unit changed) list the live runs and ask
+`uv run hostctl research-setup` and `uv run hostctl units` (when the unit changed) list the live runs and ask
 before restarting the runner; with no terminal to ask they stop, unless `FORCE=1`
-(`hostctl.run_guard`). `make restart` and `make deploy` restart AnythingLLM only,
+(`hostctl.run_guard`). `uv run hostctl restart` and `uv run hostctl deploy` restart AnythingLLM only,
 so they don't need to ask. The runner runs the code it started with: after changing
-`packages/research`, `make research-setup` puts it live.
+`packages/research`, `uv run hostctl research-setup` puts it live.
 
 Every run appends one line to `~/.local/share/everythingllm/research/runs/YYYY-MM.jsonl`: the question,
 how it ended (`ok` / `failed`, with the error; `interrupted` for one killed by a restart;
@@ -1013,7 +1014,7 @@ unused).
   acts or delegates refuses a call from an `agents-*` workspace (`_lib/delegated.js`, held
   by a test). A task can read and report; it can't write, run code or delegate again.
 - **The live card** is served on 127.0.0.1:8451 (`AGENTS_LIVE_PORT`) and mapped to
-  `https://<PUBLIC_HOST>:8445/_live/agents/` by `make serve-setup`. Its page shows the
+  `https://<PUBLIC_HOST>:8445/_live/agents/` by `uv run hostctl serve-setup`. Its page shows the
   progress, and every task's reply once the delegation is done, escaped and under a CSP
   that allows nothing but the page's own CSS (`runs.live`).
 - **The run log** is `~/.local/share/everythingllm/agents/runs/` (`runs.runlog`, as
@@ -1029,7 +1030,7 @@ unused).
   for few page reads either way.
 - **The key.** agents-runner calls AnythingLLM with a developer API key of its own, in
   `~/.config/everythingllm/agents.env` (`ANYTHINGLLM_API_KEY`, mode 600, put there by hand);
-  `make agents-setup` checks it. Like research-runner, it isn't restarted by `make units`
+  `uv run hostctl agents-setup` checks it. Like research-runner, it isn't restarted by `uv run hostctl units`
   while a delegation is going (`hostctl.run_guard`).
 
 ## Nilson relay
@@ -1079,9 +1080,9 @@ and `run=…,workspace=…,thread=…` as its tags; never the answer.
 
 The secrets live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
 AnythingLLM container mounts: `ANYTHINGLLM_API_KEY` (a developer API key), `RELAY_TOKEN`,
-and optionally `NTFY_URL` and `NTFY_TOKEN`. `make relay-setup` makes the file with a fresh
+and optionally `NTFY_URL` and `NTFY_TOKEN`. `uv run hostctl relay-setup` makes the file with a fresh
 token, refuses to go on until the API key is filled in, then maps the tailnet port and
-starts the unit; `make relay-logs` follows it (the `%-logs` rule). `relay.app`'s docstring lists the rest of the
+starts the unit; `uv run hostctl relay-logs` follows it (any app's `<app>-logs`). `relay.app`'s docstring lists the rest of the
 config. Neither the key nor the token appears in a response or a log line, and a test holds
 that.
 

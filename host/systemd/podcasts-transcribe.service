@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 # PODCASTS_TRANSCRIBE_THREADS is read from it at every run, so a change there needs no
-# `make units`; unset, it is 1 thread.
+# `uv run hostctl units`; unset, it is 1 thread.
 EnvironmentFile=@REPO@/host.env
 Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/podcasts
 Type=oneshot
@@ -19,6 +19,6 @@ Nice=19
 # (transcribing.json).
 MemoryHigh=5G
 MemoryMax=6G
-# On SIGTERM (a stop, a restart by `make units`, a reboot) the run removes transcribing.json
+# On SIGTERM (a stop, a restart by `uv run hostctl units`, a reboot) the run removes transcribing.json
 # and exits 143: not a failure, and not held against the episode.
 SuccessExitStatus=143

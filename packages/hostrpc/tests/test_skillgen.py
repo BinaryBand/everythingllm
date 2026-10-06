@@ -8,7 +8,7 @@ import hostrpc
 import pytest
 from hostrpc import skillgen
 
-# The generator imports the fronts, so it's tested with the whole workspace (make test).
+# The generator imports the fronts, so it's tested with the whole workspace (uv run hostctl test).
 Field = pytest.importorskip("pydantic").Field
 pytest.importorskip("mcp")
 
@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_the_generated_skills_are_up_to_date():
-    assert skillgen.stale(ROOT) == [], "run `make skills`"
+    assert skillgen.stale(ROOT) == [], "run `uv run hostctl skills`"
 
 
 FRONTS = dict(skillgen.declared(ROOT))

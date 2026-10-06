@@ -135,7 +135,7 @@ def data_dir() -> Path:
       research/runs/       the deep-research run log and live runs' markers
       agents/runs/         the delegations' run log and live runs' markers
       relay/               the Nilson relay's database
-      backups/             what make units and make deploy replaced"""
+      backups/             what uv run hostctl units and uv run hostctl deploy replaced"""
     return Path("~/.local/share/everythingllm").expanduser()
 
 
@@ -277,7 +277,7 @@ class Skills(list):
     """A front's ops that are agent skills rather than MCP tools (ops that write or act, so
     that they can refuse a delegated task): each is declared like a tool, a signature with a
     docstring and no body, with `@skills.add`. Nothing serves them here; hostrpc.skillgen
-    (`make skills`) writes anythingllm/agent-skills/<op>/ from them, which forwards each call
+    (`uv run hostctl skills`) writes anythingllm/agent-skills/<op>/ from them, which forwards each call
     to the service whose socket is $<env>, else storage/everythingllm/<folder>/runner.sock."""
 
     def __init__(self, folder: str, env: str):

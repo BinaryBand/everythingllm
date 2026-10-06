@@ -310,7 +310,7 @@ def main() -> None:
             chat=lib.chat,
             paused=lambda: not transcriber.threads(),
         )
-        # A stop (systemctl, make units, a reboot) unwinds, so the marker goes with it;
+        # A stop (systemctl, uv run hostctl units, a reboot) unwinds, so the marker goes with it;
         # only a kill (out of memory) leaves it behind. 143 is 128 + SIGTERM.
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
         print(f"transcribed {worker.run()} episodes", flush=True)

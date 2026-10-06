@@ -364,7 +364,7 @@ def import_command(name: str) -> None:
 
 
 def mcp_packages() -> list[str]:
-    """The workspace members the MCP servers run (each one's `--package`), so `make mcp-sync`
+    """The workspace members the MCP servers run (each one's `--package`), so `uv run hostctl mcp-sync`
     installs what they need into the container's venv and nothing else."""
     servers = json.loads((REPO / "mcp_servers.json").read_text())["mcpServers"]
     names = [

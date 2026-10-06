@@ -1,5 +1,5 @@
 """hostctl's units, machine and run_guard: rendering and installing the unit templates, the
-checks before `make install`, and the restart guard."""
+checks before `uv run hostctl install`, and the restart guard."""
 
 import sys
 from pathlib import Path

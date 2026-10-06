@@ -47,7 +47,7 @@ module.exports.runtime = {
       if (e instanceof Down)
         return (
           `The deep research service isn't running on the server (${e.message}). Tell the user it needs ` +
-          "`make research-setup` on the server; don't try to do the research by hand."
+          "`uv run hostctl research-setup` on the server; don't try to do the research by hand."
         );
       return `The deep research run couldn't start: ${e?.message || e}. Tell the user what went wrong; don't retry on your own.`;
     }

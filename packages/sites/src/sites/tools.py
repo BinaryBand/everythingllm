@@ -3,7 +3,7 @@
 returned. Each function in OPS is the tool of the same name; server.py describes them. A
 SiteError's or FeedError's text is the tool's error. The entries, the zola builds and the
 news feeds all happen here, like every other site writer's (research-runner, the article
-writer, `make sites-build`); the build lock keeps them from overlapping. The runner also
+writer, `uv run hostctl sites-build`); the build lock keeps them from overlapping. The runner also
 serves the article writer behind the Daily News headlines (sites.articles_web).
 
 Config (environment, from host.env and the unit):

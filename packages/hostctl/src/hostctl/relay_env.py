@@ -1,11 +1,11 @@
-"""`make relay-setup`'s first step: the Nilson relay's secrets file.
+"""`uv run hostctl relay-setup`'s first step: the Nilson relay's secrets file.
 
 Makes ~/.config/everythingllm/relay.env (mode 600) when it's missing, with a fresh RELAY_TOKEN and
 an empty ANYTHINGLLM_API_KEY, and exits 1 until that key is filled in, so the unit isn't
 started into a crash loop. The file stays outside the repo, which the AnythingLLM container
-mounts. Standard library only, run with the system python3.
+mounts. Standard library only, like the rest of hostctl.
 
-    python3 -m hostctl.relay_env [path]   # with hostctl and apps on PYTHONPATH, as make does
+    python3 -m hostctl.relay_env [path]   # with hostctl and apps on PYTHONPATH, as appctl does
 """
 
 import os
@@ -21,7 +21,7 @@ TEMPLATE = """\
 # The Nilson relay's secrets (packages/relay; see the README's "Nilson relay"). Mode 600.
 # A developer API key from AnythingLLM's Settings > Developer API.
 ANYTHINGLLM_API_KEY=
-# The token Nilson sends the relay; made by `make relay-setup`.
+# The token Nilson sends the relay; made by `uv run hostctl relay-setup`.
 RELAY_TOKEN={token}
 # Optional: the ntfy topic told about finished runs (e.g. https://ntfy.sh/nilson-<random>),
 # and its token.
@@ -43,7 +43,7 @@ def main() -> None:
     missing = [k for k in ("ANYTHINGLLM_API_KEY", "RELAY_TOKEN") if not found.get(k)]
     if missing:
         sys.exit(
-            f"relay: fill in {' and '.join(missing)} in {path}, then run make relay-setup again"
+            f"relay: fill in {' and '.join(missing)} in {path}, then run uv run hostctl relay-setup again"
         )
     print(f"{path} has what the relay needs")
 

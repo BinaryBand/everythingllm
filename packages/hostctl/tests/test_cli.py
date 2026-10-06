@@ -1,4 +1,4 @@
-"""hostctl.cli: the commands make's targets became, with subprocesses and the other hostctl
+"""hostctl.cli: the commands `uv run hostctl` runs, with subprocesses and the other hostctl
 modules faked, so each test reads as the steps a command takes, in order."""
 
 import sys
@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from hostctl import cli
 
-# What the Makefile had before it became aliases for these.
+# The commands that aren't per app.
 TARGETS = """install units diff deploy skills skills-check restart logs status health test
 test-skills mcp-sync apps serve-setup sandbox-images sites-build""".split()
 

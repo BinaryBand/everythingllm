@@ -1,10 +1,10 @@
 """Write the agent skills that forward one op to a host service, from the fronts' `skills`.
 
-    uv run --all-packages python -m hostctl.skills           # write them (make skills)
+    uv run --all-packages python -m hostctl.skills           # write them (uv run hostctl skills)
     uv run --all-packages python -m hostctl.skills --check   # exit 1 if they're stale
 
 See hostrpc.skillgen. Not standard-library only (it imports the fronts), so it runs in the
-dev venv rather than with the system python3, unlike the rest of hostctl.
+whole workspace's venv (--all-packages), unlike the rest of hostctl.
 """
 
 import argparse
@@ -23,7 +23,7 @@ def main() -> None:
     if args.check:
         if stale := skillgen.stale(ROOT):
             sys.exit(
-                "generated skills are stale; run `make skills`:\n  "
+                "generated skills are stale; run `uv run hostctl skills`:\n  "
                 + "\n  ".join(stale)
             )
         return

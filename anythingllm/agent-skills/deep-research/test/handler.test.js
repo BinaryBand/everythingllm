@@ -87,7 +87,7 @@ test("a runner that isn't running gets a clear answer", async () => {
   process.env.RESEARCH_SOCKET = path.join(os.tmpdir(), `dr-none-${process.pid}.sock`);
   const reply = await runtime.handler.call(agent(), { question: "q" });
   assert.match(reply, /deep research service isn't running on the server \(ENOENT/);
-  assert.match(reply, /make research-setup/);
+  assert.match(reply, /uv run hostctl research-setup/);
 });
 
 test("a start the runner refuses says why", async () => {

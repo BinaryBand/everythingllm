@@ -8,10 +8,10 @@ The apps registry (packages/apps, `guard`) says which services hold runs and whe
 run logs are; GUARDED is that, by unit. A run is live while
 its marker in <run log>/running/ has been touched within the marker's stale_ms (see
 packages/runs/src/runs/runlog.py). With no terminal to ask, it stops unless FORCE=1. Used
-by appctl.py (`make <app>-setup`) and units.py. AnythingLLM's own restarts
+by appctl.py (`uv run hostctl <app>-setup`) and units.py. AnythingLLM's own restarts
 don't need it: the runs live in the services, not in AnythingLLM.
 
-Standard library only, run with the system `python3`, like sync.py; the registry's reader
+Standard library only, like the rest of hostctl; the registry's reader
 is too.
 """
 

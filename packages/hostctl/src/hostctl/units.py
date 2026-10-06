@@ -9,10 +9,10 @@ repo's path and @KEY@ with KEY from host.env:
   install  write the changed ones (previous versions go to
            ~/.local/share/everythingllm/backups/) and reload systemd.
            A container whose unit or drop-in changed is (re)started; a host unit is
-           restarted only if it's running. Enabling host units is up to each `make *-setup`.
+           restarted only if it's running. Enabling host units is up to each `uv run hostctl *-setup`.
            A change to comments alone restarts nothing.
 
-Standard library only, run with the system `python3`, like sync.py.
+Standard library only, like the rest of hostctl.
 """
 
 import argparse
@@ -124,7 +124,7 @@ def rendered(template: Path, values: dict[str, str], root: Path = ROOT) -> str:
     """The unit from `template`, under a header that says where it came from."""
     where = template.relative_to(root / "host")
     return (
-        f"# Rendered by `make units` from {where} in the EverythingLLM repo, with this\n"
+        f"# Rendered by `uv run hostctl units` from {where} in the EverythingLLM repo, with this\n"
         "# machine's host.env filled in. Edit the template and run it again, not this copy.\n"
         + render(template.read_text(), values)
     )
@@ -283,7 +283,7 @@ def main(argv: list[str] | None = None) -> None:
             app = apps.app_of(guarded)
             setup = app.name if app else guarded
             print(
-                f"units: left {guarded} running; `make {setup}-setup` applies its new unit later"
+                f"units: left {guarded} running; `uv run hostctl {setup}-setup` applies its new unit later"
             )
     for service in restart:
         subprocess.run(["systemctl", "--user", "restart", service], check=True)

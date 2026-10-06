@@ -1,4 +1,4 @@
-"""hostctl.appctl: what `make <app>-setup` and `make serve-setup` run, with systemctl,
+"""hostctl.appctl: what `uv run hostctl <app>-setup` and `uv run hostctl serve-setup` run, with systemctl,
 tailscale and the guard faked."""
 
 from types import SimpleNamespace

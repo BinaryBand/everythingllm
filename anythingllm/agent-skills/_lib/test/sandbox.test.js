@@ -108,7 +108,7 @@ test("runner errors become replies, never throws", async () => {
     await runner.close();
   }
   process.env.SANDBOX_SOCKET = path.join(os.tmpdir(), "no-such-sandbox.sock");
-  assert.match(await writeFile.handler.call(agent().self, { path: "a", content: "a" }), /isn't running.*make sandbox-setup/);
+  assert.match(await writeFile.handler.call(agent().self, { path: "a", content: "a" }), /isn't running.*uv run hostctl sandbox-setup/);
 });
 
 test("a closed chat stops waiting on a run", async () => {

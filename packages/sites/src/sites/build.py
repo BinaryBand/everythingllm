@@ -25,7 +25,7 @@ files. A Builder without `remote` (tests, which make their own) builds a theme_f
 site here, since the repo's themes are no more than the repo's templates, and refuses any
 other.
 
-sites-runner builds a site after every write or delete; `make deploy` builds
+sites-runner builds a site after every write or delete; `uv run hostctl deploy` builds
 them all through the `sites-build` command, with host paths in the environment.
 """
 

@@ -1,16 +1,15 @@
 """hostctl's one command: everything that sets up, syncs, checks and follows this machine, by
-name (`python3 -m hostctl deploy`; each Makefile target is an alias for the command of the
-same name). `python3 -m hostctl` lists them.
+name (`uv run hostctl deploy`). `uv run hostctl` lists them.
 
 The steps are the other hostctl modules, called in-process; what isn't (systemctl, podman, the
-test runs, the skills, the site builds) runs as a subprocess, echoed first as make echoed it.
+test runs, the skills, the site builds) runs as a subprocess, echoed first.
 
 Config (environment):
   PUBLIC_HOST, ANYTHINGLLM_STORAGE  from host.env, or the environment over it; passed on to
                                     every step. Only the steps that touch storage need them.
   FORCE=1                           restart a guarded runner without asking (run_guard)
 
-Standard library only, run with the system `python3`, like the modules it calls.
+Standard library only, like the modules it calls.
 """
 
 import inspect
@@ -39,7 +38,7 @@ SANDBOX_NET = ("sandbox-net", "10.89.77.0/24")
 MCP = "/app/server/storage/everythingllm/mcp"
 EXPORTED = ("PUBLIC_HOST", "ANYTHINGLLM_STORAGE")
 
-# name: (help, function); `python3 -m hostctl` lists them in this order.
+# name: (help, function); `uv run hostctl` lists them in this order.
 COMMANDS: dict[str, tuple[str, Callable[..., None]]] = {}
 
 
@@ -131,7 +130,7 @@ def skills_check() -> None:
     run("uv", "run", "--all-packages", "python", "-m", "hostctl.skills", "--check")
 
 
-@command("import-skill", "copy a live skill into the repo: import-skill foo")
+@command("import-skill", "copy a live skill into the repo: import-skill <hubId>")
 def import_skill(name: str) -> None:
     from hostctl import sync
 
@@ -274,11 +273,11 @@ def lookup(name: str) -> tuple[Callable[..., None], list[str]]:
     app, _, kind = name.rpartition("-")
     if kind in ("setup", "logs") and app in apps.load():
         return COMMANDS[f"<app>-{kind}"][1], [app]
-    raise SystemExit(f"hostctl: no command '{name}'; `python3 -m hostctl` lists them")
+    raise SystemExit(f"hostctl: no command '{name}'; `uv run hostctl` lists them")
 
 
 def usage() -> None:
-    print("python3 -m hostctl <command>:")
+    print("uv run hostctl <command>:")
     for name, (help, _) in COMMANDS.items():
         print(f"  {name:18} {help}")
 

@@ -4,7 +4,7 @@ Work that's been looked into but not done yet. Remove an entry when it lands.
 
 ## Make the test suite faster
 
-`make test` takes about 33 s: `pytest` for 444 tests, about 4 s of it collection, plus
+`uv run hostctl test` takes about 33 s: `pytest` for 444 tests, about 4 s of it collection, plus
 0.6 s for the skill tests. Measured on 2026-10-06, by package:
 
 | Package  | Time  | Where it goes                                                      |

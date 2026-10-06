@@ -10,6 +10,7 @@ exclude = ["packages/.*", "packages/__pycache__"]
 [tool.uv.sources]
 apps = { workspace = true }
 chatimage = { workspace = true }
+hostctl = { workspace = true }
 hostrpc = { workspace = true }
 llm = { workspace = true }
 publicweb = { workspace = true }
@@ -20,6 +21,7 @@ splice = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "hostctl",
     "pytest>=8",
     "ruff>=0.16.10",
     "ty>=0.0.84",

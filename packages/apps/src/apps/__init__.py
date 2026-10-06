@@ -2,8 +2,8 @@
 
 Each app's units, socket, tailnet mappings, restart guard, health checks and setup steps are
 declared there once; hostctl and the audit ask this module rather than keep copies or work
-them out from unit names. App code doesn't read it. Standard library only, so hostctl, run
-with the system python3, can import it (the Makefile's PY puts packages/apps/src on PYTHONPATH).
+them out from unit names. App code doesn't read it. Standard library only, like hostctl, so
+any python3 with packages/apps/src on PYTHONPATH can import it (health.sh, the `before` steps).
 
     apps = load()                 # name -> App, in the file's order
     watched(), runners(), guarded(), app_of(unit), serve_mappings(), health_checks()

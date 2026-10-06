@@ -6,7 +6,7 @@ StartLimitIntervalSec=0
 
 [Service]
 # The relay's secrets (ANYTHINGLLM_API_KEY, RELAY_TOKEN, NTFY_*) live in relay.env, outside
-# the repo, which the AnythingLLM container mounts; `make relay-setup` makes it.
+# the repo, which the AnythingLLM container mounts; `uv run hostctl relay-setup` makes it.
 EnvironmentFile=@REPO@/host.env
 EnvironmentFile=%h/.config/everythingllm/relay.env
 Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/relay

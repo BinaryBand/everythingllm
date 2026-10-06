@@ -87,7 +87,7 @@ def test_setup_steps_exist_and_install_says_why_not():
                 )
         if app.units:  # host units, which a setup step starts
             assert app.install or app.why_not_installed, (
-                f"{app.name}: say why `make install` leaves it out"
+                f"{app.name}: say why `uv run hostctl install` leaves it out"
             )
 
 

@@ -1,11 +1,11 @@
 # The apps this repo runs, and everything hostctl needs to know to deploy, restart, map,
-# check and follow them. hostctl's units, run_guard and appctl (make <app>-setup,
+# check and follow them. hostctl's units, run_guard and appctl (uv run hostctl <app>-setup,
 # <app>-logs, serve-setup, install, health) and the audit read it through
 # apps.load(); app code never does. Test: packages/apps/tests/test_apps.py.
 #
 # [<app>]                 the app's name: also its socket folder (storage/everythingllm/<app>/)
-#                         and its make targets (make <app>-setup, make <app>-logs)
-# summary                 one line, for `make apps`
+#                         and its hostctl commands (uv run hostctl <app>-setup, <app>-logs)
+# summary                 one line, for `uv run hostctl apps`
 # runner                  the unit serving storage/everythingllm/<app>/runner.sock (hostrpc)
 # units                   host user units: unit -> label (enabled and restarted by setup,
 #                         watched by the audit)
@@ -19,7 +19,7 @@
 # guard                   restarts wait while a run is going: {runs (under the data dir), noun}
 # serve                   tailnet HTTPS mappings: {https, port, path?} -> http://127.0.0.1:<port>
 # health                  name -> URL that should answer below 500
-# install                 whether `make install` sets it up; why_not_installed says why not
+# install                 whether `uv run hostctl install` sets it up; why_not_installed says why not
 
 [anythingllm]
 summary = "AnythingLLM, in its Quadlet container (127.0.0.1:3001; units restart it)"

@@ -1,4 +1,4 @@
-"""Setting up a machine from this repo; the steps `make install` runs around the others.
+"""Setting up a machine from this repo; the steps `uv run hostctl install` runs around the others.
 
   check      before anything changes: host.env, the tools the units run, linger, tailscale,
              and the storage folder (creating what the containers mount inside it)
@@ -6,7 +6,7 @@
   search     point AnythingLLM's web search at this machine's SearXNG
   checklist  what's left to do by hand in AnythingLLM's UI, ticking what's already done
 
-Standard library only, run with the system `python3`, like sync.py. It only ever checks
+Standard library only, like the rest of hostctl. It only ever checks
 whether a key in AnythingLLM's .env is set; it never prints a value.
 """
 
@@ -126,7 +126,7 @@ def wait_api(timeout: float = 180) -> None:
             pass
         if time.monotonic() > end:
             sys.exit(
-                f"AnythingLLM's API didn't answer at {API} within {timeout:.0f} s: `make logs`."
+                f"AnythingLLM's API didn't answer at {API} within {timeout:.0f} s: `uv run hostctl logs`."
             )
         time.sleep(2)
 
@@ -188,7 +188,7 @@ def checklist() -> list[tuple[bool | None, str]]:
         (
             keys.get("AGENT_SKILL_RERANKER_TOP_N", False)
             and keys.get("AGENT_MAX_TOOL_CALLS", False),
-            "Add AGENT_SKILL_RERANKER_TOP_N and AGENT_MAX_TOOL_CALLS to the .env (see anythingllm/env.example for why), then `make restart`.",
+            "Add AGENT_SKILL_RERANKER_TOP_N and AGENT_MAX_TOOL_CALLS to the .env (see anythingllm/env.example for why), then `uv run hostctl restart`.",
         ),
         (
             searxng_answers(),
@@ -196,7 +196,7 @@ def checklist() -> list[tuple[bool | None, str]]:
         ),
         (
             workspaces > 0,
-            "Create a workspace, then run `make deploy` again so it gets the system prompt.",
+            "Create a workspace, then run `uv run hostctl deploy` again so it gets the system prompt.",
         ),
         (
             None,
@@ -220,7 +220,7 @@ def main(argv: list[str] | None = None) -> None:
         for p in problems:
             print(f"  - {p}")
         if problems:
-            sys.exit("Fix these, then run `make install` again.")
+            sys.exit("Fix these, then run `uv run hostctl install` again.")
         print("machine check: ready")
     elif args.action == "wait-api":
         wait_api()
@@ -228,11 +228,11 @@ def main(argv: list[str] | None = None) -> None:
         search()
     else:
         items = checklist()
-        print("\nLeft to do in AnythingLLM (make install sets up everything else):")
+        print("\nLeft to do in AnythingLLM (uv run hostctl install sets up everything else):")
         for done, item in items:
             print(f"  [{'x' if done else ' ' if done is not None else '?'}] {item}")
         print(
-            "[?]: can't be checked from here. Run `make install` again any time; it only changes what's out of date."
+            "[?]: can't be checked from here. Run `uv run hostctl install` again any time; it only changes what's out of date."
         )
 
 

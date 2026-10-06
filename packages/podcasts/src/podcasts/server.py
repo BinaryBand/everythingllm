@@ -75,7 +75,7 @@ async def refresh_podcasts(
 
 
 # Adding and removing a podcast are skills (anythingllm/agent-skills/add-podcast,
-# remove-podcast, generated from these by `make skills`), not tools here: they can refuse a
+# remove-podcast, generated from these by `uv run hostctl skills`), not tools here: they can refuse a
 # delegated task. refresh_podcasts stays a tool: it only starts a sync.
 
 

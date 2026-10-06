@@ -100,7 +100,7 @@ class SandboxError(hostrpc.RunnerError):
     """An error to show the agent: bad arguments, a missing file, the runner being down."""
 
 
-# Also named in the Makefile's sandbox-setup and host/systemd/sandbox-proxy.service; the proxy's
+# Also named in hostctl's sandbox-images (cli.py) and host/systemd/sandbox-proxy.service; the proxy's
 # address (10.89.77.2:8888) is set in Containerfile.sandbox, that unit and tinyproxy.conf.
 IMAGE = "localhost/everythingllm-sandbox"
 NETWORK = "sandbox-net"
@@ -616,9 +616,9 @@ class Runner(hostrpc.Service):
         )
         problems = []
         if image[0] != 0:
-            problems.append(f"image {IMAGE} is missing (make sandbox-setup)")
+            problems.append(f"image {IMAGE} is missing (uv run hostctl sandbox-setup)")
         if network[0] != 0:
-            problems.append(f"network {NETWORK} is missing (make sandbox-setup)")
+            problems.append(f"network {NETWORK} is missing (uv run hostctl sandbox-setup)")
         if proxy[0] != 0 or proxy[1].strip() != "true":
             problems.append(
                 f"{PROXY_CONTAINER} isn't running (systemctl --user status sandbox-proxy)"

@@ -37,9 +37,10 @@ containers"). The checks a script couldn't make, and the cleanup once they've he
   - Run one Nilson chat to the end through the relay, with its ntfy notice.
   - Ask the agent for one Daily News article, which drives the article writer in
     sites-runner's container.
-  - Watch the first sync and transcription pass finish in the workers' containers
-    (`podcasts/sync.log`, `uv run hostctl podcasts-logs`, `list_podcasts`). The first sync
-    started at 00:28 on 2026-10-07.
+  - Watch the first transcription pass in its container (`uv run hostctl podcasts-logs`),
+    due at 06:30 on 2026-10-07, after the quiet hours (`PODCASTS_QUIET_HOURS`). The first
+    sync in the sync worker's container finished at 01:01 the same night, every episode
+    cut.
 - **Once the containers have run for a week:** delete the old host venvs
   `~/.local/share/everythingllm/venvs/{relay,research,sites,podcasts}`, and the leftover
   `browser-net` network (`podman network rm browser-net`).

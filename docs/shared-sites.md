@@ -1,6 +1,6 @@
 # Plan: per-workspace sharing and publishing, shared themes, and sites the agent designs
 
-Status: all stages done 2026-10-06. News, research and status are built in the sandbox
+Status: all stages done 2026-10-06; publishing revised the same day to serve `public/` as it is (see "Publishing"). News, research and status are built in the sandbox
 with `theme_from = "system"`; none uses a workspace's theme yet. Decision 2 is settled
 (system sites pin a workspace theme; not built until one does). As built, the switch is `[extra.build]
 theme_from` in each site's repo `zola.toml`, the same setting `build-site` reads, rather
@@ -56,44 +56,37 @@ workspaces, and `public` is for the web.
 - **`/public` replaces the read-only `/pages` mount.** A workspace sees its live pages as
   files it can edit, rather than as a read-only copy.
 
-## Publishing: `public/` synced to the web
+## Publishing: `public/` served as it is
 
-A workspace's `public/` is the source of truth for its pages. Caddy doesn't serve it
-directly; the runner keeps the served copy in step with it.
+Revised 2026-10-06. This section first planned a sync: the runner copied each workspace's
+`public/` into the pages site, so Caddy never read a workspace folder. It was built and
+ran for a day. It's replaced by serving `public/` directly, for fewer moving parts and
+more freedom for the workspaces: this is an AI tool, and a workspace that publishes a
+broken or half-written page has only broken its own page.
 
-- **Mapping.** `public/<slug>/` is served as `https://<host>:8445/<slug>/`, and a single
-  `public/<slug>.html` as a one-file page. URLs and the ownership rules are today's: a
-  slug belongs to the workspace that published it first, and another workspace's
-  `public/<same-slug>` is refused at sync with a note saying so.
-- **Automatic sync.** When a run, a `write-file` or a `build-site` ends having changed
-  `public/`, the runner syncs that workspace's pages. The end of an operation is a
-  consistent point, so pages go live whole, never mid-write, a moment after the change.
-  The operation's reply lists what went live, what came down and any CSP warnings.
-- **Removal.** A page owned by the workspace whose folder or file is gone from `public/`
-  is taken down at the next sync. That's the only way sync removes anything, and only the
-  workspace's own pages.
-- **`publish`** stays, for forcing a sync of everything or of one slug. With a path
-  outside `public/`, it copies that file or folder into `public/<slug>` first, so old
-  habits keep working.
-- **The safe copy.** Every sync uses `publish`'s existing path:
-  - plain files only, never symlinks, FIFOs or devices
-  - a size cap per page
-  - dotfiles such as `.git` left out
-  - the page built beside its destination and swapped in atomically
-  - the CSP check, link cards and the index page
-
-  So the served folder only ever holds plain files the runner copied itself.
-- **Quota.** `public/` counts toward the workspace's 5 GB like its other folders.
-
-Why not serve `public/` directly: hosts that publish untrusted content (GitHub Pages,
-Netlify, Cloudflare Pages) deploy a copy in the same way. The opposite model, a web server
-reading users' folders (the old `~user/public_html`), is the classic source of symlink
-holes. Doing it here would need:
-- a `nosymfollow` mount, which depends on podman passing it through
-- a workspace prefix on every URL, so two workspaces can't both have `public/notes`
-
-It would still leave FIFOs and half-written pages served as they are. Automatic sync gives
-the same "what's in the folder is what's live" with none of that.
+- **Where `public/` lives.** In `sandbox/public/<workspace>/`, apart from the workspace's
+  other folders, in a tree that holds nothing but `public/` folders. It's still mounted at
+  `/public` in runs and counts toward the workspace's quota.
+- **Serving.** Caddy mounts that tree read-only and serves it on a port of its own, :8447,
+  each workspace under `/<workspace>/`. What's written there is live at once; there's no
+  copy, no sync and no slug to claim. Caddy's directory listing is the index. Dotfiles
+  aren't served.
+- **Why it's safe without a copy.** The reason for the copy was never page quality; it
+  was that a symlink in a served folder could reach whatever Caddy can see. Caddy now sees
+  only `public/` folders (public already) and its own container, never a workspace's
+  `project/`, `threads/` or `shared/`.
+- **Its own origin, for scripts later.** A separate port is a separate browser origin, so
+  whatever workspace pages run can't read the podcasts' private feeds or post to
+  `/news/write` on :8445. Scripts are off for every workspace for now; the Caddyfile's
+  `@scripts` matcher is the switch for one workspace (`script-src 'self'
+  'unsafe-inline'`, still nothing from other hosts). Turning it on is its own decision,
+  with its own review.
+- **What the replies say.** A run, `write-file` or `build-site` that changed `public/`
+  lists the pages it changed, their URLs and what in them the CSP blocks. `publish` gives
+  a page's link and card, lists the workspace's pages, copies a file or folder from
+  elsewhere into `public/`, or removes a page.
+- **Old addresses.** :8445's front page and education's pages (`/lab/`,
+  `/knowledge-protocol-guide/`) redirect to :8447.
 
 ## Tools stay out of the sandbox's reach
 
@@ -151,7 +144,7 @@ A runner operation, `build_site(scope, path)`, with a `build-site` skill:
    `zola build --base-url <url>`. The runner passes the URL in, so a site can't point its
    links at another host.
 4. **Publishing.** The runner copies `/out` into the caller's `public/<slug>/`, replacing
-   what was there, and the automatic sync puts it live. The slug is the site folder's
+   what was there, which puts it live. The slug is the site folder's
    name, or one the call gives. So what's in `public/` is always what's live, built sites
    included.
 
@@ -273,9 +266,10 @@ to change.
   sandbox can write, and needs a signing key and pinning mounts to be safe.
 - **Build tools in `/shared`.** Whoever writes them puts code into every workspace's
   builds.
-- **Caddy serving each workspace's `public/` directly.** See "Publishing" above: it would
-  need a `nosymfollow` mount and a workspace prefix on every URL, and would still serve
-  FIFOs and half-written pages. Automatic sync gives the same experience safely.
+- **Syncing `public/` into the pages site** (built 2026-10-06, replaced the same day). It
+  kept Caddy away from workspace folders by copying them, at the cost of markers,
+  signatures, slug ownership and a step between writing a page and its going live.
+  Keeping `public/` in a tree of its own gives the same safety without the copy.
 - **Publishing only on an explicit `publish`.** It was safe, but it kept a step between
   "the page is in `public/`" and "the page is live" that the folder model doesn't need.
   Syncing at the end of each operation keeps pages whole without that step.

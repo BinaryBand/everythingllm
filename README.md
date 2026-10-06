@@ -60,18 +60,25 @@ This repo owns the two containers the setup runs, as templates in `host/quadlet/
 
 - `anythingllm.container`: AnythingLLM, pinned by digest, because the log filter depends on
   its internals
-- `static_agent.container`: the pages site, a Caddy container that mounts
-  `host/caddy/pages.Caddyfile` from the repo, so its CSP is versioned. Everything gets
-  `default-src 'self'; script-src 'none'`: no scripts, and nothing fetched from another
-  host, so CSS can't send anything out either. `form-action 'none'; base-uri 'none'` cover
-  what `default-src` doesn't: no form posts anywhere, and no `<base>` repoints a page's
-  links. A page the sandbox published (a folder with a `.page` file naming the workspace
-  it belongs to, and the root's listing) may carry inline CSS too
-  (`style-src 'self' 'unsafe-inline'`). Everything unmarked keeps it blocked, so a new site
-  or folder starts strict: the Zola sites, `/podcasts`. Caddy hides the `.page` and
-  `.zola-site` markers, and a test holds both policies. `publish` warns the agent when a
-  page uses something the CSP blocks (scripts, stylesheets, fonts or images from other
-  hosts), since the page would otherwise just render without it.
+- `static_agent.container`: a Caddy container that mounts `host/caddy/pages.Caddyfile` from
+  the repo, so its CSPs are versioned, and serves two sites:
+  - **the pages site** (:8445): the Zola sites, `/podcasts` and the link cards, from
+    `pages/public/`. `default-src 'self'; script-src 'none'`: no scripts, no inline styles,
+    and nothing fetched from another host, so CSS can't send anything out either.
+    `form-action 'none'; base-uri 'none'` cover what `default-src` doesn't: no form posts
+    anywhere, and no `<base>` repoints a page's links. Its front page and the workspace
+    pages' old addresses redirect to :8447.
+  - **the workspace pages site** (:8447): every sandbox workspace's `/public`, mounted
+    read-only from `sandbox/public/` and served as it is (see "Code sandbox"). The same
+    policy, but inline CSS is allowed. It's a port, and so a browser origin, of its own, so
+    that whatever its pages ever run can't read the podcasts' private feeds or post to
+    `/news/write`. Scripts are off for every workspace; `@scripts` in the Caddyfile is the
+    switch for letting one workspace's pages run them (`script-src 'self'
+    'unsafe-inline'`, still nothing from other hosts), and matches nothing yet.
+
+  `publish` and the sandbox's replies warn the agent when a page uses something the CSP
+  blocks (scripts, stylesheets, fonts or images from other hosts), since the page would
+  otherwise just render without it.
 
 The host's own units in `host/systemd/` (services, timers, and the AnythingLLM drop-in) are
 templates too. `make units` renders all of them:
@@ -404,8 +411,8 @@ Code edits go live the next time AnythingLLM starts the server (restart it from 
 Agent Skills > MCP Servers page, `make restart`, or `make deploy`, which restarts). Note
 that this runs whatever is in the working tree, committed or not. Requires `mcp` 2.x (`MCPServer`, not `FastMCP`).
 
-`tailscale serve` maps tailnet HTTPS :8445 to the pages site. Pages live under
-AnythingLLM's storage, so the container sees them without another mount.
+`tailscale serve` maps tailnet HTTPS :8445 to the pages site and :8447 to the workspace pages
+site.
 
 ## Code sandbox
 
@@ -417,25 +424,27 @@ app's, and a way to publish what it makes:
   tools, have no 60 s limit. Reading, listing, moving and deleting files is bash.
 - `write-file` writes a text file, or deletes a file or folder (deleting exactly one of the
   workspace's folders empties it).
-- `publish` forces a sync of `/public` (below), copying a file or folder there first when
-  it's given one from elsewhere, or takes a page down.
-- `build-site` builds a Zola site from the workspace's folders into `/public/<slug>` and
+- `publish` gives a page's link and card, lists the workspace's pages, copies a file or
+  folder from elsewhere into `/public`, or removes a page.
+- `build-site` builds a Zola site from the workspace's folders into `/public/<slug>`, which
   puts it live (see "Building sites").
 
-**Pages are `/public`.** A workspace's `/public` is its pages on the web: each top-level
-folder `public/<slug>/` is served as `https://<PUBLIC_HOST>:8445/<slug>/` (its
-`index.html` is the page), and a top-level file `public/<slug>.<ext>` as a one-file page.
-Whenever a run, a `write-file` or a `publish` that changed `/public` ends, `sandbox-runner`
-syncs it: changed pages are copied (plain files only, no symlinks, FIFOs or dotfiles, at
-most 500 MB a page) into a folder beside the live one and swapped in whole, and a page
-whose entry is gone from `/public` is taken down. The reply says what went live, what came
-down and what was skipped (a name that isn't a slug, a slug another workspace or a Zola
-site has, an empty folder). Caddy serves the copy, never a workspace folder: serving
-`/public` directly would follow its symlinks, serve FIFOs and half-written pages, and need
-a workspace prefix in every URL. Each page's `.page` marker names its workspace (only that
-workspace can replace or remove it) and a signature of its source, so an unchanged page
-isn't copied again. The root's `index.html` lists every page. A workspace's `/public`
-starts out holding the pages it had already published.
+**Pages are `/public`, served as they are.** A workspace's `/public` is its pages on the
+web, at `https://<PUBLIC_HOST>:8447/<workspace>/`: `public/notes/index.html` is
+`/<workspace>/notes/`, and any other file is served as it is. Whatever is written there is
+live at once, and deleting it takes it down; there's no copy, no sync and no page names to
+claim, since each workspace owns its prefix. A half-written or broken page is the
+workspace's own business. The replies of `run-code`, `write-file` and `build-site` list the
+pages they changed, with their URLs and what in them the CSP blocks. Caddy's directory
+listing is the index, of the workspaces at the root and of a workspace's pages under it;
+dotfiles aren't served.
+
+What keeps this safe is where `/public` lives: in `~/.local/share/everythingllm/sandbox/public/<workspace>/`,
+apart from the workspace's other folders, in a tree that holds nothing but `/public`
+folders. Caddy mounts that tree read-only, so a symlink in a workspace's pages can only
+reach other workspaces' pages (public already) or Caddy's own container, never a
+workspace's `/project`, `/work` or `/shared`. `/public` counts toward the workspace's size
+limit.
 
 **Link cards.** AnythingLLM's chat shows a Markdown image up to 800 px wide, and keeps it a
 link when it's inside one, even with "Render HTML in chat" off. That setting is per browser
@@ -493,7 +502,7 @@ different workspaces overlap. `docs/shared-sites.md` has the design.
 workspaces can read it and copy it. It started as a copy of the `agent-site` theme and a
 welcome entry, with a `README.md` for the agent and a git repository so it can roll back.
 It's built with `build-site` (`path` `/shared/education/sites/lab`, slug `lab`), which
-puts it at `https://<PUBLIC_HOST>:8445/lab/`. Nothing in the repo or on the host reads it,
+puts it at `https://<PUBLIC_HOST>:8447/education/lab/`. Nothing in the repo or on the host reads it,
 so it can break without breaking anything else, and the CSP still holds for whatever it
 serves.
 
@@ -508,12 +517,12 @@ folder read-only but an empty `/out`:
   "system"` the repo's from `/system/themes`, with `theme_from = "<workspace>"` that
   workspace's `/shared/<workspace>/themes/<theme>`, and without it the site's own
   `themes/`;
-- it runs `zola build` with the base URL the runner passes in (`…:8445/<slug>`), so a site
-  can't point its links at another host, within 60 s.
+- it runs `zola build` with the base URL the runner passes in
+  (`…:8447/<workspace>/<slug>`), so a site can't point its links at another host, within 60 s.
 
-The runner copies the output into `/public/<slug>` (plain files only) and syncs, so a site
-goes live, comes down and is skipped exactly like any page; zola's error comes back if it
-doesn't build, and nothing changes then. A build waits like a run (`op_wait`).
+The runner copies the output into `/public/<slug>` (plain files only, in place of what was
+there), so a site is live like any page; zola's error comes back if it doesn't build, and
+nothing changes then. A build waits like a run (`op_wait`).
 
 **Each run** gets a fresh `localhost/everythingllm-sandbox` container, with the script mounted
 read-only from a host-only folder at `/sandbox`:
@@ -525,10 +534,10 @@ read-only from a host-only folder at `/sandbox`:
 - containers carry the label `everythingllm-sandbox=1`; the runner removes any left over
   from a crash or restart when it starts.
 
-The host never follows a symlink out of a mount when it reads, writes or publishes for the
-agent, won't write into a FIFO or device there, leaves symlinks out of a published folder,
-and won't publish over a symlink planted in the site folder; the sandbox can create any
-symlink it likes in its own folders.
+The host never follows a symlink out of a mount when it reads, writes or copies for the
+agent, won't write into a FIFO or device there, and leaves symlinks out of what `publish`
+or a build copies into `/public`; the sandbox can create any symlink it likes in its own
+folders.
 
 **Network.** Sandboxes sit on `sandbox-net`, a podman network made with `--internal`
 (no route out) and `--disable-dns` (no DNS, so nothing leaks out through lookups either). Their

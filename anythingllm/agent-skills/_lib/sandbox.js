@@ -1,6 +1,6 @@
-// What the sandbox skills (run-code, write-file, publish) share: the runner's socket, the
-// scope of a call, turning the runner's errors into replies for the agent, and telling it
-// what a sync of /public put on the pages site.
+// What the sandbox skills (run-code, write-file, publish, build-site) share: the runner's
+// socket, the scope of a call, turning the runner's errors into replies for the agent, and
+// telling it which of its pages in /public a call changed.
 //
 // The scope is where the call came from, never what the model says: the workspace (a
 // scheduled job has none, and gets "_jobs") and the chat thread ("default" for a
@@ -35,19 +35,16 @@ async function withSandbox(self, work) {
   }
 }
 
-/** The lines saying what a sync of /public did (a run's, a write's or publish's `published`). */
+/** The lines saying which pages in /public a run, write or build changed (its `published`). */
 function publishedLines(p) {
   if (!p) return [];
   const lines = [];
   for (const page of p.live || []) {
-    lines.push(`live: ${page.url} (${page.files} file${page.files === 1 ? "" : "s"})`);
-    if (page.card) lines.push(`Card: ${page.card}`);
+    lines.push(`live: ${page.url}`);
     if (page.blocked?.length)
-      lines.push(`warning: the pages site blocks ${page.blocked.join(", ")} on ${page.slug}; the page will show without them`);
+      lines.push(`warning: the pages site blocks ${page.blocked.join(", ")} in ${page.slug}; it will show without them`);
   }
-  for (const slug of p.removed || []) lines.push(`taken down: the page '${slug}'`);
-  for (const s of p.skipped || []) lines.push(`not published: ${s.why}`);
-  if (p.error) lines.push(`publishing failed: ${p.error}`);
+  for (const slug of p.removed || []) lines.push(`gone: /public/${slug}`);
   return lines;
 }
 

@@ -1,5 +1,5 @@
 """The sandbox runner: a host daemon that runs the agent's code in throwaway podman containers
-and publishes what it makes to the pages site.
+and builds the sites it makes.
 
 Each run gets a fresh container from the sandbox image with no network except the
 allowlisting proxy on sandbox-net, a read-only root, CPU/memory/process limits and a
@@ -10,8 +10,8 @@ AnythingLLM pass as a scope of {workspace, thread} (never chosen by the model):
   /project         the workspace's folder, shared by its threads and kept (pip installs go here)
   /shared/<ws>     the workspace's shared folder: it writes it, every other workspace reads it
   /shared/<other>  each other workspace's shared folder, read-only
-  /public          the workspace's pages on the web: synced to the pages site whenever a
-                   run, write or publish that changed it ends
+  /public          the workspace's pages on the web, served as they are at
+                   https://<host>:8447/<workspace>/ the moment they're written
   /system/themes   the repo's Zola themes, read-only
 
 The shared and system folders are mounted noexec and never on PATH: they're data, and code
@@ -24,20 +24,22 @@ needs: a run, a write and a publish in one workspace take turns, runs in differe
 workspaces overlap, and the runner's file operations only ever take paths in the caller's
 own folders, which no other workspace can change under them.
 
-Publishing is a sync of /public: each top-level folder `public/<slug>/` (or file
-`public/<slug>.<ext>`) is copied to `<site>/<slug>/`, plain files only, and swapped in
-whole; a page whose entry has gone from /public is taken down. Caddy serves the copy, never
-a workspace folder. The slug's `.page` marker holds the workspace that owns it (only that
-workspace can replace or remove it; the pages site lets a marked folder use inline CSS,
-host/caddy/pages.Caddyfile) and a signature of the source, so an unchanged page isn't
-copied again. The site's root `index.html` lists every page and is rewritten after each
-change. A workspace's /public starts out holding the pages it had already published.
+Each workspace's /public lives apart from its other folders, in a tree that holds nothing
+but /public folders (SANDBOX_PUBLIC, `<public>/<workspace>/`). The workspace pages site
+(static_agent, host/caddy/pages.Caddyfile, :8447) serves that tree read-only as it is, each
+workspace under its own prefix: there's no copy, no page to claim, and a half-written page
+is the workspace's own business. Nothing private is in the tree, so a symlink in it can't
+reach another workspace's /project or /work. The site's CSP is one rule for every
+workspace (no scripts yet; the Caddyfile has the switch for letting a workspace's pages run
+them, on an origin of their own). A run, write or build that changed /public says which
+pages changed and where they are; op_publish gives a page's address and link card, and can
+copy a file or folder into /public first.
 
 A site build (op_build_site) runs the repo's sitebuild.py in a container with no network
 and every folder read-only but an empty /out: it copies a Zola site from the workspace's
 own folders, puts the theme it names in place (the repo's from /system/themes, or a
 workspace's from /shared/<it>/themes), and builds it. The runner copies the output into
-/public/<slug> (plain files only) and syncs, so a site goes live like any page.
+/public/<slug> (plain files only), so a site goes live like any page.
 
 The system sites (news, research, status) are built the same way when their repo zola.toml
 names a theme with [extra.build] theme_from (op_build_system_site, which sites.build calls):
@@ -58,17 +60,18 @@ Config (environment):
   SANDBOX_SITES_SOURCE   the system sites' sources (default the repo's zola/sites)
   SANDBOX_SITES_CONTENT  their entries (default ~/.local/share/everythingllm/pages/entries,
                          as sites.build's SITES_CONTENT)
-  SANDBOX_SITE_DIR  the pages site's root, where pages are published (default
-                    ~/.local/share/everythingllm/pages/public)
+  SANDBOX_PUBLIC    every workspace's /public, as <workspace>/ (default
+                    ~/.local/share/everythingllm/sandbox/public)
+  SANDBOX_PUBLIC_URL  public URL of SANDBOX_PUBLIC (default https://<PUBLIC_HOST>:8447/)
+  SANDBOX_SITE_DIR  the pages site's root, where system sites are staged and link cards
+                    saved (default ~/.local/share/everythingllm/pages/public)
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import html as htmllib
-import json
 import logging
 import os
 import re
@@ -79,7 +82,6 @@ import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -126,14 +128,14 @@ OUTPUT_BYTES = 20_000  # per stream of a run
 WRITE_BYTES = 1_000_000  # op_write
 WORKSPACE_WARN_BYTES = 4 << 30
 WORKSPACE_MAX_BYTES = 5 << 30  # no new runs or writes past this; deletes still work
-PUBLISH_MAX_BYTES = 500 << 20
+PUBLISH_MAX_BYTES = 500 << 20  # what publish or a build copies into /public at once
 THREAD_MAX_AGE = 7 * 24 * 3600
 LIST_MAX = 200  # files named in a run's changed list
 # A request answers within WAIT; a run that's still going carries on, and the skill waits
 # on it again with op_wait.
 WAIT = 45
 RESULT_KEEP = 3600  # how long a finished run's result can still be fetched
-PAGE_MARKER = ".page"  # JSON: the owning workspace, title and entry file; the pages site allows its inline CSS
+CSP_SCAN = 200  # HTML files of a changed page checked for what the CSP blocks
 
 # What podman produced: exit code, stdout, stderr, and whether it was killed for time.
 PodmanResult = tuple[int, str, str, bool]
@@ -210,6 +212,8 @@ class Config:
     system_themes: Path
     site_dir: Path
     site_url: str
+    public_root: Path = Path("/nonexistent")
+    public_url: str = "http://127.0.0.1:8447/"
     sites_source: Path = REPO / "zola" / "sites"
     sites_content: Path = Path("/nonexistent")
 
@@ -236,18 +240,26 @@ class Config:
                 "SANDBOX_SITE_URL",
                 f"https://{host}:8445/" if host else "http://127.0.0.1:8445/",
             ),
+            public_root=Path(
+                get("SANDBOX_PUBLIC", hostrpc.data_dir() / "sandbox" / "public")
+            ),
+            public_url=get(
+                "SANDBOX_PUBLIC_URL",
+                f"https://{host}:8447/" if host else "http://127.0.0.1:8447/",
+            ),
         )
 
 
 @dataclass(frozen=True)
 class Scope:
-    """Where a call came from, and the host folders behind its writable mounts, all in the
-    workspace's folder (`home`): threads/<thread>/ (/work), project/ (/project), shared/
-    (/shared/<workspace>) and public/ (/public)."""
+    """Where a call came from, and the host folders behind its writable mounts: in the
+    workspace's folder (`home`), threads/<thread>/ (/work), project/ (/project) and shared/
+    (/shared/<workspace>); and its folder in the served tree (`public`, /public)."""
 
     workspace: str
     thread: str
     home: Path
+    public: Path
 
     @property
     def roots(self) -> dict[str, Path]:
@@ -255,16 +267,15 @@ class Scope:
             "/work": self.home / "threads" / self.thread,
             "/project": self.home / "project",
             f"/shared/{self.workspace}": self.home / "shared",
-            "/public": self.home / "public",
+            "/public": self.public,
         }
 
-    def mount_of(self, parts: tuple[str, ...]) -> tuple[str, tuple[str, ...]] | None:
-        """A path under `home`, as parts, as its mount and its parts inside that; None
-        outside them all (another thread's /work)."""
+    def mount_of(self, folder: Path) -> tuple[str, tuple[str, ...]] | None:
+        """A folder as its mount and its parts inside that; None outside them all
+        (another thread's /work)."""
         for mount, root in self.roots.items():
-            prefix = root.relative_to(self.home).parts
-            if parts[: len(prefix)] == prefix:
-                return mount, parts[len(prefix) :]
+            if folder.is_relative_to(root):
+                return mount, folder.relative_to(root).parts
         return None
 
 
@@ -288,11 +299,11 @@ class Usage:
 
 def snapshot(scope: Scope) -> Usage:
     """Every visible file in the workspace's mounts by its path in the sandbox, and the size
-    of the whole workspace (its other threads too). Hidden top-level entries (.local with
-    pip installs, .cache…) count toward the size only."""
+    of the whole workspace (its other threads and its /public too). Hidden top-level entries
+    (.local with pip installs, .cache…) count toward the size only."""
     usage = Usage()
-    for dirpath, _, filenames in os.walk(scope.home):
-        where = scope.mount_of(Path(dirpath).relative_to(scope.home).parts)
+    for dirpath, _, filenames in (*os.walk(scope.home), *os.walk(scope.public)):
+        where = scope.mount_of(Path(dirpath))
         for name in filenames:
             try:
                 st = os.lstat(os.path.join(dirpath, name))
@@ -313,9 +324,13 @@ def snapshot(scope: Scope) -> Usage:
     return usage
 
 
-def public_files(usage: Usage) -> dict[str, tuple[int, int]]:
-    """The part of a snapshot under /public, to tell whether a run changed the pages."""
-    return {p: sig for p, sig in usage.files.items() if p.startswith("/public/")}
+def public_changes(before: Usage, after: Usage) -> set[str]:
+    """The top-level entries of /public a run added, changed or removed: its pages that changed."""
+    b, a = (
+        {p: sig for p, sig in u.files.items() if p.startswith("/public/")}
+        for u in (before, after)
+    )
+    return {p.split("/")[2] for p in b.keys() | a.keys() if b.get(p) != a.get(p)}
 
 
 def write_regular(target: Path, data: bytes, path: str) -> None:
@@ -427,24 +442,6 @@ def csp_blocked(html: str, origin: str = "") -> list[str]:
     return [what for what, pattern in _CSP_BLOCKED if pattern.search(html)]
 
 
-def marker(folder: Path) -> dict[str, str] | None:
-    """A published page's marker; None for anything that isn't one (a Zola site, the
-    podcasts, a folder nobody marked)."""
-    file = folder / PAGE_MARKER
-    if (
-        folder.is_symlink()
-        or not folder.is_dir()
-        or file.is_symlink()
-        or not file.is_file()
-    ):
-        return None
-    try:
-        m = json.loads(file.read_text())
-    except ValueError:
-        return None
-    return m if isinstance(m, dict) and m.get("workspace") else None
-
-
 def page_description(html: str) -> str:
     """A line about a page for its card: its meta description, else its first paragraph."""
     if m := DESCRIPTION_RE.search(html):
@@ -487,16 +484,6 @@ def regular_files(source: Path) -> tuple[list[tuple[Path, str]], int]:
     return sorted(found, key=lambda f: f[1]), size
 
 
-def signature(files: list[tuple[Path, str]]) -> str:
-    """What a page's source looks like: its files' names, sizes and times. Stored in the
-    page's marker, so a sync skips a page whose source hasn't changed."""
-    h = hashlib.sha256()
-    for path, name in files:
-        st = os.lstat(path)
-        h.update(f"{name}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
-    return h.hexdigest()[:16]
-
-
 @dataclass
 class Job:
     """A run, kept for RESULT_KEEP after it finishes so op_wait can still fetch its result."""
@@ -519,7 +506,6 @@ class Runner(hostrpc.Service):
     )
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     _jobs: dict[str, Job] = field(default_factory=dict)
-    _site: asyncio.Lock = field(default_factory=asyncio.Lock)  # who owns which slug
 
     # --- scopes and paths ---
 
@@ -534,29 +520,16 @@ class Runner(hostrpc.Service):
         for what, key in (("workspace", workspace), ("thread", thread)):
             if not KEY_RE.match(key):
                 raise SandboxError(f"bad {what} '{key}'")
-        s = Scope(workspace, thread, self.config.root / workspace)
-        fresh = not (s.home / "public").exists()
+        s = Scope(
+            workspace,
+            thread,
+            self.config.root / workspace,
+            self.config.public_root / workspace,
+        )
         for d in s.roots.values():
             d.mkdir(parents=True, exist_ok=True)
         os.utime(s.roots["/work"])
-        if fresh:
-            self.seed(s)
         return s
-
-    def seed(self, scope: Scope) -> None:
-        """Fill a new /public with the pages the workspace had already published, and note
-        each one's source in its marker, so the first sync leaves them as they are. The
-        pages are the runner's own copies, so this copy is safe."""
-        public = scope.home / "public"
-        for slug, page in self.pages(scope.workspace):
-            files, _ = regular_files(page)
-            for source, name in files:
-                (public / slug / name).parent.mkdir(parents=True, exist_ok=True)
-                copy_regular(source, public / slug / name)
-            m = marker(page) or {}
-            m["source"] = signature(regular_files(public / slug)[0])
-            hostrpc.atomic_write(page / PAGE_MARKER, json.dumps(m) + "\n")
-        log.info("seeded %s's /public", scope.workspace)
 
     def split(self, scope: Scope, path: str) -> tuple[str, Path, Path]:
         """`path` in the sandbox (under one of the caller's own mounts, or relative to /work)
@@ -746,10 +719,8 @@ class Runner(hostrpc.Service):
             finally:
                 await self.podman(["rm", "-f", "--ignore", name], 60, None)
                 await asyncio.to_thread(shutil.rmtree, run_dir, True)
-            published = (
-                await self.sync(scope)
-                if public_files(before) != public_files(after)
-                else None
+            published = await asyncio.to_thread(
+                self.page_changes, scope, public_changes(before, after)
             )
         changed = sorted(
             p for p, sig in after.files.items() if before.files.get(p) != sig
@@ -902,7 +873,7 @@ class Runner(hostrpc.Service):
                 raise SandboxError(
                     f"'{path}' has no zola.toml, so it isn't a Zola site"
                 )
-            url = f"{self.config.site_url.rstrip('/')}/{slug}"
+            url = self.public_url(scope.workspace, slug)
             try:
                 args = await asyncio.to_thread(self.prepare_build, name, scope, run_dir)
                 async with self._runs:
@@ -925,7 +896,7 @@ class Runner(hostrpc.Service):
             finally:
                 await self.podman(["rm", "-f", "--ignore", name], 60, None)
                 await asyncio.to_thread(shutil.rmtree, run_dir, True)
-            published = await self.sync(scope)
+            published = await asyncio.to_thread(self.page_changes, scope, {slug})
         log.info(
             "built %s from %s for %s: %d files", slug, path, scope.workspace, files
         )
@@ -1088,8 +1059,10 @@ class Runner(hostrpc.Service):
         self.idle(s.workspace)
         async with self.lock(s.workspace):
             result = await self.write(s, path, content, delete)
-            if mount == "/public":
-                result["published"] = await self.sync(s)
+            if mount == "/public" and (target := self.split(s, path)[2]) != s.public:
+                result["published"] = await asyncio.to_thread(
+                    self.page_changes, s, {target.relative_to(s.public).parts[0]}
+                )
         return result
 
     async def write(
@@ -1135,17 +1108,49 @@ class Runner(hostrpc.Service):
 
     # --- pages ---
 
-    def pages(self, workspace: str) -> list[tuple[str, Path]]:
-        """The workspace's published pages, as (slug, folder)."""
-        site = self.config.site_dir
-        if not site.is_dir():
-            return []
-        return sorted(
-            (d.name, d)
-            for d in site.iterdir()
-            if SLUG_RE.fullmatch(d.name)
-            and (marker(d) or {}).get("workspace") == workspace
+    def public_url(self, workspace: str, path: str = "") -> str:
+        """Where `path` in a workspace's /public is on the workspace pages site."""
+        return f"{self.config.public_url.rstrip('/')}/{workspace}/{path}"
+
+    def page_url(self, workspace: str, item: Path) -> str:
+        """A top-level entry of /public on the site: a folder as itself, a file as the file."""
+        return self.public_url(
+            workspace, quote(item.name) + ("/" if item.is_dir() else "")
         )
+
+    def blocked(self, item: Path) -> list[str]:
+        """What in a page's HTML the site's CSP blocks, so the agent hears it won't run."""
+        origin = "/".join(self.config.public_url.split("/")[:3])
+        files = [
+            f for f, name in regular_files(item)[0] if name.endswith((".html", ".htm"))
+        ]
+        found = set()
+        for f in files[:CSP_SCAN]:
+            with open(f, "rb") as text:
+                found.update(
+                    csp_blocked(text.read(WRITE_BYTES).decode(errors="replace"), origin)
+                )
+        return sorted(found)
+
+    def page_changes(self, scope: Scope, names: set[str]) -> dict[str, Any] | None:
+        """Where the top-level entries `names` of /public that changed are now, with what
+        their CSP blocks, and which of them are gone; None when there are none. Hidden
+        entries are left out: the site doesn't serve them."""
+        live, removed = [], []
+        for name in sorted(n for n in names if not n.startswith(".")):
+            item = scope.public / name
+            if not os.path.lexists(item):
+                removed.append(name)
+            elif item.is_dir() or item.is_file():
+                live.append(
+                    {
+                        "slug": name,
+                        "url": self.page_url(scope.workspace, item),
+                        "blocked": self.blocked(item),
+                    }
+                )
+        result = {"live": live, "removed": removed}
+        return {k: v for k, v in result.items() if v} or None
 
     async def op_publish(
         self,
@@ -1154,55 +1159,91 @@ class Runner(hostrpc.Service):
         path: str = "",
         remove: bool = False,
     ) -> dict[str, Any]:
-        """Publishing is a sync of /public (see the module docstring); this forces one.
-        With `path` outside /public, that file or folder is first copied to
-        /public/<slug> (an HTML file as its index.html); with `remove`, /public's entry for
-        `slug` is deleted, which takes the page down. With a slug, the reply is that page's
-        (url, files, blocked, card, or removed); without one, the sync's."""
+        """A page's address and link card. /public is the workspace's pages, live as they're
+        written, so nothing needs publishing; with `path` outside /public, that file or
+        folder is first copied to /public/<slug> (an HTML file as its index.html), and with
+        `remove`, /public's entry for the page is deleted. Without a slug or path, the
+        workspace's pages."""
         s = self.scope(scope)
-        if (slug or remove or (path or "").strip()) and not (
+        path = (path or "").strip()
+        outside = bool(path) and self.split(s, path)[0] != "/public"
+        if (outside or (slug and not path)) and not (
             isinstance(slug, str) and SLUG_RE.fullmatch(slug)
         ):
             raise SandboxError(
                 "slug must be 1-63 lowercase letters, digits or hyphens, not starting "
                 "or ending with a hyphen, e.g. 'trip-plan'"
             )
-        dest = self.config.site_dir / slug if slug else None
         self.idle(s.workspace)
         async with self.lock(s.workspace):
-            if (
-                dest
-                and os.path.lexists(dest)
-                and (marker(dest) or {}).get("workspace") != s.workspace
-            ):
-                raise SandboxError(
-                    f"'{slug}' is taken on the pages site; choose another slug"
-                )
-            public = s.home / "public"
+            if outside:
+                await asyncio.to_thread(self.stage, s, path, slug)
+                name = slug
+            elif path:
+                target = self.split(s, path)[2]
+                if target == s.public:
+                    raise SandboxError(
+                        "give a page in /public, e.g. /public/trip-plan, not all of it"
+                    )
+                name = target.relative_to(s.public).parts[0]
+            elif slug:
+                entries = self.public_entries(s.public, slug)
+                name = entries[0].name if entries else slug
+            else:
+                return await asyncio.to_thread(self.listing, s)
+            item = s.public / name
             if remove:
-                entries = self.public_entries(public, slug)
-                if not entries and not (dest and os.path.lexists(dest)):
-                    raise SandboxError(f"there's no page '{slug}'")
+                entries = self.public_entries(s.public, Path(name).stem) or (
+                    [item] if os.path.lexists(item) else []
+                )
+                if not entries:
+                    raise SandboxError(f"there's no page '{name}' in /public")
                 for e in entries:
                     await asyncio.to_thread(remove_path, e)
-            elif path and path.strip() and self.split(s, path)[0] != "/public":
-                await asyncio.to_thread(self.stage, s, path, slug)
-            elif slug and not self.public_entries(public, slug):
+                return {"slug": name, "removed": True}
+            if not (item.is_dir() or item.is_file()) or item.is_symlink():
                 raise SandboxError(
-                    f"there's nothing at /public/{slug} to publish; give the path of "
+                    f"there's nothing at /public/{name} to publish; give the path of "
                     "the file or folder to publish"
                 )
-            synced = await self.sync(s) or {}
-        if not slug:
-            return synced or {"unchanged": True}
-        if remove:
-            return {"slug": slug, "removed": True}
-        for why in (k["why"] for k in synced.get("skipped", []) if k["slug"] == slug):
-            raise SandboxError(why)
-        for page in synced.get("live", []):
-            if page["slug"] == slug:
-                return page
-        return await asyncio.to_thread(self.page_info, s.workspace, slug)  # unchanged
+            return await asyncio.to_thread(self.page_info, s.workspace, item)
+
+    def listing(self, scope: Scope) -> dict[str, Any]:
+        """The workspace's pages: /public's top-level entries and where they are."""
+        items = sorted(e for e in scope.public.iterdir() if not e.name.startswith("."))
+        return {
+            "site": self.public_url(scope.workspace),
+            "pages": [
+                {"slug": e.name, "url": self.page_url(scope.workspace, e)}
+                for e in items[:LIST_MAX]
+            ],
+        }
+
+    def page_info(self, workspace: str, item: Path) -> dict[str, Any]:
+        """A page's address, size, what its CSP blocks and its link card."""
+        url = self.page_url(workspace, item)
+        entry = item / "index.html" if item.is_dir() else item
+        title, description = item.name, ""
+        if entry.suffix.lower() in (".html", ".htm") and entry.is_file():
+            with open(entry, "rb") as f:
+                html = f.read(WRITE_BYTES).decode(errors="replace")
+            if m := TITLE_RE.search(html):
+                title = htmllib.unescape(" ".join(m.group(1).split())) or title
+            description = page_description(html)
+        return {
+            "slug": item.name,
+            "url": url,
+            "files": len(regular_files(item)[0]),
+            "blocked": self.blocked(item),
+            "card": chatimage.card.make(
+                self.config.site_dir,
+                url,
+                title,
+                f"Pages · {workspace}",
+                description,
+                images=self.config.site_url,
+            ),
+        }
 
     def public_entries(self, public: Path, slug: str) -> list[Path]:
         """/public's entries for `slug`: its folder, or a file named <slug>.<ext>."""
@@ -1231,13 +1272,13 @@ class Runner(hostrpc.Service):
         self.put_public(scope, files, slug)
 
     def stage_files(self, scope: Scope, source: Path, slug: str) -> int:
-        """A build's output into /public/<slug>: its plain files, within the page cap."""
+        """A build's output into /public/<slug>: its plain files, within the copy cap."""
         files, size = regular_files(source) if source.is_dir() else ([], 0)
         if not files:
             raise SandboxError("the build produced no files")
         if size > PUBLISH_MAX_BYTES:
             raise SandboxError(
-                f"the built site is {size >> 20} MB; a page can be at most "
+                f"the built site is {size >> 20} MB; a build can copy at most "
                 f"{PUBLISH_MAX_BYTES >> 20} MB"
             )
         self.put_public(scope, files, slug)
@@ -1246,245 +1287,20 @@ class Runner(hostrpc.Service):
     def put_public(
         self, scope: Scope, files: list[tuple[Path, str]], slug: str
     ) -> None:
-        """Copy plain files into /public/<slug>, in place of whatever was there for it."""
-        public = scope.home / "public"
-        new = Path(tempfile.mkdtemp(dir=public, prefix=f".{slug}."))
+        """Copy plain files into /public/<slug>, in place of whatever was there for it, built
+        in a hidden folder beside it (which the site doesn't serve) and swapped in."""
+        new = Path(tempfile.mkdtemp(dir=scope.public, prefix=f".{slug}."))
         try:
             for src, name in files:
                 (new / name).parent.mkdir(parents=True, exist_ok=True)
                 copy_regular(src, new / name)
-            for old in self.public_entries(public, slug):
-                remove_path(old)
-            os.rename(new, public / slug)
-        except BaseException:
-            remove_path(new)
-            raise
-
-    def page_info(self, workspace: str, slug: str) -> dict[str, Any]:
-        """A published page's details, as a sync reports one."""
-        page = self.config.site_dir / slug
-        m = marker(page) or {}
-        url = self.page_url(slug, m.get("entry", "index.html"))
-        return {
-            "slug": slug,
-            "url": url,
-            "files": len(regular_files(page)[0]),
-            "blocked": [],
-            "card": self.card(page, url, workspace),
-        }
-
-    def public_pages(
-        self, scope: Scope
-    ) -> tuple[dict[str, tuple[str, list[tuple[Path, str]]]], list[dict[str, str]]]:
-        """What /public makes pages of, by slug (the entry's name and its plain files), and
-        what it skips, with why. Hidden entries are left out without a word."""
-        public = scope.home / "public"
-        pages: dict[str, tuple[str, list[tuple[Path, str]]]] = {}
-        skipped: list[dict[str, str]] = []
-        for e in sorted(public.iterdir()) if public.is_dir() else []:
-            if e.name.startswith("."):
-                continue
-            mode = os.lstat(e).st_mode
-            slug = e.name if stat.S_ISDIR(mode) else Path(e.name).stem
-
-            why = ""
-            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
-                why = f"/public/{e.name} isn't a plain file or folder"
-            elif not SLUG_RE.fullmatch(slug):
-                why = f"'{slug}' isn't a page name: use lowercase letters, digits and hyphens"
-            elif slug in pages:
-                why = f"/public has two entries for '{slug}'; /public/{e.name} is left out"
-            else:
-                files, size = regular_files(e)
-                if not files:
-                    why = f"/public/{e.name} has no files to publish"
-                elif size > PUBLISH_MAX_BYTES:
-                    why = (
-                        f"/public/{e.name} is {size >> 20} MB; a page can be at most "
-                        f"{PUBLISH_MAX_BYTES >> 20} MB"
-                    )
-                else:
-                    pages[slug] = (e.name, files)
-            if why:
-                skipped.append({"name": e.name, "slug": slug, "why": why})
-        return pages, skipped
-
-    async def sync(self, scope: Scope) -> dict[str, Any] | None:
-        """Bring the workspace's pages in line with its /public; None when nothing changed
-        or needs saying. Callers hold the workspace's lock, so no run changes /public under
-        it."""
-        async with self._site:
-            try:
-                return await asyncio.to_thread(self.sync_pages, scope)
-            except (OSError, SandboxError) as e:
-                log.warning("sync of %s's /public failed: %s", scope.workspace, e)
-                return {"error": str(e)}
-
-    def sync_pages(self, scope: Scope) -> dict[str, Any] | None:
-        site, workspace = self.config.site_dir, scope.workspace
-        pages, skipped = self.public_pages(scope)
-        live, removed = [], []
-        for slug, (name, files) in pages.items():
-            dest = site / slug
-            m = marker(dest)
-            if os.path.lexists(dest) and (m or {}).get("workspace") != workspace:
-                skipped.append(
-                    {
-                        "name": name,
-                        "slug": slug,
-                        "why": f"'{slug}' is taken on the pages site; choose another slug",
-                    }
-                )
-                continue
-            source = signature(files)
-            if m and m.get("source") == source:
-                continue
-            entry, blocked = self.replace(dest, files, workspace, source)
-            url = self.page_url(slug, entry)
-            live.append(
-                {
-                    "slug": slug,
-                    "url": url,
-                    "files": len(files),
-                    "blocked": blocked,
-                    "card": self.card(dest, url, workspace),
-                }
-            )
-        for slug, page in self.pages(workspace):
-            if slug not in pages and not any(k["slug"] == slug for k in skipped):
-                m = marker(page) or {}
-                remove_path(page)
-                chatimage.card.remove(
-                    site, self.page_url(slug, m.get("entry", "index.html"))
-                )
-                removed.append(slug)
-        if live or removed:
-            self.rebuild_index()
-            log.info(
-                "synced %s's /public: live %s, removed %s",
-                workspace,
-                [p["slug"] for p in live],
-                removed,
-            )
-        result = {"live": live, "removed": removed, "skipped": skipped}
-        return {k: v for k, v in result.items() if v} or None
-
-    def page_url(self, slug: str, entry: str) -> str:
-        return f"{self.config.site_url.rstrip('/')}/{page_path(slug, entry)}"
-
-    def card(self, page: Path, url: str, workspace: str) -> str:
-        """The chat's link card for a page just published (see chatimage.card); "" when it
-        couldn't be made."""
-        m = marker(page) or {}
-        entry = m.get("entry", "index.html")
-        title, description = entry, ""  # a file that isn't a page goes by its name
-        if entry.endswith((".html", ".htm")):
-            title = m.get("title") or page.name
-            description = page_description((page / entry).read_text(errors="replace"))
-        return chatimage.card.make(
-            self.config.site_dir,
-            url,
-            title,
-            f"Pages · {workspace}",
-            description,
-        )
-
-    def replace(
-        self, dest: Path, files: list[tuple[Path, str]], workspace: str, source: str
-    ) -> tuple[str, list[str]]:
-        """Build the page in a temp folder beside `dest` and swap it in, so the site never
-        serves half of one. Returns its entry file and what in its HTML the CSP blocks."""
-        site = self.config.site_dir
-        names = [name for _, name in files]
-        entry = "index.html" if "index.html" in names else names[0]
-        new = Path(tempfile.mkdtemp(dir=site, prefix=f".{dest.name}."))
-        try:
-            for src, name in files:
-                (new / name).parent.mkdir(parents=True, exist_ok=True)
-                copy_regular(src, new / name)
-                (new / name).chmod(0o644)
-            html = {
-                n: (new / n).read_text(errors="replace")
-                for n in names
-                if n.endswith((".html", ".htm"))
-            }
-            m = TITLE_RE.search(html.get(entry, ""))
-            title = htmllib.unescape(" ".join(m.group(1).split())) if m else dest.name
-            (new / PAGE_MARKER).write_text(
-                json.dumps(
-                    {
-                        "workspace": workspace,
-                        "title": title,
-                        "entry": entry,
-                        "source": source,
-                    }
-                )
-                + "\n"
-            )
             new.chmod(0o755)
-            old = None
-            if os.path.lexists(dest):
-                old = site / f".{dest.name}.old-{secrets.token_hex(3)}"
-                os.rename(dest, old)
-            os.rename(new, dest)
-            if old:
+            for old in self.public_entries(scope.public, slug):
                 remove_path(old)
+            os.rename(new, scope.public / slug)
         except BaseException:
             remove_path(new)
             raise
-        origin = "/".join(self.config.site_url.split("/")[:3])
-        return entry, sorted(
-            {w for text in html.values() for w in csp_blocked(text, origin)}
-        )
-
-    def rebuild_index(self) -> None:
-        """The site root's listing of every page, newest first, from the pages' markers."""
-        site = self.config.site_dir
-        rows = []
-        for d in site.iterdir():
-            if not SLUG_RE.fullmatch(d.name) or not (m := marker(d)):
-                continue
-            updated = datetime.fromtimestamp(
-                (d / PAGE_MARKER).stat().st_mtime, timezone.utc
-            )
-            rows.append(
-                (
-                    updated,
-                    (
-                        f'<li><a href="{page_path(d.name, m.get("entry", "index.html"))}">'
-                        f"{htmllib.escape(m.get('title') or d.name)}</a> "
-                        f'<span>{htmllib.escape(m["workspace"])} · <time datetime="{updated.isoformat()}">'
-                        f"{updated:%Y-%m-%d}</time></span></li>"
-                    ),
-                )
-            )
-        items = "\n".join(row for _, row in sorted(rows, reverse=True))
-        body = f"<ul>\n{items}\n</ul>" if rows else "<p>Nothing published yet.</p>"
-        (site / PAGE_MARKER).touch()  # the listing's own inline CSS
-        hostrpc.atomic_write(
-            site / "index.html",
-            f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pages</title>
-<style>
-  :root {{ color-scheme: light dark; }}
-  body {{ margin: 0 auto; max-width: 46rem; padding: 2rem 1rem;
-         font: 1rem/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }}
-  ul {{ padding: 0; list-style: none; }}
-  li {{ padding: .4rem 0; border-bottom: 1px solid #8884; }}
-  span {{ opacity: .6; font-size: .9em; margin-left: .5rem; }}
-</style>
-</head>
-<body>
-<h1>Pages</h1>
-{body}
-</body>
-</html>
-""",
-        )
 
     # --- server ---
 

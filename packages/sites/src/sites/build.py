@@ -5,7 +5,7 @@ Each site is assembled in a temporary directory from its source in the repo
 SITES_CONTENT/<name>/ (default ~/.local/share/everythingllm/pages/entries, out of the AnythingLLM
 container's reach, since only host services read or write entries). It's built straight next to its destination and swapped in at
 SITES_OUTPUT/<name>/, so readers never see a half-built site. The output carries a marker
-file; a directory without one (a page the sandbox published, the podcasts) is never
+file; a directory without one (the podcasts, the link cards) is never
 replaced. Builds hold a lock on SITES_CONTENT/.build.lock, so sites-runner and a deploy on
 the host never overlap.
 

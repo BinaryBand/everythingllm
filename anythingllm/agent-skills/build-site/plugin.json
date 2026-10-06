@@ -4,7 +4,7 @@
   "name": "Build Site",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Build a Zola static site from a folder in this workspace's sandbox (/project/... or /shared/<this workspace>/...) and put it live on the pages site, at /<slug>/. The folder needs a zola.toml. Its theme is the site's own themes/<name>/, or one taken at build time when zola.toml says where from: theme = \"agent-site\" with [extra.build] theme_from = \"system\" for the repo's themes in /system/themes, or theme_from = \"<workspace>\" for /shared/<workspace>/themes/<name>. The build has no network, and the link it gives is the site's address (base_url is set for you). The output goes into /public/<slug>, replacing what was there, and is published like any page in /public; zola's errors come back if it doesn't build.",
+  "description": "Build a Zola static site from a folder in this workspace's sandbox (/project/... or /shared/<this workspace>/...) into this workspace's pages, at https://…:8447/<this workspace>/<slug>/. The folder needs a zola.toml. Its theme is the site's own themes/<name>/, or one taken at build time when zola.toml says where from: theme = \"agent-site\" with [extra.build] theme_from = \"system\" for the repo's themes in /system/themes, or theme_from = \"<workspace>\" for /shared/<workspace>/themes/<name>. The build has no network, and the link it gives is the site's address (base_url is set for you). The output goes into /public/<slug>, replacing what was there, and is live like anything in /public; zola's errors come back if it doesn't build.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

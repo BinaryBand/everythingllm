@@ -1,26 +1,47 @@
-# The pages site (static_agent, quadlet/static_agent.container.in), on 127.0.0.1:8445.
-# script-src 'none' is load-bearing: the agent publishes pages from its sandbox.
-# default-src 'self' keeps every fetch on this host, so CSS can't send anything elsewhere.
-# form-action and base-uri 'none': default-src doesn't cover them, and nothing here needs a
-# form, so markup the agent writes can't post anywhere or repoint the page's relative links.
+# The pages site (:8445) and the workspace pages site (:8447), both served by static_agent
+# (quadlet/static_agent.container.in) on 127.0.0.1 and mapped to the tailnet by tailscale serve.
+# default-src 'self' keeps every fetch on the page's own host, so CSS can't send anything
+# elsewhere. form-action and base-uri 'none': default-src doesn't cover them, and nothing here
+# needs a form, so markup the agent writes can't post anywhere or repoint relative links.
 {
   auto_https off
   admin off
 }
+
+# The system sites (news, research, status: Zola, built from the repo's templates), the
+# podcasts' feeds and the link cards. No scripts, no inline styles.
 :8445 {
   root * /srv/site
-  # A directory the sandbox published as a page (sandbox.runner, PAGE_MARKER) may carry its
-  # own CSS, in <style> and style="". Everything else keeps inline styles blocked: the Zola
-  # sites, the podcasts, and anything new nobody marked.
-  @page file /{path.0}/.page
-  # In a route, so the page header is set after the default (outside one, Caddy would run
-  # the unmatched header last and undo it).
-  route {
-    header Content-Security-Policy "default-src 'self'; script-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
-    header @page Content-Security-Policy "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
-  }
+  # Workspace pages moved to :8447 on 2026-10-06; the front page and education's old
+  # addresses point there.
+  redir / https://{$PUBLIC_HOST:127.0.0.1}:8447/
+  redir /lab/* https://{$PUBLIC_HOST:127.0.0.1}:8447/education{uri}
+  redir /knowledge-protocol-guide/* https://{$PUBLIC_HOST:127.0.0.1}:8447/education{uri}
+  header Content-Security-Policy "default-src 'self'; script-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
   header X-Content-Type-Options nosniff
   file_server {
-    hide .page .zola-site
+    hide .zola-site
+  }
+}
+
+# Every sandbox workspace's /public (sandbox.runner), served as it is: /<workspace>/... is
+# that workspace's, whatever it put there, live the moment it's written. The folder mounted
+# here holds nothing but /public folders, so a symlink in one can't reach anything private.
+# A port of its own makes these pages an origin of their own: whatever they ever run can't
+# read the podcasts' private feeds or post to /news/write on :8445.
+:8447 {
+  root * /srv/workspaces
+  # Which workspaces' pages may run scripts: none yet. To let one, match its prefix here,
+  # e.g. `@scripts path /education/*`, and restart static_agent.
+  @scripts expression false
+  # In a route, so the scripts header is set after the default (outside one, Caddy would
+  # run the unmatched header last and undo it).
+  route {
+    header Content-Security-Policy "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+    header @scripts Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+  }
+  header X-Content-Type-Options nosniff
+  file_server browse {
+    hide .*
   }
 }

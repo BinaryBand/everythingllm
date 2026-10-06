@@ -91,7 +91,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   long research runs).
 - Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`),
   not in AnythingLLM's storage, laid out by kind: `venvs/<name>`, `pages/{public,entries}`,
-  `sandbox/{workspaces,shared}`, `podcasts/` (with `models/`), `research/runs`, `relay/`.
+  `sandbox/{workspaces,public}`, `podcasts/` (with `models/`), `research/runs`, `relay/`.
   Put new data in the folder of its kind, not at the root. Storage keeps AnythingLLM's own data, the runners' sockets (under `everythingllm/`) and what AnythingLLM
   itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.
@@ -105,11 +105,11 @@ is 3.13. Keep code 3.12-compatible, and check with
   `~/.local/share/everythingllm/pages/entries/<site>/<section>/<slug>.md` (host-only, outside storage), and `sites-runner` rebuilds that site with the
   host's zola. A write that doesn't build is undone. Other writers use the `sites-write`
   command or `SiteStore`, so the entry format has one implementation.
-- The exception is free-form pages: a sandbox workspace's `/public` is its pages, and
-  `sandbox-runner` syncs it to `~/.local/share/everythingllm/pages/public/<slug>/` (plain
-  files only, swapped in whole) whenever a run, write or `publish` that changed it ends,
-  with a `.page` marker naming the workspace that owns each page; Caddy allows inline CSS
-  in marked folders and never serves a workspace folder directly.
+- The exception is free-form pages: a sandbox workspace's `/public` is its pages, kept in
+  `~/.local/share/everythingllm/sandbox/public/<workspace>/` (a tree holding nothing else)
+  and served as it is by Caddy on :8447 under `/<workspace>/`, with no copy or sync.
+  That port is an origin of its own; its scripts are off, and the Caddyfile's `@scripts`
+  is the switch for one workspace.
 - Sites live in `zola/sites/<name>/` and share the `zola/themes/agent-site/` theme
   (Tera 2 `{% component %}`s, not macros). Each site documents its fields for the agent in
   `agent_help` in its `zola.toml`.

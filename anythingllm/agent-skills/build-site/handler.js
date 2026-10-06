@@ -14,8 +14,7 @@ module.exports.runtime = {
       }
       if (r === null) return "The chat closed; the build carries on, and the site goes live when it's done.";
       const lines = [`built ${r.files} file${r.files === 1 ? "" : "s"} into /public/${r.slug}`];
-      lines.push(...publishedLines(r.published));
-      if (!r.published?.live?.length && !r.published?.skipped?.length) lines.push(`unchanged: ${r.url}`);
+      lines.push(...(r.published ? publishedLines(r.published) : [`live: ${r.url}`]));
       return lines.join("\n");
     });
   },

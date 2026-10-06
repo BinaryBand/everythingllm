@@ -52,11 +52,17 @@ HEIGHT = 460
 
 
 def make(
-    site_dir: Path, url: str, title: str, label: str, description: str = ""
+    site_dir: Path,
+    url: str,
+    title: str,
+    label: str,
+    description: str = "",
+    images: str = "",
 ) -> str:
     """Draw the card for the page at `url`, save it in the pages site's `_cards/`, and
     return the Markdown line that shows it as a link to the page; "" when it couldn't be
-    made, since the page is published either way."""
+    made, since the page is published either way. `images` is the pages site's URL, for a
+    page served elsewhere (a workspace's, on its own port); by default the page's own host."""
     where = shown_url(url)
     version = hashlib.sha256(
         json.dumps([DESIGN, title, label, description, where]).encode()
@@ -70,7 +76,7 @@ def make(
     except Exception as e:  # noqa: BLE001 - a card is a nicety; the caller still gives the link
         log.warning("couldn't make a card for %s: %s", url, e)
         return ""
-    image = urljoin(url, f"/{FOLDER}/{file.name}?v={version}")
+    image = urljoin(images or url, f"/{FOLDER}/{file.name}?v={version}")
     return f"[![{alt(title)}]({link(image)})]({link(url)})"
 
 

@@ -137,38 +137,43 @@ test("write-file and publish replies", async () => {
     assert.equal(await writeFile.handler.call(self, { path: "/work/out", delete: true }), "deleted folder /work/out");
     assert.equal(
       await publish.handler.call(self, { path: "/work/out", slug: "plot" }),
-      "published 2 files: https://h/plot/\nwarning: the pages site blocks scripts; the page will show without them"
+      "live: https://h/plot/ (2 files)\nwarning: the pages site blocks scripts; the page will show without them"
     );
-    assert.equal(await publish.handler.call(self, { slug: "plot", remove: true }), "removed the page 'plot'");
+    assert.equal(await publish.handler.call(self, { slug: "plot", remove: true }), "removed /public/plot; it's no longer on the web");
     assert.deepEqual(runner.requests[2].args, { scope: { workspace: "career", thread: "12" }, slug: "plot", path: "/work/out", remove: false });
   } finally {
     await runner.close();
   }
 });
 
-test("what a sync published comes back with run-code, write-file and publish", async () => {
+test("the pages a call changed come back with run-code and write-file, and publish lists them", async () => {
   const published = {
-    live: [{ slug: "notes", url: "https://h/notes/", files: 1, blocked: ["scripts"], card: "[![Notes](c.png)](https://h/notes/)" }],
+    live: [{ slug: "notes", url: "https://h/career/notes/", blocked: ["scripts"] }],
     removed: ["old"],
-    skipped: [{ name: "Bad Name", slug: "Bad Name", why: "'Bad Name' isn't a page name" }],
   };
+  let pages = [{ slug: "notes", url: "https://h/career/notes/" }];
   const runner = await fakeRunner((op) => {
     if (op === "run") return { ok: true, result: { ...done, changed: ["/public/notes/index.html"], published } };
     if (op === "write") return { ok: true, result: { path: "/public/old", folder: true, published: { removed: ["old"] } } };
-    if (op === "publish") return { ok: true, result: { unchanged: true } };
+    if (op === "publish") return { ok: true, result: { site: "https://h/career/", pages } };
   });
   try {
     const { self } = agent();
     const reply = await runCode.handler.call(self, { language: "bash", code: "x" });
     assert.match(
       reply,
-      /live: https:\/\/h\/notes\/ \(1 file\)\nCard: \[!\[Notes\]\(c\.png\)\]\(https:\/\/h\/notes\/\)\nwarning: the pages site blocks scripts on notes; the page will show without them\ntaken down: the page 'old'\nnot published: 'Bad Name' isn't a page name$/
+      /live: https:\/\/h\/career\/notes\/\nwarning: the pages site blocks scripts in notes; it will show without them\ngone: \/public\/old$/
     );
     assert.equal(
       await writeFile.handler.call(self, { path: "/public/old", delete: true }),
-      "deleted folder /public/old\ntaken down: the page 'old'"
+      "deleted folder /public/old\ngone: /public/old"
     );
-    assert.equal(await publish.handler.call(self, {}), "/public and the pages site already match; nothing to publish");
+    assert.equal(
+      await publish.handler.call(self, {}),
+      "This workspace's pages (https://h/career/):\n- notes: https://h/career/notes/"
+    );
+    pages = [];
+    assert.match(await publish.handler.call(self, {}), /no pages yet; whatever goes in \/public is live at https:\/\/h\/career\//);
   } finally {
     await runner.close();
   }
@@ -178,13 +183,13 @@ test("build-site sends the path and slug, waits out a long build and says what w
   const runner = await fakeRunner((op) =>
     op === "build_site"
       ? { ok: true, result: { running: true, run_id: "r-9", seconds: 45 } }
-      : { ok: true, result: { slug: "lab", url: "https://h/lab/", files: 8, zola: "Done", published: { live: [{ slug: "lab", url: "https://h/lab/", files: 8, blocked: [] }] } } }
+      : { ok: true, result: { slug: "lab", url: "https://h/career/lab/", files: 8, zola: "Done", published: { live: [{ slug: "lab", url: "https://h/career/lab/", blocked: [] }] } } }
   );
   try {
     const { self, lines } = agent();
     assert.equal(
       await buildSite.handler.call(self, { path: "/shared/career/sites/lab", slug: "lab" }),
-      "built 8 files into /public/lab\nlive: https://h/lab/ (8 files)"
+      "built 8 files into /public/lab\nlive: https://h/career/lab/"
     );
     assert.deepEqual(runner.requests[0].args, { scope: { workspace: "career", thread: "12" }, path: "/shared/career/sites/lab", slug: "lab" });
     assert.deepEqual(runner.requests[1], { op: "wait", args: { scope: { workspace: "career", thread: "12" }, run_id: "r-9" } });

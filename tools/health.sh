@@ -38,7 +38,8 @@ while IFS='|' read -r name url; do
   if [ "$code" != 000 ] && [ "$code" -lt 500 ]; then ok "$name ($code)"; else fail "$name ($url: ${code/000/no answer})"; fi
 done <<'EOF'
 AnythingLLM|http://127.0.0.1:3001/api/ping
-pages site|http://127.0.0.1:8445/
+pages site|http://127.0.0.1:8445/news/
+workspace pages|http://127.0.0.1:8447/
 article writer|http://127.0.0.1:8448/
 podcasts-web|http://127.0.0.1:8449/health
 Nilson relay|http://127.0.0.1:8446/health

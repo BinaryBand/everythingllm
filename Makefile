@@ -102,6 +102,7 @@ serve-setup:     ## map this setup's tailnet HTTPS ports with tailscale serve (o
 	  sudo tailscale serve --bg --https=8445 --set-path=/podcasts http://127.0.0.1:8449
 	tailscale serve status | grep -q '/_live/research' || \
 	  sudo tailscale serve --bg --https=8445 --set-path=/_live/research http://127.0.0.1:8450
+	tailscale serve status | grep -q ':8447 ' || sudo tailscale serve --bg --https=8447 http://127.0.0.1:8447
 	tailscale serve status | grep -q ':8888 ' || sudo tailscale serve --bg --https=8888 http://127.0.0.1:8888
 	tailscale serve status | grep -q ':3001 ' || sudo tailscale serve --bg --https=3001 http://127.0.0.1:3001
 	tailscale serve status | grep -q ':8446 ' || sudo tailscale serve --bg --https=8446 http://127.0.0.1:8446

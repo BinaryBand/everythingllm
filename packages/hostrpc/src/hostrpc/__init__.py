@@ -129,6 +129,7 @@ def data_dir() -> Path:
       venvs/<name>/        the host services' venvs
       pages/public/        the pages site Caddy serves; pages/entries/, the Zola entries
       sandbox/workspaces/  the sandbox's folders, per workspace: threads/, project/, shared/
+      sandbox/public/      each sandbox workspace's /public, served as it is on :8447
       podcasts/            the podcasts' state and audio; podcasts/models/, Whisper and Kokoro
       research/runs/       the deep-research run log and live runs' markers
       relay/               the Nilson relay's database

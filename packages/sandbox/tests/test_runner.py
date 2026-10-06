@@ -1,6 +1,5 @@
 import asyncio
 import itertools
-import json
 import os
 import re
 from pathlib import Path
@@ -58,6 +57,8 @@ def cfg(tmp_path):
         system_themes=tmp_path / "themes",
         site_dir=tmp_path / "site",
         site_url="https://pages.example/",
+        public_root=tmp_path / "public",
+        public_url="https://ws.example/",
     )
 
 
@@ -82,7 +83,7 @@ def shared(cfg, scope):
 
 
 def public(cfg, scope):
-    return cfg.root / scope["workspace"] / "public"
+    return cfg.public_root / scope["workspace"]
 
 
 def test_a_run_mounts_its_threads_work_and_its_workspaces_project(cfg):
@@ -492,86 +493,110 @@ def test_unknown_and_expired_runs(cfg):
     assert r._jobs == {}
 
 
-# --- publishing ---
+# --- /public: the workspace's pages, served as they are ---
 
 
-def test_publish_a_folder_as_a_page(cfg):
-    r = make(cfg)
-    go(
-        r.op_write(
-            A, "out/index.html", "<title>Plot &amp; notes</title><img src=plot.svg>"
+def test_public_lives_apart_from_the_workspaces_private_folders(cfg):
+    seen = {}
+    r = make(cfg, effect=lambda m: seen.update(m))
+    go(r.op_run(A, "bash", "true"))
+    assert seen["/public"] == cfg.public_root / "career" == public(cfg, A)
+    assert not seen["/public"].is_relative_to(cfg.root)  # nothing private beside it
+    args = r.podman.runs()[0][0]
+    assert f"{public(cfg, A)}:/public:rw,noexec,nosuid,nodev" in args
+
+
+def test_a_page_written_into_public_is_live_at_once_and_runs_say_where(cfg):
+    seen_live = []
+
+    def effect(m):
+        (m["/public"] / "notes").mkdir()
+        (m["/public"] / "notes" / "index.html").write_text(
+            "<title>Notes</title><p>hi</p>"
         )
-    )
-    go(r.op_write(A, "out/plot.svg", "<svg/>"))
-    go(r.op_write(A, "out/.hidden/x", "x"))
-    res = go(r.op_publish(A, "plot", "/work/out"))
-    card = res.pop("card")
-    assert re.fullmatch(
-        r"\[!\[Plot & notes\]\(https://pages\.example/_cards/(\w+\.png)\?v=\w+\)\]\(https://pages\.example/plot/\)",
-        card,
-    )
-    assert (cfg.site_dir / "_cards").is_dir()
-    assert res == {
-        "slug": "plot",
-        "url": "https://pages.example/plot/",
-        "files": 2,  # .hidden/ is left out
-        "blocked": [],
+        seen_live.append((public(cfg, A) / "notes" / "index.html").exists())
+
+    r = make(cfg, effect=effect)
+    res = go(r.op_run(A, "bash", "make notes"))
+    assert seen_live == [True]  # served from where it was written: no copy
+    assert res["published"] == {
+        "live": [
+            {"slug": "notes", "url": "https://ws.example/career/notes/", "blocked": []}
+        ]
     }
-    page = cfg.site_dir / "plot"
-    assert (page / "plot.svg").read_text() == "<svg/>"
-    m = json.loads((page / ".page").read_text())
-    assert m.pop("source") and m == {
-        "workspace": "career",
-        "title": "Plot & notes",
-        "entry": "index.html",
+    assert not (cfg.site_dir / "notes").exists()
+    # A run that leaves /public alone says nothing about pages.
+    r.podman.effect = None
+    assert go(r.op_run(A, "bash", "true"))["published"] is None
+
+
+def test_writes_say_which_page_changed_or_went(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/public/a/index.html", "<title>A</title>"))
+    res = go(r.op_write(A, "/public/b.html", "<script>x()</script>"))
+    assert res["published"] == {
+        "live": [
+            {
+                "slug": "b.html",
+                "url": "https://ws.example/career/b.html",
+                "blocked": ["scripts"],
+            }
+        ]
     }
-    # What's published is also in the workspace's /public, its source from now on.
-    assert sorted(os.listdir(public(cfg, A) / "plot")) == ["index.html", "plot.svg"]
-    assert (page / "plot.svg").stat().st_mode & 0o777 == 0o644
-    index = (cfg.site_dir / "index.html").read_text()
-    assert '<a href="plot/">Plot &amp; notes</a>' in index and "career" in index
-    assert (cfg.site_dir / ".page").exists()
-    assert not [
-        p for p in cfg.site_dir.iterdir() if p.name.startswith(".plot")
-    ]  # no temp folders left
+    res = go(r.op_write(A, "/public/a", delete=True))
+    assert res["published"] == {"removed": ["a"]}
+    assert go(r.op_write(A, "/project/x", "x")).get("published") is None
 
 
-def test_publish_a_file(cfg):
+def test_a_run_reports_removed_and_changed_pages_but_not_hidden_ones(cfg):
     r = make(cfg)
-    go(r.op_write(A, "/project/report.html", "<p>hi</p><script>x()</script>"))
-    go(r.op_write(A, "my data.csv", "a"))
-    res = go(r.op_publish(A, "report", "/project/report.html"))
-    assert res["url"] == "https://pages.example/report/" and res["blocked"] == [
-        "scripts"
-    ]
-    assert (cfg.site_dir / "report" / "index.html").exists()
-    res = go(r.op_publish(A, "data", "my data.csv"))
-    assert res["url"] == "https://pages.example/data/my%20data.csv"
-    assert (
-        '<a href="data/my%20data.csv">data</a>'
-        in (cfg.site_dir / "index.html").read_text()
-    )
+    go(r.op_write(A, "/public/old/index.html", "o"))
+    go(r.op_write(A, "/public/keep.html", "k"))
+
+    def effect(m):
+        remove = m["/public"] / "old"
+        for f in remove.iterdir():
+            f.unlink()
+        remove.rmdir()
+        (m["/public"] / ".draft").mkdir()
+        (m["/public"] / ".draft" / "x.html").write_text("x")
+        (m["/public"] / "new.txt").write_text("n")
+
+    r.podman.effect = effect
+    res = go(r.op_run(A, "bash", "tidy"))
+    assert res["published"] == {
+        "live": [
+            {
+                "slug": "new.txt",
+                "url": "https://ws.example/career/new.txt",
+                "blocked": [],
+            }
+        ],
+        "removed": ["old"],
+    }
 
 
-def test_republishing_replaces_and_remove_unpublishes(cfg):
+def test_public_counts_toward_the_workspaces_quota(cfg, monkeypatch):
     r = make(cfg)
-    go(r.op_write(A, "a/index.html", "one"))
-    go(r.op_write(A, "a/old.png", "x"))
-    go(r.op_publish(A, "p", "a"))
-    go(r.op_write(A, "a/old.png", delete=True))
-    go(r.op_write(A, "a/index.html", "two"))
-    go(r.op_publish(A, "p", "a"))
-    assert sorted(os.listdir(cfg.site_dir / "p")) == [".page", "index.html"]
-    assert len(os.listdir(cfg.site_dir / "_cards")) == 1  # the card was replaced too
-    assert go(r.op_publish(A2, "p", remove=True)) == {
-        "slug": "p",
-        "removed": True,
-    }  # any chat of the workspace
-    assert not (cfg.site_dir / "p").exists()
-    assert not os.listdir(cfg.site_dir / "_cards")
-    assert "Nothing published yet" in (cfg.site_dir / "index.html").read_text()
-    with pytest.raises(runner.SandboxError, match="no page"):
-        go(r.op_publish(A, "p", remove=True))
+    go(r.op_write(A, "/public/big.html", "x" * 1000))
+    monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 500)
+    with pytest.raises(runner.SandboxError, match="over its"):
+        go(r.op_run(A, "bash", "true"))
+
+
+def test_each_workspace_has_its_own_public(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/public/mine.html", "a"))
+    go(
+        r.op_write(B, "/public/mine.html", "b")
+    )  # no names to claim: each has its prefix
+    assert (public(cfg, A) / "mine.html").read_text() == "a"
+    assert (public(cfg, B) / "mine.html").read_text() == "b"
+    seen = []
+    r.podman.effect = lambda m: seen.append(sorted(os.listdir(m["/public"])))
+    go(r.op_run(A, "bash", "ls /public"))
+    go(r.op_run(B, "bash", "ls /public"))
+    assert seen == [["mine.html"], ["mine.html"]]
 
 
 @pytest.mark.parametrize(
@@ -592,44 +617,80 @@ def test_page_description(html, description):
     assert runner.page_description(html) == description
 
 
-def test_a_page_belongs_to_its_workspace(cfg):
-    r = make(cfg)
-    go(r.op_write(A, "x.html", "x"))
-    go(r.op_write(B, "y.html", "y"))
-    go(r.op_publish(A, "mine", "x.html"))
-    for op in (r.op_publish(B, "mine", "y.html"), r.op_publish(B, "mine", remove=True)):
-        with pytest.raises(runner.SandboxError, match="taken"):
-            go(op)
-    # Anything on the site that isn't a page is taken too: a Zola site, the podcasts.
-    (cfg.site_dir / "news").mkdir()
-    (cfg.site_dir / "news" / ".zola-site").touch()
-    (cfg.site_dir / "unowned").mkdir()
-    (cfg.site_dir / "unowned" / ".page").write_text(
-        "career\n"
-    )  # not a marker this runner wrote
-    for slug in ("news", "unowned", "index.html"):
-        with pytest.raises(runner.SandboxError, match="taken|slug must"):
-            go(r.op_publish(A, slug, "x.html"))
-    # Each workspace's runs see its own pages, in its /public.
-    seen = []
-    r.podman.effect = lambda m: seen.append(sorted(os.listdir(m["/public"])))
-    go(r.op_run(A, "bash", "ls /public"))
-    go(r.op_run(B, "bash", "ls /public"))
-    assert seen == [["mine"], []]
-
-
-def test_links_on_the_sites_own_origin_arent_blocked(cfg):
+def test_publish_gives_a_pages_address_and_card(cfg):
     r = make(cfg)
     go(
         r.op_write(
             A,
-            "site/index.html",
-            '<link rel="stylesheet" href="https://pages.example/lab/a.css">'
-            '<img src="https://pages.example.evil/x.png">',
+            "/public/plot/index.html",
+            "<title>Plot &amp; notes</title><img src=plot.svg>",
         )
     )
-    res = go(r.op_publish(A, "s", "site"))
-    assert res["blocked"] == ["images, media or frames from another host"]
+    go(r.op_write(A, "/public/plot/plot.svg", "<svg/>"))
+    for args in (("plot",), ("", "/public/plot/plot.svg")):
+        res = go(r.op_publish(A, *args))
+        card = res.pop("card")
+        assert re.fullmatch(
+            r"\[!\[Plot & notes\]\(https://pages\.example/_cards/\w+\.png\?v=\w+\)\]\(https://ws\.example/career/plot/\)",
+            card,
+        )
+        assert res == {
+            "slug": "plot",
+            "url": "https://ws.example/career/plot/",
+            "files": 2,
+            "blocked": [],
+        }
+    assert (cfg.site_dir / "_cards").is_dir()  # cards stay on the pages site
+    assert not (cfg.site_dir / "plot").exists()
+
+
+def test_publish_copies_into_public_and_remove_deletes_from_it(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "trip/index.html", "<title>Trip</title>"))
+    go(r.op_write(A, "trip/.hidden/x", "x"))
+    res = go(r.op_publish(A, "trip-plan", "/work/trip"))
+    assert res["url"] == "https://ws.example/career/trip-plan/"
+    assert os.listdir(public(cfg, A) / "trip-plan") == ["index.html"]
+    assert not [p for p in os.listdir(public(cfg, A)) if p.startswith(".")]
+    go(r.op_write(A, "/project/report.html", "<p>hi</p>"))
+    go(r.op_publish(A, "report", "/project/report.html"))
+    assert (public(cfg, A) / "report" / "index.html").read_text() == "<p>hi</p>"
+    assert go(r.op_publish(A2, "trip-plan", remove=True)) == {
+        "slug": "trip-plan",
+        "removed": True,
+    }  # any chat of the workspace
+    assert not (public(cfg, A) / "trip-plan").exists()
+    with pytest.raises(runner.SandboxError, match="no page"):
+        go(r.op_publish(A, "trip-plan", remove=True))
+
+
+def test_publish_without_a_page_lists_them(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/public/a/index.html", "a"))
+    go(r.op_write(A, "/public/data.csv", "1"))
+    go(r.op_write(A, "/public/.draft", "x"))
+    assert go(r.op_publish(A)) == {
+        "site": "https://ws.example/career/",
+        "pages": [
+            {"slug": "a", "url": "https://ws.example/career/a/"},
+            {"slug": "data.csv", "url": "https://ws.example/career/data.csv"},
+        ],
+    }
+
+
+def test_links_on_the_sites_own_origin_arent_blocked(cfg):
+    r = make(cfg)
+    res = go(
+        r.op_write(
+            A,
+            "/public/s/index.html",
+            '<link rel="stylesheet" href="https://ws.example/career/lab/a.css">'
+            '<img src="https://ws.example.evil/x.png">',
+        )
+    )
+    assert res["published"]["live"][0]["blocked"] == [
+        "images, media or frames from another host"
+    ]
 
 
 def test_publish_refuses_bad_input(cfg, tmp_path, monkeypatch):
@@ -638,28 +699,24 @@ def test_publish_refuses_bad_input(cfg, tmp_path, monkeypatch):
     for slug in ["", "Has-Caps", "-x", "a/b", "../x"]:
         with pytest.raises(runner.SandboxError, match="slug must"):
             go(r.op_publish(A, slug, "a.txt"))
-    for path, msg in [
-        ("missing", "no 'missing'"),
-        ("/work", "all of /work"),
-        ("", "nothing at /public/s"),
+    for slug, path, msg in [
+        ("s", "missing", "no 'missing'"),
+        ("s", "/work", "all of /work"),
+        ("s", "", "nothing at /public/s"),
+        ("", "/public", "not all of it"),
     ]:
         with pytest.raises(runner.SandboxError, match=msg):
-            go(r.op_publish(A, "s", path))
+            go(r.op_publish(A, slug, path))
     (work(cfg, A) / "empty").mkdir()
     with pytest.raises(runner.SandboxError, match="no files"):
         go(r.op_publish(A, "s", "empty"))
-    # A symlink planted in the site folder isn't followed: the slug is taken.
+    # Symlinks inside a copied folder are left out.
     victim = tmp_path / "victim"
     victim.mkdir()
-    (cfg.site_dir / "s").symlink_to(victim)
-    with pytest.raises(runner.SandboxError, match="taken"):
-        go(r.op_publish(A, "s", "a.txt"))
-    assert not any(victim.iterdir())
-    # Symlinks inside a published folder are left out.
     go(r.op_write(A, "dir/f.txt", "f"))
-    (work(cfg, A) / "dir" / "leak").symlink_to(tmp_path / "victim")
+    (work(cfg, A) / "dir" / "leak").symlink_to(victim)
     go(r.op_publish(A, "d", "dir"))
-    assert sorted(os.listdir(cfg.site_dir / "d")) == [".page", "f.txt"]
+    assert sorted(os.listdir(public(cfg, A) / "d")) == ["f.txt"]
     monkeypatch.setattr(runner, "PUBLISH_MAX_BYTES", 2)
     with pytest.raises(runner.SandboxError, match="the most publish copies"):
         go(r.op_publish(A, "s2", "a.txt"))
@@ -672,175 +729,41 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
         "SANDBOX_SYSTEM_THEMES",
         "SANDBOX_SITE_DIR",
         "SANDBOX_SITE_URL",
+        "SANDBOX_PUBLIC",
+        "SANDBOX_PUBLIC_URL",
     ):
         monkeypatch.delenv(var, raising=False)
-    assert runner.Config.from_env().site_url == "http://127.0.0.1:8445/"
+    config = runner.Config.from_env()
+    assert config.site_url == "http://127.0.0.1:8445/"
+    assert config.public_url == "http://127.0.0.1:8447/"
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")
     monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
     config = runner.Config.from_env()
     assert config.socket == Path("/data/allm/everythingllm/sandbox/runner.sock")
-    assert (
-        config.site_dir
-        == Path("~/.local/share/everythingllm/pages/public").expanduser()
-    )
+    data = Path("~/.local/share/everythingllm").expanduser()
+    assert config.site_dir == data / "pages" / "public"
     assert config.site_url == "https://box.tail.ts.net:8445/"
-    assert (
-        config.root
-        == Path("~/.local/share/everythingllm/sandbox/workspaces").expanduser()
-    )
+    assert config.root == data / "sandbox" / "workspaces"
+    assert config.public_root == data / "sandbox" / "public"
+    assert config.public_url == "https://box.tail.ts.net:8447/"
     assert config.system_themes == runner.REPO / "zola" / "themes"
     assert (config.system_themes / "agent-site" / "theme.toml").is_file()
 
 
-def test_the_pages_site_lets_marked_pages_use_inline_css():
-    caddy = (
-        Path(__file__).resolve().parents[3] / "host" / "caddy" / "pages.Caddyfile"
-    ).read_text()
-    assert f"@page file /{{path.0}}/{runner.PAGE_MARKER}\n" in caddy
-    assert f"hide {runner.PAGE_MARKER} .zola-site" in caddy
-
-
-# --- /public, synced to the pages site ---
-
-
-def test_a_page_written_into_public_goes_live_when_the_run_ends(cfg):
-    seen_live = []
-
-    def effect(m):
-        (m["/public"] / "notes").mkdir()
-        (m["/public"] / "notes" / "index.html").write_text(
-            "<title>Notes</title><p>hi</p>"
-        )
-        seen_live.append((cfg.site_dir / "notes").exists())  # not while the run goes
-
-    r = make(cfg, effect=effect)
-    res = go(r.op_run(A, "bash", "make notes"))
-    assert seen_live == [False]
-    [page] = res["published"]["live"]
-    assert page["url"] == "https://pages.example/notes/" and page["files"] == 1
-    assert page["card"].startswith("[![Notes]")
-    assert (cfg.site_dir / "notes" / "index.html").read_text().endswith("<p>hi</p>")
-    # A run that leaves /public alone publishes nothing.
-    r.podman.effect = None
-    assert go(r.op_run(A, "bash", "true"))["published"] is None
-
-
-def test_an_unchanged_page_isnt_copied_again_and_a_removed_one_comes_down(cfg):
-    r = make(cfg)
-    go(r.op_write(A, "/public/a/index.html", "<title>A</title>"))
-    res = go(r.op_write(A, "/public/b.html", "<title>B</title>"))
-    assert [p["slug"] for p in res["published"]["live"]] == ["b"]  # a didn't change
-    copied = (cfg.site_dir / "a" / "index.html").stat().st_mtime_ns
-    assert go(r.op_publish(A)) == {"unchanged": True}
-    assert (cfg.site_dir / "a" / "index.html").stat().st_mtime_ns == copied
-    res = go(r.op_write(A, "/public/a", delete=True))
-    assert res["published"] == {"removed": ["a"]}
-    assert not (cfg.site_dir / "a").exists() and (cfg.site_dir / "b").exists()
-    assert len(os.listdir(cfg.site_dir / "_cards")) == 1  # a's card went too
-    index = (cfg.site_dir / "index.html").read_text()
-    assert 'href="b/"' in index and 'href="a/"' not in index
-
-
-def test_what_public_makes_pages_of(cfg, tmp_path):
-    r = make(cfg)
-    go(r.op_run(A, "bash", "true"))
-    pub = public(cfg, A)
-    (pub / "data.csv").write_text("a,b")
-    (pub / "Bad Name").mkdir()
-    (pub / "Bad Name" / "x.html").write_text("x")
-    (pub / "twin").mkdir()
-    (pub / "twin" / "index.html").write_text("folder")
-    (pub / "twin.html").write_text("file")
-    (pub / "empty").mkdir()
-    (pub / ".git").mkdir()
-    (pub / ".git" / "config").write_text("[core]")
-    os.mkfifo(pub / "pipe")
-    (pub / "site").mkdir()
-    (pub / "site" / "index.html").write_text("<p>s</p>")
-    (pub / "site" / ".env").write_text("SECRET=1")
-    (pub / "site" / "leak").symlink_to(tmp_path / "victim")
-    out = go(r.op_publish(A))
-    assert sorted(p["slug"] for p in out["live"]) == ["data", "site", "twin"]
-    assert {k["name"] for k in out["skipped"]} == {
-        "Bad Name",
-        "twin.html",
-        "empty",
-        "pipe",
-    }
-    assert (cfg.site_dir / "twin" / "index.html").read_text() == "folder"
-    assert sorted(os.listdir(cfg.site_dir / "site")) == [".page", "index.html"]
-    assert [p["url"] for p in out["live"] if p["slug"] == "data"] == [
-        "https://pages.example/data/data.csv"
-    ]
-
-
-def test_a_slug_another_workspace_owns_is_skipped_and_its_page_stays(cfg):
-    r = make(cfg)
-    go(r.op_write(A, "/public/notes.html", "career's"))
-    res = go(r.op_write(B, "/public/notes.html", "home's"))
-    [skip] = res["published"]["skipped"]
-    assert skip["name"] == "notes.html" and "taken" in skip["why"]
-    assert (cfg.site_dir / "notes" / "index.html").read_text() == "career's"
-    (cfg.site_dir / "news").mkdir()
-    (cfg.site_dir / "news" / ".zola-site").touch()
-    res = go(r.op_write(B, "/public/news/index.html", "x"))
-    assert "taken" in res["published"]["skipped"][-1]["why"]
-    assert not (cfg.site_dir / "news" / "index.html").exists()
-
-
-def test_a_page_over_the_cap_is_skipped_and_kept_as_it_was(cfg, monkeypatch):
-    r = make(cfg)
-    go(r.op_write(A, "/public/p.html", "ok"))
-    monkeypatch.setattr(runner, "PUBLISH_MAX_BYTES", 3)
-    res = go(r.op_write(A, "/public/p.html", "too big"))
-    assert "at most 0 MB" in res["published"]["skipped"][0]["why"]
-    assert (cfg.site_dir / "p" / "index.html").read_text() == "ok"
-
-
-def test_csp_warnings_come_back_with_the_sync(cfg):
-    res = go(make(cfg).op_write(A, "/public/p.html", "<script>x()</script>"))
-    assert res["published"]["live"][0]["blocked"] == ["scripts"]
-
-
-def test_a_workspaces_public_starts_with_the_pages_it_had(cfg):
-    page = cfg.site_dir / "old"
-    page.mkdir()
-    (page / "index.html").write_text("<title>Old</title>kept")
-    (page / "img").mkdir()
-    (page / "img" / "a.png").write_bytes(b"png")
-    (page / ".page").write_text(
-        json.dumps({"workspace": "career", "title": "Old", "entry": "index.html"})
+def test_the_workspace_pages_site_serves_public_as_it_is():
+    repo = Path(__file__).resolve().parents[3]
+    caddy = (repo / "host" / "caddy" / "pages.Caddyfile").read_text()
+    unit = (repo / "host" / "quadlet" / "static_agent.container.in").read_text()
+    assert (
+        "Volume=%h/.local/share/everythingllm/sandbox/public:/srv/workspaces:ro" in unit
     )
-    other = cfg.site_dir / "theirs"
-    other.mkdir()
-    (other / "index.html").write_text("x")
-    (other / ".page").write_text(
-        json.dumps({"workspace": "home", "entry": "index.html"})
-    )
-    r = make(cfg)
-    assert go(r.op_publish(A)) == {"unchanged": True}  # seeded, so nothing to do
-    assert sorted(os.listdir(public(cfg, A))) == ["old"]
-    assert (public(cfg, A) / "old" / "img" / "a.png").read_bytes() == b"png"
-    assert (page / "index.html").read_text().endswith("kept")
-    # From then on /public is the source: deleting it there takes the page down.
-    go(r.op_write(A, "/public/old", delete=True))
-    assert not page.exists() and other.exists()
-
-
-def test_publish_copies_into_public_and_remove_deletes_from_it(cfg):
-    r = make(cfg)
-    go(r.op_write(A, "trip/index.html", "<title>Trip</title>"))
-    res = go(r.op_publish(A, "trip-plan", "/work/trip"))
-    assert res["url"] == "https://pages.example/trip-plan/"
-    assert os.listdir(public(cfg, A) / "trip-plan") == ["index.html"]
-    # Publishing an unchanged page again answers with the page as it is.
-    assert go(r.op_publish(A, "trip-plan"))["url"] == res["url"]
-    assert go(r.op_publish(A, "trip-plan", remove=True)) == {
-        "slug": "trip-plan",
-        "removed": True,
-    }
-    assert not (public(cfg, A) / "trip-plan").exists()
-    assert not (cfg.site_dir / "trip-plan").exists()
+    assert "PublishPort=127.0.0.1:8447:8447" in unit
+    workspaces = caddy[caddy.index(":8447 {") :]
+    assert "root * /srv/workspaces" in workspaces
+    assert (
+        "script-src 'none'" in workspaces
+    )  # scripts stay off until the switch is used
+    assert "@scripts expression false" in workspaces
 
 
 # --- site builds ---
@@ -855,22 +778,21 @@ def built(m):
     (out / "leak").symlink_to("/etc/passwd")
 
 
-def test_a_site_builds_without_network_into_public_and_goes_live(cfg):
+def test_a_site_builds_without_network_into_public(cfg):
     r = make(cfg, effect=built)
     go(r.op_write(A, "/project/sites/portfolio/zola.toml", 'theme = "agent-site"'))
     res = go(r.op_build_site(A, "/project/sites/portfolio"))
     assert res["slug"] == "portfolio" and res["files"] == 2
-    assert res["url"] == "https://pages.example/portfolio/"
+    assert res["url"] == "https://ws.example/career/portfolio/"
     assert [p["slug"] for p in res["published"]["live"]] == ["portfolio"]
     assert sorted(os.listdir(public(cfg, A) / "portfolio")) == ["index.html", "notes"]
-    assert (cfg.site_dir / "portfolio" / "notes" / "index.html").exists()
     args = r.podman.runs()[0][0]
     assert args[args.index("--network") + 1] == "none" and "--dns" not in args
     assert args[-4:] == [
         "python",
         "/sandbox/sitebuild.py",
         "/project/sites/portfolio",
-        "https://pages.example/portfolio",
+        "https://ws.example/career/portfolio",
     ]
     m = mounts(args)
     assert set(m) == {
@@ -897,7 +819,7 @@ def test_a_build_from_shared_takes_a_slug_and_another_workspaces_themes(cfg):
     go(r.op_write(B, "/shared/home/themes/t/theme.toml", ""))
     go(r.op_write(A, "/shared/career/sites/lab/zola.toml", 'theme = "t"'))
     res = go(r.op_build_site(A, "/shared/career/sites/lab/", slug="my-lab"))
-    assert res["url"] == "https://pages.example/my-lab/"
+    assert res["url"] == "https://ws.example/career/my-lab/"
     assert (
         f"{shared(cfg, B)}:/shared/home:ro,noexec,nosuid,nodev" in r.podman.runs()[0][0]
     )

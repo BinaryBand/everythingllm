@@ -4,7 +4,7 @@
   "name": "Write File",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Write a text file into the sandbox (e.g. data, a module or a page for run-code to use or publish), or delete a file or folder there. Paths are sandbox paths: /work/... (this chat's scratch), /project/... (the workspace's, kept) or /shared/<this workspace>/... (what it shares with the other workspaces, kept) or /public/... (this workspace's pages on the web: a write or delete there is live as soon as it's done); a relative path is under /work. Other workspaces' /shared folders are read-only. Deleting exactly /work, /project or /shared/<this workspace> empties it. Deleting works even when the sandbox is over its size limit.",
+  "description": "Write a text file into the sandbox (e.g. data, a module or a page for run-code to use or publish), or delete a file or folder there. Paths are sandbox paths: /work/... (this chat's scratch), /project/... (the workspace's, kept) or /shared/<this workspace>/... (what it shares with the other workspaces, kept) or /public/... (this workspace's pages on the web at https://…:8447/<this workspace>/: a write or delete there is live as soon as it's done); a relative path is under /work. Other workspaces' /shared folders are read-only. Deleting exactly /work, /project or /shared/<this workspace> empties it. Deleting works even when the sandbox is over its size limit.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

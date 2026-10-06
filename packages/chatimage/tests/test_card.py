@@ -73,3 +73,17 @@ def test_an_unchanged_card_is_not_drawn_again(tmp_path, monkeypatch):
     assert drew == []
     linkcard.make(tmp_path, url, "Daily News", "Site · news", "New description")
     assert len(drew) == 1
+
+
+def test_a_card_for_a_page_served_elsewhere_lives_on_the_pages_site(tmp_path):
+    line = linkcard.make(
+        tmp_path,
+        "https://h:8447/career/trip-plan/",
+        "Trip plan",
+        "Pages · career",
+        images="https://h:8445/",
+    )
+    assert re.fullmatch(
+        r"\[!\[Trip plan\]\(https://h:8445/_cards/\w+\.png\?v=\w+\)\]\(https://h:8447/career/trip-plan/\)",
+        line,
+    )

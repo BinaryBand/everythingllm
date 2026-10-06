@@ -8,6 +8,7 @@ exclude = ["packages/.*", "packages/__pycache__"]
 # For every member: a member that others depend on is found here, in the workspace, and
 # pytest comes with the dev group (splice adds its test-only dependencies to it).
 [tool.uv.sources]
+apps = { workspace = true }
 chatimage = { workspace = true }
 hostrpc = { workspace = true }
 llm = { workspace = true }

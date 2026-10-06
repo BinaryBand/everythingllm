@@ -1,0 +1,98 @@
+# The apps this repo runs, and everything the tools need to know to deploy, restart, map,
+# check and follow them. tools/units.py, tools/run_guard.py, tools/appctl.py (make
+# <app>-setup, <app>-logs, serve-setup, install, health) and the audit read it through
+# apps.load(); app code never does. Test: packages/apps/tests/test_apps.py.
+#
+# [<app>]                 the app's name: also its socket folder (storage/everythingllm/<app>/)
+#                         and its make targets (make <app>-setup, make <app>-logs)
+# summary                 one line, for `make apps`
+# runner                  the unit serving storage/everythingllm/<app>/runner.sock (hostrpc)
+# units                   host user units: unit -> label (enabled and restarted by setup,
+#                         watched by the audit)
+# timers                  timers setup enables and starts
+# watch                   more units the audit and logs follow, which setup leaves alone
+#                         (a timer's service): unit -> label
+# container               a Quadlet container: journal name (systemd-<x>) -> label; its
+#                         template is host/quadlet/<x>.container.in
+# managed = false         deployed by something else (no template here)
+# before                  commands setup runs first, from the repo's root
+# guard                   restarts wait while a run is going: {runs (under the data dir), noun}
+# serve                   tailnet HTTPS mappings: {https, port, path?} -> http://127.0.0.1:<port>
+# health                  name -> URL that should answer below 500
+# install                 whether `make install` sets it up; why_not_installed says why not
+
+[anythingllm]
+summary = "AnythingLLM, in its Quadlet container (127.0.0.1:3001; units restart it)"
+container = { "systemd-anythingllm" = "AnythingLLM" }
+serve = [{ https = 3001, port = 3001 }]
+health = { "AnythingLLM" = "http://127.0.0.1:3001/api/ping" }
+
+[searxng]
+summary = "SearXNG, the web search the agent and research use (deployed by Ansible, not this repo)"
+managed = false
+container = { "systemd-searxng" = "SearXNG" }
+serve = [{ https = 8888, port = 8888 }]
+
+[pages]
+summary = "the pages site (Caddy): the Zola sites on :8445 and the workspaces' /public on :8447"
+container = { "systemd-static_agent" = "pages site (Caddy)" }
+serve = [{ https = 8445, port = 8445 }, { https = 8447, port = 8447 }]
+health = { "pages site" = "http://127.0.0.1:8445/news/", "workspace pages" = "http://127.0.0.1:8447/" }
+
+[sandbox]
+summary = "the code sandbox's runner and PyPI proxy, with their images and network"
+runner = "sandbox-runner.service"
+units = { "sandbox-proxy.service" = "code sandbox PyPI proxy", "sandbox-runner.service" = "code sandbox runner" }
+before = ["make --no-print-directory sandbox-images"]
+install = true
+
+[podcasts]
+summary = "podcasts-runner, podcasts-web (:8445/podcasts) and the 6-hourly sync and transcription timers"
+runner = "podcasts-runner.service"
+units = { "podcasts-runner.service" = "podcasts runner", "podcasts-web.service" = "podcasts-web" }
+timers = ["podcasts-sync.timer", "podcasts-transcribe.timer"]
+watch = { "podcasts-sync@_all.service" = "podcast sync", "podcasts-transcribe.service" = "podcast transcripts" }
+serve = [{ https = 8445, path = "/podcasts", port = 8449 }]
+health = { "podcasts-web" = "http://127.0.0.1:8449/health" }
+install = true
+
+[research]
+summary = "research-runner, which runs deep research for the skill (live cards at :8445/_live/research)"
+runner = "research-runner.service"
+units = { "research-runner.service" = "deep-research runner" }
+guard = { runs = "research/runs", noun = "Deep-research runs" }
+serve = [{ https = 8445, path = "/_live/research", port = 8450 }]
+health = { "research live cards" = "http://127.0.0.1:8450/_live/research/dr-00000000.png" }
+install = true
+
+[agents]
+summary = "agents-runner, which runs delegations (live cards at :8445/_live/agents)"
+runner = "agents-runner.service"
+units = { "agents-runner.service" = "delegation runner" }
+before = ["python3 tools/agents_env.py"]
+guard = { runs = "agents/runs", noun = "Delegations" }
+serve = [{ https = 8445, path = "/_live/agents", port = 8451 }]
+health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-00000000.png" }
+why_not_installed = "it needs its developer API key in ~/.config/everythingllm/agents.env, made by hand"
+
+[sites]
+summary = "sites-runner, which writes and builds the sites' entries, and the article writer (:8445/news/write)"
+runner = "sites-runner.service"
+units = { "sites-runner.service" = "sites runner" }
+serve = [{ https = 8445, path = "/news/write", port = 8448 }]
+health = { "article writer" = "http://127.0.0.1:8448/" }
+install = true
+
+[audit]
+summary = "audit-runner, which runs the audit's checks on the host"
+runner = "audit-runner.service"
+units = { "audit-runner.service" = "audit runner" }
+install = true
+
+[relay]
+summary = "the Nilson relay (tailnet https :8446)"
+units = { "relay.service" = "Nilson relay" }
+before = ["python3 tools/relay_env.py"]
+serve = [{ https = 8446, port = 8446 }]
+health = { "Nilson relay" = "http://127.0.0.1:8446/health" }
+why_not_installed = "it's only for the Nilson app, and its secrets file needs an AnythingLLM API key filled in by hand"

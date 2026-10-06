@@ -88,10 +88,12 @@ internal-net = podman network exists $(1) || podman network create --internal --
 SANDBOX := host/containers/sandbox
 SANDBOX_UNITS := sandbox-proxy.service sandbox-runner.service
 
-sandbox-setup: units ## build the sandbox images and network, enable and (re)start its host units
+sandbox-images:  ## build the sandbox's images and its internal network (make sandbox-setup runs this first)
 	podman build -t localhost/everythingllm-sandbox -f $(SANDBOX)/Containerfile.sandbox $(SANDBOX)
 	podman build -t localhost/everythingllm-sandbox-proxy -f $(SANDBOX)/Containerfile.proxy $(SANDBOX)
 	$(call internal-net,sandbox-net,10.89.77.0/24)
+
+sandbox-setup: units sandbox-images ## build the sandbox images and network, enable and (re)start its host units
 	$(call enable-restart,$(SANDBOX_UNITS))
 
 sandbox-logs:    ## follow the sandbox runner and its proxy (host, systemd user units)

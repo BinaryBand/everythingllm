@@ -913,7 +913,7 @@ class Runner(hostrpc.Service):
             "slug": slug,
             "url": f"{url}/",
             "files": files,
-            "zola": out.strip()[-500:],
+            "zola": (out + err).strip()[-500:],  # zola reports on stderr
             "published": published,
         }
 

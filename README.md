@@ -21,8 +21,8 @@ Then it does the following:
 2. waits for AnythingLLM
 3. deploys (`uv run hostctl deploy`)
 4. points web search at SearXNG
-5. runs every setup target: tailnet ports, sandbox, podcast
-   timers, research, sites and audit runners
+5. runs every setup target: tailnet ports, sandbox, the podcasts'
+   runner and workers, research, sites and audit runners
 6. runs `uv run hostctl health`
 7. ends with a checklist of what only AnythingLLM's UI can do. Each item is ticked when
    it's already done: the chat model and embedder, a DeepSeek key, the agent limits in the
@@ -81,7 +81,7 @@ the service containers (see "Service containers"), these two:
   blocks (scripts, stylesheets, fonts or images from other hosts), since the page would
   otherwise just render without it.
 
-The host's own units in `host/systemd/` (services, timers, and the AnythingLLM drop-in) are
+The host's own units in `host/systemd/` (services, and the AnythingLLM drop-in) are
 templates too. `uv run hostctl units` renders all of them:
 
 - `host/quadlet/*.container.in` goes to `~/.config/containers/systemd/`
@@ -93,9 +93,12 @@ versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
 restarts nothing. A guarded runner with a run going is left running, and a container whose
 image of ours or network isn't there yet isn't started: its app's setup makes them (see
-"Service containers"). A host unit it installed whose template is gone (deleted, or moved to
-`host/quadlet/` as a container) is retired: stopped, disabled and moved to the backups, and a
-container that took its name over is started. Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
+"Service containers"). Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
+A host unit it rendered whose template is gone is retired: stopped, disabled and moved to
+the backups. That is how the podcasts' old timers go, and how a host runner gives way to
+its container, whose Quadlet unit of the same name the old copy would hide (the container
+is started then, unless it's a guarded runner with a run going). `uv run hostctl diff`
+lists what it would retire. Units it didn't render are left alone.
 
 Run it from the main checkout. It refuses to run in a worktree, since the units run the
 repo they were rendered from. Edit the templates, never the installed copies; `uv run hostctl diff`
@@ -255,10 +258,11 @@ through its UI.
   (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's
   laid out by kind:
 
-      venvs/<name>/        the host services' venvs (agents, audit, gateway, podcasts,
-                           sandbox, splice)
+      venvs/<name>/        the host services' venvs (agents, audit, gateway, sandbox, splice)
       venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/):
-                           egress-proxy, relay, research-runner, sites-runner
+                           egress-proxy, relay, research-runner, sites-runner,
+                           podcasts-runner, podcasts-sync-worker,
+                           podcasts-transcribe-worker
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
@@ -502,8 +506,9 @@ on its own: its template goes from `host/systemd/<x>.service` to
 stops and disables it and moves its installed copy to the backups (systemd prefers
 `~/.config/systemd/user/<x>.service` to the unit Quadlet generates under the same name),
 then starts the container; a guarded runner with a run going is left for a later run.
-`uv run hostctl diff` lists what it would retire. So far the relay, research-runner and
-sites-runner have moved; the old venvs in `venvs/<name>/` can go once their containers work.
+`uv run hostctl diff` lists what it would retire. So far the relay, research-runner,
+sites-runner and the podcasts' runner and workers have moved (podcasts-web, splice's, stays
+a host unit); the old venvs in `venvs/<name>/` can go once their containers work.
 
 **The image.** Every service container runs `localhost/everythingllm-service`
 (`host/containers/service/Containerfile`): `python:3.12-slim`, the host's uv copied from its
@@ -798,21 +803,46 @@ a show found only in such an app has no public feed.
 - Use an app that fetches feeds from the phone itself (AntennaPod, Podcast Addict), with
   Tailscale on. Apps that fetch through their own servers (Pocket Casts, Overcast, Apple
   Podcasts' sync) can't reach a tailnet address.
-- The MCP server in the container only forwards each tool call to `podcasts-runner` on the
-  host (`packages/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
-  own venv in `~/.local/share/everythingllm/venvs/podcasts`, socket `storage/everythingllm/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
-  see "Services on the host"), which runs the tool and sends back its text.
-  The feeds, the model's key and the audio stack never touch the container: the sync
-  and transcription run on the host too, from the same venv.
-- MCP tool calls time out after 60 s, so the runner only starts the sync and returns. A
-  sync is a unit of its own, `podcasts-sync@<slug>.service`, or `podcasts-sync@_all.service`
-  for every feed (what the timer starts), so restarting the runner, AnythingLLM or the
-  container stops none. A sync that dies within a second is reported as a tool error with
-  the last line of its log. The sync takes `~/.local/share/everythingllm/podcasts/sync.lock` and exits at once if
-  another holds it, and it takes
+- The MCP server in the container only forwards each tool call to `podcasts-runner`
+  (`packages/podcasts/src/podcasts/tools.py`, socket `storage/everythingllm/podcasts/runner.sock`;
+  the rest of its data is in `~/.local/share/everythingllm/podcasts/`; see "Services on the
+  host"), which runs the tool and sends back its text. The feeds, the model's key and the
+  audio stack never touch AnythingLLM's container: the sync and transcription run in two
+  long-running workers, `podcasts-sync-worker` and `podcasts-transcribe-worker`.
+- The runner and both workers run in service containers of their own (see "Service
+  containers"; `host/quadlet/podcasts-{runner,sync-worker,transcribe-worker}.container.in`,
+  each with its venv in `~/.local/share/everythingllm/venvs/<name>-ctr/`), at
+  `10.89.79.13`–`.15` on egress-net, all three in egress.toml's `podcasts` profile: public
+  hosts on ports 80 and 443 (feeds and episodes, Apple's directory, DeepSeek, and Hugging
+  Face for Whisper's model), nothing of ours. A feed or an episode on a private address is
+  refused by the proxy rather than by `publicweb`, so its error reads `403 Forbidden`; one
+  on another port is refused too. Each mounts only what it uses, at its host path: the
+  state folder (`~/.local/share/everythingllm/podcasts/`, with the queue and `models/`) and
+  the served folder (`pages/public/podcasts/`), plus the runner's socket folder (the only
+  one that writes in storage, so the only one with `GroupAdd=keep-groups`) or AnythingLLM's
+  `.env` read-only (the workers', for DeepSeek); the repo, read-only, gives the
+  transcription worker `host.env`. Locks (`sync.lock`, `transcribe.lock`, `feeds.lock`)
+  work across them, as they're all on the host's filesystem. `podcasts-web` stays a host
+  unit: it only reads what they write. Each first start syncs its venv (the `host` extra:
+  Whisper, PyAV, onnxruntime, about 500 MB installed) through the proxy, which took about
+  10 minutes here; until then the runner's socket isn't there and the tools say the
+  service isn't running.
+- MCP tool calls time out after 60 s, so the runner only asks for the sync and returns. It
+  leaves a request in `~/.local/share/everythingllm/podcasts/queue/`
+  (`sync-<slug>.json`, or `sync-_all.json` for every feed), and the sync worker
+  (`podcasts.sync`) takes them from there, one sync at a time, looking every couple of
+  seconds; so restarting the runner, AnythingLLM or the container stops none. A sync of
+  every feed takes the single feeds' requests waiting with it, and what is asked for
+  during a sync waits for the next. The worker touches `queue/sync-worker.alive` every few
+  seconds; when it's older than a minute, `refresh_podcasts` says the worker isn't running
+  (and `add-podcast` that nothing downloads until it is), and the request waits for it.
+  `podcasts-sync [slug]` asks by hand (`uv run --package podcasts --extra host
+  podcasts-sync hard-fork`). Each sync takes `~/.local/share/everythingllm/podcasts/sync.lock`;
+  one that finds it held (a transcript being saved) is asked for again. It takes
   one feed and one episode at a time, rewrites `feed.xml` after every download, deletes
   episodes that fall out of the newest `keep`, and picks up feeds added while it runs. Its
-  output goes to `~/.local/share/everythingllm/podcasts/sync.log`; what each show has is in
+  output goes to `~/.local/share/everythingllm/podcasts/sync.log` (the worker's own lines,
+  which sync it starts and how it ended, to the journal); what each show has is in
   `~/.local/share/everythingllm/podcasts/shows/<slug>.json`, subscriptions in `~/.local/share/everythingllm/podcasts/feeds.json`, and
   when the last sync started and finished (and its traceback, if it crashed) in
   `~/.local/share/everythingllm/podcasts/last_sync.json`, which `list_podcasts` reports on.
@@ -842,11 +872,16 @@ a show found only in such an app has no public feed.
     every episode), the feed's record says so, downloaded episodes stay, and new ones wait
     for the next sync, along with anything older: an old episode fetched in the meantime
     would only be pruned once the newer one is judged.
-- `podcasts-sync.timer` runs the sync every 6 hours (`uv run hostctl podcasts-setup`; it replaced
-  a scheduled job that only called `refresh_podcasts`, so no agent is involved). A sync
-  killed midway (a reboot, or `uv run hostctl units` changing its unit while it runs) leaves its
-  episode for the next one to download again, and a day later that cleans up what the killed
-  one left.
+- The sync worker asks for every feed's sync itself every 6 hours, at 00:00, 06:00, 12:00
+  and 18:00 local time (`queue/sync-worker.last` says when it last did, so a slot missed
+  while it was down comes at once when it starts, as `Persistent=true` did for the timer it
+  replaced, which in turn replaced a scheduled job that only called `refresh_podcasts`; no
+  agent is involved). Stopping it (a reboot, `uv run hostctl podcasts-setup`, or `uv run
+  hostctl units` changing its unit) stops a sync at its next feed, download or scrub and
+  asks for it again, so the next start finishes it; `list_podcasts` says so meanwhile.
+  Episodes downloaded but not yet looked at for ads stay out of the feed and are
+  downloaded again then, as are those of a sync killed outright (a download that outlasts
+  the 60 s stop timeout), and a day later that cleans up what was left.
 - Our feed is built from scratch from the show's title, art and episode details, not
   copied, so `itunes:new-feed-url` and the like can't send the app back to the public feed.
 - When a show moves its feed, the sync follows: after a permanent redirect (301/308), or to
@@ -925,12 +960,16 @@ episode and by what, and the sync logs each episode's cuts to `sync.log`.
   stay in it while they are. One that can't be read goes out as it is, with the error in its
   record.
 - Reading an episode takes about 15 s an hour of audio and about 450 MB of memory an hour
-  of audio, in the sync on the host. Video episodes aren't cut.
+  of audio, in the sync worker (which has 4 GB). Video episodes aren't cut.
 
 ### Transcripts
 
-`podcasts-transcribe.timer` transcribes every downloaded episode with Whisper's `base` model,
-newest first, half an hour after each sync. It transcribes the original, and keeps the
+The transcription worker (`podcasts-transcribe-worker.service`, `podcasts.transcripts`)
+transcribes every downloaded episode with Whisper's `base` model, newest first, in a pass
+every 6 hours, half an hour after each scheduled sync (00:30, 06:30, …; a slot missed while
+it was down comes at once when it starts, from `queue/transcribe-worker.last`). It makes one
+when asked too (`uv run --package podcasts --extra host podcasts-transcribe`, which leaves
+`queue/transcribe.json`), and as it starts after dying in one. It transcribes the original, and keeps the
 segments in its times in `~/.local/share/everythingllm/podcasts/transcripts/<slug>/`. Each transcript is published
 as `<episode>.vtt`, named and shifted to match what's served (cut lines left out), and linked
 from `feed.xml` (`<podcast:transcript>`), so apps such as AntennaPod show it. The
@@ -941,16 +980,24 @@ few lines of each other.
 - It runs apart from the sync, at nice 19, on as many threads as
   `PODCASTS_TRANSCRIBE_THREADS` in `host.env` gives for the time of day: a number, or
   entries like `08:00=4,22:00=1` (all 4 cores by day, fans audible; 1 at night, quiet,
-  since on 2 they spin up). Unset, it is 1. A run checks between episodes and loads
+  since on 2 they spin up). Unset, it is 1. The worker reads it from `host.env` again at
+  every pass, so a change needs no restart. A pass checks between episodes and loads
   Whisper again when the period changes; 0 threads pauses it until the next entry (the
-  run stops, and a later timer run starts again). Whisper is slow on this CPU: about 8
+  pass stops, and a later one starts again). Whisper is slow on this CPU: about 8
   minutes an hour of audio on every core. After each episode it takes the newest one
   waiting, so a show's new episode goes ahead of a catalog's backlog. It holds no lock while transcribing or looking for ad reads, then takes the sync lock briefly to save the
   result, but only if the episode's original and served file are still the ones it
-  transcribed. A second run
-  exits at once while one is going (`~/.local/share/everythingllm/podcasts/transcribe.lock`); its output is in
+  transcribed. A second pass
+  gives way at once while one is going (`~/.local/share/everythingllm/podcasts/transcribe.lock`); its output is in
   the journal (`uv run hostctl podcasts-logs`).
-- The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/podcasts/models/whisper/base`.
+- Its container caps it at 6 GB (`--memory=6g`; its unit slows it down past 5 GB,
+  `MemoryHigh`). Past that the kernel kills the worker, not the rest of the host; it
+  starts again, and its first
+  pass marks the episode it died on failed (`transcribing.json` names it) and goes on with
+  the rest. A stop, by contrast, removes `transcribing.json`, so it isn't held against the
+  episode, and the worker exits 143, which the unit counts as success.
+- The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/podcasts/models/whisper/base`,
+  from Hugging Face through the egress proxy (`HF_HOME` is in the container's `/tmp`).
 - **Ad reads.** Audio fingerprints miss an ad heard for the first time, or one the host
   reads in their own words, so AnythingLLM's default model (DeepSeek, key and model from
   AnythingLLM's `.env`, through the shared `llm` package) reads each new transcript, half an hour at a time, and names
@@ -970,10 +1017,12 @@ To look at what would be cut without cutting it:
 
     uv run --package podcasts --extra host spot repeats ep1.mp3 ep2.mp3 ep3.mp3
 
-Run a sync by hand (every feed, or one, logging to `~/.local/share/everythingllm/podcasts/sync.log`):
+Ask the workers for a sync (every feed, or one, logging to
+`~/.local/share/everythingllm/podcasts/sync.log`) or a transcription pass by hand:
 
-    systemctl --user start podcasts-sync@_all.service
-    systemctl --user start podcasts-sync@hard-fork.service
+    uv run --package podcasts --extra host podcasts-sync
+    uv run --package podcasts --extra host podcasts-sync hard-fork
+    uv run --package podcasts --extra host podcasts-transcribe
 
 ## News articles
 

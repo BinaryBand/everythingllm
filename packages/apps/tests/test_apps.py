@@ -139,11 +139,15 @@ def test_the_tools_views_are_what_the_audit_had():
         "CONTAINER_NAME",
         "pages site (Caddy)",
     )
-    assert apps.watched()["podcasts-sync@_all.service"] == (
-        "_SYSTEMD_USER_UNIT",
+    assert apps.watched()["systemd-podcasts-sync-worker"] == (
+        "CONTAINER_NAME",
         "podcast sync",
     )
-    app = apps.app_of("podcasts-transcribe.timer")
+    assert apps.watched()["podcasts-web.service"] == (
+        "_SYSTEMD_USER_UNIT",
+        "podcasts-web",
+    )
+    app = apps.app_of("podcasts-transcribe-worker.service")
     assert app is not None and app.name == "podcasts"
     assert apps.app_of("nothing.service") is None
 

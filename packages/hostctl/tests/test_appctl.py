@@ -71,17 +71,29 @@ def test_serve_with_nothing_mapped_maps_everything(ran, monkeypatch):
     )
 
 
-def test_setup_runs_its_steps_maps_restarts_and_starts_timers(ran, monkeypatch):
+def test_setup_runs_its_steps_maps_and_restarts(ran, monkeypatch):
     monkeypatch.setattr(appctl.run_guard, "ok_to_restart", lambda unit: True)
     registry = appctl.apps.load()
     appctl.setup(registry["podcasts"])
+    # podcasts-web is a host unit, enabled; the runner and workers are containers, which
+    # Quadlet enables, so they're only restarted.
+    containers = (
+        "podcasts-runner.service podcasts-sync-worker.service "
+        "podcasts-transcribe-worker.service"
+    )
     assert ran == [
+        "python3 -m hostctl service-images",
         "tailscale serve status --json",
         "sudo tailscale serve --bg --https=8445 --set-path=/podcasts http://127.0.0.1:8449",
-        "systemctl --user enable podcasts-runner.service podcasts-web.service",
-        "systemctl --user restart podcasts-runner.service podcasts-web.service",
-        "systemctl --user enable --now podcasts-sync.timer podcasts-transcribe.timer",
+        "systemctl --user enable podcasts-web.service",
+        f"systemctl --user restart podcasts-web.service {containers}",
     ]
+    ran.clear()
+    # No app of ours has a timer now (the podcasts' workers schedule themselves).
+    appctl.setup(
+        appctl.apps.App("x", "x", units={"x.service": "x"}, timers=("x.timer",))
+    )
+    assert ran[-1] == "systemctl --user enable --now x.timer"
     ran.clear()
     appctl.setup(registry["agents"])
     assert ran[0] == "python3 -m hostctl.agents_env"

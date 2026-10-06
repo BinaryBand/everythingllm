@@ -1,5 +1,7 @@
 import json
+import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -22,6 +24,7 @@ from podcasts.library import (
 )
 from podcasts.rss import ITUNES, Episode, FeedError, parse
 from podcasts.rules import RuleError, judge, local_day
+from podcasts.worker import ALL_FEEDS, SYNC_WORKER
 from publicweb import public_client
 
 FEED_URL = "https://pod.example/feed.xml"
@@ -661,68 +664,77 @@ def test_add_passes_its_deadline_on(lib):
     assert remote.gets == []
 
 
-class FakeUnits:
-    """Runs a unit's sync as a child process: `script` (given the unit's instance), or the
-    real podcasts-sync, as podcasts-sync@.service would."""
-
-    def __init__(self, lib, script: str = ""):
-        self.lib, self.script, self.procs, self.started = lib, script, {}, []
-
-    def start(self, unit):
-        instance = unit.removeprefix("podcasts-sync@").removesuffix(".service")
-        cmd = ["-c", self.script] if self.script else ["-m", "podcasts.sync"]
-        with open(self.lib.state / "sync.log", "ab") as log:
-            self.procs[unit] = subprocess.Popen(
-                [sys.executable, *cmd, instance], stdout=log, stderr=log
-            )
-        self.started.append(unit)
-
-    def failed(self, unit):
-        return self.procs[unit].poll() not in (None, 0)
-
-
-def test_start_sync_starts_a_unit_for_the_feed_or_all(lib, monkeypatch):
-    monkeypatch.setattr(library.time, "sleep", lambda s: None)
-    lib.units = FakeUnits(lib, "import time; time.sleep(0.2)")
+def test_start_sync_asks_the_worker_for_the_feed_or_all(lib):
+    lib.queue.beat(SYNC_WORKER)  # a worker is running
     assert lib.start_sync("the-show") and lib.start_sync()
-    assert lib.units.started == [
-        "podcasts-sync@the-show.service",
-        "podcasts-sync@_all.service",
-    ]
-    for p in lib.units.procs.values():
-        p.wait()
+    assert set(lib.queue.syncs()) == {"the-show", ALL_FEEDS}
+    # Every feed's takes the single feed's with it.
+    assert lib.queue.take_sync() == ALL_FEEDS and lib.queue.syncs() == []
 
 
-def test_start_sync_leaves_a_running_sync_be(lib):
-    lib.units = FakeUnits(lib)
+def test_start_sync_while_a_sync_runs_waits_for_it(lib):
+    lib.queue.beat(SYNC_WORKER)
     with lib._lock("sync.lock"):
         assert lib.sync_running()
         assert not lib.start_sync("the-show")
-    assert lib.units.started == []
+    assert lib.queue.syncs() == ["the-show"]
+    assert "starts after it" in tools._started(False)
 
 
-def test_start_sync_reports_a_sync_that_dies_at_once(lib):
-    lib.units = FakeUnits(
-        lib, "import sys\nprint('ModuleNotFoundError: no podcasts')\nsys.exit(1)\n"
-    )
-    with pytest.raises(
-        LibraryError, match="the sync failed to start: ModuleNotFoundError: no podcasts"
-    ):
+def test_start_sync_says_when_the_worker_isnt_running(lib):
+    with pytest.raises(LibraryError, match="the sync worker isn't running"):
         lib.start_sync()
-    assert not lib.sync_running()
+    assert lib.queue.syncs() == [ALL_FEEDS]  # it waits for the worker all the same
+    lib.queue.beat(SYNC_WORKER)
+    stale = time.time() - 120
+    os.utime(lib.queue.folder / f"{SYNC_WORKER}.alive", (stale, stale))
+    with pytest.raises(LibraryError, match="podcasts-sync-worker.service"):
+        lib.start_sync("the-show")
 
 
-def test_start_sync_runs_the_real_sync(lib, tmp_path, monkeypatch):
-    monkeypatch.setenv("PODCASTS_DIR", str(tmp_path / "site"))
-    monkeypatch.setenv("PODCASTS_STATE", str(tmp_path / "state"))
-    lib.units = FakeUnits(lib)
-    assert lib.start_sync()  # podcasts-sync _all: every feed
-    for _ in range(150):
-        if (lib.last_sync() or {}).get("finished"):
-            break
-        time.sleep(0.1)
-    assert lib.last_sync()["error"] == ""
-    assert "another sync" not in (tmp_path / "state" / "sync.log").read_text()
+def test_add_podcast_saves_the_subscription_when_the_worker_is_down(lib, monkeypatch):
+    remote = Remote(feed(("a", "1")))
+    monkeypatch.setattr(tools, "lib", lambda: lib)
+    monkeypatch.setattr(tools, "make_client", remote.client)
+    text = tools.add_podcast(FEED_URL)
+    assert "Subscribed to 'The Show'" in text
+    assert "But the sync worker isn't running" in text
+    assert "nothing downloads until then" in text
+    assert lib.queue.syncs() == ["the-show"]
+
+
+def test_start_sync_reaches_the_real_worker(lib, tmp_path, monkeypatch):
+    """podcasts-sync-worker as the unit runs it: it beats, takes what start_sync asks for,
+    runs the real sync with its output in sync.log, and stops on SIGTERM."""
+    env = {
+        **os.environ,
+        "PODCASTS_DIR": str(tmp_path / "site"),
+        "PODCASTS_STATE": str(tmp_path / "state"),
+    }
+    worker = subprocess.Popen(
+        [sys.executable, "-m", "podcasts.sync"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        for _ in range(150):
+            if lib.queue.alive(SYNC_WORKER):
+                break
+            time.sleep(0.1)
+        assert lib.start_sync()  # every feed: there are none
+        for _ in range(150):
+            if (lib.last_sync() or {}).get("finished"):
+                break
+            time.sleep(0.1)
+        assert lib.last_sync()["error"] == "" and lib.queue.syncs() == []
+        assert "syncing every feed" in (tmp_path / "state" / "sync.log").read_text()
+    finally:
+        worker.send_signal(signal.SIGTERM)
+        out, _ = worker.communicate(timeout=30)
+    assert worker.returncode == 0, out
+    assert "synced every feed" in out and "stopped" in out
 
 
 def test_from_env_defaults_to_everythingllms_data(tmp_path, monkeypatch):

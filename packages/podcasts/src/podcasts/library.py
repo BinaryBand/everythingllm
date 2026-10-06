@@ -15,14 +15,17 @@ Two directories:
                            transcripts/<slug>/, transcripts for search (see transcripts.py);
                            sync.lock, held by the sync for as long as it runs;
                            last_sync.json, when the last sync started and finished, and
-                           why it crashed if it did; sync.log, the sync's output.
+                           why it crashed or that it was stopped; sync.log, the sync's
+                           output; transcribe.lock and transcribing.json (transcripts.py);
+                           queue/, the syncs and passes asked for, and the workers'
+                           heartbeats and schedules (see worker.py).
   site   (PODCASTS_DIR)    served by splice-web (at /podcasts/ on the pages site's port),
                            which also serves the episodes from their manifests:
                            <slug>/feed.xml, <slug>/<episode>.vtt transcripts, index.html.
 
-A sync can take far longer than an MCP tool call may (60 s), so podcasts-runner only
-starts it, as a systemd unit of its own (see Units), and the sync keeps its progress in
-shows/<slug>.json.
+A sync can take far longer than an MCP tool call may (60 s), so podcasts-runner only asks
+for it: start_sync leaves a request in queue/, and podcasts-sync-worker (sync.py), a
+long-running service of its own, runs it. The sync keeps its progress in shows/<slug>.json.
 Each feed keeps its newest `keep` episodes (or all of them), leaving out those its `rules`
 skip (the user's own words, read by the default model; see rules.py and Library.choose):
 new ones are downloaded, newest first and at most DAILY_DOWNLOADS a day per feed, so a
@@ -46,8 +49,6 @@ import itertools
 import json
 import os
 import shutil
-import subprocess
-import time
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -77,6 +78,7 @@ from podcasts.segments import (
     retime,
     shift,
 )
+from podcasts.worker import ALL_FEEDS, SYNC_WORKER, Queue
 
 MAX_FEED_BYTES = 20 * 1024 * 1024
 MAX_EPISODE_BYTES = 2 * 1024 * 1024 * 1024
@@ -106,7 +108,6 @@ TYPE_EXT = {
 }
 EXT_TYPE = {ext: t for t, ext in reversed(TYPE_EXT.items())}
 USER_AGENT = "everythingllm-podcasts/0.1 (private podcast mirror)"
-ALL_FEEDS = "_all"  # podcasts-sync's argument for every feed; no slug has an underscore
 
 
 def clean_url(text: str) -> str:
@@ -249,44 +250,6 @@ def models_dir(name: str) -> Path:
     )
 
 
-class Units:
-    """Starts syncs as systemd user units, so they outlive whatever asked for them:
-    podcasts-sync@<slug>.service syncs one feed (and any added meanwhile),
-    podcasts-sync@_all.service every feed, as the timer does. Both log to sync.log."""
-
-    def start(self, unit: str) -> None:
-        try:
-            subprocess.run(
-                ["systemctl", "--user", "start", "--no-block", unit],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except subprocess.CalledProcessError as e:
-            raise LibraryError(
-                f"couldn't start {unit}: {(e.stderr or '').strip() or e}"
-            ) from None
-
-    def failed(self, unit: str) -> bool:
-        return (
-            subprocess.run(
-                ["systemctl", "--user", "is-failed", "--quiet", unit],
-                check=False,
-                timeout=30,
-            ).returncode
-            == 0
-        )
-
-
-def _last_line(file: Path) -> str:
-    try:
-        lines = file.read_text(errors="replace").strip().splitlines()
-    except FileNotFoundError:
-        return ""
-    return lines[-1] if lines else ""
-
-
 class Library:
     def __init__(
         self,
@@ -295,7 +258,6 @@ class Library:
         base_url: str,
         scrubber: Scrubber | None = None,
         chat: Chat | None = None,
-        units: Units | None = None,
     ):
         self.site = Path(site)
         self.state = Path(state)
@@ -304,7 +266,10 @@ class Library:
         self.chat = (
             chat  # the default model, for feeds' rules; None: they can't be applied
         )
-        self.units = units  # starts syncs; None (as in tests): start_sync can't
+        self.queue = Queue(self.state)  # where start_sync asks the sync worker
+        # Asked between a sync's steps (feeds, downloads, scrubs); True stops it there: the
+        # sync worker's, once it has been told to stop.
+        self.stopping = lambda: False
         self.audio = AudioStore(self.state)
         self.transcripts = TranscriptStore(self.state / "transcripts")
         self._sync_started = ""
@@ -327,7 +292,6 @@ class Library:
             ),
             Scrubber(Path(state) / "prints"),
             default_model(),
-            Units(),
         )
 
     def feed_url(self, slug: str) -> str:
@@ -523,14 +487,19 @@ class Library:
             return not got
 
     def last_sync(self) -> dict | None:
-        """{started, finished, error} of the last sync; finished is "" while one runs."""
+        """{started, finished, error, stopped} of the last sync; finished is "" while one
+        runs, and stopped true when the sync worker was stopped before it was done."""
         try:
             return json.loads((self.state / "last_sync.json").read_text())
         except (FileNotFoundError, ValueError):
             return None
 
-    def _save_last_sync(self, finished: str = "", error: str = "") -> None:
+    def _save_last_sync(
+        self, finished: str = "", error: str = "", stopped: bool = False
+    ) -> None:
         d = {"started": self._sync_started, "finished": finished, "error": error}
+        if stopped:
+            d["stopped"] = True
         _write_json(self.state / "last_sync.json", d)
 
     def sync_crashed(self, tb: str) -> None:
@@ -540,28 +509,23 @@ class Library:
         self._save_last_sync(_now(), "\n".join(tb.strip().splitlines()[-4:]))
 
     def start_sync(self, slug: str = "") -> bool:
-        """Start a sync of `slug` (or every feed) in the background, as its own unit (see
-        Units); False if one is already running. Raises LibraryError if it dies at once."""
-        if self.sync_running():
-            return False
-        if self.units is None:
-            raise LibraryError("this library can't start syncs")
-        unit = f"podcasts-sync@{slug or ALL_FEEDS}.service"
-        self.units.start(unit)
-        time.sleep(1)
-        if self.units.failed(unit):
-            why = (
-                _last_line(self.state / "sync.log")
-                or f"see systemctl --user status {unit}"
+        """Ask the sync worker for a sync of `slug` (or every feed): True if it can start
+        now, False if it waits for the sync that's running. Raises LibraryError when the
+        worker isn't running; the request waits for it all the same."""
+        self.queue.ask_sync(slug or ALL_FEEDS)
+        if not self.queue.alive(SYNC_WORKER):
+            raise LibraryError(
+                "the sync worker isn't running (podcasts-sync-worker.service; "
+                "`uv run hostctl podcasts-setup` starts it), so the sync waits until it is"
             )
-            raise LibraryError(f"the sync failed to start: {why}")
-        return True
+        return not self.sync_running()
 
     def sync(self, client: httpx.Client, only: str = "") -> bool:
         """Sync every feed (or just `only`), picking up feeds added while it runs.
 
         Returns False without doing anything if another sync holds sync.lock. One feed failing doesn't stop the others:
-        its error goes into its record.
+        its error goes into its record. Once `stopping()` says so, it stops at the next
+        feed, download or scrub, and notes in last_sync.json that it was stopped.
         """
         with self._lock("sync.lock", blocking=False) as got:
             if not got:
@@ -570,7 +534,7 @@ class Library:
             self._save_last_sync()
             done: set[str] = set()
             before = set(self.feeds())
-            while True:
+            while not self.stopping():
                 feeds = self.feeds()
                 todo = [
                     s
@@ -580,6 +544,8 @@ class Library:
                 if not todo:
                     break
                 for slug in todo:
+                    if self.stopping():
+                        break
                     done.add(slug)
                     try:
                         self.sync_feed(client, slug, feeds[slug])
@@ -587,9 +553,11 @@ class Library:
                         print(f"{slug}: sync failed", flush=True)
                         traceback.print_exc()
                         self._feed_failed(slug, f"sync failed: {type(e).__name__}: {e}")
-            self.gc()
+            stopped = self.stopping()
+            if not stopped:  # the next sync collects what this one would have
+                self.gc()
             self.write_index()
-            self._save_last_sync(_now())
+            self._save_last_sync(_now(), stopped=stopped)
         return True
 
     def gc(self, grace: float = GRACE) -> None:
@@ -667,6 +635,8 @@ class Library:
         for i, ep in enumerate(wanted):
             if ep.file:
                 continue
+            if self.stopping():  # the episode waits for the next sync
+                break
             if downloaded >= DAILY_DOWNLOADS:
                 waiting = sum(not e.file for e in wanted)
                 errors.append(
@@ -787,6 +757,8 @@ class Library:
         assert scrubber is not None  # only called when cuts_ads()
         todo = [e for e in wanted if e.audio and not e.scrubbed and _scrubbable(e)]
         for ep in todo:
+            if self.stopping():
+                return  # the rest wait for the next sync, out of the feed
             publish("; ".join(errors), f"{ep.title} (reading for ads)")
             try:
                 scrubber.fingerprint(slug, key(ep), self.audio.path(ep.audio))
@@ -796,6 +768,8 @@ class Library:
         for i, ep in enumerate(todo):
             if ep.scrubbed:
                 continue
+            if self.stopping():
+                return
             publish("; ".join(errors), f"{ep.title} (looking for ads)")
             try:
                 spans = scrubber.scrub(slug, key(ep), self.audio.path(ep.audio))

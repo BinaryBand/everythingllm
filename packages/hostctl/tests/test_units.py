@@ -25,7 +25,7 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
         "static_agent.container",
         "log-filter.conf",
         "podcasts-web.service",
-        "podcasts-sync.timer",
+        "podcasts-sync-worker.container",
     } <= set(planned)
     for unit in planned.values():
         assert not units.PLACEHOLDER.search(unit.text), unit.source
@@ -297,40 +297,106 @@ def test_hold_back_leaves_a_guarded_runner_with_a_run_going(
     assert "left research-runner.service running" in capsys.readouterr().out
 
 
-def test_a_host_unit_whose_container_took_over_is_retired(
-    tmp_path, monkeypatch, capsys
-):
-    # relay.service was a host unit; host/quadlet/relay.container.in makes it now, and the
-    # old installed copy would hide Quadlet's (~/.config/systemd/user comes first).
+RENDERED = (
+    "# Rendered by `uv run hostctl units` from systemd/x in the EverythingLLM repo\n"
+)
+
+
+def test_a_rendered_unit_with_no_template_is_retired(tmp_path, monkeypatch, capsys):
+    """The podcasts' timers went when their workers came, and a runner's host unit goes
+    when its container comes: the installed copies would keep firing, or hide Quadlet's
+    unit of the same name. Only units this rendered (or linked the old way) count."""
+    ran = []
+    monkeypatch.setattr(
+        units.subprocess, "run", lambda cmd, **kw: ran.append(" ".join(cmd))
+    )
+    monkeypatch.setattr(run_guard, "ok_to_restart", lambda service: True)
+    user, containers = tmp_path / "user", tmp_path / "containers"
+    user.mkdir()
+    for name in ("old.timer", "old@.service", "gone-runner.service", "kept.service"):
+        (user / name).write_text(RENDERED + "[Unit]\n")
+    (user / "made.timer").write_text("# Rendered by `make units` from systemd/made\n")
+    (user / "theirs.service").write_text("[Unit]\nDescription=not ours\n")
+    (user / "linked.service").symlink_to(ROOT / "host" / "systemd" / "linked.service")
+    plan = [
+        unit(tmp_path, user / "kept.service", "x", "kept.service"),
+        unit(
+            tmp_path,
+            containers / "gone-runner.container",
+            "x",
+            "gone-runner.service",
+            True,
+        ),
+    ]
+    old = units.retired(plan, user)
+    assert [p.name for p in old] == [
+        "gone-runner.service",
+        "linked.service",
+        "made.timer",
+        "old.timer",
+        "old@.service",
+    ]
+    start, left = units.retire(old, plan, tmp_path / "backup")
+    assert (start, left) == (["gone-runner.service"], [])
+    # A template's instances can't be stopped by its name; they finish on their own.
+    assert ran == [
+        f"systemctl --user disable --now {name}"
+        for name in ("gone-runner.service", "linked.service", "made.timer", "old.timer")
+    ]
+    assert sorted(p.name for p in user.iterdir()) == ["kept.service", "theirs.service"]
+    assert (tmp_path / "backup" / "user" / "old.timer").read_text() == (
+        RENDERED + "[Unit]\n"
+    )
+    assert "gone-runner.service: its container takes over" in capsys.readouterr().out
+
+
+def test_a_guarded_runner_with_a_run_going_isnt_retired(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_guard, "ok_to_restart", lambda service: False)
+    monkeypatch.setattr(units.subprocess, "run", lambda *a, **kw: pytest.fail("ran"))
     user = tmp_path / "user"
     user.mkdir()
-    (user / "relay.service").write_text("[Service]\nExecStart=old\n")
-    (user / "gateway.service").write_text("[Service]\nExecStart=still a host unit\n")
-    planned = plan(tmp_path)
-    assert units.retired(planned, user) == [user / "relay.service"]
-
-    calls = []
-    monkeypatch.setattr(units.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
-    backup = tmp_path / "backup"
-    assert units.retire([user / "relay.service"], backup) == []
-    assert calls == [["systemctl", "--user", "disable", "--now", "relay.service"]]
-    assert not (user / "relay.service").exists()
-    assert (
-        backup / "user" / "relay.service"
-    ).read_text() == "[Service]\nExecStart=old\n"
-    assert units.retired(planned, user) == []
-
-    # A guarded runner with a run going stays a host unit until the next try.
-    calls.clear()
-    old = user / "research-runner.service"
-    old.write_text("[Service]\n")
-    monkeypatch.setitem(run_guard.GUARDED, "research-runner.service", ("r", "Runs"))
-    monkeypatch.setattr(run_guard, "ok_to_restart", lambda service: False)
-    assert units.retire([old], backup) == ["research-runner.service"]
-    assert calls == [] and old.exists()
-    assert (
-        "left the host unit research-runner.service running" in capsys.readouterr().out
+    (user / "research-runner.service").write_text(RENDERED)
+    plan = [
+        unit(tmp_path, tmp_path / "r.container", "x", "research-runner.service", True)
+    ]
+    old = units.retired(plan, user)
+    assert units.retire(old, plan, tmp_path / "backup") == (
+        [],
+        ["research-runner.service"],
     )
+    assert (user / "research-runner.service").is_file()
+
+
+def test_the_podcasts_host_units_are_retired_and_their_containers_started(
+    tmp_path, monkeypatch
+):
+    """From timers to workers to containers: on a machine with any of the podcasts' host
+    units installed, each goes, the containers take over the runner's and the workers'
+    names, and podcasts-web stays."""
+    monkeypatch.setattr(units.subprocess, "run", lambda *a, **kw: None)
+    planned = plan(tmp_path)
+    user = tmp_path / "user"
+    user.mkdir()
+    old = [
+        "podcasts-runner.service",
+        "podcasts-sync-worker.service",
+        "podcasts-sync.timer",
+        "podcasts-sync@.service",
+        "podcasts-transcribe-worker.service",
+        "podcasts-transcribe.service",
+        "podcasts-transcribe.timer",
+    ]
+    for name in [*old, "podcasts-web.service"]:
+        (user / name).write_text(RENDERED)
+    retired = units.retired(planned, user)
+    assert [p.name for p in retired] == old
+    start, left = units.retire(retired, planned, tmp_path / "backup")
+    assert start == [
+        "podcasts-runner.service",
+        "podcasts-sync-worker.service",
+        "podcasts-transcribe-worker.service",
+    ]
+    assert left == [] and [p.name for p in user.iterdir()] == ["podcasts-web.service"]
 
 
 def test_units_retires_the_old_host_unit_then_starts_its_container(
@@ -340,7 +406,7 @@ def test_units_retires_the_old_host_unit_then_starts_its_container(
 
     user, containers = tmp_path / "user", tmp_path / "containers"
     user.mkdir()
-    (user / "relay.service").write_text("[Service]\nExecStart=old\n")
+    (user / "relay.service").write_text(RENDERED + "[Service]\nExecStart=old\n")
     # Everything else is installed as the repo has it, so only the old relay is left.
     planned = plan(tmp_path)
     for u in planned:

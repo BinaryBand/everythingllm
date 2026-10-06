@@ -2,8 +2,8 @@
 container (server.py) forwards each tool call here over hostrpc and shows the agent the
 text returned. Each function in OPS is the tool of the same name; server.py describes them
 to the agent. The work, and everything it needs (the feeds, the model's key, the audio
-stack), stays on the host; syncs run as units of their own (see library.Units), so
-restarting this service stops none.
+stack), stays on the host; syncs are only asked for here, and run by podcasts-sync-worker
+(sync.py, library.Library.start_sync), so restarting this service stops none.
 
 Config (environment, from host.env and the unit):
   PODCASTS_SOCKET      socket to listen on (default <storage>/everythingllm/podcasts/runner.sock)
@@ -45,7 +45,10 @@ def _started(started: bool) -> str:
         return (
             "Downloading in the background; call list_podcasts later to see progress."
         )
-    return "A sync is already running; it picks up new podcasts before it finishes."
+    return (
+        "A sync is already running (it picks up new podcasts before it finishes); "
+        "this one starts after it."
+    )
 
 
 def find_podcast(query: str) -> str:
@@ -91,7 +94,7 @@ def add_podcast(
     try:
         sync = _started(lib().start_sync(slug))
     except LibraryError as e:  # the subscription is saved either way
-        sync = f"But {e}. Nothing will download until that's fixed."
+        sync = f"But {e}: nothing downloads until then."
     verb = "Subscribed to" if new else "Updated"
     return (
         f"{verb} '{show.title}' ({len(show.episodes)} episodes in its feed, {_keeping(keep)}; "
@@ -111,6 +114,11 @@ def list_podcasts() -> str:
         reason = last["error"].splitlines()[-1]
         out.append(
             f"The last sync (started {last['started']}) crashed: {reason}. Details are in sync.log."
+        )
+    elif last and last.get("stopped") and not running:
+        out.append(
+            f"The last sync (started {last['started']}) was stopped part-way by a restart; "
+            "the sync worker finishes it when it's back."
         )
     elif last and not last.get("finished") and not running:
         out.append(

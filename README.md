@@ -108,8 +108,8 @@ for a run (the guard), its health checks, the steps its setup runs first, and wh
 `packages/apps` (standard library only, like `hostctl`);
 app code never does. `uv run hostctl apps` lists the apps; for each:
 
-- `uv run hostctl <app>-setup` runs its `before` steps (the sandbox's image build, the agents and relay
-  key files), maps its tailnet paths, enables and (re)starts its units, asking first while
+- `uv run hostctl <app>-setup` runs its `before` steps (the sandbox's image build, the agents, relay
+  and gateway key files), maps its tailnet paths, enables and (re)starts its units, asking first while
   a guarded one has a run going (`FORCE=1` doesn't ask), and starts its timers
   (`hostctl.appctl`).
 - `uv run hostctl <app>-logs` follows its units and the ones it watches.
@@ -231,6 +231,8 @@ through its UI.
     current (see "Deep research")
 - `packages/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
   AnythingLLM's agent; also a workspace member (see "Nilson relay")
+- `packages/gateway/` — the MCP gateway, a host service that serves the fronts' tools over
+  HTTP to MCP clients other than AnythingLLM (see "MCP gateway")
 - `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`uv run hostctl units`);
   each one's `Description=` says what it does, and its app's `uv run hostctl <app>-setup` (see "The
   apps") enables it.
@@ -240,8 +242,8 @@ through its UI.
   (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's
   laid out by kind:
 
-      venvs/<name>/        the host services' venvs (agents, audit, podcasts, relay,
-                           research, sandbox, sites, splice)
+      venvs/<name>/        the host services' venvs (agents, audit, gateway, podcasts,
+                           relay, research, sandbox, sites, splice)
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
@@ -270,7 +272,8 @@ through its UI.
     and the closing checklist
   - `appctl` — the apps' setup, logs and tailnet mappings, from the registry
   - `run_guard` — asks before a runner with a live run restarts
-  - `agents_env`, `relay_env` — the agents and relay setups' key file checks
+  - `agents_env`, `relay_env`, `gateway_env` — the agents, relay and gateway setups' key
+    file checks
   - `skills` — writes the generated skills (`uv run hostctl skills`)
   - `health.sh` — `uv run hostctl health`
 
@@ -416,7 +419,8 @@ The repo is mounted read-only into the AnythingLLM container at `/mcp` (see the
 `Volume=` line in `host/quadlet/anythingllm.container.in`), and `mcp_servers.json` launches each server
 with `uv run --frozen --project /mcp --package <name>`. The container's venv and uv
 cache live in `/srv/anythingllm/storage/everythingllm/mcp/`. The container can't reach the host's
-loopback, so servers run inside it over stdio rather than as host HTTP services.
+loopback, so servers run inside it over stdio rather than as host HTTP services. Other MCP
+clients get the same tools over HTTP from the gateway (see "MCP gateway").
 
 ### Services on the host
 
@@ -1032,6 +1036,51 @@ unused).
   `~/.config/everythingllm/agents.env` (`ANYTHINGLLM_API_KEY`, mode 600, put there by hand);
   `uv run hostctl agents-setup` checks it. Like research-runner, it isn't restarted by `uv run hostctl units`
   while a delegation is going (`hostctl.run_guard`).
+
+## MCP gateway
+
+The gateway (`packages/gateway`, `gateway.service`, 127.0.0.1:8452, tailnet https :8452)
+serves the runners' tools over MCP's streamable HTTP to clients other than AnythingLLM,
+such as Claude Code on another machine on the tailnet (`docs/.proposals/gateway-and-containers.md`,
+kept out of git). It's one more front on the host, over the same runner sockets:
+
+- **The fronts' own tools.** It imports `sites.server`, `podcasts.server` and
+  `audit.server` and serves each one's `tool.registered` (what `hostrpc.forwarder`
+  registered), so the schemas and docstrings are the ones AnythingLLM sees. A front's
+  skills, the ops that write or act, aren't tools, so they aren't served. Two fronts with a
+  tool of the same name stop it from starting.
+- **Delegation.** `delegate`, `wait`, `runs` and `cancel` over agents-runner
+  (`gateway/agents.py`, declared like a front's tools). A client follows a run with `wait`,
+  advancing `since` by the events it got, until `done`. The daily budget
+  (`AGENTS_DAILY_USD`) counts these delegations too.
+- **Sockets.** The fronts' `hostrpc.caller` falls back to the container's storage path, so
+  at start the gateway sets each front's `<FRONT>_SOCKET` to the host's
+  (`hostrpc.socket_path`), unless it's set already.
+
+**Clients and tokens.** Every path but `/health` needs `Authorization: Bearer <token>`. Each
+client has its own token, a `GATEWAY_TOKEN_<NAME>` line in
+`~/.config/everythingllm/gateway.env` (mode 600), and its name is `<name>` in lowercase,
+`_` as `-`. To revoke a client, delete its line and restart the gateway. Each tool call is
+logged with the client's name and the tool's, never its arguments or the token, and a test
+holds that. The server is stateless HTTP; DNS-rebinding protection allows only
+`127.0.0.1`, `localhost` and `PUBLIC_HOST` as the Host.
+
+Why it may act where an MCP tool in AnythingLLM may not: writes are skills there because an
+MCP call doesn't say which workspace made it, so it can't refuse a delegated task. A
+gateway call is named by its token. The gateway's first stage serves only reads,
+`refresh_podcasts` (which only starts background work) and delegation (whose tasks can only
+read). Writes, the sandbox and research come later, with a grant per client.
+
+**Setting it up.** `uv run hostctl gateway-setup` makes `gateway.env` with a token for
+`claude-code` when it's missing, maps the port, and starts the unit. It isn't part of
+`uv run hostctl install`. Then, on the client's machine:
+
+    claude mcp add --transport http everythingllm https://<PUBLIC_HOST>:8452/mcp \
+      --header "Authorization: Bearer <GATEWAY_TOKEN_CLAUDE_CODE from gateway.env>"
+
+`uv run hostctl gateway-logs` follows it. A code change to a front's tools reaches the
+gateway when it restarts (`systemctl --user restart gateway`); `uv run hostctl deploy`
+doesn't restart it.
 
 ## Nilson relay
 

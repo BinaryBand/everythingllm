@@ -154,6 +154,22 @@ def test_a_front_calls_through_caller_and_gets_the_services_errors(sock, monkeyp
         asyncio.run(call("check", {"n": 1}))
 
 
+def test_a_forwarder_lists_what_it_registered():
+    added = []
+    tool = hostrpc.forwarder(lambda op, args: None, added.append)
+
+    @tool
+    async def first(a: int) -> str:
+        """First."""
+
+    @tool
+    async def second() -> str:
+        """Second."""
+
+    assert tool.registered == added == [first, second]
+    assert [f.__name__ for f in tool.registered] == ["first", "second"]
+
+
 def test_socket_path_is_the_env_or_storage(monkeypatch):
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")
     monkeypatch.delenv("PICKY_SOCKET", raising=False)

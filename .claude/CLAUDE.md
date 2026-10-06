@@ -96,7 +96,10 @@ is 3.13. Keep code 3.12-compatible, and check with
   member is an MCP server: `publicweb`, `llm`, `chatimage` and `hostrpc` are libraries, `hostctl` is the host's command (`uv run hostctl`), and
   `splice`, `research` and `sandbox` are host-only services. `relay` is a host HTTP service
   for the Nilson app, not the agent; its secrets are in `~/.config/everythingllm/relay.env`,
-  never in the repo.
+  never in the repo. `gateway` is the one MCP server on the host: it serves the fronts' own
+  tools (each front's `tool.registered`) and the agents ops over HTTP to other MCP clients,
+  each with a token in `~/.config/everythingllm/gateway.env`. A front's tool reaches it
+  unchanged, so a new read tool needs nothing there; it restarts only by hand.
 - The agent does short judgment work through thin tools. For example, the
   `daily-news-page` scheduled job calls `headlines` and then the `write-entry` skill. Code asks a
   model itself (`packages/llm`) only where there's no agent (background syncs, reader clicks,

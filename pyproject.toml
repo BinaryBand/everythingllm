@@ -9,10 +9,12 @@ exclude = ["packages/.*", "packages/__pycache__"]
 # pytest comes with the dev group (splice adds its test-only dependencies to it).
 [tool.uv.sources]
 apps = { workspace = true }
+audit = { workspace = true }
 chatimage = { workspace = true }
 hostctl = { workspace = true }
 hostrpc = { workspace = true }
 llm = { workspace = true }
+podcasts = { workspace = true }
 publicweb = { workspace = true }
 runs = { workspace = true }
 sandbox = { workspace = true }
@@ -38,5 +40,5 @@ testpaths = ["packages"]
 
 # An MCP server's tools are signatures whose bodies hostrpc.forwarder supplies.
 [[tool.ty.overrides]]
-include = ["packages/*/src/*/server.py"]
+include = ["packages/*/src/*/server.py", "packages/gateway/src/gateway/agents.py"]
 rules = { empty-body = "ignore" }

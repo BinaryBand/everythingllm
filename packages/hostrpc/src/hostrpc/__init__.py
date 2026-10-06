@@ -256,7 +256,8 @@ def forwarder(call: Callable, register: Callable[[Callable], Any]):
     """A decorator for an MCP server's tools: the decorated function's signature and
     docstring describe the tool (register is the server's add_tool), and calling it sends
     op=<its name>, args=<every parameter, defaults applied> through `call` (from caller),
-    so a tool is written as a signature with no body."""
+    so a tool is written as a signature with no body. The decorator's `registered` lists
+    what it registered, which the gateway serves again over HTTP."""
 
     def decorate(fn):
         sig = inspect.signature(fn)
@@ -268,8 +269,10 @@ def forwarder(call: Callable, register: Callable[[Callable], Any]):
             return await call(fn.__name__, dict(bound.arguments))
 
         register(forward)
+        decorate.registered.append(forward)
         return forward
 
+    decorate.registered = []
     return decorate
 
 

@@ -65,7 +65,9 @@ def test_a_runner_is_one_of_its_apps_units_and_only_runners_are_guarded():
             )
             assert not app.runner.endswith(".timer") and app.runner not in app.watch
         if app.guard:
-            assert app.runner, f"{app.name} is guarded but has no runner"
+            assert app.runner or len(app.container) == 1, (
+                f"{app.name} is guarded but has no runner or one container"
+            )
 
 
 def test_a_runner_may_be_a_containers_service(tmp_path):
@@ -134,6 +136,10 @@ def test_the_tools_views_are_what_the_audit_had():
     assert {u: (g.runs, g.noun) for u, g in guarded.items()} == {
         "research-runner.service": ("research/runs", "Deep-research runs"),
         "agents-runner.service": ("agents/runs", "Delegations"),
+        "egress-proxy.service": (
+            "research/runs",
+            "Deep-research runs (their requests go through the proxy)",
+        ),
     }
     assert apps.watched()["systemd-static_agent"] == (
         "CONTAINER_NAME",

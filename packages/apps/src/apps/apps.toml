@@ -55,6 +55,8 @@ install = true
 summary = "the egress proxy: the service containers' only way out of egress-net, to what egress.toml allows each"
 container = { "systemd-egress-proxy" = "egress proxy" }
 before = ["python3 -m hostctl service-images"]
+# Restarting the proxy cuts every tunnel, research's model and page requests among them.
+guard = { runs = "research/runs", noun = "Deep-research runs (their requests go through the proxy)" }
 install = true
 
 [podcasts]

@@ -135,12 +135,14 @@ def runners(apps: dict[str, App] | None = None) -> dict[str, str]:
 
 
 def guarded(apps: dict[str, App] | None = None) -> dict[str, Guard]:
-    """Units whose restarts wait while a run is going: the runner unit -> its guard."""
-    return {
-        app.runner: app.guard
-        for app in (apps or load()).values()
-        if app.runner and app.guard
-    }
+    """Units whose restarts wait while a run is going: the runner unit, or for an app
+    with no runner its one container's unit (the egress proxy, which carries research's
+    runs) -> its guard."""
+    out = {}
+    for app in (apps or load()).values():
+        if app.guard and (unit := app.runner or next(iter(app.container_units), None)):
+            out[unit] = app.guard
+    return out
 
 
 def app_of(unit: str, apps: dict[str, App] | None = None) -> App | None:

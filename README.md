@@ -93,12 +93,14 @@ versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
 restarts nothing. A guarded runner with a run going is left running, and a container whose
 image of ours or network isn't there yet isn't started: its app's setup makes them (see
-"Service containers"). Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
+"Service containers"). Nor is one whose egress proxy (its `Wants=`) isn't installed yet:
+`uv run hostctl units egress` comes first. Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
 A host unit it rendered whose template is gone is retired: stopped, disabled and moved to
 the backups. That is how the podcasts' old timers go, and how a host runner gives way to
 its container, whose Quadlet unit of the same name the old copy would hide (the container
-is started then, unless it's a guarded runner with a run going). `uv run hostctl diff`
-lists what it would retire. Units it didn't render are left alone. Given app names, `uv run
+is started then, unless it's a guarded runner with a run going). While one of an app's
+containers can't start yet, every old host unit of that app stays as it is, so the app is
+never left with neither. `uv run hostctl diff` lists what it would retire. Units it didn't render are left alone. Given app names, `uv run
 hostctl units relay` installs and retires only those apps' units (a unit the registry no
 longer has counts as an app's by its name), so services move into their containers one at
 a time; the rest wait for a later run.
@@ -555,8 +557,9 @@ the proxy (a minute or three); later ones find it synced.
 <app>-setup`, or `systemctl --user restart <x>.service`. `<app>-setup` restarts an app's
 containers (it doesn't enable them: Quadlet's `[Install]` does), asking first while a
 guarded runner has a run going, as for a host unit. `uv run hostctl units` starts a changed
-container, except a guarded one with a run going, and one whose image or network isn't
-there yet, which waits for its app's setup.
+container, except a guarded one with a run going, and one whose image, network or egress
+proxy isn't there yet, which waits for its app's setup (or `units egress`). The egress
+proxy is guarded by research's runs, since its restart cuts their requests.
 
 **Hardening.** Every service container's template has these Quadlet keys
 (`packages/egress/tests/test_quadlet.py` holds them to it):

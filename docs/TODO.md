@@ -35,9 +35,6 @@ containers"). The checks a script couldn't make, and the cleanup once they've he
 
 - **Checks that need a person.**
   - Run one Nilson chat to the end through the relay, with its ntfy notice.
-  - In Claude Code, reconnect the gateway (`/mcp`). tools/list should show `agents_*`,
-    `research_*`, `sandbox_*` and the write tools. `sandbox_run` should write under
-    `~/.local/share/everythingllm/sandbox/workspaces/client-claude-code/threads/gateway`.
   - Ask the agent for one Daily News article, which drives the article writer in
     sites-runner's container.
   - Watch the first sync and transcription pass finish in the workers' containers

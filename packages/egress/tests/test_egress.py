@@ -429,3 +429,97 @@ def test_an_unreachable_host_is_a_502(monkeypatch):
         return answer
 
     assert asyncio.run(go()).startswith(b"HTTP/1.1 502")
+
+
+class Scripted(Upstream):
+    """An upstream that plays `script(reader, writer)` instead of answering at once."""
+
+    def __init__(self, script):
+        super().__init__()
+        self.handle = script
+
+
+async def tunnel(script, client) -> None:
+    """A CONNECT tunnel to `script`, with `client(reader, writer)` at the near end."""
+    upstream = Scripted(script)
+    await upstream.start()
+    p = proxy.Proxy(config_for(), upstream.opener)
+    server = await asyncio.start_server(p.handle, "127.0.0.1", 0)
+    reader, writer = await asyncio.open_connection(
+        "127.0.0.1", server.sockets[0].getsockname()[1]
+    )
+    writer.write(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
+    await reader.readuntil(b"\r\n\r\n")
+    try:
+        await asyncio.wait_for(client(reader, writer), 5)
+    finally:
+        writer.close()
+        server.close()
+        upstream.server.close()
+
+
+QUIET = 0.3  # IDLE_SECONDS, for these tests
+CHUNKS = 8  # one each 0.1 s: longer than QUIET
+
+
+def test_a_download_keeps_the_quiet_way_up_open(monkeypatch):
+    fake_dns(monkeypatch, PUBLIC)
+    monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)
+    seen = {}
+
+    async def download(reader, writer):
+        for _ in range(CHUNKS):
+            writer.write(b"x")
+            await writer.drain()
+            await asyncio.sleep(0.1)
+        seen["ended"] = reader.at_eof()  # the proxy didn't half-close the way up
+        seen["after"] = await asyncio.wait_for(reader.read(100), 2)
+        writer.write(b"done")
+        await writer.drain()
+        writer.close()
+
+    async def client(reader, writer):
+        assert await reader.readexactly(CHUNKS) == b"x" * CHUNKS
+        writer.write(b"next request")  # a kept-alive connection's, say
+        await writer.drain()
+        assert await reader.read() == b"done"
+
+    asyncio.run(tunnel(download, client))
+    assert seen == {"ended": False, "after": b"next request"}
+
+
+def test_an_upload_keeps_the_quiet_way_down_open(monkeypatch):
+    fake_dns(monkeypatch, PUBLIC)
+    monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)
+
+    async def upload(reader, writer):
+        await reader.readexactly(CHUNKS)
+        writer.write(b"ok")
+        await writer.drain()
+        writer.close()
+
+    async def client(reader, writer):
+        for _ in range(CHUNKS):
+            writer.write(b"x")
+            await writer.drain()
+            await asyncio.sleep(0.1)
+        assert await reader.read() == b"ok"
+
+    asyncio.run(tunnel(upload, client))
+
+
+def test_a_tunnel_quiet_both_ways_is_closed(monkeypatch):
+    fake_dns(monkeypatch, PUBLIC)
+    monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)
+    seen = {}
+
+    async def silent(reader, writer):
+        seen["upstream"] = await reader.read()  # until the proxy closes it
+
+    async def client(reader, writer):
+        start = asyncio.get_running_loop().time()
+        assert await reader.read() == b""
+        seen["after"] = asyncio.get_running_loop().time() - start
+
+    asyncio.run(tunnel(silent, client))
+    assert seen["upstream"] == b"" and QUIET * 0.9 <= seen["after"] < 2

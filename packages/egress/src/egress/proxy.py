@@ -30,6 +30,7 @@ import asyncio
 import logging
 import os
 import socket
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -159,15 +160,37 @@ async def reply(writer: asyncio.StreamWriter, status: str, text: str) -> None:
         pass
 
 
-async def pipe(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
-    """Copy until `src` ends or goes quiet for IDLE_SECONDS, then end `dst`'s side."""
+class Tunnel:
+    """When a tunnel last moved, either way: a download whose request went up an hour ago
+    keeps the way up open, and an upload the server hasn't answered yet the way down."""
+
+    def __init__(self) -> None:
+        self.moved = time.monotonic()
+
+    def left(self) -> float:
+        """Seconds until the tunnel has been quiet both ways for IDLE_SECONDS."""
+        return self.moved + IDLE_SECONDS - time.monotonic()
+
+
+async def pipe(
+    src: asyncio.StreamReader, dst: asyncio.StreamWriter, tunnel: Tunnel
+) -> None:
+    """Copy until `src` ends, then end `dst`'s side; or stop, leaving it, once the tunnel
+    has been quiet both ways for IDLE_SECONDS."""
     try:
-        while data := await asyncio.wait_for(src.read(65536), IDLE_SECONDS):
+        while (left := tunnel.left()) > 0:
+            try:
+                data = await asyncio.wait_for(src.read(65536), left)
+            except TimeoutError:
+                continue  # the other way may have moved meanwhile
+            if not data:
+                if dst.can_write_eof():
+                    dst.write_eof()
+                return
+            tunnel.moved = time.monotonic()
             dst.write(data)
             await dst.drain()
-        if dst.can_write_eof():
-            dst.write_eof()
-    except (OSError, TimeoutError):
+    except OSError:
         pass
 
 
@@ -261,8 +284,9 @@ class Proxy:
             else:
                 up_writer.write(request.forward)
             # The answer coming back is what counts: once it ends, so does the connection.
-            up = asyncio.ensure_future(pipe(reader, up_writer))
-            await pipe(up_reader, writer)
+            tunnel = Tunnel()
+            up = asyncio.ensure_future(pipe(reader, up_writer, tunnel))
+            await pipe(up_reader, writer, tunnel)
             up.cancel()
             with suppress(asyncio.CancelledError):
                 await up

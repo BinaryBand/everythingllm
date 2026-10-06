@@ -17,11 +17,14 @@ Standard library only, run with the system `python3`, like sync.py.
 
 import argparse
 import difflib
+import json
 import os
 import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,6 +77,37 @@ def storage() -> Path:
             "ANYTHINGLLM_STORAGE isn't set: copy host.env.example to host.env and fill it in."
         )
     )
+
+
+_tokens: dict[str, str] = {}  # AnythingLLM's API -> this run's login token
+
+
+def anythingllm_headers(api: str, fresh: bool = False) -> dict[str, str]:
+    """The headers for AnythingLLM's internal API: none while it has no password, else a
+    Bearer token from logging in with the password in storage's .env, once per run
+    (`fresh` logs in again, after a 401). A copy of hostrpc.anythingllm_headers."""
+    env = env_file(storage() / ".env")
+    if not (env.get("AUTH_TOKEN") and env.get("JWT_SECRET")):
+        return {}
+    if fresh or api not in _tokens:
+        req = urllib.request.Request(
+            f"{api.rstrip('/')}/request-token",
+            json.dumps({"password": env["AUTH_TOKEN"]}).encode(),
+            {"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as res:
+                token = json.load(res).get("token")
+        except urllib.error.HTTPError as e:
+            sys.exit(
+                f"AnythingLLM refused the password in {storage() / '.env'} ({e.code})"
+            )
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            sys.exit(f"couldn't log in to AnythingLLM at {api}: {e}")
+        if not token:
+            sys.exit(f"AnythingLLM refused the password in {storage() / '.env'}")
+        _tokens[api] = token
+    return {"Authorization": f"Bearer {_tokens[api]}"}
 
 
 def render(template: str, values: dict[str, str]) -> str:

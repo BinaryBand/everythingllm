@@ -104,7 +104,7 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
     monkeypatch.setattr(
         publish,
         "embed_report",
-        lambda *a: embedded.append(a) or "deep-research/alpha-x.json",
+        lambda *a, **k: embedded.append(a) or "deep-research/alpha-x.json",
     )
     progress, meter = [], []
     req = job.Request(

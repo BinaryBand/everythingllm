@@ -95,6 +95,9 @@ is 3.13. Keep code 3.12-compatible, and check with
   Put new data in the folder of its kind, not at the root. Storage keeps AnythingLLM's own data, the runners' sockets (under `everythingllm/`) and what AnythingLLM
   itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.
+- AnythingLLM's internal API (`/api/...`, not `/api/v1/`) needs its password: call it with
+  `hostrpc.anythingllm_headers` (packages) or `units.anythingllm_headers` (tools), never
+  without. The developer API (`/api/v1/`) takes the API key instead.
 
 ## Sites and pages
 

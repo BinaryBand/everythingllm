@@ -156,7 +156,7 @@ def job_run(job: str, run_id: int = 0) -> str:
 def run_job(name: str) -> str:
     e = checks.Env.from_env()
     job = find_job(e, name)
-    status, body = e.post(f"{e.api}/scheduled-jobs/{job['id']}/trigger")
+    status, body = e.internal(f"/scheduled-jobs/{job['id']}/trigger", post=True)
     try:
         reply = json.loads(body)
     except json.JSONDecodeError:

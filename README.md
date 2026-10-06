@@ -97,6 +97,26 @@ It must leave them alone now, or its next run undoes `make units`.
 `/_live/research` to research-runner's live cards), SearXNG on :8888, AnythingLLM's UI on
 :3001 and the Nilson relay on :8446. Other mappings on the machine are left alone.
 
+### AnythingLLM's password
+
+AnythingLLM's own API (`/api/...`, which its UI uses; not the developer API's `/api/v1/`) answers
+anyone who reaches it until it has a password, and tailnet :3001 reaches it. That includes
+scheduled jobs, which run the agent with every tool approved, `.env` changes and new API keys.
+So it gets a password (Settings > Security > Password protection; long and random, from
+`[a-zA-Z0-9_-!@$%^&*();]`), which AnythingLLM keeps in plain text as `AUTH_TOKEN` in storage's
+`.env`, beside a `JWT_SECRET` it makes.
+
+Our callers of that API log in with it: `tools/sync.py` and `tools/machine.py` through
+`units.anythingllm_headers`, the audit and research's workspace embedding through
+`hostrpc.anythingllm_headers`. Each logs in once per process (a login lasts 30 days and is
+logged) and once more after a 401; with no password set they send nothing. The relay uses the
+developer API key and doesn't log in. `make health` and the audit's `security` check fail when
+`/api/scheduled-jobs` answers without a login.
+
+What a password doesn't close: `/api/request-token` has no rate limit, so the password has to
+be long; a developer API key (the relay's) still has full `/api/v1` access, `update-env`
+included; the agent's websocket needs only an invocation's id.
+
 Not in this repo, so a new machine needs them first: rootless podman with Quadlet, systemd
 lingering for the user, tailscale, uv, zola in `/usr/local/bin`, SearXNG (deployed by Ansible,
 see SearXNG below) and Ollama if it's the embedding provider. AnythingLLM's own settings
@@ -1033,12 +1053,16 @@ to it, since the AnythingLLM container can't reach the host's loopback.
 
 AnythingLLM uses it as the search provider (Agent Skills > Web Search > SearXNG), with
 base URL `https://<PUBLIC_HOST>:8888/search`. The same can be set through the
-local API:
+local API, logged in with the password (AnythingLLM's internal API needs it; see "AnythingLLM's
+password" below):
 
-    curl -X POST localhost:3001/api/system/update-env -H 'Content-Type: application/json' \
-      -d '{"AgentSearXNGApiUrl":"https://<PUBLIC_HOST>:8888/search"}'
-    curl -X POST localhost:3001/api/admin/system-preferences -H 'Content-Type: application/json' \
-      -d '{"agent_search_provider":"searxng-engine"}'
+    read -rsp 'AnythingLLM password: ' pw; echo
+    token=$(curl -s localhost:3001/api/request-token -H 'Content-Type: application/json' \
+      -d "$(jq -n --arg p "$pw" '{password: $p}')" | jq -r .token)
+    curl -X POST localhost:3001/api/system/update-env -H "Authorization: Bearer $token" \
+      -H 'Content-Type: application/json' -d '{"AgentSearXNGApiUrl":"https://<PUBLIC_HOST>:8888/search"}'
+    curl -X POST localhost:3001/api/admin/system-preferences -H "Authorization: Bearer $token" \
+      -H 'Content-Type: application/json' -d '{"agent_search_provider":"searxng-engine"}'
 
 Some engines block servers now and then (DuckDuckGo answers 403 and is suspended for a
 few minutes); the response's `unresponsive_engines` lists them. Check with

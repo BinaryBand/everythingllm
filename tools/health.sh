@@ -44,6 +44,11 @@ podcasts-web|http://127.0.0.1:8449/health
 Nilson relay|http://127.0.0.1:8446/health
 research live cards|http://127.0.0.1:8450/_live/research/dr-00000000.png
 EOF
+# Without a password, AnythingLLM's internal API answers anyone who reaches :3001 (the tailnet).
+case "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/api/scheduled-jobs)" in
+  401) ok "AnythingLLM asks for a login" ;;
+  *) fail "AnythingLLM answers without a login: set a password (Settings → Security)" ;;
+esac
 
 echo "Sockets"
 # The host services the container talks to over sockets in storage.

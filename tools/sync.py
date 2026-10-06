@@ -32,7 +32,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from units import BACKUPS, ROOT, storage
+from units import BACKUPS, ROOT, anythingllm_headers, storage
 
 STORAGE = storage()
 REPO = ROOT / "anythingllm"
@@ -78,15 +78,17 @@ def planned_files() -> dict[Path, str]:
     return out
 
 
-def api(method: str, path: str, body: dict | None = None) -> dict:
+def api(method: str, path: str, body: dict | None = None, fresh: bool = False) -> dict:
+    """Call AnythingLLM's internal API, logged in if it has a password (once more after a 401)."""
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
-        API + path, data, {"Content-Type": "application/json"}, method=method
-    )
+    headers = {"Content-Type": "application/json", **anythingllm_headers(API, fresh)}
+    req = urllib.request.Request(API + path, data, headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.load(resp)
     except urllib.error.HTTPError as e:
+        if e.code == 401 and not fresh:
+            return api(method, path, body, fresh=True)
         sys.exit(f"{method} {path}: {e.code} {e.read().decode(errors='replace')}")
     except urllib.error.URLError as e:
         sys.exit(f"AnythingLLM API not reachable at {API}: {e.reason}")

@@ -10,7 +10,8 @@ with `request` (most through `caller`), and blocking code on the host (a site bu
 worker thread or a command) with `request_sync`. The agent skills speak the same protocol from node,
 through anythingllm/agent-skills/_lib/hostrpc.js.
 
-It also holds the two file helpers every service needs: `atomic_write` and `env_values`.
+It also holds the two file helpers every service needs, `atomic_write` and `env_values`, and
+`anythingllm_headers`, the login for AnythingLLM's internal API.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ import os
 import signal
 import socket as socketlib
 import tempfile
+import urllib.error
+import urllib.request
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from types import FunctionType
@@ -77,6 +80,41 @@ def env_values(
     if environ:
         found.update({n: os.environ[n] for n in names if os.environ.get(n)})
     return found
+
+
+_tokens: dict[str, str] = {}  # AnythingLLM's API -> this process's login token
+
+
+def anythingllm_headers(
+    api: str, env_file: str | Path, *, fresh: bool = False
+) -> dict[str, str]:
+    """The headers for AnythingLLM's internal API (`<api>/...`, not the developer API's
+    /v1): none while it has no password, else a Bearer token from logging in with the
+    password in its .env (AUTH_TOKEN, set in the UI's Security settings). One login per
+    process, since each one is logged; `fresh` logs in again, after a 401. Tools copy this
+    as units.anythingllm_headers."""
+    env = env_values(env_file, ("AUTH_TOKEN", "JWT_SECRET"), environ=False)
+    if not (env.get("AUTH_TOKEN") and env.get("JWT_SECRET")):
+        return {}
+    if fresh or api not in _tokens:
+        req = urllib.request.Request(
+            f"{api.rstrip('/')}/request-token",
+            json.dumps({"password": env["AUTH_TOKEN"]}).encode(),
+            {"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as res:
+                token = json.load(res).get("token")
+        except urllib.error.HTTPError as e:
+            raise RunnerError(
+                f"AnythingLLM refused the password in {env_file} ({e.code})"
+            ) from None
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            raise RunnerError(f"couldn't log in to AnythingLLM at {api}: {e}") from None
+        if not token:
+            raise RunnerError(f"AnythingLLM refused the password in {env_file}")
+        _tokens[api] = token
+    return {"Authorization": f"Bearer {_tokens[api]}"}
 
 
 def storage() -> Path:

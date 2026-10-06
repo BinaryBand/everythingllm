@@ -93,10 +93,12 @@ def embed_report(
     now: datetime | None = None,
     wait: float = EMBED_WAIT,
     poll: float = EMBED_POLL,
+    login: Callable[[bool], dict[str, str]] = lambda fresh: {},
 ) -> str:
     """Store the report as an AnythingLLM document under <documents_dir>/<folder>/ and embed
     it into the workspace with that slug, through AnythingLLM's API at `api` (as the UI's
     document picker does), and wait up to `wait` seconds for the workspace to list it.
+    `login(fresh)` gives the headers for AnythingLLM's password (hostrpc.anythingllm_headers).
     Returns the docpath. Raises EmbedError when it wasn't embedded;
     the document file stays, so it can still be embedded from the workspace's settings."""
     id = str(uuid.uuid4())
@@ -122,9 +124,13 @@ def embed_report(
     client = client or httpx.Client(timeout=300)
     base = f"{api.rstrip('/')}/workspace/{quote(workspace, safe='')}"
     try:
-        resp = client.post(
-            f"{base}/update-embeddings", json={"adds": [docpath], "deletes": []}
-        )
+        for fresh in (False, True):  # a login lasts 30 days: once more after a 401
+            client.headers.update(login(fresh))
+            resp = client.post(
+                f"{base}/update-embeddings", json={"adds": [docpath], "deletes": []}
+            )
+            if resp.status_code != 401 or "Authorization" not in client.headers:
+                break
         if resp.status_code != 200:
             raise EmbedError(
                 f"AnythingLLM answered {resp.status_code} for workspace '{workspace}'"

@@ -160,8 +160,12 @@ class Env:
     credit_fail_usd: float = 0.25
     now: Callable[[], datetime] = lambda: datetime.now(UTC)
     http: Callable[..., tuple[int, bytes]] = http  # (url, headers=None)
-    post: Callable[[str], tuple[int, bytes]] = lambda url: http(
-        url, data=b"{}", timeout=30
+    post: Callable[..., tuple[int, bytes]] = lambda url, headers=None: http(
+        url, headers, data=b"{}", timeout=30
+    )
+    env_file: Path | None = None  # AnythingLLM's .env, for its password; None: no login
+    login: Callable[..., dict[str, str]] = (
+        hostrpc.anythingllm_headers  # (api, env_file, fresh=) -> headers
     )
     run: Callable[[list[str]], Iterable[str]] = stream_lines
     storage: Path = field(
@@ -175,6 +179,7 @@ class Env:
     def from_env(cls) -> "Env":
         sites = Builder.from_env()  # the same sites sites-runner writes
         storage = hostrpc.storage()
+        env_file = Path(os.environ.get("ANYTHINGLLM_ENV", storage / ".env"))
         return cls(
             journal_dir=Path(os.environ.get("AUDIT_JOURNAL_DIR", "/var/log/journal")),
             api=os.environ.get("ANYTHINGLLM_API", "http://127.0.0.1:3001/api").rstrip(
@@ -189,9 +194,8 @@ class Env:
                     "AUDIT_RUNLOGS", hostrpc.data_dir() / "research" / "runs"
                 )
             ),
-            settings=read_settings(
-                Path(os.environ.get("ANYTHINGLLM_ENV", storage / ".env"))
-            ),
+            settings=read_settings(env_file),
+            env_file=env_file,
             storage=storage,
             credit_warn_usd=float(os.environ.get("AUDIT_CREDIT_WARN_USD", "2.0")),
             credit_fail_usd=float(os.environ.get("AUDIT_CREDIT_FAIL_USD", "0.25")),
@@ -201,8 +205,24 @@ class Env:
         """Today in Stockholm, the date reports and site entries go by."""
         return self.now().astimezone(STOCKHOLM).date()
 
+    def internal(self, path: str, post: bool = False) -> tuple[int, bytes]:
+        """AnythingLLM's internal API at `path` (a GET, or a POST of {}), logged in when it
+        has a password, and once more after a 401, since a login lasts 30 days."""
+        url, status, body = f"{self.api}{path}", 0, b""
+        for fresh in (False, True):
+            headers = (
+                self.login(self.api, self.env_file, fresh=fresh)
+                if self.env_file
+                else {}
+            )
+            call = self.post if post else self.http
+            status, body = call(url, headers) if headers else call(url)
+            if status != 401 or not headers:
+                break
+        return status, body
+
     def api_json(self, path: str):
-        status, body = self.http(f"{self.api}{path}")
+        status, body = self.internal(path)
         if status != 200:
             raise RuntimeError(
                 f"AnythingLLM API {path} answered {status or 'nothing'}: {body[:200].decode(errors='replace')}"
@@ -965,6 +985,37 @@ def _section_rules(
     return findings
 
 
+# --- AnythingLLM's password ---------------------------------------------------------
+
+
+def password(env: Env, since: datetime) -> list[Finding]:
+    """AnythingLLM's internal API answers anyone who can reach it (tailnet :3001) until it
+    has a password: they could make scheduled jobs, which run the agent with every tool
+    approved. Asked without a login, it should say 401."""
+    status, _ = env.http(f"{env.api}/scheduled-jobs")
+    if status == 401:
+        return []
+    if status == 200:
+        return [
+            Finding(
+                "fail",
+                "security",
+                "AnythingLLM has no password",
+                "Its internal API answers without a login, so anyone who reaches :3001 can"
+                " make scheduled jobs that run the agent with every tool approved. Set one"
+                " in Settings → Security → Password protection.",
+            )
+        ]
+    return [
+        Finding(
+            "warn",
+            "security",
+            "Couldn't tell whether AnythingLLM has a password",
+            f"/scheduled-jobs answered {status or 'nothing'} without a login, not 401.",
+        )
+    ]
+
+
 # --- everything ----------------------------------------------------------------------
 
 CHECKS: dict[str, Callable[[Env, datetime], list[Finding]]] = {
@@ -975,6 +1026,7 @@ CHECKS: dict[str, Callable[[Env, datetime], list[Finding]]] = {
     "jobs": jobs,
     "research": research_runs,
     "sites": sites,
+    "security": password,
 }
 
 

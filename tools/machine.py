@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from units import ROOT, env_file, host_settings
+from units import ROOT, anythingllm_headers, env_file, host_settings
 
 API = "http://127.0.0.1:3001/api"
 EXAMPLE_HOST = "machine.tailnet-name.ts.net"
@@ -101,13 +101,20 @@ def check() -> list[str]:
     return problems
 
 
-def api(method: str, path: str, body: dict | None = None) -> dict:
+def api(method: str, path: str, body: dict | None = None, fresh: bool = False) -> dict:
+    """Call AnythingLLM's internal API, logged in if it has a password (once more after a 401)."""
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
-        API + path, data, {"Content-Type": "application/json"}, method=method
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.load(resp)
+    headers = {"Content-Type": "application/json"}
+    if path != "/ping":  # answers before setup, and without a login
+        headers |= anythingllm_headers(API, fresh)
+    req = urllib.request.Request(API + path, data, headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and not fresh:
+            return api(method, path, body, fresh=True)
+        raise
 
 
 def wait_api(timeout: float = 180) -> None:
@@ -158,6 +165,10 @@ def checklist() -> list[tuple[bool | None, str]]:
     except (urllib.error.URLError, OSError, KeyError, ValueError):
         workspaces = 0
     return [
+        (
+            keys.get("AUTH_TOKEN", False) and keys.get("JWT_SECRET", False),
+            "Set a password (Settings > Security > Password protection): without one, anyone who reaches :3001 on the tailnet can use AnythingLLM's own API, scheduled jobs included. Use a long random one; our tools log in with it from the .env.",
+        ),
         (
             keys.get("LLM_PROVIDER", False),
             "Choose the chat model and enter its key (Settings > LLM Preference).",

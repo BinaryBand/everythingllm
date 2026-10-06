@@ -316,6 +316,9 @@ def _run(
                 url,
                 file_text(url),
                 settings.api,
+                login=lambda fresh: hostrpc.anythingllm_headers(
+                    settings.api, settings.env_file, fresh=fresh
+                ),
             )
         except Exception as e:  # noqa: BLE001 - the report is already published; this copy only warns
             copies["document_error"] = str(e)

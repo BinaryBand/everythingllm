@@ -891,3 +891,38 @@ def test_research_runs_in_progress_or_interrupted(env):
         ("warn", "Deep research run was interrupted"),
         ("info", "Deep research run in progress"),
     ]
+
+
+def test_password_wants_a_401_without_a_login(env):
+    env.pages[f"{API}/scheduled-jobs"] = (401, b"Unauthorized")
+    assert checks.password(env, SINCE) == []
+    env.pages[f"{API}/scheduled-jobs"] = (200, b'{"jobs": []}')
+    [f] = checks.password(env, SINCE)
+    assert (f.severity, f.title) == ("fail", "AnythingLLM has no password")
+    del env.pages[f"{API}/scheduled-jobs"]
+    [f] = checks.password(env, SINCE)
+    assert f.severity == "warn" and "answered 404" in f.detail
+
+
+def test_the_internal_api_logs_in_and_again_after_a_401(env, tmp_path):
+    env.env_file = tmp_path / ".env"
+    logins, seen = [], []
+
+    def login(api, env_file, fresh=False):
+        logins.append(fresh)
+        return {"Authorization": f"Bearer t{len(logins)}"}
+
+    def http(url, headers=None):
+        seen.append(headers)
+        ok = headers == {"Authorization": "Bearer t2"}  # the first token has expired
+        return (200, b'{"jobs": []}') if ok else (401, b"Unauthorized")
+
+    env.login, env.http = login, http
+    assert env.api_json("/scheduled-jobs") == {"jobs": []}
+    assert logins == [False, True] and len(seen) == 2
+
+
+def test_no_password_file_means_no_login(env):
+    env.login = lambda *a, **k: pytest.fail("logged in without a .env")
+    env.pages[f"{API}/scheduled-jobs"] = (200, b'{"jobs": []}')
+    assert env.api_json("/scheduled-jobs") == {"jobs": []}

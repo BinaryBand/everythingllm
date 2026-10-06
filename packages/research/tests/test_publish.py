@@ -207,3 +207,33 @@ def test_embed_report_waits_for_the_embedder_to_finish(tmp_path):
     )
     assert docpath.startswith("deep-research/s-")
     assert [m for m, _, _ in calls] == ["POST", "GET", "GET", "GET"]
+
+
+def test_embed_report_logs_in_and_again_after_a_401(tmp_path):
+    seen, logins = [], []
+
+    def handler(request):
+        seen.append((request.method, request.headers.get("Authorization")))
+        if request.headers.get("Authorization") != "Bearer t2":  # t1 has expired
+            return httpx.Response(401, text="Unauthorized")
+        if request.method == "POST":
+            return httpx.Response(200, json={"workspace": {}, "message": None})
+        adds = [p.name for p in (tmp_path / "deep-research").iterdir()]
+        return httpx.Response(
+            200,
+            json={
+                "workspace": {"documents": [{"docpath": f"deep-research/{adds[0]}"}]}
+            },
+        )
+
+    def login(fresh):
+        logins.append(fresh)
+        return {"Authorization": f"Bearer t{len(logins)}"}
+
+    embed_report(
+        "main", tmp_path, "deep-research", "heat-pumps", "Heat pumps",
+        "https://example.org/r/", TEXT, "http://127.0.0.1:3001/api",
+        httpx.Client(transport=httpx.MockTransport(handler)), login=login,
+    )  # fmt: skip
+    assert logins == [False, True]
+    assert seen == [("POST", "Bearer t1"), ("POST", "Bearer t2"), ("GET", "Bearer t2")]

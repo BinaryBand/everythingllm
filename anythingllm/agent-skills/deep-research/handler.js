@@ -38,6 +38,7 @@ module.exports.runtime = {
         embed,
         workspace: workspace?.slug || null,
         workspace_name: workspace?.name || null,
+        engine: String(args.ENGINE ?? "").trim().toLowerCase() || null,
       });
     } catch (e) {
       this.logger?.(`deep-research couldn't start a run: ${e?.message || e}`);

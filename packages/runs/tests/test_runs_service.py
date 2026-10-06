@@ -30,11 +30,16 @@ def test_a_run_reports_progress_and_its_result_to_a_waiting_caller():
         assert run.id.startswith("th-") and len(run.id) == 11
         assert s.launch(run, work) == 0
         first = await s.op_wait(run.id)
-        assert first == {"events": ["one"], "done": False, "result": None}
-        assert run.fraction == 0.5
+        assert first == {
+            "events": ["one"],
+            "done": False,
+            "fraction": 0.5,
+            "result": None,
+        }
         assert await s.op_wait(run.id, since=1) == {
             "events": [],
             "done": False,
+            "fraction": 0.5,
             "result": None,
         }  # timed out
         go.set()

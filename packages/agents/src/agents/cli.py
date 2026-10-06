@@ -1,6 +1,10 @@
 """agents-run: start a delegation by hand and follow it, as the delegate skill would.
 
   agents-run "goal" --task name:profile:"instructions" [--task …] [--then profile:"instructions"]
+             [--material name:file …] [--plain name …]
+
+--material gives the task called `name` (or `then`) a file's text as its material, and
+--plain sends that task as a plain chat, without the agent's tools.
 
 It asks agents-runner over its socket, prints the live card's address, follows the run's
 progress and prints every task's reply at the end. Ctrl-C stops following; the delegation
@@ -16,6 +20,8 @@ import sys
 
 import hostrpc
 from hostrpc import RunnerError
+
+from agents.runner import LIMIT
 
 CALL_SECONDS = 60  # a wait is a long poll of 45 s
 
@@ -35,9 +41,38 @@ def then(text: str) -> dict:
     return {"profile": profile, "instructions": instructions}
 
 
+def material(text: str) -> tuple[str, str]:
+    name, _, file = text.partition(":")
+    if not (name and file):
+        raise argparse.ArgumentTypeError("material is name:file")
+    return name, file
+
+
+def delegation(args: argparse.Namespace) -> dict:
+    """The delegate op's arguments; ValueError for a name no task has, OSError for a file
+    that can't be read."""
+    tasks = {t["name"]: t for t in args.task}
+    if args.then:
+        tasks["then"] = args.then
+
+    def named(name: str, flag: str) -> dict:
+        if name not in tasks:
+            raise ValueError(f"{flag} {name}: no task is called that")
+        return tasks[name]
+
+    for name, file in args.material or []:
+        with open(file, encoding="utf-8") as f:
+            named(name, "--material")["material"] = f.read()
+    for name in args.plain or []:
+        named(name, "--plain")["tools"] = False
+    return {"goal": args.goal, "tasks": args.task, "then": args.then}
+
+
 async def call(op: str, args: dict) -> dict:
     socket = hostrpc.socket_path("agents", "AGENTS_SOCKET")
-    return await hostrpc.request(socket, op, args, CALL_SECONDS, name="agents runner")
+    return await hostrpc.request(
+        socket, op, args, CALL_SECONDS, name="agents runner", limit=LIMIT
+    )
 
 
 def card_url(card: str) -> str:
@@ -59,6 +94,10 @@ async def follow(run_id: str) -> dict:
 
 def report(result: dict) -> None:
     print(f"\n{result['status']} (${result.get('cost', 0):.4f})")
+    for model, count in (result.get("tokens") or {}).items():
+        print(
+            f"  {model}: {count['prompt']} prompt, {count['completion']} completion tokens"
+        )
     if result.get("error"):
         print(result["error"])
     for o in [
@@ -76,9 +115,12 @@ async def run(args: argparse.Namespace) -> int:
     if not args.goal or not args.task:
         print("give a goal and at least one --task", file=sys.stderr)
         return 2
-    started = await call(
-        "delegate", {"goal": args.goal, "tasks": args.task, "then": args.then}
-    )
+    try:
+        request = delegation(args)
+    except (ValueError, OSError) as e:
+        print(e, file=sys.stderr)
+        return 2
+    started = await call("delegate", request)
     print(
         f"{started['run_id']}: {card_url(started['card']) or 'no live card (no PUBLIC_HOST)'}"
     )
@@ -98,6 +140,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--then", type=then, help="profile:instructions, run over the results"
+    )
+    parser.add_argument(
+        "--material",
+        type=material,
+        action="append",
+        help="name:file, the file's text as that task's material (name `then` for then)",
+    )
+    parser.add_argument(
+        "--plain",
+        metavar="NAME",
+        action="append",
+        help="send that task as a plain chat, without tools",
     )
     parser.add_argument(
         "--cancel", metavar="RUN_ID", help="cancel a delegation instead"

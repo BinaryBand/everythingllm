@@ -3,7 +3,7 @@ name = "publicweb"
 version = "0.1.0"
 description = "An httpx client that only reaches public hosts, for servers that fetch URLs they were handed, and a page reader on it"
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.28,<0.29", "httpcore>=1.0,<2", "trafilatura>=2"]
+dependencies = ["httpx>=0.28,<0.29", "httpcore>=1.0,<2", "lxml>=5", "trafilatura>=2"]
 
 [build-system]
 requires = ["hatchling"]

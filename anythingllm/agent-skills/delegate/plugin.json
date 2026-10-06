@@ -18,7 +18,7 @@
       },
       "tasks": {
         "type": "array",
-        "description": "1 to 8 tasks, each {\"name\": \"short-name\", \"profile\": \"worker\" or \"planner\", \"instructions\": \"what to do and what to report back\"}."
+        "description": "1 to 8 tasks, each {\"name\": \"short-name\", \"profile\": \"worker\" or \"planner\", \"instructions\": \"what to do and what to report back\"}. Optionally \"material\": text for the task to work on (a draft, notes, a document), passed to it as data, and \"tools\": false for a task that only works on what it's given and needs no searching or reading."
       },
       "then": {
         "type": "object",

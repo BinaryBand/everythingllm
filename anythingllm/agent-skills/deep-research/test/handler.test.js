@@ -42,7 +42,7 @@ const CARD = "[![Deep research: Bitcoin?](https://h:8445/_live/research/dr-1.png
 test("a run is started and the skill answers at once with its live card", async () => {
   const runner = await fakeRunner(() => ({ ok: true, result: { run_id: "dr-1", queued: 0, card: CARD } }));
   try {
-    const self = agent({ runtimeArgs: { PLANNER_MODEL: "glm-5.3" } });
+    const self = agent({ runtimeArgs: { PLANNER_MODEL: "glm-5.3", ENGINE: " Agents " } });
     const reply = await runtime.handler.call(self, { question: "Bitcoin?", depth: "quick" });
     assert.match(reply, /^Deep research started \(run dr-1\)\. .*adding it to this workspace's documents/);
     assert.ok(reply.includes(`\n\nCard: ${CARD}\n\n`));
@@ -53,7 +53,7 @@ test("a run is started and the skill answers at once with its live card", async 
         op: "start",
         args: {
           question: "Bitcoin?", depth: "quick", planner: "glm-5.3", worker: null, planner_fallback: null, site: null,
-          embed: true, workspace: "career", workspace_name: "Career",
+          embed: true, workspace: "career", workspace_name: "Career", engine: "agents",
         },
       },
     ]);
@@ -70,6 +70,7 @@ test("a queued run says so, and without a card or embedding the reply says less"
     assert.doesNotMatch(reply, /Card:|workspace's documents/);
     assert.match(reply, /the report will be on the research site/);
     assert.equal(runner.requests[0].args.embed, false);
+    assert.equal(runner.requests[0].args.engine, null);
   } finally {
     await runner.close();
   }

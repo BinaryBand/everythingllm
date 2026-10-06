@@ -213,6 +213,7 @@ def research(question: str, depth: str | None, ctx: Context) -> dict:
         "sources": used,
         "summary": summary_bullets(markdown),
         "stats": {
+            "engine": "pipeline",
             "seconds": round(time.monotonic() - started),
             "workers": len(results),
             "workers_detail": [r["detail"] for r in results],
@@ -230,6 +231,7 @@ def research(question: str, depth: str | None, ctx: Context) -> dict:
             "tokens": {
                 k: llm.usage[k] for k in ("prompt", "cached", "completion", "reasoning")
             },
+            "tokens_by_model": {m: dict(t) for m, t in llm.by_model.items()},
         },
     }
 

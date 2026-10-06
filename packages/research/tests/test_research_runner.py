@@ -90,6 +90,7 @@ def test_a_run_starts_reports_progress_and_finishes(served):
         assert first == {
             "events": ["researching Bitcoin?"],
             "done": False,
+            "fraction": 0.5,
             "result": None,
         }
         # Nothing new: the wait times out with no events.
@@ -169,6 +170,9 @@ def test_bad_requests_get_errors(served):
             in (await call(socket, "wait", run_id="dr-nope"))["error"]
         )
         assert (await call(socket, "explode"))["error"] == "unknown op 'explode'"
+        assert (await call(socket, "start", question="q", engine="magic"))[
+            "error"
+        ] == "No research engine 'magic': it's one of pipeline, agents."
         assert (
             "bad arguments for start"
             in (await call(socket, "start", question="q", colour="red"))["error"]

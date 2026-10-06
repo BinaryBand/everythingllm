@@ -1306,6 +1306,7 @@ source = { editable = "packages/publicweb" }
 dependencies = [
     { name = "httpcore" },
     { name = "httpx" },
+    { name = "lxml" },
     { name = "trafilatura" },
 ]
 
@@ -1313,6 +1314,7 @@ dependencies = [
 requires-dist = [
     { name = "httpcore", specifier = ">=1.0,<2" },
     { name = "httpx", specifier = ">=0.28,<0.29" },
+    { name = "lxml", specifier = ">=5" },
     { name = "trafilatura", specifier = ">=2" },
 ]
 

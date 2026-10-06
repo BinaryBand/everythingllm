@@ -3,9 +3,15 @@ report, add it to the workspace, write the run log, and say what to tell the use
 
 research-runner runs these for the skill; `research-run` runs one by hand:
     research-run "Why is the sky blue?" --depth quick
+    research-run "Why is the sky blue?" --engine agents --out /tmp/cmp
+
+There are two engines: `pipeline` (research.pipeline, our own workers on SearXNG) and
+`agents` (research.recipe, AnythingLLM's agents through agents-runner). `--out` writes the
+report and its stats to a folder instead of publishing it, for comparing them.
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -23,13 +29,15 @@ from sites.build import Builder
 from sites.store import SiteStore, pages_url
 from sites.store import today as sites_today
 
-from research import publish
+from research import pipeline, publish, recipe
 from research.config import RESULTS_PER_SEARCH, SEARCH_GAP
 from research.llm import LLM
-from research.pipeline import Context, research
-from research.web import make_reader, page_client
+from research.web import make_checker, make_reader, page_client
 
 OFF = re.compile(r"^(no|off|none|false|0)$", re.IGNORECASE)
+ENGINES = ("pipeline", "agents")
+# The agents engine's models are its profiles' workspaces (agents.profiles).
+AGENT_PROFILES = {"planner": "agents-planner", "worker": "agents-worker"}
 
 
 @dataclass
@@ -43,6 +51,7 @@ class Settings:
         ""  # the pages site's public URL, for the live cards (research.live)
     )
     live_port: int = 8450  # where research.live listens
+    agents_socket: Path | None = None  # agents-runner's, for the agents engine
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -56,6 +65,7 @@ class Settings:
             runlogs=hostrpc.data_dir() / "research" / "runs",
             pages_url=pages_url(Builder.from_env().source),
             live_port=int(get("RESEARCH_LIVE_PORT", "8450")),
+            agents_socket=hostrpc.socket_path("agents", "AGENTS_SOCKET"),
         )
 
     @property
@@ -81,6 +91,7 @@ class Request:
     embed: bool = True
     workspace: str | None = None  # slug
     workspace_name: str | None = None
+    engine: str = "pipeline"  # or "agents" (ENGINES)
     # Set by research-runner, not the skill: the run's id and its live progress card,
     # kept in the run log so the audit can hand the card out again.
     run_id: str | None = None
@@ -95,6 +106,8 @@ class Request:
 
     @property
     def models(self) -> dict:
+        if self.engine == "agents":
+            return dict(AGENT_PROFILES)
         return {"planner": self.planner, "worker": self.worker}
 
     @property
@@ -120,15 +133,26 @@ def run(
     llm: LLM | None = None,
     search=None,
     read=None,
+    out: Path | None = None,
+    delegate: recipe.Delegate | None = None,
+    check=None,
 ) -> dict:
     """Run it; never raises. Returns {status, reply, sources, url, title, error}: `reply`
     is what the agent is told, `sources` the cited pages, for the chat's citations, `url`
     and `title` the published report's, when there is one, and `error` why it failed. `meter` hears how far along the
-    run is, from 0 to 1."""
+    run is, from 0 to 1. With `out` (a folder; research-run's, never the skill's), the
+    report and its stats are written there instead of being published."""
     runlog = RunLog(settings.runlogs)
-    record = {"question": req.question, "depth": req.depth, "models": req.models}
+    record = {
+        "question": req.question,
+        "depth": req.depth,
+        "engine": req.engine,
+        "models": req.models,
+    }
     if req.run_id:
         record.update(run_id=req.run_id, card=req.card)
+    if out:
+        record["out"] = str(out)
     runlog.start(record)
     outcome = {**record, "status": "failed"}
 
@@ -151,6 +175,9 @@ def run(
                 llm,
                 search,
                 read,
+                out,
+                delegate,
+                check,
             )
     except Exception as e:  # noqa: BLE001 - run() never raises; any failure goes in the reply and the log
         outcome["error"] = str(e) or type(e).__name__
@@ -183,13 +210,48 @@ def _run(
     llm,
     search,
     read,
+    out=None,
+    delegate=None,
+    check=None,
 ) -> str:
     """The run itself; what it opens goes on `clients`, closed when the run ends."""
+    if req.engine not in ENGINES:
+        raise RuntimeError(
+            f"no research engine '{req.engine}': it's one of {', '.join(ENGINES)}."
+        )
     builder = builder or Builder.from_env()
     # Fail before spending tokens if there's nowhere to publish.
-    if not (builder.source / req.site / "zola.toml").is_file():
+    if not out and not (builder.source / req.site / "zola.toml").is_file():
         raise RuntimeError(f"no Zola site named '{req.site}' in {builder.source}.")
     today = sites_today()
+    if req.engine == "agents":
+        if delegate is None:
+            if settings.agents_socket is None:
+                raise RuntimeError("no socket for agents-runner (AGENTS_SOCKET).")
+            delegate = recipe.AgentsRunner(settings.agents_socket, progress, meter)
+        report = recipe.research(
+            req.question,
+            req.depth,
+            recipe.Context(
+                delegate=delegate,
+                check=check or make_checker(clients.enter_context(page_client())),
+                progress=progress,
+                today=today,
+                meter=meter,
+            ),
+        )
+    else:
+        report = _pipeline(
+            req, settings, progress, meter, clients, today, llm, search, read
+        )
+    return _finish(
+        req, settings, progress, meter, outcome, sources, builder, today, report, out
+    )
+
+
+def _pipeline(
+    req, settings, progress, meter, clients, today, llm, search, read
+) -> dict:
     if llm is None:
         llm = LLM.for_models(
             [req.planner, req.worker],
@@ -200,7 +262,7 @@ def _run(
             ),
         )
         clients.callback(llm.close)
-    ctx = Context(
+    ctx = pipeline.Context(
         llm=llm,
         search=search
         or make_search(
@@ -215,7 +277,13 @@ def _run(
         today=today,
         meter=meter,
     )
-    report = research(req.question, req.depth, ctx)
+    return pipeline.research(req.question, req.depth, ctx)
+
+
+def _finish(
+    req, settings, progress, meter, outcome, sources, builder, today, report, out
+) -> str:
+    """Publish the report (or write it to `out`) and say what to tell the agent."""
     sources.extend({"url": s["url"], "title": s["title"]} for s in report["sources"])
     stats = report["stats"]
     bullets = "\n".join(f"- {re.sub(r'\s*\[\d+\]', '', b)}" for b in report["summary"])
@@ -238,6 +306,34 @@ def _run(
         return publish.report_file(
             report["title"], today, report["question"], url, report["markdown"]
         )
+
+    if out:
+        slug = publish.free_file_slug(out, report["title"])
+        file = publish.save_report_file(out, slug, file_text(None))
+        (out / f"{slug}.json").write_text(
+            json.dumps(
+                {
+                    "question": report["question"],
+                    "title": report["title"],
+                    "depth": report["depth"],
+                    "engine": req.engine,
+                    "models": req.models,
+                    "stats": stats,
+                    "sources": report["sources"],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        outcome.update(
+            status="ok",
+            depth=report["depth"],
+            title=report["title"],
+            stats=stats,
+            file=str(file),
+        )
+        progress(f"wrote {file}")
+        return f'Research report "{report["title"]}" written to {file}.\n\n{basis}'
 
     meter(0.95)
     store = SiteStore(builder.source, builder.content, build=builder.build, agent=True)
@@ -356,6 +452,13 @@ def main() -> None:
     parser.add_argument("--planner", help=f"default {Request.planner}")
     parser.add_argument("--worker", help=f"default {Request.worker}")
     parser.add_argument("--workspace", help="slug of a workspace to add the report to")
+    parser.add_argument("--engine", choices=ENGINES, help=f"default {Request.engine}")
+    parser.add_argument(
+        "--out",
+        type=Path,
+        metavar="DIR",
+        help="write the report and its stats (<slug>.md, <slug>.json) here instead of publishing it",
+    )
     args = parser.parse_args()
     req = Request.of(
         args.question,
@@ -363,9 +466,13 @@ def main() -> None:
         planner=args.planner,
         worker=args.worker,
         workspace=args.workspace,
+        engine=args.engine,
     )
     result = run(
-        req, Settings.from_env(), lambda m: print(m, file=sys.stderr, flush=True)
+        req,
+        Settings.from_env(),
+        lambda m: print(m, file=sys.stderr, flush=True),
+        out=args.out,
     )
     print(result["reply"])
     sys.exit(0 if result["status"] == "ok" else 1)

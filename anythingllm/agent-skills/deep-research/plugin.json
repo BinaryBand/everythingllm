@@ -49,6 +49,16 @@
         "hint": "Zola site the reports are published to (section 'reports')."
       }
     },
+    "ENGINE": {
+      "type": "string",
+      "required": false,
+      "input": {
+        "type": "text",
+        "default": "pipeline",
+        "placeholder": "pipeline",
+        "hint": "How the research is done: 'pipeline' (our own workers on SearXNG, with the planner and worker models above) or 'agents' (AnythingLLM's own agents in the agents-planner and agents-worker workspaces, through agents-runner; being compared, see README)."
+      }
+    },
     "EMBED_IN_WORKSPACE": {
       "type": "string",
       "required": false,

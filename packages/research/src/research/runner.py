@@ -3,7 +3,7 @@
 The skill (anythingllm/agent-skills/deep-research) asks over its socket (hostrpc):
 
   start(question, depth?, planner?, worker?, planner_fallback?, site?, embed?, workspace?,
-        workspace_name?) -> {run_id, queued, card}
+        workspace_name?, engine?) -> {run_id, queued, card}
   wait(run_id, since=0)   up to WAIT seconds for news: {events (from `since` on), done,
                           result ({status, reply, sources}) once done}
   runs()                  the runs this runner holds: {run_id, question, started, done}
@@ -21,6 +21,8 @@ Config (environment, from host.env and the unit):
   ANYTHINGLLM_STORAGE   storage directory (default /srv/anythingllm/storage)
   RESEARCH_SOCKET       socket to listen on (default <storage>/everythingllm/research/runner.sock)
   RESEARCH_LIVE_PORT    port on 127.0.0.1 for the live cards (default 8450; research.live)
+  AGENTS_SOCKET         agents-runner's socket, for the agents engine (research.recipe;
+                        default <storage>/everythingllm/agents/runner.sock)
   and what research.job.Settings reads.
 """
 
@@ -54,9 +56,13 @@ class Runner(RunService):
 
     async def op_start(self, question: str, **args) -> dict:
         """args: depth, planner, worker, planner_fallback, site, embed, workspace,
-        workspace_name (job.Request's fields); None or "" takes the default."""
+        workspace_name, engine (job.Request's fields); None or "" takes the default."""
         if not isinstance(question, str) or not question.strip():
             raise RunnerError("No research question was given.")
+        if args.get("engine") not in (None, "", *job.ENGINES):
+            raise RunnerError(
+                f"No research engine '{args['engine']}': it's one of {', '.join(job.ENGINES)}."
+            )
         req = job.Request.of(question, **args)
         run = self.new_run(req.question)
         card = live.card(self.settings.pages_url, run.id, req.question)

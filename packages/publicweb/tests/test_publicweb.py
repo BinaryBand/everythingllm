@@ -223,3 +223,43 @@ def test_save_leaves_a_whole_file_or_none(tmp_path):
     ):
         save(body, tmp_path / "b.mp3")
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.mp3"]
+
+
+ARTICLE = (
+    "<html><head><title> Heat  pumps </title><style>p{color:red}</style></head><body>"
+    "<nav><p>Prices from &euro;3&nbsp;000 in the shop</p></nav><article>"
+    + "".join(
+        f"<p>In trial {n}, air-source heat pumps kept a COP above 2 at &minus;15&#8239;°C.</p>"
+        for n in range(12)
+    )
+    + "</article><script>var secret = 'not text';</script><footer>Made in Oslo</footer>"
+    "</body></html>"
+).encode()
+
+
+def test_read_page_has_the_main_text_and_the_whole_pages():
+    from publicweb.pages import read_html, read_page
+
+    client = serving(ARTICLE, **{"content-type": "text/html; charset=utf-8"})
+    page = read_page(client, "https://a.example/", Refused)
+    assert page is not None and page.title == "Heat pumps"
+    assert "COP above 2" in page.main and "shop" not in page.main
+    assert "Prices from €3\xa0000 in the shop" in page.full  # entities decoded
+    assert "Made in Oslo" in page.full and "−15" in page.full
+    assert "secret" not in page.full and "color:red" not in page.full
+    assert read_html(client, "https://a.example/", 50, Refused) == page.main[:50]
+    plain = serving(b"hello", **{"content-type": "text/plain"})
+    assert read_page(plain, "https://a.example/", Refused) is None
+
+
+def test_blocks_dont_run_their_words_together():
+    from publicweb.pages import page_text
+
+    title, text = page_text("<ul><li>one</li><li>two</li></ul><p>a<b>b</b>c</p>")
+    assert title == "" and text.split() == ["one", "two", "abc"]
+    assert page_text("") == ("", "")
+    xml = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        "<html><head><title>T</title></head><body><p>Body</p></body></html>"
+    )
+    assert page_text(xml) == ("T", "T\nBody\n")

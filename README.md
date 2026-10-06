@@ -890,6 +890,33 @@ on; `off` turns this off) for the rest of the run; the chat's progress says so, 
 `stats.fallbacks` records it. The planner was `deepseek-v4-pro` until 2026-10-04, when that was V4.1-Flash
 underneath (see below).
 
+**Two engines.** The steps above are the `pipeline` engine (`research.pipeline`), the
+default. The `agents` engine (`research.recipe`, stage 3 of `docs/.proposals/agents.md`)
+does the same steps as delegations to `agents-runner` (see "Delegation"), with AnythingLLM's
+own agents:
+- the plan, gap checks, writing and fact-check are `agents-planner` tasks, sent as plain
+  chats with the notes as their material
+- each sub-question is an `agents-worker` task. It searches and reads with AnythingLLM's web
+  tools, and ends with its findings as JSON.
+
+Research's guarantees stay in code:
+- research-runner fetches every cited page itself (`research.web.make_checker`), and keeps
+  a finding only if its quote is in the page's main text or anywhere else on it
+  (`publicweb.pages.read_page`)
+- the sources are numbered here
+- the fact-check's edits and the citations are applied as in the pipeline
+
+What it gives up: the run-wide search budget and pacing (searches go through AnythingLLM's
+tool, and a worker is held to its own tool-call limit), the planner's quota fallback, and
+the counts of searches and pages read. The run log's `engine`, and `stats.engine`, say which
+engine ran a report. Both engines' stats have `tokens_by_model`; the agents engine's also
+have `cost` (what AnythingLLM could price: not the planner's GLM) and `delegations`.
+
+The skill's `ENGINE` setup arg picks the engine (`pipeline` until the two are compared), and
+`research-run --engine agents` runs one by hand. `--out DIR` writes the report and its stats
+(`<slug>.md`, `<slug>.json`) there instead of publishing it, for comparing the engines on the
+same questions.
+
 DeepSeek notes, found while building it:
 - Don't use JSON mode (`response_format`): with it, flash often replies with the wrong keys
   or just `{"type": "json_object"}`. Plain prompts plus a parse/repair retry are reliable.
@@ -952,6 +979,11 @@ To run one by hand, in this process rather than the runner (it logs and publishe
     set -a && . ./host.env && set +a && \
       uv run --package research research-run "Why is the sky blue?" --depth quick
 
+Through the agents engine, to a folder rather than the research site:
+
+    set -a && . ./host.env && set +a && uv run --package research research-run \
+      "Why is the sky blue?" --depth quick --engine agents --out /tmp/research-cmp
+
 ## Delegation
 
 `agents-runner` (`packages/agents`, `host/systemd/agents-runner.service`, its own venv in
@@ -968,9 +1000,13 @@ starts a delegation by hand:
       --task b:worker:"Find the COP of model B, with sources" \
       --then planner:"Compare them in a short table"
 
+`--material name:file` gives a task (or `then`) a file's text as its material, and
+`--plain name` sends it as a plain chat.
+
 Over its socket, `storage/everythingllm/agents/runner.sock`: `delegate(goal, tasks: [{name,
-profile, instructions}], then?)` answers at once with a run id and a live card; `wait`,
-`runs` and `cancel` (tasks that haven't started won't; running ones finish, unused).
+profile, instructions, material?, tools?}], then?)` answers at once with a run id and a live
+card; `wait`, `runs` and `cancel` (tasks that haven't started won't; running ones finish,
+unused).
 
 - **Profiles are workspaces.** A task's `profile` is its role, and each role is an
   AnythingLLM workspace with its model and a system prompt (`agents/profiles.py`,
@@ -980,6 +1016,11 @@ profile, instructions}], then?)` answers at once with a run id and a live card; 
 - **Each task** gets a thread of its own in its workspace, gone when the task ends, and at
   most `AGENTS_SLOTS` (3) run at once across all delegations. `then`'s prompt has the
   replies quoted in `<result>` tags as material, never instructions.
+- **Material and plain chats.** A task's `material` (a draft, notes, findings; 200,000
+  characters a task, 400,000 in all) goes into its prompt quoted in a `<material>` tag, as
+  data. `tools: false` sends the task as a plain chat rather than to the agent, for
+  judgment over what it's given. The result counts `tokens` per model as well as `cost`,
+  since AnythingLLM has no price for generic-openai, the planner's provider.
 - **Containment.** Every tool loads in a headless run, so every skill of ours that writes,
   acts or delegates refuses a call from an `agents-*` workspace (`_lib/delegated.js`, held
   by a test). A task can read and report; it can't write, run code or delegate again.

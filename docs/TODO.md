@@ -66,6 +66,12 @@ Left open by the code review of the browser's saved logins (2026-10-07):
   every 2 s per open view and each time decrypts the vault and asks the driver for its
   offers, even when nothing is being captured. Cheap today; caching on the vault file's
   mtime and returning offers only while one is pending would cut it.
+- **One approval at a time per workspace.** A `Session` holds one `approval`
+  (`runner.py`), so when two chats in a workspace (or a scheduled job and a chat) ask for
+  ask-first logins at once, each request makes the other stale. Both `browser-login`
+  calls are told to call again, they keep replacing each other, and the user only sees
+  the last one. Fixing it means keeping the waiting approvals by id and having the
+  take-over view list each one with its own allow and refuse buttons.
 
 ## Format hostctl's older modules
 

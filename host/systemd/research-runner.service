@@ -1,5 +1,5 @@
 [Unit]
-Description=Deep research for the AnythingLLM skill (socket in storage/research/)
+Description=Deep research for the AnythingLLM skill (socket in storage/everythingllm/research/)
 After=network.target
 # Keep retrying after a crash loop instead of giving up for good.
 StartLimitIntervalSec=0

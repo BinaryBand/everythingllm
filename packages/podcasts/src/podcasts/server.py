@@ -5,7 +5,7 @@ tool call goes to it over a Unix socket in storage, and the text it sends back i
 tool's result. Nothing here touches the feeds or the audio.
 
 Config (environment):
-  PODCASTS_SOCKET  the runner's socket (default storage/podcasts/runner.sock, as the container sees it)
+  PODCASTS_SOCKET  the runner's socket (default storage/everythingllm/podcasts/runner.sock, as the container sees it)
 """
 
 from typing import Annotated

@@ -158,7 +158,7 @@ def test_socket_path_is_the_env_or_storage(monkeypatch):
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")
     monkeypatch.delenv("PICKY_SOCKET", raising=False)
     assert hostrpc.socket_path("picky", "PICKY_SOCKET") == Path(
-        "/data/allm/picky/runner.sock"
+        "/data/allm/everythingllm/picky/runner.sock"
     )
     monkeypatch.setenv("PICKY_SOCKET", "/tmp/p.sock")
     assert hostrpc.socket_path("picky", "PICKY_SOCKET") == Path("/tmp/p.sock")

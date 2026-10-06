@@ -50,7 +50,7 @@ Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
                     this machine's storage directory and tailnet name, from host.env
                     (default /srv/anythingllm/storage, and no name: links use 127.0.0.1)
-  SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/sandbox/runner.sock)
+  SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/everythingllm/sandbox/runner.sock)
   SANDBOX_ROOT      workspace folders, host-only (default
                     ~/.local/share/everythingllm/sandbox/workspaces);
                     run scripts go in its `.runs` folder

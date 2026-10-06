@@ -21,7 +21,7 @@ WATCHED = {
 }
 
 # Host services the MCP servers and skills hand work to (<folder>-runner.service), by the
-# storage folder their socket is in.
+# folder their socket is in under storage/everythingllm/.
 RUNNERS = {
     u.removesuffix(".service"): u.removesuffix("-runner.service")
     for u in WATCHED

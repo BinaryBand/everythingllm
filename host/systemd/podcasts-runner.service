@@ -1,5 +1,5 @@
 [Unit]
-Description=Podcasts runner: does what the podcasts MCP server's tools ask (socket in storage/podcasts/)
+Description=Podcasts runner: does what the podcasts MCP server's tools ask (socket in storage/everythingllm/podcasts/)
 After=network.target
 # Keep retrying after a crash loop instead of giving up for good.
 StartLimitIntervalSec=0

@@ -1,5 +1,5 @@
 [Unit]
-Description=Code sandbox and page publisher for AnythingLLM's run-code, write-file and publish skills (socket in storage/sandbox/)
+Description=Code sandbox and page publisher for AnythingLLM's run-code, write-file and publish skills (socket in storage/everythingllm/sandbox/)
 After=sandbox-proxy.service
 Wants=sandbox-proxy.service
 

@@ -18,7 +18,7 @@ record after that.
 
 Config (environment, from host.env and the unit):
   ANYTHINGLLM_STORAGE   storage directory (default /srv/anythingllm/storage)
-  RESEARCH_SOCKET       socket to listen on (default <storage>/research/runner.sock)
+  RESEARCH_SOCKET       socket to listen on (default <storage>/everythingllm/research/runner.sock)
   RESEARCH_LIVE_PORT    port on 127.0.0.1 for the live cards (default 8450; research.live)
   and what research.job.Settings reads.
 """

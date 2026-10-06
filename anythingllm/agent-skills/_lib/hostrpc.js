@@ -6,9 +6,9 @@
 const net = require("net");
 const path = require("path");
 
-/** A service's socket: `env` if set, else storage/<folder>/runner.sock as the container sees it. */
+/** A service's socket: `env` if set, else storage/everythingllm/<folder>/runner.sock as the container sees it. */
 function socketPath(folder, env) {
-  return process.env[env] || path.join(process.env.STORAGE_DIR || "/app/server/storage", folder, "runner.sock");
+  return process.env[env] || path.join(process.env.STORAGE_DIR || "/app/server/storage", "everythingllm", folder, "runner.sock");
 }
 
 /** The service isn't there: no socket, or nobody listening on it. */

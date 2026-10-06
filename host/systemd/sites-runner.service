@@ -1,5 +1,5 @@
 [Unit]
-Description=Sites runner: does what the sites MCP server's tools ask, zola builds included (socket in storage/sites/), and writes Daily News articles (tailnet via tailscale serve :8445/news/write)
+Description=Sites runner: does what the sites MCP server's tools ask, zola builds included (socket in storage/everythingllm/sites/), and writes Daily News articles (tailnet via tailscale serve :8445/news/write)
 After=network.target
 # Keep retrying after a crash loop instead of giving up for good.
 StartLimitIntervalSec=0

@@ -5,7 +5,7 @@ call goes to it over a Unix socket in storage, and the text it sends back is the
 result. On the host the checks can read the journal, every service's socket and the sites.
 
 Config (environment):
-  AUDIT_SOCKET  the runner's socket (default storage/audit/runner.sock, as the container sees it)
+  AUDIT_SOCKET  the runner's socket (default storage/everythingllm/audit/runner.sock, as the container sees it)
 """
 
 from typing import Annotated, Literal

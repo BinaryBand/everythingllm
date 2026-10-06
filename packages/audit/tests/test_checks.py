@@ -92,8 +92,8 @@ def test_ping_all_asks_every_service_at_once(tmp_path):
                 sock = (
                     Path("/tmp") / f"audit-{folder}-{os.getpid()}.sock"
                 )  # AF_UNIX paths are short
-                (tmp_path / folder).mkdir()
-                (tmp_path / folder / "runner.sock").symlink_to(sock)
+                (tmp_path / "everythingllm" / folder).mkdir(parents=True)
+                (tmp_path / "everythingllm" / folder / "runner.sock").symlink_to(sock)
                 await stack.enter_async_context(hostrpc.serving(service, sock))
             return await asyncio.to_thread(checks.ping_all, tmp_path, 1)
 

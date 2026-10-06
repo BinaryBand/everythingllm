@@ -64,7 +64,7 @@ is 3.13. Keep code 3.12-compatible, and check with
 - Heavy, long-running or host-dependent work runs in a host service:
   `sandbox-runner`, `research-runner`, `podcasts-runner`, `sites-runner` and
   `audit-runner`. The MCP server or skill in the container is a thin front that forwards each
-  call over `storage/<name>/runner.sock` using `packages/hostrpc`: one request per connection,
+  call over `storage/everythingllm/<name>/runner.sock` using `packages/hostrpc`: one request per connection,
   a line of JSON each way (`{"op","args"}` → `{"ok","result"|"error"}`).
   - A runner is `hostrpc.Service(tools.OPS, errors=…)`: its ops are the functions in the
     package's `tools.py`, which also holds `main()` (`hostrpc.run(...)`). A front's tools are
@@ -92,7 +92,7 @@ is 3.13. Keep code 3.12-compatible, and check with
 - Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`),
   not in AnythingLLM's storage, laid out by kind: `venvs/<name>`, `pages/{public,entries}`,
   `sandbox/{workspaces,shared}`, `podcasts/` (with `models/`), `research/runs`, `relay/`.
-  Put new data in the folder of its kind, not at the root. Storage keeps AnythingLLM's own data, the runners' sockets and what AnythingLLM
+  Put new data in the folder of its kind, not at the root. Storage keeps AnythingLLM's own data, the runners' sockets (under `everythingllm/`) and what AnythingLLM
   itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.
 

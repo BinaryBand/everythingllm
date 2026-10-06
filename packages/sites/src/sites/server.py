@@ -6,7 +6,7 @@ call goes to it over a Unix socket in storage, and the text it sends back is the
 result. Nothing here touches the entries, runs zola or fetches a feed.
 
 Config (environment):
-  SITES_SOCKET  the runner's socket (default storage/sites/runner.sock, as the container sees it)
+  SITES_SOCKET  the runner's socket (default storage/everythingllm/sites/runner.sock, as the container sees it)
 """
 
 from typing import Annotated, Any

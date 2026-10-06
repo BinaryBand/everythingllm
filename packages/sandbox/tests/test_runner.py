@@ -678,7 +678,7 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")
     monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
     config = runner.Config.from_env()
-    assert config.socket == Path("/data/allm/sandbox/runner.sock")
+    assert config.socket == Path("/data/allm/everythingllm/sandbox/runner.sock")
     assert (
         config.site_dir
         == Path("~/.local/share/everythingllm/pages/public").expanduser()

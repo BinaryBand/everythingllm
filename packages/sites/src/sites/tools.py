@@ -7,7 +7,7 @@ writer, `make sites-build`); the build lock keeps them from overlapping. The run
 serves the article writer behind the Daily News headlines (sites.articles_web).
 
 Config (environment, from host.env and the unit):
-  SITES_SOCKET   socket to listen on (default <storage>/sites/runner.sock)
+  SITES_SOCKET   socket to listen on (default <storage>/everythingllm/sites/runner.sock)
   SITES_ARTICLES_*  the article writer's; see sites.articles_web
   SITES_SOURCE   repo directory holding one Zola site per subdirectory
   ANYTHINGLLM_STORAGE, SITES_CONTENT, SITES_OUTPUT, ZOLA

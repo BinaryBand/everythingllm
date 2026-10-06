@@ -6,7 +6,7 @@ stack), stays on the host; syncs run as units of their own (see library.Units), 
 restarting this service stops none.
 
 Config (environment, from host.env and the unit):
-  PODCASTS_SOCKET      socket to listen on (default <storage>/podcasts/runner.sock)
+  PODCASTS_SOCKET      socket to listen on (default <storage>/everythingllm/podcasts/runner.sock)
   ANYTHINGLLM_STORAGE  storage directory (default /srv/anythingllm/storage)
   PODCASTS_DIR         served directory, inside the pages site (default ~/.local/share/everythingllm/pages/public/podcasts)
   PODCASTS_STATE       subscriptions and sync state (default ~/.local/share/everythingllm/podcasts)

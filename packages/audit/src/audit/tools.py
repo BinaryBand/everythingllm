@@ -4,7 +4,7 @@ journal and ask every host service on its socket. The MCP server in the containe
 returned. Each function in OPS is the tool of the same name; server.py describes them.
 
 Config (environment, from host.env and the unit):
-  AUDIT_SOCKET       socket to listen on (default <storage>/audit/runner.sock)
+  AUDIT_SOCKET       socket to listen on (default <storage>/everythingllm/audit/runner.sock)
   ANYTHINGLLM_STORAGE  storage directory (default /srv/anythingllm/storage); the defaults
                      below are under it
   AUDIT_JOURNAL_DIR  the host journal (default /var/log/journal)

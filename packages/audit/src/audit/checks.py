@@ -126,9 +126,8 @@ def ping_all(storage: Path, timeout: float = PING_SECONDS) -> dict[str, str]:
 
     async def ping(name: str, folder: str) -> str:
         try:
-            reply = await hostrpc.request(
-                storage / folder / "runner.sock", "ping", {}, timeout, name=name
-            )
+            sock = storage / hostrpc.SOCKETS / folder / "runner.sock"
+            reply = await hostrpc.request(sock, "ping", {}, timeout, name=name)
         except RunnerError as e:
             return str(e)
         return "; ".join(reply.get("problems") or [])

@@ -188,7 +188,7 @@ through its UI.
       research/runs/       the deep-research run log and live runs' markers
       relay/               the Nilson relay's database
 
-  Storage keeps AnythingLLM's own data, the runners' sockets (`storage/<name>/runner.sock`,
+  Storage keeps AnythingLLM's own data, the runners' sockets (`storage/everythingllm/<name>/runner.sock`,
   which the container reaches) and what AnythingLLM reads (`anythingllm-fs/research/`,
   `documents/`).
 - The `static_agent` Caddy container mounts just `pages/public/` read-only and serves it on
@@ -351,7 +351,7 @@ MCP server or skill in the container as a thin front: `sandbox-runner` (the code
 `research-runner` (deep research), `podcasts-runner` (the podcasts tools),
 `sites-runner` (the sites tools and their builds) and `audit-runner` (the audit's
 checks). Each listens
-on a Unix socket in storage, `storage/<name>/runner.sock` (mode 0660), which the container
+on a Unix socket in storage, `storage/everythingllm/<name>/runner.sock` (mode 0660), which the container
 sees without a Quadlet change, and they all speak `hostrpc`'s protocol: one request per
 connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "result"}` or
 `{"ok": false, "error"}` out.
@@ -378,7 +378,7 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
   `tools.py` (`packages/podcasts` is the example), a `<name>-runner` console script, a unit
   `host/systemd/<name>-runner.service` with its own venv in `~/.local/share/everythingllm/`, and
   an entry in the audit's `WATCHED` (`audit/services.py`), which `RUNNERS` and a test
-  follow. Its socket is `storage/<name>/runner.sock`, where `hostrpc.caller` looks.
+  follow. Its socket is `storage/everythingllm/<name>/runner.sock`, where `hostrpc.caller` looks.
 
 Code edits go live the next time AnythingLLM starts the server (restart it from the
 Agent Skills > MCP Servers page, `make restart`, or `make deploy`, which restarts). Note
@@ -435,7 +435,7 @@ cached. Removing a page or deleting an entry deletes its card.
 
 Code never runs in the AnythingLLM container, which has SYS_ADMIN, the `.env` keys and all
 of storage. The skills (`anythingllm/agent-skills/`, sharing `_lib/`) only forward calls
-over a Unix socket, `storage/sandbox/runner.sock` (see "Services on the host"), to
+over a Unix socket, `storage/everythingllm/sandbox/runner.sock` (see "Services on the host"), to
 `sandbox-runner` on the host (`host/systemd/sandbox-runner.service`, its own venv in
 `~/.local/share/everythingllm/venvs/sandbox`).
 
@@ -548,7 +548,7 @@ a show found only in such an app has no public feed.
   Podcasts' sync) can't reach a tailnet address.
 - The MCP server in the container only forwards each tool call to `podcasts-runner` on the
   host (`packages/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
-  own venv in `~/.local/share/everythingllm/venvs/podcasts`, socket `storage/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
+  own venv in `~/.local/share/everythingllm/venvs/podcasts`, socket `storage/everythingllm/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
   see "Services on the host"), which runs the tool and sends back its text.
   The feeds, the model's key and the audio stack never touch the container: the sync,
   transcription and the read-aloud run on the host too, from the same venv.
@@ -779,7 +779,7 @@ thin front: it hands the question, its setup args and the workspace to `research
 on the host (`packages/research`, `host/systemd/research-runner.service`, its own venv in
 `~/.local/share/everythingllm/venvs/research`), and answers at once with the run's live
 progress card, so the chat is free while the run goes. They talk over a Unix socket the
-container sees, `storage/research/runner.sock` (see "Services on the host"):
+container sees, `storage/everythingllm/research/runner.sock` (see "Services on the host"):
 `start` returns a run id and its card, `wait(run_id, since)` long-polls up to 45 s for new
 progress lines and the result, `runs` lists what the runner holds.
 
@@ -973,7 +973,7 @@ returns that old run.
 The "System Audit" scheduled job checks this setup every day and publishes what it finds
 to the `status` site. The checks and the report are fixed code in the `audit` MCP server,
 which forwards each tool call to `audit-runner` on the host (`packages/audit/src/audit/tools.py`,
-`host/systemd/audit-runner.service`, socket `storage/audit/runner.sock`), where the checks
+`host/systemd/audit-runner.service`, socket `storage/everythingllm/audit/runner.sock`), where the checks
 can read the journal and every service's socket; the model only writes a summary and
 suggests a fix per finding. Its tools:
 

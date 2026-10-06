@@ -31,8 +31,11 @@ from types import FunctionType
 from typing import Any
 
 LIMIT = 1 << 20  # longest line either side reads; a service can pass its own
-# Storage as the AnythingLLM container sees it; a service's socket is <storage>/<folder>/runner.sock.
+# Storage as the AnythingLLM container sees it.
 CONTAINER_STORAGE = "/app/server/storage"
+# The folder in storage that holds our services' sockets, apart from AnythingLLM's own:
+# a service's socket is <storage>/everythingllm/<folder>/runner.sock.
+SOCKETS = "everythingllm"
 CALL_TIMEOUT = 55  # for an MCP tool's call; AnythingLLM gives up on one after 60 s
 
 
@@ -101,8 +104,8 @@ def site_dir() -> Path:
 
 
 def socket_path(folder: str, env: str) -> Path:
-    """A service's socket on the host: $<env>, else <storage>/<folder>/runner.sock."""
-    return Path(os.environ.get(env) or storage() / folder / "runner.sock")
+    """A service's socket on the host: $<env>, else <storage>/everythingllm/<folder>/runner.sock."""
+    return Path(os.environ.get(env) or storage() / SOCKETS / folder / "runner.sock")
 
 
 async def read_message(reader: asyncio.StreamReader) -> dict[str, Any] | None:
@@ -193,11 +196,13 @@ def caller(
     limit: int = LIMIT,
 ):
     """For an MCP server in the container: `async call(op, args)`, which asks the service
-    whose socket is $<env>, else <CONTAINER_STORAGE>/<folder>/runner.sock, and raises
+    whose socket is $<env>, else <CONTAINER_STORAGE>/everythingllm/<folder>/runner.sock, and raises
     `error` (the server's ToolError) with RunnerError's text."""
 
     async def call(op: str, args: dict[str, Any]) -> Any:
-        socket = os.environ.get(env) or f"{CONTAINER_STORAGE}/{folder}/runner.sock"
+        socket = (
+            os.environ.get(env) or f"{CONTAINER_STORAGE}/{SOCKETS}/{folder}/runner.sock"
+        )
         try:
             return await request(socket, op, args, timeout, name=name, limit=limit)
         except RunnerError as e:

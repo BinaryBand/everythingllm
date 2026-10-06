@@ -1,5 +1,5 @@
 [Unit]
-Description=Audit runner: runs the audit MCP server's health checks on the host (socket in storage/audit/)
+Description=Audit runner: runs the audit MCP server's health checks on the host (socket in storage/everythingllm/audit/)
 After=network.target
 # Keep retrying after a crash loop instead of giving up for good.
 StartLimitIntervalSec=0

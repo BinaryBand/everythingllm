@@ -30,6 +30,7 @@ def served(tmp_path, monkeypatch):
             if socket.exists() and research.live:
                 break
             await asyncio.sleep(0.01)
+        assert research.live is not None, "the live server didn't start"
         return task, research.live.sockets[0].getsockname()[1]
 
     return settings, gate, socket, start
@@ -82,6 +83,7 @@ def test_the_card_is_pushed_until_the_run_ends_then_links_to_the_report(served):
         head = await reader.readuntil(b"\r\n\r\n")
         assert b"multipart/x-mixed-replace; boundary=frame" in head
         first = await next_frame(reader)
+        assert first is not None
         assert Image.open(io.BytesIO(first)).format == "PNG"
         gate.go.set()
         frames = [first]

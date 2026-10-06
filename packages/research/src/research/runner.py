@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import hostrpc
 from hostrpc import RunnerError
@@ -134,7 +135,7 @@ class Runner(hostrpc.Service):
             )
         async with self.slots:
             try:
-                result = await asyncio.to_thread(
+                result: dict[str, Any] = await asyncio.to_thread(
                     self.execute,
                     req,
                     self.settings,

@@ -2,8 +2,10 @@ import asyncio
 import itertools
 import os
 import re
+import shutil
 from pathlib import Path
 
+import hostrpc
 import pytest
 from sandbox import runner
 from sandbox.runner import Config, Runner
@@ -725,6 +727,7 @@ def test_publish_refuses_bad_input(cfg, tmp_path, monkeypatch):
 def test_config_follows_this_machines_host_settings(monkeypatch):
     for var in (
         "SANDBOX_SOCKET",
+        "SANDBOX_BUILD_SOCKET",
         "SANDBOX_ROOT",
         "SANDBOX_SYSTEM_THEMES",
         "SANDBOX_SITE_DIR",
@@ -740,6 +743,9 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
     monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
     config = runner.Config.from_env()
     assert config.socket == Path("/data/allm/everythingllm/sandbox/runner.sock")
+    assert config.build_socket == Path(
+        "/data/allm/everythingllm/sandbox-build/runner.sock"
+    )
     data = Path("~/.local/share/everythingllm").expanduser()
     assert config.site_dir == data / "pages" / "public"
     assert config.site_url == "https://box.tail.ts.net:8445/"
@@ -943,6 +949,56 @@ def test_a_system_site_copy_never_follows_a_symlink_planted_on_the_way(
     with pytest.raises(runner.SandboxError, match="couldn't copy the built site"):
         go(r.op_build_system_site("status"))
     assert planted.read_text() == "host file"
+
+
+def test_the_build_socket_serves_only_system_site_builds(cfg, tmp_path, monkeypatch):
+    """The sites and research containers mount the build socket, not the runner's: the
+    runner takes the scope a caller names, so the full socket would let a container act as
+    any workspace."""
+    cfg = system_cfg(cfg, tmp_path)
+    # AF_UNIX paths are short, so not tmp_path.
+    base = Path("/tmp") / f"sandbox-test-{os.getpid()}"
+    cfg.socket, cfg.build_socket = base / "runner.sock", base / "build.sock"
+    made = []
+
+    def fake_runner(config):
+        made.append(make(config, effect=built))
+        return made[-1]
+
+    monkeypatch.setattr(runner, "Runner", fake_runner)
+
+    async def check():
+        stop = asyncio.Event()
+        task = asyncio.create_task(runner.serve(cfg, stop))
+        while not (cfg.socket.exists() and cfg.build_socket.exists()):
+            await asyncio.sleep(0.01)
+        try:
+            ask = hostrpc.request
+            assert await ask(cfg.build_socket, "ping", {}, 5) == {}
+            for op, args in [
+                ("run", {"scope": A, "language": "bash", "code": "true"}),
+                ("write", {"scope": A, "path": "/project/x", "content": "x"}),
+                ("publish", {"scope": A, "slug": "x", "path": "x"}),
+                ("build_site", {"scope": A, "path": "/project/s"}),
+            ]:
+                with pytest.raises(hostrpc.RunnerError, match=f"unknown op '{op}'"):
+                    await ask(cfg.build_socket, op, args, 5)
+            res = await ask(
+                cfg.build_socket, "build_system_site", {"site": "status"}, 5
+            )
+            assert res["path"] == str(cfg.site_dir / ".status.new")
+            # The runner's own socket still has every op.
+            await ask(cfg.socket, "write", {"scope": A, "path": "x", "content": "x"}, 5)
+        finally:
+            stop.set()
+            await task
+        assert not cfg.socket.exists() and not cfg.build_socket.exists()
+
+    try:
+        go(check())
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+    assert len(made) == 1  # one runner behind both
 
 
 def test_what_a_system_site_build_refuses(cfg, tmp_path):

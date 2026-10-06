@@ -19,6 +19,7 @@ def no_host_settings(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     # Nor does any test reach this machine's sandbox runner (site builds would ask it).
     monkeypatch.setenv("SANDBOX_SOCKET", "/nonexistent/sandbox/runner.sock")
+    monkeypatch.setenv("SANDBOX_BUILD_SOCKET", "/nonexistent/sandbox-build/runner.sock")
     try:
         from sites import store
     except ImportError:  # a package that doesn't use the sites

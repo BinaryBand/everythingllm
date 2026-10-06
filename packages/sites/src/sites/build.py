@@ -41,8 +41,8 @@ Config (environment):
   ZOLA                the zola binary (default /usr/local/bin/zola)
   SITES_SANDBOX_ONLY  1: build nothing here, only through the sandbox (sites-runner's
                       container sets it)
-  SANDBOX_SOCKET      the sandbox runner's socket (default
-                      <storage>/everythingllm/sandbox/runner.sock)
+  SANDBOX_BUILD_SOCKET  the sandbox runner's socket for system site builds, which serves
+                      nothing else (default <storage>/everythingllm/sandbox-build/runner.sock)
 """
 
 import argparse
@@ -103,7 +103,7 @@ def sandbox_build(name: str) -> Path:
     """Have the sandbox runner build a theme_from site; where its output went."""
     try:
         result = hostrpc.request_sync(
-            hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
+            hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET"),
             "build_system_site",
             {"site": name},
             BUILD_SECONDS + 10,

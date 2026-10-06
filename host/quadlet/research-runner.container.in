@@ -52,10 +52,11 @@ Volume=%h/.local/share/everythingllm/pages/entries/.build.lock:%h/.local/share/e
 # which is renamed into place (one mount, or the rename fails), and the link cards go in
 # _cards/.
 Volume=%h/.local/share/everythingllm/pages/public:%h/.local/share/everythingllm/pages/public
-# Its socket's folder, and the sandbox's, which builds the research site
-# (build_system_site); connecting needs no write access to the folder.
+# Its socket's folder, and the folder of the sandbox runner's build socket, which serves
+# build_system_site and nothing else (never its runner.sock, which takes any workspace's
+# scope); connecting needs no write access to the folder.
 Volume=@ANYTHINGLLM_STORAGE@/everythingllm/research:@ANYTHINGLLM_STORAGE@/everythingllm/research
-Volume=@ANYTHINGLLM_STORAGE@/everythingllm/sandbox:@ANYTHINGLLM_STORAGE@/everythingllm/sandbox:ro
+Volume=@ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build:@ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build:ro
 # AnythingLLM's .env, read-only: the model keys and its password.
 Volume=@ANYTHINGLLM_STORAGE@/.env:@ANYTHINGLLM_STORAGE@/.env:ro
 # Where the report is saved for the agent's files, and its copy for the workspace.
@@ -66,7 +67,7 @@ EnvironmentFile=@REPO@/host.env
 
 [Service]
 # podman won't bind-mount what isn't there.
-ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research %h/.local/share/everythingllm/pages/entries/research %h/.local/share/everythingllm/pages/public @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/sandbox @ANYTHINGLLM_STORAGE@/anythingllm-fs/research @ANYTHINGLLM_STORAGE@/documents/deep-research
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research %h/.local/share/everythingllm/pages/entries/research %h/.local/share/everythingllm/pages/public @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build @ANYTHINGLLM_STORAGE@/anythingllm-fs/research @ANYTHINGLLM_STORAGE@/documents/deep-research
 ExecStartPre=/usr/bin/touch %h/.local/share/everythingllm/pages/entries/.build.lock
 # A run is mostly waiting on the models; what CPU it takes (page parsing) can give way.
 # The container's processes inherit it from podman.

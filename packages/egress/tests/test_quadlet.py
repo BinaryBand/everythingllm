@@ -152,7 +152,7 @@ RESEARCH = {
     f"{DATA}/pages/entries/.build.lock": False,
     f"{DATA}/pages/public": False,  # one mount: a build's rename stays inside it
     f"{STORAGE}/everythingllm/research": False,  # its socket
-    f"{STORAGE}/everythingllm/sandbox": True,  # the sandbox's, for build_system_site
+    f"{STORAGE}/everythingllm/sandbox-build": True,  # the sandbox's build_system_site
     f"{STORAGE}/.env": True,
     f"{STORAGE}/anythingllm-fs/research": False,
     f"{STORAGE}/documents/deep-research": False,
@@ -198,7 +198,7 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
         "SITES_CONTENT",
         "SITES_OUTPUT",
         "RESEARCH_SOCKET",
-        "SANDBOX_SOCKET",
+        "SANDBOX_BUILD_SOCKET",
     ):
         monkeypatch.delenv(var, raising=False)
     settings, builder = job.Settings.from_env(), Builder.from_env()
@@ -223,7 +223,10 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
         hostrpc.socket_path("research", "RESEARCH_SOCKET"),
     ):
         assert not read_only(path), path
-    for path in (settings.env_file, hostrpc.socket_path("sandbox", "SANDBOX_SOCKET")):
+    for path in (
+        settings.env_file,
+        hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET"),
+    ):
         read_only(path)  # mounted; read-only will do
     # The research site is built in the sandbox, so the container needs no zola.
     assert builder.theme_from(site) == "system" and builder.remote is not None
@@ -283,6 +286,9 @@ def test_a_service_container_gets_nothing_beyond_its_mounts_and_limits(template)
         source = volume.split(":")[0].rstrip("/")
         assert source not in TOO_WIDE, (name, volume)
         assert "podman" not in source and not source.endswith(".sock"), (name, volume)
+        # The sandbox runner's own socket takes any workspace's scope; a container gets
+        # its build socket's folder (sandbox-build) at most.
+        assert source != "@ANYTHINGLLM_STORAGE@/everythingllm/sandbox", (name, volume)
         # Its own folder of venvs/, not another container's or a host service's.
         if "/venvs/" in source:
             assert source.endswith(f"/venvs/{name}-ctr"), (name, volume)
@@ -300,7 +306,7 @@ def test_sites_runner_mounts_only_what_it_uses():
             f"{data}/pages/entries:{data}/pages/entries",
             f"{data}/pages/public:{data}/pages/public",
             f"{storage}/everythingllm/sites:{storage}/everythingllm/sites",
-            f"{storage}/everythingllm/sandbox:{storage}/everythingllm/sandbox:ro",
+            f"{storage}/everythingllm/sandbox-build:{storage}/everythingllm/sandbox-build:ro",
             f"{storage}/.env:{storage}/.env:ro",
             f"{data}/venvs/sites-runner-ctr:{data}/venvs/sites-runner-ctr",
         ]

@@ -14,7 +14,8 @@ Config (environment, from host.env and the unit):
   SITES_SOCKET   socket to listen on (default <storage>/everythingllm/sites/runner.sock)
   ARTICLES_HOST, SEARXNG_URL, ...  the article writer's; see sites.articles_web
   SITES_SOURCE   repo directory holding one Zola site per subdirectory
-  ANYTHINGLLM_STORAGE, SITES_CONTENT, SITES_OUTPUT, ZOLA, SITES_SANDBOX_ONLY, SANDBOX_SOCKET
+  ANYTHINGLLM_STORAGE, SITES_CONTENT, SITES_OUTPUT, ZOLA, SITES_SANDBOX_ONLY,
+  SANDBOX_BUILD_SOCKET
                  where entries, themes and built sites are, the zola binary, and whether
                  only the sandbox builds; see sites.build for the defaults
   EGRESS_PROXY, HTTPS_PROXY, HTTP_PROXY   the container's way out (README, "Service

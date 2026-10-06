@@ -393,8 +393,15 @@ build exactly as they did; pointing one at a workspace's theme is a one-line cha
 `zola.toml`, after which that workspace's theme edits restyle the site at its next build.
 Their entries stay on the host and are written exactly as below; no host service reads or
 writes a sandbox folder. The operation takes only a site's name and reads the rest from
-the repo, since its socket is reachable from the AnythingLLM container. With
-`sandbox-runner` down, those sites can't build, so their writes fail and are undone.
+the repo, since its socket is reachable from the AnythingLLM container. `sandbox-runner`
+also serves it alone, with `ping`, on a second socket,
+`storage/everythingllm/sandbox-build/runner.sock` (`SANDBOX_BUILD_SOCKET`), which is what
+`sites.build` asks and what the sites and research containers mount: the runner's own
+socket takes whatever scope a caller names, so a container that reads the web must never
+have it. The copy into `.<name>.new`, and `sites.build`'s marker, follow no symlink and
+write over nothing, since those containers can write `pages/public/` while the host copies
+into it. With `sandbox-runner` down, those sites can't build, so their writes fail and are
+undone.
 
 The sites MCP server's builds are started on the host, in `sites-runner` (in a service
 container of its own; see "Service containers"), and the audit's report in `audit-runner`,
@@ -519,7 +526,7 @@ creates `egress-net`; the `egress` app's setup runs it first.
 **The paths are the host's.** The repo is mounted read-only at its own path (`@REPO@`), and
 the container runs `uv run --frozen --no-dev --project @REPO@ --package <pkg> [--extra host]
 <script>` with `HOME=%h`. Everything else it mounts (its folders in the data dir and in
-storage, its socket folder, the sandbox's socket) is mounted at its host path too, so a path
+storage, its socket folder, the sandbox's build socket) is mounted at its host path too, so a path
 means the same inside and out: what the sandbox's `build_system_site` hands back, what a
 runner tells the container, what lands in a run log. `host.env` comes in through
 `EnvironmentFile=`, as does an app's own secrets file (`relay.env`): podman reads them on
@@ -624,8 +631,8 @@ its own venv folder (`venvs/sites-runner-ctr/`), it mounts, each at its host pat
   in `pages/entries/.build.lock` that a host `sites-build` takes too, draws link cards and
   swaps built sites in
 - `storage/everythingllm/sites/`, its socket's folder (so `GroupAdd=keep-groups`)
-- `storage/everythingllm/sandbox/`, read-only: the sandbox runner's socket, for
-  `build_system_site`. The sandbox writes `pages/public/.<site>.new`, which the runner sees
+- `storage/everythingllm/sandbox-build/`, read-only: the sandbox runner's build socket,
+  which serves `build_system_site` and nothing else. The sandbox writes `pages/public/.<site>.new`, which the runner sees
   at the same path and swaps in. Connecting to a socket needs no write access to its
   folder, and a folder rather than the socket itself keeps working when the sandbox runner
   makes a new one
@@ -1207,8 +1214,8 @@ host path:
   sites-runner's still take turns; and `pages/public/` whole, since the sandbox builds the
   research site into `.research.new` there and the rename into place must stay within one
   mount (the link cards go in its `_cards/`)
-- in storage: its socket folder; the sandbox's, read-only (connecting needs no more), for
-  `build_system_site`: the research site has `theme_from = "system"`, so no zola runs in the
+- in storage: its socket folder; the sandbox's build socket's (`sandbox-build/`, which
+  serves only `build_system_site`), read-only (connecting needs no more): the research site has `theme_from = "system"`, so no zola runs in the
   container; AnythingLLM's `.env`, read-only, for the model keys and its password;
   `anythingllm-fs/research/` and `documents/deep-research/`
 

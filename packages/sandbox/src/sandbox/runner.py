@@ -46,13 +46,18 @@ names a theme with [extra.build] theme_from (op_build_system_site, which sites.b
 their repo source and entries come in read-only, and the output goes, plain files only,
 into the pages site's `.<site>.new`, which sites.build marks and swaps in. The op takes only
 a site's name, and reads what to build from the repo itself: its socket is reachable from
-the AnythingLLM container.
+the AnythingLLM container. It is also served alone, with ping, on a second socket
+(SANDBOX_BUILD_SOCKET, `SystemBuilds`), the one the sites and research service containers
+mount: the full socket trusts the scope a caller names, so a container that parses the web
+must not have it.
 
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
                     this machine's storage directory and tailnet name, from host.env
                     (default /srv/anythingllm/storage, and no name: links use 127.0.0.1)
   SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/everythingllm/sandbox/runner.sock)
+  SANDBOX_BUILD_SOCKET  the socket serving only build_system_site (default
+                    <storage>/everythingllm/sandbox-build/runner.sock)
   SANDBOX_ROOT      workspace folders, host-only (default
                     ~/.local/share/everythingllm/sandbox/workspaces);
                     run scripts go in its `.runs` folder
@@ -78,6 +83,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import stat
 import tempfile
 import time
@@ -218,6 +224,7 @@ class Config:
     public_url: str = "http://127.0.0.1:8447/"
     sites_source: Path = SYSTEM_ZOLA / "sites"
     sites_content: Path = Path("/nonexistent")
+    build_socket: Path | None = None  # SystemBuilds' socket; none, none served
 
     @property
     def scripts(self) -> Path:
@@ -229,6 +236,7 @@ class Config:
         host = get("PUBLIC_HOST")
         return cls(
             socket=hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
+            build_socket=hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET"),
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
@@ -1377,15 +1385,44 @@ class Runner(hostrpc.Service):
             await asyncio.sleep(3600)
 
 
-async def serve(config: Config) -> None:
+class SystemBuilds(hostrpc.Service):
+    """The runner's build_system_site alone (and ping), for SANDBOX_BUILD_SOCKET: what the
+    sites and research containers may ask of the sandbox. No op here takes a scope."""
+
+    log = log
+
+    def __init__(self, runner: Runner):
+        super().__init__()
+        self.runner = runner
+
+    async def op_build_system_site(self, site: str) -> dict[str, Any]:
+        return await self.runner.op_build_system_site(site)
+
+
+async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
+    """Serve the runner on its socket, and SystemBuilds on the build socket, until `stop`
+    is set, or without one until SIGTERM."""
     runner = Runner(config)
     await runner.cleanup()
     config.root.mkdir(parents=True, exist_ok=True)
+    loop = asyncio.get_running_loop()
+    on_sigterm = stop is None
+    if stop is None:
+        stop = asyncio.Event()
+        loop.add_signal_handler(signal.SIGTERM, stop.set)
     gc = asyncio.create_task(runner.gc_loop())
+    servers = [hostrpc.serve(runner, config.socket, limit=LIMIT, stop=stop)]
+    if config.build_socket is not None:
+        servers.append(
+            hostrpc.serve(SystemBuilds(runner), config.build_socket, stop=stop)
+        )
     try:
-        await hostrpc.serve(runner, config.socket, limit=LIMIT)
+        await asyncio.gather(*servers)
     finally:
+        stop.set()  # one failed: the other stops too
         gc.cancel()
+        if on_sigterm:
+            loop.remove_signal_handler(signal.SIGTERM)
 
 
 def main() -> None:

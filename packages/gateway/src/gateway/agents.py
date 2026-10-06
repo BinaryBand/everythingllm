@@ -3,7 +3,9 @@
 AnythingLLM's agent delegates through the delegate skill, which refuses a delegated task
 (an agents-* workspace); a gateway client is named by its token, so it gets the ops as
 tools here instead. Declared like a front's tools (a signature and a docstring, no body);
-gateway.app serves them. Not an MCP server of its own, so nothing in the container runs it.
+gateway.app serves them as the `agents` group, named with PREFIX (agents_delegate, …), while
+the op each sends to the runner keeps its own name (delegate, …). Not an MCP server of its
+own, so nothing in the container runs it.
 
 Config (environment):
   AGENTS_SOCKET  the runner's socket (gateway.app sets it to the host's path)
@@ -18,8 +20,11 @@ from pydantic import Field
 
 mcp = MCPServer("agents")
 
+# The gateway serves each tool here as PREFIX + its name, apart from the fronts' tools.
+PREFIX = "agents_"
+
 RunId = Annotated[
-    str, Field(description="The run id delegate gave, e.g. 'dg-1a2b3c4d'.")
+    str, Field(description="The run id agents_delegate gave, e.g. 'dg-1a2b3c4d'.")
 ]
 
 # The runner's socket; there are no skills here, only tools.
@@ -60,8 +65,9 @@ async def delegate(
     """Hand work to AnythingLLM's own agents, run in parallel on the server. 'worker' tasks
     search and read the web; 'planner' tasks plan, review and write up. Each task sees only
     the goal and its own instructions, so make them self-contained. The tasks can only read.
-    Answers at once with {run_id, queued, card}; follow the run with wait. Tasks that read
-    many pages cost real money, and delegation has a daily budget: keep it to 2-4 tasks."""
+    Answers at once with {run_id, queued, card}; follow the run with agents_wait. Tasks
+    that read many pages cost real money, and delegation has a daily budget: keep it to
+    2-4 tasks."""
 
 
 @tool

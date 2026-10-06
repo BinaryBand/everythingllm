@@ -1,0 +1,29 @@
+# Which tools each MCP gateway client may see and call (gateway.grants; the README's "MCP
+# gateway"). A client is named as its token is in ~/.config/everythingllm/gateway.env
+# (GATEWAY_TOKEN_CLAUDE_CODE is claude-code); the tokens stay there, never here. A client
+# with a token but no entry here gets no tools. The gateway reads this when it starts, so
+# restart it after a change (systemctl --user restart gateway).
+#
+#   [clients.<name>]
+#   tools = ["<group>", ...]
+#
+# The groups:
+#   sites, podcasts, audit   each front's read tools, the ones AnythingLLM's agent has
+#   sites:write              write_entry, delete_entry
+#   podcasts:write           add_podcast, remove_podcast
+#   audit:write              publish_report, run_job
+#   agents                   delegations to AnythingLLM's own agents (agents_*)
+#   research, sandbox        deep research and the code sandbox (no tools yet)
+
+[clients.claude-code]
+tools = [
+  "sites",
+  "sites:write",
+  "podcasts",
+  "podcasts:write",
+  "audit",
+  "audit:write",
+  "agents",
+  "research",
+  "sandbox",
+]

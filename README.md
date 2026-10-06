@@ -1042,17 +1042,28 @@ unused).
 The gateway (`packages/gateway`, `gateway.service`, 127.0.0.1:8452, tailnet https :8452)
 serves the runners' tools over MCP's streamable HTTP to clients other than AnythingLLM,
 such as Claude Code on another machine on the tailnet (`docs/.proposals/gateway-and-containers.md`,
-kept out of git). It's one more front on the host, over the same runner sockets:
+kept out of git). It's one more front on the host, over the same runner sockets. Its tools
+come in groups, and a client gets the groups it's granted. Two tools of the same name stop
+it from starting.
 
-- **The fronts' own tools.** It imports `sites.server`, `podcasts.server` and
-  `audit.server` and serves each one's `tool.registered` (what `hostrpc.forwarder`
-  registered), so the schemas and docstrings are the ones AnythingLLM sees. A front's
-  skills, the ops that write or act, aren't tools, so they aren't served. Two fronts with a
-  tool of the same name stop it from starting.
-- **Delegation.** `delegate`, `wait`, `runs` and `cancel` over agents-runner
-  (`gateway/agents.py`, declared like a front's tools). A client follows a run with `wait`,
-  advancing `since` by the events it got, until `done`. The daily budget
-  (`AGENTS_DAILY_USD`) counts these delegations too.
+- **The fronts' read tools** (groups `sites`, `podcasts`, `audit`). It imports
+  `sites.server`, `podcasts.server` and `audit.server` and serves each one's
+  `tool.registered` (what `hostrpc.forwarder` registered), so the schemas and docstrings are
+  the ones AnythingLLM sees.
+- **The fronts' skills as tools** (`sites:write`, `podcasts:write`, `audit:write`):
+  `write_entry`, `delete_entry`, `add_podcast`, `remove_podcast`, `publish_report` and
+  `run_job`. The gateway wraps each front's `skills` (signatures, as its tools are) with
+  `hostrpc.forwarder` itself, so each call goes to the front's runner under the op's name,
+  as the generated skill's does.
+- **Delegation** (`agents`): `agents_delegate`, `agents_wait`, `agents_runs` and
+  `agents_cancel` over agents-runner (`gateway/agents.py`, declared like a front's tools).
+  A front declared in the gateway names its tools with its `PREFIX` (`agents_`), so they
+  don't clash with research's and the sandbox's; the op sent to the runner keeps its own
+  name (`delegate`, …). A client follows a run with `agents_wait`, advancing `since` by the
+  events it got, until `done`. The daily budget (`AGENTS_DAILY_USD`) counts these
+  delegations too.
+- **`research` and `sandbox`**, which a grant may name already; their tools come with the
+  gateway's next stage.
 - **Sockets.** The fronts' `hostrpc.caller` falls back to the container's storage path, so
   at start the gateway sets each front's `<FRONT>_SOCKET` to the host's
   (`hostrpc.socket_path`), unless it's set already.
@@ -1060,16 +1071,29 @@ kept out of git). It's one more front on the host, over the same runner sockets:
 **Clients and tokens.** Every path but `/health` needs `Authorization: Bearer <token>`. Each
 client has its own token, a `GATEWAY_TOKEN_<NAME>` line in
 `~/.config/everythingllm/gateway.env` (mode 600), and its name is `<name>` in lowercase,
-`_` as `-`. To revoke a client, delete its line and restart the gateway. Each tool call is
-logged with the client's name and the tool's, never its arguments or the token, and a test
-holds that. The server is stateless HTTP; DNS-rebinding protection allows only
-`127.0.0.1`, `localhost` and `PUBLIC_HOST` as the Host.
+`_` as `-`. To revoke a client, delete its line and restart the gateway. The server is
+stateless HTTP; DNS-rebinding protection allows only `127.0.0.1`, `localhost` and
+`PUBLIC_HOST` as the Host.
+
+**Grants.** `packages/gateway/src/gateway/grants.toml` (in the repo, beside the code, with no
+tokens) gives each client its groups, `[clients.<name>] tools = ["sites", "agents", …]`.
+`claude-code` gets every group. A client with a token but no grant gets no tools (the log
+says so at start), and a key or group the file doesn't know stops the gateway from
+starting. The gateway reads it at start, so restart it after a change. One MCP middleware,
+`gateway.grants.Grants`, holds each client to its grant:
+
+- it drops from `tools/list` the tools the client isn't granted;
+- it refuses a `tools/call` outside the grant with an error naming the client (JSON-RPC
+  `-32602`, as for an unknown tool);
+- it logs each call with the client's name and the tool's, never its arguments or the
+  token (a refusal as a warning), and tests hold that;
+- it sets the ContextVar `gateway.grants.client` to the client's name around the call, so
+  a tool can tell who is calling (the next stage's research and sandbox tools take the
+  client's scope from it, never from the model).
 
 Why it may act where an MCP tool in AnythingLLM may not: writes are skills there because an
 MCP call doesn't say which workspace made it, so it can't refuse a delegated task. A
-gateway call is named by its token. The gateway's first stage serves only reads,
-`refresh_podcasts` (which only starts background work) and delegation (whose tasks can only
-read). Writes, the sandbox and research come later, with a grant per client.
+gateway call is named by its token, and the client's grant says what it may do.
 
 **Setting it up.** `uv run hostctl gateway-setup` makes `gateway.env` with a token for
 `claude-code` when it's missing, maps the port, and starts the unit. It isn't part of
@@ -1078,9 +1102,10 @@ read). Writes, the sandbox and research come later, with a grant per client.
     claude mcp add --transport http everythingllm https://<PUBLIC_HOST>:8452/mcp \
       --header "Authorization: Bearer <GATEWAY_TOKEN_CLAUDE_CODE from gateway.env>"
 
-`uv run hostctl gateway-logs` follows it. A code change to a front's tools reaches the
-gateway when it restarts (`systemctl --user restart gateway`); `uv run hostctl deploy`
-doesn't restart it.
+Another client needs a `GATEWAY_TOKEN_<NAME>` line and a `[clients.<name>]` grant.
+`uv run hostctl gateway-logs` follows it. A code change to a front's tools or skills, or to
+`grants.toml`, reaches the gateway when it restarts (`systemctl --user restart gateway`);
+`uv run hostctl deploy` doesn't restart it.
 
 ## Nilson relay
 

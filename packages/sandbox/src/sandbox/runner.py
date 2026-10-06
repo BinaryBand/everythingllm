@@ -1354,7 +1354,9 @@ class Runner(hostrpc.Service):
             if slug not in pages and not any(k["slug"] == slug for k in skipped):
                 m = marker(page) or {}
                 remove_path(page)
-                chatimage.card.remove(site, self.page_url(slug, m.get("entry", "index.html")))
+                chatimage.card.remove(
+                    site, self.page_url(slug, m.get("entry", "index.html"))
+                )
                 removed.append(slug)
         if live or removed:
             self.rebuild_index()

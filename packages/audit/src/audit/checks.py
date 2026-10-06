@@ -86,7 +86,9 @@ def http(
     of that JSON."""
     kind = {"Content-Type": "application/json"} if data is not None else {}
     req = urllib.request.Request(
-        url, data, headers={"User-Agent": "everythingllm-audit", **kind, **(headers or {})}
+        url,
+        data,
+        headers={"User-Agent": "everythingllm-audit", **kind, **(headers or {})},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as res:

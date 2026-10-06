@@ -28,7 +28,9 @@ from pathlib import Path
 import research_guard
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKUPS = research_guard.DATA / "backups"  # outside the repo, which the container mounts
+BACKUPS = (
+    research_guard.DATA / "backups"
+)  # outside the repo, which the container mounts
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
 
 

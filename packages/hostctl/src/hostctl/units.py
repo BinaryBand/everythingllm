@@ -12,11 +12,13 @@ repo's path and @KEY@ with KEY from host.env:
            restarted only if it's running. Enabling host units is up to each `uv run hostctl *-setup`.
            A change to comments alone restarts nothing. Either waits while it's a guarded
            runner with a run going (run_guard), and a container also while its local
-           image or its network isn't there yet (its app's setup makes them).
+           image or its network isn't there yet (its app's setup makes them), or the
+           egress proxy it Wants= isn't installed (`uv run hostctl units egress`).
            A host unit this rendered whose template is gone (removed from host/systemd,
            or moved to host/quadlet as a container) is retired: stopped and disabled, and
            its installed copy moved to the backups. A container that took its name over is
            started then, since the old copy would hide Quadlet's unit; `diff` lists them.
+           An app's host units stay running while one of its containers can't start yet.
            Given app names (`uv run hostctl units relay`), it installs and retires only
            those apps' units, so services can move into containers one at a time; the
            rest wait for a later run.
@@ -254,10 +256,11 @@ def podman_has(kind: str, name: str) -> bool:
     )
 
 
-def missing(unit: Unit) -> list[str]:
-    """What a container's unit needs that podman doesn't have yet: an image of ours
-    (localhost/, built by its app's `before` step) or a network it doesn't create itself.
-    Starting it without them only fails."""
+def missing(unit: Unit, plan: list[Unit] = ()) -> list[str]:
+    """What a container's unit needs that isn't there yet: an image of ours (localhost/,
+    built by its app's `before` step), a network it doesn't create itself, or a container
+    of `plan` that it Wants= (the egress proxy) and that isn't installed. Starting it
+    without them only fails, or, without the proxy, crash-loops."""
     needs = []
     for line in unit.text.splitlines():
         key, _, value = line.strip().partition("=")
@@ -267,24 +270,55 @@ def missing(unit: Unit) -> list[str]:
             name = value.split(":")[0]
             if name not in BUILTIN_NETWORKS and not name.endswith(".network"):
                 needs.append(("network", name))
-    return [f"{kind} {name}" for kind, name in needs if not podman_has(kind, name)]
+        elif key == "Wants":
+            needs += [("unit", name) for name in value.split()]
+    lacking = []
+    for kind, name in needs:
+        if kind == "unit":
+            dep = [u for u in plan if u.always and u.service == name]
+            if dep and not dep[0].dest.exists():
+                lacking.append(name)
+        elif not podman_has(kind, name):
+            lacking.append(f"{kind} {name}")
+    return lacking
 
 
-def hold_back(restart: list[str], plan: list[Unit]) -> list[str]:
+def how_to_make(service: str, lacking: list[str]) -> str:
+    """The commands that make what `service`'s container lacks, in the order to run them."""
+    app = apps.app_of(service)
+    steps = [
+        f"`uv run hostctl units {dep.name}`"
+        for need in lacking
+        if need.endswith(".service") and (dep := apps.app_of(need))
+    ]
+    if any(not need.endswith(".service") for need in lacking):
+        steps.append(f"`uv run hostctl {app.name if app else service}-setup`")
+    return ", then ".join(steps)
+
+
+def hold_back(
+    restart: list[str], plan: list[Unit], cleared: set[str] = frozenset()
+) -> list[str]:
     """The units of `restart` to restart now. Left out, each with a word on why: a
     container podman can't start yet, and a guarded runner, host unit or container, with
-    a run going that the restart would kill (run_guard asks, or FORCE=1)."""
+    a run going that the restart would kill (run_guard asks, or FORCE=1), unless retiring
+    its host unit already asked (`cleared`)."""
     now = []
     for service in restart:
         app = apps.app_of(service)
         setup = f"`uv run hostctl {app.name if app else service}-setup`"
         containers = [u for u in plan if u.always and u.service == service]
-        lacking = [need for u in containers for need in missing(u)]
+        lacking = [need for u in containers for need in missing(u, plan)]
         if lacking:
             print(
-                f"units: not starting {service}: no {', '.join(lacking)} yet; {setup} makes them"
+                f"units: not starting {service}: no {', '.join(lacking)} yet; "
+                f"{how_to_make(service, lacking)} makes them"
             )
-        elif service in run_guard.GUARDED and not run_guard.ok_to_restart(service):
+        elif (
+            service in run_guard.GUARDED
+            and service not in cleared
+            and not run_guard.ok_to_restart(service)
+        ):
             print(f"units: left {service} running; {setup} applies its new unit later")
         else:
             now.append(service)
@@ -318,11 +352,29 @@ def retire(
     """Stop and disable each, and move its installed copy to `backup`. Returns the
     containers to start now that the host unit of their name is gone, and the units left
     as they are: a guarded runner with a run going (run_guard asks), whose container
-    mustn't start beside it."""
+    mustn't start beside it, and every old unit of an app whose containers can't start
+    yet (no image, network or proxy), so the host keeps running it until they can."""
     containers = {u.service for u in plan if u.always}
+    waiting = {}  # app name -> what one of its containers lacks
+    for u in plan:
+        if (
+            u.always
+            and (lacking := missing(u, plan))
+            and (app := apps.app_of(u.service))
+        ):
+            waiting.setdefault(app.name, (u.service, lacking))
     start, left = [], []
     for path in old:
         name = path.name
+        blocked = [a for a in waiting if belongs(name, [a])]
+        if blocked:
+            service, lacking = waiting[blocked[0]]
+            print(
+                f"units: left {name} running: {service} has no {', '.join(lacking)} yet; "
+                f"{how_to_make(service, lacking)}, then `uv run hostctl units {blocked[0]}`"
+            )
+            left.append(name)
+            continue
         if name in run_guard.GUARDED and not run_guard.ok_to_restart(name):
             print(f"units: left {name} running; run `uv run hostctl units` again later")
             left.append(name)
@@ -415,7 +467,8 @@ def main(argv: list[str] | None = None) -> None:
     restart = [s for s in restart if s not in left]
     restart += [s for s in start if s not in restart]
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    for service in hold_back(restart, plan):
+    # retire() has asked the guard for the containers it starts; don't ask again.
+    for service in hold_back(restart, plan, cleared=set(start)):
         subprocess.run(["systemctl", "--user", "restart", service], check=True)
         print(f"restarted {service}")
     if backup.exists():

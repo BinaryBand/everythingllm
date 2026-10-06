@@ -297,6 +297,51 @@ def test_hold_back_leaves_a_guarded_runner_with_a_run_going(
     assert "left research-runner.service running" in capsys.readouterr().out
 
 
+def test_a_container_waits_for_the_proxy_it_wants(tmp_path, monkeypatch, capsys):
+    """`units podcasts` before `units egress` would start containers whose first uv sync
+    can't reach PyPI, and they'd crash-loop: a container held to the egress proxy waits
+    until the proxy's unit is installed."""
+    monkeypatch.setattr(units, "podman_has", lambda kind, name: True)
+    proxy = unit(
+        tmp_path, tmp_path / "egress-proxy.container", "x", "egress-proxy.service", True
+    )
+    relay = unit(
+        tmp_path,
+        tmp_path / "relay.container",
+        "[Unit]\nWants=egress-proxy.service\n[Container]\nImage=localhost/everythingllm-service\n",
+        "relay.service",
+        True,
+    )
+    assert units.missing(relay, [proxy, relay]) == ["egress-proxy.service"]
+    assert units.hold_back(["relay.service"], [proxy, relay]) == []
+    assert (
+        "not starting relay.service: no egress-proxy.service yet; "
+        "`uv run hostctl units egress` makes them" in capsys.readouterr().out
+    )
+    proxy.dest.write_text("x")
+    assert units.missing(relay, [proxy, relay]) == []
+    assert units.hold_back(["relay.service"], [proxy, relay]) == ["relay.service"]
+
+
+def test_a_runner_cleared_when_its_host_unit_retired_isnt_asked_again(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(units, "podman_has", lambda kind, name: True)
+    monkeypatch.setattr(
+        run_guard, "ok_to_restart", lambda service: pytest.fail("asked again")
+    )
+    runner = unit(
+        tmp_path,
+        tmp_path / "research-runner.container",
+        "[Container]\nImage=localhost/everythingllm-service\n",
+        "research-runner.service",
+        True,
+    )
+    assert units.hold_back(
+        ["research-runner.service"], [runner], cleared={"research-runner.service"}
+    ) == ["research-runner.service"]
+
+
 RENDERED = (
     "# Rendered by `uv run hostctl units` from systemd/x in the EverythingLLM repo\n"
 )
@@ -367,6 +412,40 @@ def test_a_guarded_runner_with_a_run_going_isnt_retired(tmp_path, monkeypatch):
     assert (user / "research-runner.service").is_file()
 
 
+def test_an_apps_host_units_stay_while_its_containers_cant_start(
+    tmp_path, monkeypatch, capsys
+):
+    """Retiring research-runner's host unit before its image or network exists would leave
+    research with no runner at all: the host unit, and the rest of the app's, stay."""
+    monkeypatch.setattr(units.subprocess, "run", lambda *a, **kw: pytest.fail("ran"))
+    monkeypatch.setattr(units, "podman_has", lambda kind, name: kind == "network")
+    monkeypatch.setattr(
+        run_guard, "ok_to_restart", lambda service: pytest.fail("asked")
+    )
+    planned = plan(tmp_path)
+    user = tmp_path / "user"
+    user.mkdir()
+    for name in ("research-runner.service", "podcasts-sync.timer"):
+        (user / name).write_text(RENDERED)
+    old = units.retired(planned, user)
+    start, left = units.retire(old, planned, tmp_path / "backup")
+    assert (start, sorted(left)) == (
+        [],
+        ["podcasts-sync.timer", "research-runner.service"],
+    )
+    assert sorted(p.name for p in user.iterdir()) == [
+        "podcasts-sync.timer",
+        "research-runner.service",
+    ]
+    out = capsys.readouterr().out
+    assert (
+        "left research-runner.service running: research-runner.service has no "
+        "egress-proxy.service, image localhost/everythingllm-service yet; "
+        "`uv run hostctl units egress`, then `uv run hostctl research-setup`, "
+        "then `uv run hostctl units research`" in out
+    )
+
+
 def test_the_podcasts_host_units_are_retired_and_their_containers_started(
     tmp_path, monkeypatch
 ):
@@ -374,6 +453,7 @@ def test_the_podcasts_host_units_are_retired_and_their_containers_started(
     units installed, each goes, the containers take over the runner's and the workers'
     names, and podcasts-web stays."""
     monkeypatch.setattr(units.subprocess, "run", lambda *a, **kw: None)
+    monkeypatch.setattr(units, "missing", lambda unit, plan=(): [])
     planned = plan(tmp_path)
     user = tmp_path / "user"
     user.mkdir()

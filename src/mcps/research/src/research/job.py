@@ -49,7 +49,7 @@ class Settings:
             searxng_url=SEARXNG,
             api="http://127.0.0.1:3001/api",
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
-            runlogs=hostrpc.data_dir() / "logs" / "deep-research",
+            runlogs=hostrpc.data_dir() / "research" / "runs",
         )
 
     @property

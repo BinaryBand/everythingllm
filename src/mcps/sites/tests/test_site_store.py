@@ -626,8 +626,8 @@ def test_from_env_puts_entries_and_sites_on_the_host(monkeypatch):
     b = Builder.from_env()
     assert b.source == REPO_ZOLA / "sites"
     assert (b.content, b.output, b.zola) == (
-        Path("~/.local/share/everythingllm/zola").expanduser(),
-        Path("~/.local/share/everythingllm/site").expanduser(),
+        Path("~/.local/share/everythingllm/pages/entries").expanduser(),
+        Path("~/.local/share/everythingllm/pages/public").expanduser(),
         "/usr/local/bin/zola",
     )
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")

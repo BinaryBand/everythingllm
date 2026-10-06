@@ -2,7 +2,7 @@
 
 Each site is assembled in a temporary directory from its source in the repo
 (SITES_SOURCE/<name>/), the shared themes beside it (../themes) and the entries in
-SITES_CONTENT/<name>/ (default ~/.local/share/everythingllm/zola, out of the AnythingLLM
+SITES_CONTENT/<name>/ (default ~/.local/share/everythingllm/pages/entries, out of the AnythingLLM
 container's reach, since only host services read or write entries). It's built straight next to its destination and swapped in at
 SITES_OUTPUT/<name>/, so readers never see a half-built site. The output carries a marker
 file; a directory without one (a page the sandbox published, the podcasts) is never
@@ -85,13 +85,11 @@ class Builder:
     @classmethod
     def from_env(cls) -> "Builder":
         """Paths from the environment, with the host's defaults: builds run on the host, from
-        entries in ~/.local/share/everythingllm/zola into the pages site (hostrpc.site_dir()), with its zola (src/tools/machine.py checks it's there),
+        entries in hostrpc.data_dir()/pages/entries into the pages site (hostrpc.site_dir()), with its zola (src/tools/machine.py checks it's there),
         from the sites in the repo this package is in."""
         get = os.environ.get
         source = Path(get("SITES_SOURCE", REPO_SITES))
-        content = Path(
-            get("SITES_CONTENT", "~/.local/share/everythingllm/zola")
-        ).expanduser()
+        content = Path(get("SITES_CONTENT", hostrpc.data_dir() / "pages" / "entries"))
         return cls(
             source=source,
             themes=source.parent / "themes",

@@ -245,7 +245,10 @@ def default_model() -> Chat | None:
 
 def models_dir(name: str) -> Path:
     """Where the speech and transcription models for `name` are kept."""
-    return Path(os.environ.get("PODCASTS_MODELS", data_dir() / "models")) / name
+    return (
+        Path(os.environ.get("PODCASTS_MODELS", data_dir() / "podcasts" / "models"))
+        / name
+    )
 
 
 class Units:

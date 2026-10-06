@@ -7,7 +7,7 @@ StartLimitIntervalSec=0
 [Service]
 # The checks' other paths (run logs, .env, the sandbox socket) default to storage's.
 EnvironmentFile=@REPO@/host.env
-Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/audit-venv
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/audit
 # The tailnet URL the agent's web search uses, so the check covers tailscale serve too.
 Environment=SEARXNG_URL=https://@PUBLIC_HOST@:8888/search
 ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package audit audit-runner

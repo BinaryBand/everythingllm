@@ -32,7 +32,7 @@ TOOLS = {
     "zola": "/usr/local/bin/zola",
 }
 # The pages site's folder, which the static_agent container mounts, so it must exist first.
-SITE_DIR = Path.home() / ".local" / "share" / "everythingllm" / "site"
+SITE_DIR = Path.home() / ".local" / "share" / "everythingllm" / "pages" / "public"
 
 
 def settings() -> dict[str, str]:

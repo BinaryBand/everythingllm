@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 EnvironmentFile=@REPO@/host.env
-Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/podcasts-venv
-# The edition comes from the news site: the repo's sources, the entries in ~/.local/share/everythingllm/zola, the host's zola.
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/podcasts
+# The edition comes from the news site: the repo's sources, the entries in ~/.local/share/everythingllm/pages/entries, the host's zola.
 Type=oneshot
 # Does nothing if the newest edition is already read aloud, so it can run twice a day.
 ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package podcasts --extra host news-audio

@@ -31,12 +31,13 @@ Config (environment):
                     this machine's storage directory and tailnet name, from host.env
                     (default /srv/anythingllm/storage, and no name: links use 127.0.0.1)
   SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/sandbox/runner.sock)
-  SANDBOX_ROOT      workspace folders, host-only (default ~/.local/share/everythingllm/sandbox);
+  SANDBOX_ROOT      workspace folders, host-only (default
+                    ~/.local/share/everythingllm/sandbox/workspaces);
                     run scripts go in its `.runs` folder
   SANDBOX_SHARED    the folder behind /shared, host-only (default
-                    ~/.local/share/everythingllm/shared)
+                    ~/.local/share/everythingllm/sandbox/shared)
   SANDBOX_SITE_DIR  the pages site's root, where pages are published (default
-                    ~/.local/share/everythingllm/site)
+                    ~/.local/share/everythingllm/pages/public)
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
 """
 
@@ -194,11 +195,11 @@ class Config:
         return cls(
             socket=hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
             root=Path(
-                get("SANDBOX_ROOT", "~/.local/share/everythingllm/sandbox")
-            ).expanduser(),
+                get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
+            ),
             shared=Path(
-                get("SANDBOX_SHARED", "~/.local/share/everythingllm/shared")
-            ).expanduser(),
+                get("SANDBOX_SHARED", hostrpc.data_dir() / "sandbox" / "shared")
+            ),
             site_dir=Path(get("SANDBOX_SITE_DIR", hostrpc.site_dir())),
             site_url=get(
                 "SANDBOX_SITE_URL",

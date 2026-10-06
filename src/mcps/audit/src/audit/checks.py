@@ -183,7 +183,11 @@ class Env:
             sites_source=sites.source,
             sites_content=sites.content,
             sites_output=sites.output,
-            runlogs=Path(os.environ.get("AUDIT_RUNLOGS", hostrpc.data_dir() / "logs")),
+            runlogs=Path(
+                os.environ.get(
+                    "AUDIT_RUNLOGS", hostrpc.data_dir() / "research" / "runs"
+                )
+            ),
             settings=read_settings(
                 Path(os.environ.get("ANYTHINGLLM_ENV", storage / ".env"))
             ),
@@ -592,12 +596,12 @@ def jobs(env: Env, since: datetime) -> list[Finding]:
 
 
 def research_running(env: Env) -> list[dict]:
-    """Runs with a marker in deep-research/running/ (research-runner writes the log line
+    """Runs with a marker in the run log's running/ (research-runner writes the log line
     only when a run ends): "interrupted" once the marker has been quiet for its stale_ms (the
     runner restarted under it; the runner moves it into the log when it starts again),
     otherwise "running". As research/runlog.py decides it."""
     runs = []
-    for file in (env.runlogs / "deep-research" / "running").glob("*.json"):
+    for file in (env.runlogs / "running").glob("*.json"):
         try:
             run = json.loads(file.read_text(encoding="utf-8"))
             quiet = env.now() - datetime.fromtimestamp(file.stat().st_mtime, UTC)
@@ -616,7 +620,7 @@ def research_runs_since(env: Env, since: datetime) -> list[dict]:
 
     Logs are one file per month (YYYY-MM.jsonl), so older months are skipped unread.
     """
-    folder = env.runlogs / "deep-research"
+    folder = env.runlogs
     first_month = since.astimezone(UTC).strftime("%Y-%m")
     runs = [
         r

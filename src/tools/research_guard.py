@@ -3,7 +3,7 @@ without a report (a run writes its log line only at the end), so this lists live
 
   python3 src/tools/research_guard.py   exit 0 to go ahead, 1 to stop
 
-A run is live while its marker in ~/.local/share/everythingllm/logs/deep-research/running/
+A run is live while its marker in ~/.local/share/everythingllm/research/runs/running/
 has been touched
 within the marker's stale_ms (see src/mcps/research/src/research/runlog.py). With no terminal to
 ask, it stops unless FORCE=1. Used by `make research-setup` and units.py. AnythingLLM's own
@@ -26,7 +26,7 @@ DATA = Path.home() / ".local" / "share" / "everythingllm"  # hostrpc.data_dir()
 
 def live_runs(data: Path) -> list[dict]:
     runs = []
-    for f in sorted((data / "logs" / "deep-research" / "running").glob("*.json")):
+    for f in sorted((data / "research" / "runs" / "running").glob("*.json")):
         try:
             run, quiet = json.loads(f.read_text()), time.time() - f.stat().st_mtime
         except (OSError, ValueError):

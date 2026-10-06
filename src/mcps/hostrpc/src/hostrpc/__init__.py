@@ -80,15 +80,21 @@ def storage() -> Path:
 
 
 def data_dir() -> Path:
-    """EverythingLLM's own data on the host: what only host services read or write (the
-    pages site, the podcasts, our speech models, the deep-research run logs), kept out of
-    AnythingLLM's storage, which the container mounts."""
+    """EverythingLLM's own data on the host: what only host services read or write, kept
+    out of AnythingLLM's storage, which the container mounts. By kind:
+
+      venvs/<name>/        the host services' venvs
+      pages/public/        the pages site Caddy serves; pages/entries/, the Zola entries
+      sandbox/workspaces/  the sandbox's per-workspace folders; sandbox/shared/, /shared
+      podcasts/            the podcasts' state and audio; podcasts/models/, Whisper and Kokoro
+      research/runs/       the deep-research run log and live runs' markers
+      relay/               the Nilson relay's database"""
     return Path("~/.local/share/everythingllm").expanduser()
 
 
 def site_dir() -> Path:
     """The pages site's folder on the host, which Caddy serves on :8445."""
-    return data_dir() / "site"
+    return data_dir() / "pages" / "public"
 
 
 def socket_path(folder: str, env: str) -> Path:

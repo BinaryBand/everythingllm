@@ -729,9 +729,12 @@ def test_from_env_defaults_to_everythingllms_data(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     lib = Library.from_env()
     data = tmp_path / "home" / ".local" / "share" / "everythingllm"
-    assert (lib.state, lib.site) == (data / "podcasts", data / "site" / "podcasts")
+    assert (lib.state, lib.site) == (
+        data / "podcasts",
+        data / "pages" / "public" / "podcasts",
+    )
     assert lib.base_url == "https://box.ts.net:8445/podcasts"
-    assert library.models_dir("whisper") == data / "models" / "whisper"
+    assert library.models_dir("whisper") == data / "podcasts" / "models" / "whisper"
 
 
 def test_splice_web_knows_every_type_we_download():

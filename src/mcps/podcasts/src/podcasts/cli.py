@@ -8,7 +8,7 @@ The models are kept where the services keep theirs (podcasts.library.models_dir)
 `speak fetch` or a first `transcribe` downloads them for the services too.
 
 Config (environment):
-  PODCASTS_MODELS     where the models are kept (default ~/.local/share/everythingllm/models)
+  PODCASTS_MODELS     where the models are kept (default ~/.local/share/everythingllm/podcasts/models)
   ANYTHINGLLM_STORAGE AnythingLLM's storage directory (via hostrpc)
 """
 

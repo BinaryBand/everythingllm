@@ -18,7 +18,7 @@ Config (environment, from host.env and the unit):
   SITES_SOURCE, ZOLA and the rest of sites.build's settings
                      the Zola sites, as for sites-runner; the report is written to the
                      status site through the same store and build
-  AUDIT_RUNLOGS      where skills write run logs (default ~/.local/share/everythingllm/logs)
+  AUDIT_RUNLOGS      the deep-research run log (default ~/.local/share/everythingllm/research/runs)
 """
 
 import json

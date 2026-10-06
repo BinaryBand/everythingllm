@@ -9,7 +9,7 @@ the pages site's headers. Range requests work for both, so podcast apps can seek
 resume.
 
 Config (command line, defaults under ~/.local/share/everythingllm):
-  --root       the served folder      (site/podcasts)
+  --root       the served folder      (pages/public/podcasts)
   --manifests  manifests by slug      (podcasts/manifests)
   --audio      what manifests point to (podcasts/audio)
 """
@@ -322,7 +322,9 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8449)
     parser.add_argument("--prefix", default="/podcasts")
-    parser.add_argument("--root", type=Path, default=data / "site" / "podcasts")
+    parser.add_argument(
+        "--root", type=Path, default=data / "pages" / "public" / "podcasts"
+    )
     parser.add_argument(
         "--manifests", type=Path, default=data / "podcasts" / "manifests"
     )

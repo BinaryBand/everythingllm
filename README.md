@@ -171,13 +171,24 @@ through its UI.
   `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
   to cut MCP payloads from AnythingLLM's log.
 - What only host services read or write lives in `~/.local/share/everythingllm`
-  (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts: the
-  pages site (`site/`), the Zola entries (`zola/`), the podcasts (`podcasts/`), our speech
-  models (`models/whisper`, `models/kokoro`), the deep-research run logs
-  (`logs/deep-research/`), the sandbox's folders and the services' venvs. Storage keeps
-  AnythingLLM's own data, the runners' sockets (`storage/<name>/runner.sock`, which the
-  container reaches) and what AnythingLLM reads (`anythingllm-fs/research/`, `documents/`).
-- The `static_agent` Caddy container mounts just `site/` read-only and serves it on
+  (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's
+  laid out by kind:
+
+      venvs/<name>/        the host services' venvs (audit, podcasts, relay, research,
+                           sandbox, sites, splice)
+      pages/public/        the pages site Caddy serves
+      pages/entries/       the Zola entries
+      sandbox/workspaces/  the sandbox's folders, one per workspace
+      sandbox/shared/      /shared, every workspace's
+      podcasts/            the podcasts' state, audio, transcripts and manifests
+      podcasts/models/     Whisper and Kokoro
+      research/runs/       the deep-research run log and live runs' markers
+      relay/               the Nilson relay's database
+
+  Storage keeps AnythingLLM's own data, the runners' sockets (`storage/<name>/runner.sock`,
+  which the container reaches) and what AnythingLLM reads (`anythingllm-fs/research/`,
+  `documents/`).
+- The `static_agent` Caddy container mounts just `pages/public/` read-only and serves it on
   127.0.0.1:8445
 - `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
@@ -247,7 +258,7 @@ archive, Atom feed; no scripts or inline styles, so it passes the CSP). Each
 `_index.md` files, and any templates or `static/` CSS it overrides or adds. Templates are
 Tera 2: reusable pieces are `{% component %}`s (global, no import), not macros.
 
-The `sites` MCP server writes entries to `~/.local/share/everythingllm/zola/<name>/<section>/<slug>.md`
+The `sites` MCP server writes entries to `~/.local/share/everythingllm/pages/entries/<name>/<section>/<slug>.md`
 (JSON front matter, fields under `extra`) and then rebuilds that site itself, so an entry
 is live when `write_entry` returns; if the site doesn't build, the write or delete is
 undone ("not saved: the site didn't build: …"). Bodies can't use Zola shortcodes or Tera:
@@ -259,7 +270,7 @@ is stopped after 40 s. A machine without unprivileged user namespaces builds wit
 namespace and logs a warning. The
 front matter names the slug, so a file like `2026-10-01-notes.md` keeps its date in the URL. The build (`sites.build`, also the `sites-build`
 command) assembles the site from the repo plus its entries in a temp dir, builds it next
-to `~/.local/share/everythingllm/site/<name>/` and swaps it in, holding a lock on `.build.lock` in the entries folder. Entries live outside storage because
+to `~/.local/share/everythingllm/pages/public/<name>/` and swaps it in, holding a lock on `.build.lock` in the entries folder. Entries live outside storage because
 only host services read or write them; the AnythingLLM container never needs them.
 Built sites carry a `.zola-site` marker; the build won't replace a directory without one,
 and the sandbox won't publish over a directory that isn't its own page.
@@ -390,7 +401,7 @@ Code never runs in the AnythingLLM container, which has SYS_ADMIN, the `.env` ke
 of storage. The skills (`anythingllm/agent-skills/`, sharing `_lib/`) only forward calls
 over a Unix socket, `storage/sandbox/runner.sock` (see "Services on the host"), to
 `sandbox-runner` on the host (`host/systemd/sandbox-runner.service`, its own venv in
-`~/.local/share/everythingllm/sandbox-venv`).
+`~/.local/share/everythingllm/venvs/sandbox`).
 
 **Scopes.** A call carries where it came from, which AnythingLLM gives the skill and the
 model never chooses: the workspace (`_jobs` for a scheduled job, which has none) and the
@@ -409,8 +420,8 @@ Each run mounts:
 - `/pages`: the workspace's published pages and the shared ones, read-only, so `ls /pages`
   lists them.
 
-They live in `~/.local/share/everythingllm/sandbox/<workspace>/` (`project/` and
-`threads/<thread>/`) and `~/.local/share/everythingllm/shared/`, out of the container's
+They live in `~/.local/share/everythingllm/sandbox/workspaces/<workspace>/` (`project/` and
+`threads/<thread>/`) and `~/.local/share/everythingllm/sandbox/shared/`, out of the container's
 reach. `/shared` is held to 2 GB on its own. A workspace's folders together are held
 to 5 GB: over that, runs and writes are refused until the agent deletes something with
 `write-file`, and the refusal names the biggest files and folders, since no run can look
@@ -485,7 +496,7 @@ a show found only in such an app has no public feed.
   Podcasts' sync) can't reach a tailnet address.
 - The MCP server in the container only forwards each tool call to `podcasts-runner` on the
   host (`src/mcps/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
-  own venv in `~/.local/share/everythingllm/podcasts-venv`, socket `storage/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
+  own venv in `~/.local/share/everythingllm/venvs/podcasts`, socket `storage/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
   see "Services on the host"), which runs the tool and sends back its text.
   The feeds, the model's key and the audio stack never touch the container: the sync,
   transcription and the read-aloud run on the host too, from the same venv.
@@ -575,10 +586,10 @@ changed or undone, and nothing is stored twice.
   to are deleted. Originals wait a day, in case a download isn't in a record yet.
   `remove_podcast` deletes the show's at once.
 - `splice-web` (`src/mcps/splice`, standard library only, `host/systemd/podcasts-web.service`,
-  its own venv in `~/.local/share/everythingllm/splice-venv`) is mapped to `:8445/podcasts` by
+  its own venv in `~/.local/share/everythingllm/venvs/splice`) is mapped to `:8445/podcasts` by
   `tailscale serve`, ahead of the pages site's Caddy. It serves manifests with range
   requests, `HEAD`, `ETag`/`If-Range` and `sendfile`. Anything else under
-  `~/.local/share/everythingllm/site/podcasts/` (feeds, transcripts, the index) it serves as a file, with the
+  `~/.local/share/everythingllm/pages/public/podcasts/` (feeds, transcripts, the index) it serves as a file, with the
   pages site's CSP and `nosniff`, never following a symlink or leaving that folder.
   `make health` checks it, and the audit reads its journal.
 - Episodes downloaded before this kept only their cut file. The first sync after the change
@@ -635,7 +646,7 @@ few lines of each other.
   transcribed. A second run
   exits at once while one is going (`~/.local/share/everythingllm/podcasts/transcribe.lock`); its output is in
   the journal (`make podcasts-logs`).
-- The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/models/whisper/base`.
+- The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/podcasts/models/whisper/base`.
 - **Ad reads.** Audio fingerprints miss an ad heard for the first time, or one the host
   reads in their own words, so AnythingLLM's default model (DeepSeek, key and model from
   AnythingLLM's `.env`, through the shared `llm` package) reads each new transcript, half an hour at a time, and names
@@ -664,7 +675,7 @@ encoded to a 64 kbit/s MP3 and added to the `daily-news` feed,
 `https://<PUBLIC_HOST>:8445/podcasts/daily-news/feed.xml`, which keeps the newest
 14 editions. An edition already read is skipped, so the second run only catches a late
 edition. Speaking takes a minute or two of CPU at nice 19. The model (about 350 MB) is
-downloaded on first use to `~/.local/share/everythingllm/models/kokoro`.
+downloaded on first use to `~/.local/share/everythingllm/podcasts/models/kokoro`.
 
 `daily-news` is a feed made on this server, kept in `~/.local/share/everythingllm/podcasts/local.json` rather
 than `feeds.json`, so the sync never sees it; `list_podcasts` and the index show it, and
@@ -714,7 +725,7 @@ agent itself is capped at 40 tool calls per reply, `AGENT_MAX_TOOL_CALLS` in `.e
 work happens outside the agent). The skill (`anythingllm/agent-skills/deep-research/`) is a
 thin front: it hands the question, its setup args and the workspace to `research-runner`
 on the host (`src/mcps/research`, `host/systemd/research-runner.service`, its own venv in
-`~/.local/share/everythingllm/research-venv`), shows the runner's progress in the chat, and
+`~/.local/share/everythingllm/venvs/research`), shows the runner's progress in the chat, and
 replies with what the runner says to tell the user. They talk over a Unix socket the
 container sees, `storage/research/runner.sock` (see "Services on the host"):
 `start` returns a run id, `wait(run_id, since)` long-polls up to 45 s for new
@@ -737,7 +748,7 @@ A run, step by step:
    edits are applied in code, citations are renumbered and the source list appended.
 6. **Publish** — the report is first saved as `storage/anythingllm-fs/research/<slug>.md`
    (slug from the title, as sites-write makes it), where the agent's filesystem tools can
-   read it, then saved and built in `~/.local/share/everythingllm/zola/research/reports/` through `SiteStore`,
+   read it, then saved and built in `~/.local/share/everythingllm/pages/entries/research/reports/` through `SiteStore`,
    as the `sites` server does; the chat
    gets a summary, the link and the sources as citations. If publishing fails (the site
    doesn't keep an entry it couldn't build), the reply gives the saved file and the error.
@@ -803,7 +814,7 @@ every run in it. Runs are bounded by their search budget either way. At most 2 r
 another waits its turn, and its progress says so.
 
 Only a restart of `research-runner` kills a run without a result, so while a run is going
-it has a marker in `~/.local/share/everythingllm/logs/deep-research/running/<id>.json` (its question and when it
+it has a marker in `~/.local/share/everythingllm/research/runs/running/<id>.json` (its question and when it
 started), touched every minute. When the runner starts, it moves every marker into the
 log as status `interrupted`, since none of them can be its own; until then, a marker quiet
 for its `stale_ms` (3 minutes) reads as interrupted to the audit, and a fresh one as
@@ -815,7 +826,7 @@ before restarting the runner; with no terminal to ask they stop, unless `FORCE=1
 so they don't need to ask. The runner runs the code it started with: after changing
 `src/mcps/research`, `make research-setup` puts it live.
 
-Every run appends one line to `~/.local/share/everythingllm/logs/deep-research/YYYY-MM.jsonl`: the question,
+Every run appends one line to `~/.local/share/everythingllm/research/runs/YYYY-MM.jsonl`: the question,
 how it ended (`ok` / `failed`, with the error; `interrupted` for one killed by a restart;
 older runs may say `stopped`), whether the
 chat closed before it finished (`chat_closed`), the report URL and whether it

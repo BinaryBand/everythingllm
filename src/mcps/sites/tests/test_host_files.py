@@ -210,7 +210,7 @@ def test_restart_asks_while_deep_research_runs(tmp_path, capsys, monkeypatch):
 
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     monkeypatch.delenv("FORCE", raising=False)
-    running = tmp_path / "logs" / "deep-research" / "running"
+    running = tmp_path / "research" / "runs" / "running"
     assert research_guard.ok_to_restart(tmp_path)  # no folder: nothing runs
     running.mkdir(parents=True)
     quiet = running / "quiet.json"

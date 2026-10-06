@@ -389,8 +389,7 @@ def test_jobs_api_down_raises(env):
 
 
 def write_runs(env, runs):
-    folder = env.runlogs / "deep-research"
-    folder.mkdir()
+    folder = env.runlogs
     (folder / "2026-10.jsonl").write_text(
         "\n".join(json.dumps(r) for r in runs) + "\nbroken\n"
     )
@@ -452,7 +451,7 @@ def test_research_runs(env):
         ],
     )
     # An earlier month's log isn't even read.
-    (env.runlogs / "deep-research" / "2026-09.jsonl").write_text(
+    (env.runlogs / "2026-09.jsonl").write_text(
         '{"started": "2026-10-03T16:00:00Z", "status": "failed"}\n'
     )
     findings = checks.research_runs(env, SINCE)
@@ -859,7 +858,7 @@ def test_research_runs_in_progress_or_interrupted(env):
             }
         ],
     )
-    running = env.runlogs / "deep-research" / "running"
+    running = env.runlogs / "running"
     running.mkdir()
     for name, started, quiet in (
         ("live", "2026-10-03T23:50:00Z", 2),

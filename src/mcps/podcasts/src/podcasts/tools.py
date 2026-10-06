@@ -8,10 +8,10 @@ restarting this service stops none.
 Config (environment, from host.env and the unit):
   PODCASTS_SOCKET      socket to listen on (default <storage>/podcasts/runner.sock)
   ANYTHINGLLM_STORAGE  storage directory (default /srv/anythingllm/storage)
-  PODCASTS_DIR         served directory, inside the pages site (default ~/.local/share/everythingllm/site/podcasts)
+  PODCASTS_DIR         served directory, inside the pages site (default ~/.local/share/everythingllm/pages/public/podcasts)
   PODCASTS_STATE       subscriptions and sync state (default ~/.local/share/everythingllm/podcasts)
   PODCASTS_BASE_URL    public URL of PODCASTS_DIR (default https://<PUBLIC_HOST>:8445/podcasts)
-  PODCASTS_MODELS      speech and transcription models (default ~/.local/share/everythingllm/models)
+  PODCASTS_MODELS      speech and transcription models (default ~/.local/share/everythingllm/podcasts/models)
   PODCASTS_TZ          the user's time zone, for the dates feeds' rules see (default Europe/Stockholm)
 """
 

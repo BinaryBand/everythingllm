@@ -6,7 +6,7 @@ StartLimitIntervalSec=0
 
 [Service]
 EnvironmentFile=@REPO@/host.env
-Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/research-venv
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/research
 # The sites package's built sites follow ANYTHINGLLM_STORAGE; its entries, the repo and zola are the host's.
 ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package research research-runner
 # A run is mostly waiting on the models; what CPU it takes (page parsing) can give way.

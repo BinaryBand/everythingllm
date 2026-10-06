@@ -6,7 +6,7 @@ from test_checks import API, NOW, SEARX
 @pytest.fixture
 def env(tmp_path):
     (tmp_path / "journal").mkdir()
-    (tmp_path / "logs").mkdir()
+    (tmp_path / "runs").mkdir()
     (tmp_path / "content").mkdir()
     (tmp_path / "sites").mkdir()
     pages: dict[str, tuple[int, bytes]] = {}
@@ -16,7 +16,7 @@ def env(tmp_path):
         searxng_url=SEARX,
         sites_source=tmp_path / "sites",
         sites_content=tmp_path / "content",
-        runlogs=tmp_path / "logs",
+        runlogs=tmp_path / "runs",
         now=lambda: NOW,
         http=lambda url: pages.get(url, (404, b"not found")),
         run=lambda args: [],

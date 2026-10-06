@@ -89,20 +89,21 @@ is 3.13. Keep code 3.12-compatible, and check with
   `daily-news-page` scheduled job calls `headlines` and then `write_entry`. Code asks a
   model itself (`src/mcps/llm`) only where there's no agent (background syncs, reader clicks,
   long research runs).
-- Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`:
-  the pages site, Zola entries, podcasts, our speech models, run logs), not in AnythingLLM's
-  storage. Storage keeps AnythingLLM's own data, the runners' sockets and what AnythingLLM
+- Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`),
+  not in AnythingLLM's storage, laid out by kind: `venvs/<name>`, `pages/{public,entries}`,
+  `sandbox/{workspaces,shared}`, `podcasts/` (with `models/`), `research/runs`, `relay/`.
+  Put new data in the folder of its kind, not at the root. Storage keeps AnythingLLM's own data, the runners' sockets and what AnythingLLM
   itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.
 
 ## Sites and pages
 
 - The agent writes entries, not HTML. The `sites` tools save JSON-front-matter Markdown to
-  `~/.local/share/everythingllm/zola/<site>/<section>/<slug>.md` (host-only, outside storage), and `sites-runner` rebuilds that site with the
+  `~/.local/share/everythingllm/pages/entries/<site>/<section>/<slug>.md` (host-only, outside storage), and `sites-runner` rebuilds that site with the
   host's zola. A write that doesn't build is undone. Other writers use the `sites-write`
   command or `SiteStore`, so the entry format has one implementation.
 - The exception is free-form pages: the `publish` skill has `sandbox-runner` copy a file or
-  folder from the sandbox to `~/.local/share/everythingllm/site/<slug>/` (the pages site,
+  folder from the sandbox to `~/.local/share/everythingllm/pages/public/<slug>/` (the pages site,
   outside storage), with a `.page` marker naming the
   workspace that owns it; Caddy allows inline CSS in marked folders.
 - Sites live in `zola/sites/<name>/` and share the `zola/themes/agent-site/` theme

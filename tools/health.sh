@@ -6,7 +6,7 @@ set -u
 cd "$(dirname "$0")/.."
 
 CONTAINER=systemd-anythingllm
-VENV_PY=/app/server/storage/mcp/venv/bin/python
+VENV_PY=/app/server/storage/everythingllm/mcp/venv/bin/python
 failed=0
 
 ok()   { printf '  OK    %s\n' "$1"; }

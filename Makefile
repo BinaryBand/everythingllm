@@ -69,8 +69,8 @@ test-skills:     ## run agent skill and log filter tests inside the AnythingLLM 
 # whatever no MCP server needs), the rest only add.
 mcp-sync:        ## install/refresh the MCP servers' deps inside the AnythingLLM container, and only theirs
 	set -e; mode=; for pkg in $$(python3 tools/sync.py mcp-packages); do \
-	  podman exec -w /tmp -e UV_PROJECT_ENVIRONMENT=/app/server/storage/mcp/venv \
-	    -e UV_CACHE_DIR=/app/server/storage/mcp/uv-cache -e UV_PYTHON_DOWNLOADS=never \
+	  podman exec -w /tmp -e UV_PROJECT_ENVIRONMENT=/app/server/storage/everythingllm/mcp/venv \
+	    -e UV_CACHE_DIR=/app/server/storage/everythingllm/mcp/uv-cache -e UV_PYTHON_DOWNLOADS=never \
 	    $(CONTAINER) uv sync --frozen --no-dev --package $$pkg $$mode --project /mcp; \
 	  mode=--inexact; done
 

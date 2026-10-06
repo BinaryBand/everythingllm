@@ -341,7 +341,7 @@ A new site: add `zola/sites/<name>/` with `theme = "agent-site"`, its sections a
 The repo is mounted read-only into the AnythingLLM container at `/mcp` (see the
 `Volume=` line in `host/quadlet/anythingllm.container.in`), and `mcp_servers.json` launches each server
 with `uv run --frozen --project /mcp --package <name>`. The container's venv and uv
-cache live in `/srv/anythingllm/storage/mcp/`. The container can't reach the host's
+cache live in `/srv/anythingllm/storage/everythingllm/mcp/`. The container can't reach the host's
 loopback, so servers run inside it over stdio rather than as host HTTP services.
 
 ### Services on the host

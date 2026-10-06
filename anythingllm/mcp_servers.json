@@ -13,8 +13,8 @@
         "sites-mcp"
       ],
       "env": {
-        "UV_PROJECT_ENVIRONMENT": "/app/server/storage/mcp/venv",
-        "UV_CACHE_DIR": "/app/server/storage/mcp/uv-cache",
+        "UV_PROJECT_ENVIRONMENT": "/app/server/storage/everythingllm/mcp/venv",
+        "UV_CACHE_DIR": "/app/server/storage/everythingllm/mcp/uv-cache",
         "UV_PYTHON_DOWNLOADS": "never"
       }
     },
@@ -31,8 +31,8 @@
         "audit-mcp"
       ],
       "env": {
-        "UV_PROJECT_ENVIRONMENT": "/app/server/storage/mcp/venv",
-        "UV_CACHE_DIR": "/app/server/storage/mcp/uv-cache",
+        "UV_PROJECT_ENVIRONMENT": "/app/server/storage/everythingllm/mcp/venv",
+        "UV_CACHE_DIR": "/app/server/storage/everythingllm/mcp/uv-cache",
         "UV_PYTHON_DOWNLOADS": "never"
       }
     },
@@ -49,8 +49,8 @@
         "podcasts-mcp"
       ],
       "env": {
-        "UV_PROJECT_ENVIRONMENT": "/app/server/storage/mcp/venv",
-        "UV_CACHE_DIR": "/app/server/storage/mcp/uv-cache",
+        "UV_PROJECT_ENVIRONMENT": "/app/server/storage/everythingllm/mcp/venv",
+        "UV_CACHE_DIR": "/app/server/storage/everythingllm/mcp/uv-cache",
         "UV_PYTHON_DOWNLOADS": "never"
       }
     }

@@ -379,12 +379,11 @@ def test_gateway_client_makes_the_names_and_keys_the_gateway_reads(monkeypatch):
 
 
 class FakeSandbox(hostrpc.Service):
-    """Records each op with its args; a run is still going for `waits` waits."""
+    """Records each op with its args; a run is still going until it's waited on."""
 
-    def __init__(self, waits=0):
+    def __init__(self):
         super().__init__()
         self.calls = []
-        self.waits = waits
 
     async def reply(self, msg):
         self.calls.append((msg["op"], msg["args"]))
@@ -397,9 +396,6 @@ class FakeSandbox(hostrpc.Service):
         return {"run_id": "r-2", "running": True, "seconds": 45.0}
 
     async def op_wait(self, scope, run_id):
-        if self.waits:
-            self.waits -= 1
-            return {"run_id": run_id, "running": True, "seconds": 90.0}
         return {"run_id": run_id, "exit_code": 0, "stdout": "hi\n"}
 
     async def op_write(self, scope, path, content, delete):
@@ -442,9 +438,7 @@ def test_each_sandbox_tool_sends_the_clients_own_scope(client, monkeypatch):
             "run",
             {"language": "python", "code": "print(1)", "timeout": 60, "scope": ME},
         ),
-        ("wait", {"run_id": "r-1", "scope": ME}),
         ("build_site", {"path": "/project/site", "slug": "", "scope": ME}),
-        ("wait", {"run_id": "r-2", "scope": ME}),
     ]
 
 
@@ -473,24 +467,21 @@ def test_each_client_has_a_sandbox_workspace_of_its_own(monkeypatch):
     ]
 
 
-def test_a_run_still_going_is_waited_on_while_the_budget_lasts(client, monkeypatch):
-    with sandbox_runner(monkeypatch, FakeSandbox(waits=2)) as fake:
-        result = call_tool(client, "sandbox_run", {"language": "bash", "code": "ls"})
-    assert result == {"run_id": "r-1", "exit_code": 0, "stdout": "hi\n"}
-    assert [op for op, _ in fake.calls] == ["run", "wait", "wait", "wait"]
-
-
-def test_a_run_past_the_budget_answers_running(client, monkeypatch):
-    # The real runner answers a run after its full WAIT, so another wouldn't fit.
-    monkeypatch.setattr(gateway_sandbox, "BUDGET", gateway_sandbox.RUNNER_WAIT - 1)
+def test_a_run_still_going_answers_running_and_sandbox_wait_takes_it(
+    client, monkeypatch
+):
+    # The real runner answers a run after its full WAIT, and a second wouldn't fit in the
+    # call, so the client waits on it itself.
     with sandbox_runner(monkeypatch, FakeSandbox()) as fake:
         result = call_tool(client, "sandbox_run", {"language": "bash", "code": "ls"})
-    assert result == {"run_id": "r-1", "running": True, "seconds": 45.0}
-    assert [op for op, _ in fake.calls] == ["run"]
+        assert result == {"run_id": "r-1", "running": True, "seconds": 45.0}
+        done = call_tool(client, "sandbox_wait", {"run_id": "r-1"})
+    assert done == {"run_id": "r-1", "exit_code": 0, "stdout": "hi\n"}
+    assert [op for op, _ in fake.calls] == ["run", "wait"]
 
 
-def test_the_waits_fit_the_callers_timeout():
-    assert gateway_sandbox.RUNNER_WAIT < gateway_sandbox.BUDGET <= hostrpc.CALL_TIMEOUT
+def test_a_wait_fits_the_callers_timeout():
+    assert gateway_sandbox.RUNNER_WAIT < hostrpc.CALL_TIMEOUT
 
 
 @pytest.mark.parametrize("name", [None, "", "Bad Name", "x" * 94])

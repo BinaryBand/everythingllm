@@ -1385,9 +1385,9 @@ it from starting.
   `workspaces/client-<name>/threads/gateway`, and its pages are
   `https://<PUBLIC_HOST>:8447/client-<name>/`. A run or a build answers within the runner's
   45 s wait; one still going comes back as `{run_id, running: true, seconds}`, and the
-  client calls `sandbox_wait` until it's done. `sandbox_run` and `sandbox_build_site` wait
-  again themselves only while another 45 s wait fits in the call's 55 s (hostrpc's call
-  timeout), so a call never runs past what an MCP client's own 60 s limit allows.
+  client calls `sandbox_wait` until it's done. A second 45 s wait wouldn't fit in the
+  call's 55 s (hostrpc's call timeout), so no call runs past what an MCP client's own 60 s
+  limit allows.
 - **Sockets.** The fronts' `hostrpc.caller` falls back to the container's storage path, so
   at start the gateway sets each front's `<FRONT>_SOCKET` to the host's
   (`hostrpc.socket_path`), unless it's set already.

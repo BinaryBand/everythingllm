@@ -56,13 +56,9 @@ containers"). The checks a script couldn't make, and the cleanup once they've he
 
 Left open by the gateway's stages 1–3 (2026-10-06):
 
-- A call outside a client's grant comes back as a JSON-RPC `-32602` error, not as a tool
-  result with `isError`. A client shows it as a protocol failure, not as a refusal it can
-  read. Decide which is wanted, and test it with Claude Code.
 - Research runs aren't per client: `research_wait` and `research_runs` see every run the
-  runner holds, AnythingLLM's included. That's documented, not enforced.
-- `sandbox_run`'s second wait never happens against the real runner: one wait is 45 s, and
-  two don't fit in the caller's 55 s. Remove the loop, or shorten the waits so it can run.
+  runner holds, AnythingLLM's included. That's documented, not enforced, and matters only
+  once a second client has the `research` grant.
 
 ## Format hostctl's older modules
 

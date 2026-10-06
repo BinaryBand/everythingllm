@@ -16,15 +16,14 @@ the runner keeps its own name (run, …). Not an MCP server of its own, so nothi
 container runs it.
 
 A run or a site build answers within the runner's WAIT; one still going comes back as
-{run_id, running, seconds}, and sandbox_wait takes it from there. `run` and `build_site`
-wait again themselves only while that fits in the call's BUDGET.
+{run_id, running, seconds}, and sandbox_wait takes it from there: a second 45 s wait
+wouldn't fit in the call.
 
 Config (environment):
   SANDBOX_SOCKET  the runner's socket (gateway.app sets it to the host's path)
 """
 
 import re
-import time
 from typing import Annotated, Any, Literal
 
 import hostrpc
@@ -47,15 +46,11 @@ THREAD = "gateway"
 KEY_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")
 
 # How long one run or wait call can take on the runner (sandbox.runner.WAIT; a test holds
-# them equal), and how long a tool here may take in all (hostrpc's call timeout, which an
-# MCP client's own 60 s fits around).
+# them equal, and that it fits in hostrpc's call timeout, which an MCP client's own 60 s
+# fits around).
 RUNNER_WAIT = 45
-BUDGET = hostrpc.CALL_TIMEOUT
 # The runner's own line limit (sandbox.runner.LIMIT): a run's reply can be long.
 LIMIT = 8 * 1024 * 1024
-
-# The ops that start work which can outlast a call, and answer {run_id, running} then.
-LONG = ("run", "build_site")
 
 RunId = Annotated[
     str,
@@ -83,19 +78,8 @@ def scope() -> dict[str, Any]:
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:
-    """Send `op` with the client's scope added (never one from the arguments), and wait
-    on a run or build still going as long as another wait fits in BUDGET."""
-    started = time.monotonic()
-    where = scope()
-    result = await runner(op, {**args, "scope": where})
-    while (
-        op in LONG
-        and isinstance(result, dict)
-        and result.get("running")
-        and time.monotonic() - started + RUNNER_WAIT <= BUDGET
-    ):
-        result = await runner("wait", {"run_id": result["run_id"], "scope": where})
-    return result
+    """Send `op` with the client's scope added, never one from the arguments."""
+    return await runner(op, {**args, "scope": scope()})
 
 
 tool = hostrpc.forwarder(call, mcp.add_tool)

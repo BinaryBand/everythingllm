@@ -128,6 +128,7 @@ def data_dir() -> Path:
     out of AnythingLLM's storage, which the container mounts. By kind:
 
       venvs/<name>/        the host services' venvs
+      venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/)
       pages/public/        the pages site Caddy serves; pages/entries/, the Zola entries
       sandbox/workspaces/  the sandbox's folders, per workspace: threads/, project/, shared/
       sandbox/public/      each sandbox workspace's /public, served as it is on :8447

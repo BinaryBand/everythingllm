@@ -17,6 +17,7 @@ DEFAULT = Path("~/.config/everythingllm/relay.env").expanduser()
 TEMPLATE = """\
 # The Nilson relay's settings (packages/relay; see the README's "Nilson relay"). Mode 600.
 # The relay takes each client's own AnythingLLM API key, so it needs none here.
+# KEY=value lines without quotes: podman passes each value to the relay as it is.
 # Optional: the ntfy topic told about finished runs (e.g. https://ntfy.sh/nilson-<random>),
 # and its token.
 NTFY_URL=

@@ -1,17 +1,26 @@
-"""relay: the Nilson relay's HTTP API, served by uvicorn on the host and reached over the
-tailnet at `/everythingllm/` on AnythingLLM's own port, through `tailscale serve` (https),
-which strips that prefix; the routes answer with or without it. Every route but /health
-needs an AnythingLLM developer API key as a bearer token (`relay.auth`), the one the client
-gives AnythingLLM itself; see the README's "Nilson relay" for the routes.
+"""relay: the Nilson relay's HTTP API, served by uvicorn in its service container and
+reached over the tailnet at `/everythingllm/` on AnythingLLM's own port, through `tailscale
+serve` (https), which strips that prefix; the routes answer with or without it. Every route
+but /health needs an AnythingLLM developer API key as a bearer token (`relay.auth`), the one
+the client gives AnythingLLM itself; see the README's "Nilson relay" for the routes.
 
-Config (environment; the unit reads host.env, then ~/.config/everythingllm/relay.env, which
-holds the ntfy settings, outside the repo and the AnythingLLM container's reach):
-  ANYTHINGLLM_URL      AnythingLLM's base URL (default http://127.0.0.1:3001)
+Config (environment; the container gets host.env, then ~/.config/everythingllm/relay.env,
+which holds the ntfy settings, outside the repo and the AnythingLLM container's reach, then
+what host/quadlet/relay.container.in sets itself):
+  ANYTHINGLLM_URL      AnythingLLM's base URL (default http://127.0.0.1:3001; the container
+                       has https://<PUBLIC_HOST>:3001, through the egress proxy)
   DATABASE_PATH        the SQLite file (default ~/.local/share/everythingllm/relay/relay.db)
   NTFY_URL, NTFY_TOKEN the ntfy topic told about finished runs, and its token; no
                        notifications without NTFY_URL
   RUN_RETENTION_DAYS   how long finished runs are kept (default 7)
-  RELAY_HOST, RELAY_PORT  where to listen (default 127.0.0.1:8446)
+  RELAY_HOST, RELAY_PORT  where to listen (default 127.0.0.1:8446; the container listens
+                       on 0.0.0.0, published on the host's 127.0.0.1:8446)
+  FORWARDED_ALLOW_IPS  the peers whose X-Forwarded-For and X-Forwarded-Proto uvicorn
+                       believes, comma-separated (default 127.0.0.1, where tailscale serve
+                       connects from on the host). Through the container's published port
+                       every connection arrives from the container's own address, so its
+                       template sets that address.
+  HTTPS_PROXY          the egress proxy, which httpx goes out through (set in the container)
 """
 
 import contextlib
@@ -55,6 +64,7 @@ class Config:
     retention_days: float = 7
     host: str = "127.0.0.1"
     port: int = 8446
+    forwarded_allow_ips: str = "127.0.0.1"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -67,6 +77,7 @@ class Config:
             retention_days=float(get("RUN_RETENTION_DAYS") or cls.retention_days),
             host=get("RELAY_HOST") or cls.host,
             port=int(get("RELAY_PORT") or cls.port),
+            forwarded_allow_ips=get("FORWARDED_ALLOW_IPS") or cls.forwarded_allow_ips,
         )
 
 
@@ -216,6 +227,9 @@ def main() -> None:
         host=config.host,
         port=config.port,
         log_level="info",
+        # tailscale serve passes on who asked, and over https: believed only from the peer
+        # it reaches the relay through (FORWARDED_ALLOW_IPS above).
         proxy_headers=True,
+        forwarded_allow_ips=config.forwarded_allow_ips,
         timeout_graceful_shutdown=5,
     )

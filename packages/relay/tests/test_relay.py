@@ -596,3 +596,42 @@ def test_a_database_from_before_version_2_loses_its_runs(tmp_path):
     store = Store(path)  # at the current version, runs are kept
     assert [r["id"] for r in store.runs()] == ["r_2"]
     store.close()
+
+
+def test_uvicorn_believes_forwarded_headers_only_from_the_configured_peer(
+    tmp_path, monkeypatch
+):
+    # On the host tailscale serve connects from 127.0.0.1; in the container everything
+    # through the published port comes from the container's own address, which its
+    # template sets.
+    from relay import app as relay_app
+
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "relay.db"))
+    for name in ("FORWARDED_ALLOW_IPS", "RELAY_HOST", "ANYTHINGLLM_URL"):
+        monkeypatch.delenv(name, raising=False)
+    config = Config.from_env()
+    assert (config.host, config.port, config.forwarded_allow_ips) == (
+        "127.0.0.1",
+        8446,
+        "127.0.0.1",
+    )
+    assert config.anythingllm_url == "http://127.0.0.1:3001"
+
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "10.89.79.10")
+    monkeypatch.setenv("RELAY_HOST", "0.0.0.0")
+    monkeypatch.setenv("ANYTHINGLLM_URL", "https://host.example.ts.net:3001")
+    served = {}
+    monkeypatch.setattr(relay_app, "create_app", lambda config: "app")
+    monkeypatch.setattr(relay_app.logging, "basicConfig", lambda **kwargs: None)
+    monkeypatch.setattr(
+        relay_app.uvicorn, "run", lambda app, **kwargs: served.update(kwargs)
+    )
+    httpx_log = logging.getLogger("httpx")
+    level = httpx_log.level
+    try:
+        relay_app.main()
+    finally:
+        httpx_log.setLevel(level)
+    assert served["host"] == "0.0.0.0" and served["port"] == 8446
+    assert served["proxy_headers"] is True
+    assert served["forwarded_allow_ips"] == "10.89.79.10"

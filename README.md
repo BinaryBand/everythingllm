@@ -42,7 +42,7 @@ up, copy `host.env.example` and fill it in:
 These read it:
 
 - the Makefile, which exports both values
-- `src/tools/sync.py`, for `ANYTHINGLLM_STORAGE`
+- `tools/sync.py`, for `ANYTHINGLLM_STORAGE`
 - the host's systemd units, through `EnvironmentFile=@REPO@/host.env` (filled in by `make units`)
 - the site builds, which read `PUBLIC_HOST` from it and pass zola
   `--base-url https://<PUBLIC_HOST>:8445/<site>`, so `zola.toml` doesn't name the host.
@@ -81,7 +81,7 @@ templates too. `make units` renders all of them:
 - `host/systemd/*.service` and `*.timer` go to `~/.config/systemd/user/`
 
 It fills in `@REPO@` (the checkout's path) and the `host.env` settings, and saves older
-versions to `.backups/`. Then it reloads systemd and restarts what changed: a container
+versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and restarts what changed: a container
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
 restarts nothing. Enabling a host unit is up to its `make *-setup` target.
 
@@ -110,7 +110,7 @@ through its UI.
   - `run-code/`, `write-file/`, `publish/` — the code sandbox, run by `sandbox-runner` on
     the host (see "Code sandbox")
   - `_lib/` — what the skills share (no `plugin.json`, so AnythingLLM doesn't load it as
-    a skill): `hostrpc.js`, the node side of `src/mcps/hostrpc`, and `sandbox.js`
+    a skill): `hostrpc.js`, the node side of `packages/hostrpc`, and `sandbox.js`
 - `anythingllm/mcp_servers.json` — deployed to `storage/plugins/anythingllm_mcp_servers.json`
 - `anythingllm/env.example` — keys used in the live `.env` (values stay out of git)
 - `anythingllm/system-prompt.md` — the system prompt for chat and the agent: which tool
@@ -131,40 +131,40 @@ through its UI.
   follows it stays after the prompt; a prompt that starts with `@agent` runs in agent mode.
   - `deep-research/` — `/deep-research <question>` runs the deep-research skill on it
 - `zola/` — static sites built with Zola from entries the agent writes (see below)
-- `src/mcps/` — MCP servers we write: members of the uv workspace at the repo root
+- `packages/` — MCP servers we write: members of the uv workspace at the repo root
   (`pyproject.toml`, `uv.lock`), one per subdirectory
-  - `src/mcps/sites/` — the Zola sites on the tailnet pages site (:8445): list/write/get/delete
+  - `packages/sites/` — the Zola sites on the tailnet pages site (:8445): list/write/get/delete
     their entries and build them; and `headlines(section)`, the last 30 hours' stories for
     the Daily News job from the feeds in `FEEDS` (`sites/feeds.py`), each with its own link.
     The MCP server forwards to `sites-runner` on the host, which does the work
-  - `src/mcps/audit/` — health checks over this setup, for the System Audit job (see below); the
+  - `packages/audit/` — health checks over this setup, for the System Audit job (see below); the
     MCP server forwards to `audit-runner` on the host, which runs them
-  - `src/mcps/sandbox/` — not an MCP server: `sandbox-runner` runs the agent's Python and bash
+  - `packages/sandbox/` — not an MCP server: `sandbox-runner` runs the agent's Python and bash
     in throwaway podman containers on the host, with only PyPI on the network, and
     publishes pages from them, for the `run-code`, `write-file` and `publish` skills (see
     "Code sandbox" below)
-  - `src/mcps/podcasts/` — downloads podcast episodes, finds their ads, and serves them without
+  - `packages/podcasts/` — downloads podcast episodes, finds their ads, and serves them without
     those as private feeds on the pages site (see "Podcasts" below); the MCP server forwards
     to `podcasts-runner` on the host, which does the work. Its audio code is here too:
     `podcasts.avio` (PyAV decoding, and cutting without re-encoding), `podcasts.fingerprint`
     (finds the stretches recordings share), `podcasts.whisper` (speech to text, with the
     transcripts' types in `podcasts.segments`) and `podcasts.speech` (text to speech with
     Kokoro, for the Daily News read aloud). `podcasts.cli` runs them by hand as `spot
-    repeats`, `transcribe` and `speak`, with the models in `storage/models` as the
+    repeats`, `transcribe` and `speak`, with the models in `~/.local/share/everythingllm/podcasts/models` as the
     services use them
-  - `src/mcps/hostrpc/` — a library, not a server: how the MCP servers and skills talk to the
+  - `packages/hostrpc/` — a library, not a server: how the MCP servers and skills talk to the
     services on the host (see "Services on the host" below)
-  - `src/mcps/splice/` — not an MCP server: `splice-web` serves the podcasts, putting each episode
+  - `packages/splice/` — not an MCP server: `splice-web` serves the podcasts, putting each episode
     together from the untouched download and the stretches to leave out (see "Originals,
     cuts and podcasts-web" below)
-  - `src/mcps/research/` — not an MCP server: `research-runner` runs the deep-research skill's
+  - `packages/research/` — not an MCP server: `research-runner` runs the deep-research skill's
     runs on the host, and `research-run` runs one by hand (see "Deep research")
-  - `src/mcps/publicweb/` — a library, not a server: the HTTP client podcasts, sites and research use,
+  - `packages/publicweb/` — a library, not a server: the HTTP client podcasts, sites and research use,
     which refuses LAN, tailnet and loopback hosts, and `publicweb.pages`, the page reader on
     it that the article writer and research share
-  - `src/mcps/linkcard/` — a library, not a server: draws the link cards the chat shows for a
+  - `packages/linkcard/` — a library, not a server: draws the link cards the chat shows for a
     published page (see "Code sandbox")
-- `src/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
+- `packages/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
   AnythingLLM's agent; also a workspace member (see "Nilson relay")
 - `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`make units`);
   each one's `Description=` says what it does, and its `make <name>-setup` target installs it.
@@ -192,16 +192,17 @@ through its UI.
   127.0.0.1:8445
 - `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
-- `src/tools/sync.py` — diff/deploy/import between this repo and live storage; standard
+- `tools/sync.py` — diff/deploy/import between this repo and live storage; standard
   library only, run with the system `python3`
-- `src/tools/units.py` — renders and installs `host/quadlet/` and `host/systemd/` (`make units`)
-- `src/tools/machine.py` — `make install`'s checks, its wait for AnythingLLM, the web search
+- `tools/units.py` — renders and installs `host/quadlet/` and `host/systemd/` (`make units`)
+- `tools/machine.py` — `make install`'s checks, its wait for AnythingLLM, the web search
   setting and the closing checklist
 
 ## Workflow
 
 `make help` lists every target. Day to day: `make diff` shows what would change live,
-`make deploy` copies it into storage (old files go to `.backups/`), refreshes the MCP deps
+`make deploy` copies it into storage (old files go to
+`~/.local/share/everythingllm/backups/`), refreshes the MCP deps
 and restarts AnythingLLM, `make test` runs every test and `make health` checks every unit,
 port, host service and MCP server. `make import-skill NAME=<hubId>` (and `import-job`,
 `import-command`) brings something made in the UI under the repo.
@@ -216,13 +217,13 @@ Deploy doesn't delete slash commands that exist only live; remove those in the U
 
 ## uv cheatsheet
 
-The repo root is a uv workspace; each `src/mcps/<name>/` is a member with its own dependencies
+The repo root is a uv workspace; each `packages/<name>/` is a member with its own dependencies
 and console scripts, all locked together in `uv.lock`. Run these from the repo root; the dev
 venv is `.venv` there, which is the interpreter `.vscode/settings.json` points at.
 
     uv sync --all-packages                     # install every member + dev deps into .venv
     uv run --all-packages --all-extras pytest -q   # all tests (what `make test` runs)
-    uv run --package podcasts --extra host pytest src/mcps/podcasts -q   # one member's tests
+    uv run --package podcasts --extra host pytest packages/podcasts -q   # one member's tests
 
     uv run --package sites sites-mcp           # an MCP server over stdio (waits on stdin)
 
@@ -247,7 +248,7 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
   the container.
 - After `uv.lock` changes, run `make mcp-sync` (or `make deploy`, which runs it) so the
   container's venv catches up. It installs exactly the members `mcp_servers.json` runs
-  (`src/tools/sync.py mcp-packages`), and removes anything else.
+  (`tools/sync.py mcp-packages`), and removes anything else.
 
 ## Zola sites
 
@@ -357,7 +358,7 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
 - The container maps the host user (`UserNS=keep-id`), so what a service writes in storage
   is the container's to read and the other way round, and file locks work across both.
 - A new one: an `OPS` tuple and a `main()` that calls `hostrpc.run` in the package's
-  `tools.py` (`src/mcps/podcasts` is the example), a `<name>-runner` console script, a unit
+  `tools.py` (`packages/podcasts` is the example), a `<name>-runner` console script, a unit
   `host/systemd/<name>-runner.service` with its own venv in `~/.local/share/everythingllm/`, and
   an entry in the audit's `WATCHED` (`audit/services.py`), which `RUNNERS` and a test
   follow. Its socket is `storage/<name>/runner.sock`, where `hostrpc.caller` looks.
@@ -462,7 +463,7 @@ symlink it likes in its own folders.
 (no route out) and `--disable-dns` (no DNS, so nothing leaks out through lookups either). Their
 only way out is `sandbox-proxy` (tinyproxy, `host/systemd/sandbox-proxy.service`), which is
 also on the default network and lets through only the hosts in
-`src/mcps/sandbox/containers/allowlist`: `pypi.org` and `files.pythonhosted.org`. So `pip
+`host/containers/sandbox/allowlist`: `pypi.org` and `files.pythonhosted.org`. So `pip
 install` works, and the internet, the LAN, the tailnet (AnythingLLM's API, Ollama, …)
 and the host's own ports don't. `upload.pypi.org` stays blocked, so code can't push
 data out through a package upload either. To allow another host, add an anchored regex to
@@ -495,7 +496,7 @@ a show found only in such an app has no public feed.
   Tailscale on. Apps that fetch through their own servers (Pocket Casts, Overcast, Apple
   Podcasts' sync) can't reach a tailnet address.
 - The MCP server in the container only forwards each tool call to `podcasts-runner` on the
-  host (`src/mcps/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
+  host (`packages/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
   own venv in `~/.local/share/everythingllm/venvs/podcasts`, socket `storage/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
   see "Services on the host"), which runs the tool and sends back its text.
   The feeds, the model's key and the audio stack never touch the container: the sync,
@@ -585,7 +586,7 @@ changed or undone, and nothing is stored twice.
 - At the end of each sync, originals, sidecars and manifests that no feed's record refers
   to are deleted. Originals wait a day, in case a download isn't in a record yet.
   `remove_podcast` deletes the show's at once.
-- `splice-web` (`src/mcps/splice`, standard library only, `host/systemd/podcasts-web.service`,
+- `splice-web` (`packages/splice`, standard library only, `host/systemd/podcasts-web.service`,
   its own venv in `~/.local/share/everythingllm/venvs/splice`) is mapped to `:8445/podcasts` by
   `tailscale serve`, ahead of the pages site's Caddy. It serves manifests with range
   requests, `HEAD`, `ETag`/`If-Range` and `sendfile`. Anything else under
@@ -724,7 +725,7 @@ and read-only. Without a DeepSeek key, `sites-runner` logs that and serves the t
 agent itself is capped at 40 tool calls per reply, `AGENT_MAX_TOOL_CALLS` in `.env`, so the
 work happens outside the agent). The skill (`anythingllm/agent-skills/deep-research/`) is a
 thin front: it hands the question, its setup args and the workspace to `research-runner`
-on the host (`src/mcps/research`, `host/systemd/research-runner.service`, its own venv in
+on the host (`packages/research`, `host/systemd/research-runner.service`, its own venv in
 `~/.local/share/everythingllm/venvs/research`), shows the runner's progress in the chat, and
 replies with what the runner says to tell the user. They talk over a Unix socket the
 container sees, `storage/research/runner.sock` (see "Services on the host"):
@@ -761,7 +762,7 @@ A run, step by step:
    only warns: the reply and the run log (`file_error`, `document_error`) say so.
 
 Depth (`quick` / `standard` / `thorough`, default standard) sets workers, steps per worker,
-gap rounds and a search budget (15 / 40 / 80); see `src/mcps/research/src/research/config.py`. Models are setup args:
+gap rounds and a search budget (15 / 40 / 80); see `packages/research/src/research/config.py`. Models are setup args:
 `PLANNER_MODEL` (`glm-5.3`) and `WORKER_MODEL` (`deepseek-flash`, run with thinking
 off). A `glm-*` model goes to Z.AI's coding endpoint (a GLM Coding Plan key gets "1113
 Insufficient balance" anywhere else), with the Generic OpenAI provider's key when its base
@@ -822,9 +823,9 @@ for its `stale_ms` (3 minutes) reads as interrupted to the audit, and a fresh on
 so the agent can tell the user what happened instead of finding no such run.
 `make research-setup` and `make units` (when the unit changed) list the live runs and ask
 before restarting the runner; with no terminal to ask they stop, unless `FORCE=1`
-(`src/tools/research_guard.py`). `make restart` and `make deploy` restart AnythingLLM only,
+(`tools/research_guard.py`). `make restart` and `make deploy` restart AnythingLLM only,
 so they don't need to ask. The runner runs the code it started with: after changing
-`src/mcps/research`, `make research-setup` puts it live.
+`packages/research`, `make research-setup` puts it live.
 
 Every run appends one line to `~/.local/share/everythingllm/research/runs/YYYY-MM.jsonl`: the question,
 how it ended (`ok` / `failed`, with the error; `interrupted` for one killed by a restart;
@@ -848,7 +849,7 @@ client disconnects and saves it to the thread only when the stream completes, so
 whose app closes, sleeps or loses its network is lost. On 2026-10-06, with AnythingLLM
 1.16.2, an answer cut off after 15 chunks was missing from the thread three minutes later.
 
-The relay (`src/relay`, `relay.service`, 127.0.0.1:8446, tailnet https :8446) makes that
+The relay (`packages/relay`, `relay.service`, 127.0.0.1:8446, tailnet https :8446) makes that
 one call for Nilson and owns the answer. Each run streams from AnythingLLM to the end in its
 own task, which no follower owns; the relay never closes the upstream connection because a
 follower left, only when the run ends or is cancelled.
@@ -903,7 +904,7 @@ returns that old run.
 
 The "System Audit" scheduled job checks this setup every day and publishes what it finds
 to the `status` site. The checks and the report are fixed code in the `audit` MCP server,
-which forwards each tool call to `audit-runner` on the host (`src/mcps/audit/src/audit/tools.py`,
+which forwards each tool call to `audit-runner` on the host (`packages/audit/src/audit/tools.py`,
 `host/systemd/audit-runner.service`, socket `storage/audit/runner.sock`), where the checks
 can read the journal and every service's socket; the model only writes a summary and
 suggests a fix per finding. Its tools:

@@ -1,4 +1,4 @@
-// The node side of src/mcps/hostrpc, for skills that front a host service: one request per
+// The node side of packages/hostrpc, for skills that front a host service: one request per
 // connection over a Unix socket, a line of JSON each way ({op, args} -> {ok, result|error}).
 // This folder has no plugin.json, so AnythingLLM doesn't load it as a skill; skills
 // require it as "../_lib/hostrpc".

@@ -1,4 +1,4 @@
-// Deep research: hands the question to research-runner on the host (src/mcps/research), which
+// Deep research: hands the question to research-runner on the host (packages/research), which
 // plans it, researches it with parallel workers over SearXNG and publishes a cited report
 // to the `research` Zola site. This file shows its progress while the chat is open and
 // replies with what the runner says to tell the user.

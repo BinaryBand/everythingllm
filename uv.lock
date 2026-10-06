@@ -71,7 +71,7 @@ wheels = [
 [[package]]
 name = "audit"
 version = "0.1.0"
-source = { editable = "src/mcps/audit" }
+source = { editable = "packages/audit" }
 dependencies = [
     { name = "hostrpc" },
     { name = "mcp" },
@@ -81,10 +81,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "hostrpc", editable = "src/mcps/hostrpc" },
+    { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "mcp", specifier = ">=2.2,<3" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "sites", editable = "src/mcps/sites" },
+    { name = "sites", editable = "packages/sites" },
 ]
 
 [[package]]
@@ -597,7 +597,7 @@ wheels = [
 [[package]]
 name = "hostrpc"
 version = "0.1.0"
-source = { editable = "src/mcps/hostrpc" }
+source = { editable = "packages/hostrpc" }
 
 [[package]]
 name = "htmldate"
@@ -789,7 +789,7 @@ wheels = [
 [[package]]
 name = "linkcard"
 version = "0.1.0"
-source = { editable = "src/mcps/linkcard" }
+source = { editable = "packages/linkcard" }
 dependencies = [
     { name = "pillow" },
 ]
@@ -800,7 +800,7 @@ requires-dist = [{ name = "pillow", specifier = ">=11" }]
 [[package]]
 name = "llm"
 version = "0.1.0"
-source = { editable = "src/mcps/llm" }
+source = { editable = "packages/llm" }
 dependencies = [
     { name = "hostrpc" },
     { name = "httpx" },
@@ -808,7 +808,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "hostrpc", editable = "src/mcps/hostrpc" },
+    { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", specifier = ">=0.27" },
 ]
 
@@ -1222,7 +1222,7 @@ wheels = [
 [[package]]
 name = "podcasts"
 version = "0.1.0"
-source = { editable = "src/mcps/podcasts" }
+source = { editable = "packages/podcasts" }
 dependencies = [
     { name = "hostrpc" },
     { name = "mcp" },
@@ -1248,17 +1248,17 @@ host = [
 requires-dist = [
     { name = "av", marker = "extra == 'host'", specifier = ">=14" },
     { name = "faster-whisper", marker = "extra == 'host'", specifier = ">=1.1" },
-    { name = "hostrpc", editable = "src/mcps/hostrpc" },
+    { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", marker = "extra == 'host'", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'host'", specifier = ">=0.30" },
     { name = "kokoro-onnx", marker = "extra == 'host'", specifier = ">=0.4" },
-    { name = "llm", marker = "extra == 'host'", editable = "src/mcps/llm" },
+    { name = "llm", marker = "extra == 'host'", editable = "packages/llm" },
     { name = "mcp", specifier = ">=2.2,<3" },
     { name = "numpy", marker = "extra == 'host'", specifier = ">=2" },
-    { name = "publicweb", marker = "extra == 'host'", editable = "src/mcps/publicweb" },
+    { name = "publicweb", marker = "extra == 'host'", editable = "packages/publicweb" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "sites", marker = "extra == 'host'", editable = "src/mcps/sites" },
-    { name = "splice", marker = "extra == 'host'", editable = "src/mcps/splice" },
+    { name = "sites", marker = "extra == 'host'", editable = "packages/sites" },
+    { name = "splice", marker = "extra == 'host'", editable = "packages/splice" },
     { name = "typer", marker = "extra == 'host'", specifier = ">=0.12" },
 ]
 provides-extras = ["host"]
@@ -1281,7 +1281,7 @@ wheels = [
 [[package]]
 name = "publicweb"
 version = "0.1.0"
-source = { editable = "src/mcps/publicweb" }
+source = { editable = "packages/publicweb" }
 dependencies = [
     { name = "httpcore" },
     { name = "httpx" },
@@ -1649,7 +1649,7 @@ wheels = [
 [[package]]
 name = "relay"
 version = "0.1.0"
-source = { editable = "src/relay" }
+source = { editable = "packages/relay" }
 dependencies = [
     { name = "httpx" },
     { name = "starlette" },
@@ -1666,7 +1666,7 @@ requires-dist = [
 [[package]]
 name = "research"
 version = "0.1.0"
-source = { editable = "src/mcps/research" }
+source = { editable = "packages/research" }
 dependencies = [
     { name = "hostrpc" },
     { name = "httpx" },
@@ -1678,12 +1678,12 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "hostrpc", editable = "src/mcps/hostrpc" },
+    { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "linkcard", editable = "src/mcps/linkcard" },
-    { name = "llm", editable = "src/mcps/llm" },
-    { name = "publicweb", editable = "src/mcps/publicweb" },
-    { name = "sites", editable = "src/mcps/sites" },
+    { name = "linkcard", editable = "packages/linkcard" },
+    { name = "llm", editable = "packages/llm" },
+    { name = "publicweb", editable = "packages/publicweb" },
+    { name = "sites", editable = "packages/sites" },
 ]
 
 [[package]]
@@ -1823,7 +1823,7 @@ wheels = [
 [[package]]
 name = "sandbox"
 version = "0.1.0"
-source = { editable = "src/mcps/sandbox" }
+source = { editable = "packages/sandbox" }
 dependencies = [
     { name = "hostrpc" },
     { name = "linkcard" },
@@ -1831,8 +1831,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "hostrpc", editable = "src/mcps/hostrpc" },
-    { name = "linkcard", editable = "src/mcps/linkcard" },
+    { name = "hostrpc", editable = "packages/hostrpc" },
+    { name = "linkcard", editable = "packages/linkcard" },
 ]
 
 [[package]]
@@ -1847,7 +1847,7 @@ wheels = [
 [[package]]
 name = "sites"
 version = "0.1.0"
-source = { editable = "src/mcps/sites" }
+source = { editable = "packages/sites" }
 dependencies = [
     { name = "hostrpc" },
     { name = "mcp" },
@@ -1864,12 +1864,12 @@ host = [
 
 [package.metadata]
 requires-dist = [
-    { name = "hostrpc", editable = "src/mcps/hostrpc" },
+    { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", marker = "extra == 'host'", specifier = ">=0.27" },
-    { name = "linkcard", marker = "extra == 'host'", editable = "src/mcps/linkcard" },
-    { name = "llm", marker = "extra == 'host'", editable = "src/mcps/llm" },
+    { name = "linkcard", marker = "extra == 'host'", editable = "packages/linkcard" },
+    { name = "llm", marker = "extra == 'host'", editable = "packages/llm" },
     { name = "mcp", specifier = ">=2.2,<3" },
-    { name = "publicweb", marker = "extra == 'host'", editable = "src/mcps/publicweb" },
+    { name = "publicweb", marker = "extra == 'host'", editable = "packages/publicweb" },
     { name = "pydantic", specifier = ">=2" },
 ]
 provides-extras = ["host"]
@@ -1886,7 +1886,7 @@ wheels = [
 [[package]]
 name = "splice"
 version = "0.1.0"
-source = { editable = "src/mcps/splice" }
+source = { editable = "packages/splice" }
 
 [package.dev-dependencies]
 dev = [

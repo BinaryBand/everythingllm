@@ -25,7 +25,7 @@ research, Code sandbox, System audit, …) before changing it.
 - Dropped ideas (browser, quiz, whatsapp-mcp) and the history before this repo went public
   are kept in a private archive, not here. Don't recreate them from memory.
 - Machine settings come from `host.env` (git-ignored; see `host.env.example`). Unit
-  templates use `@KEY@` placeholders, which `src/tools/units.py` fills in; systemd doesn't
+  templates use `@KEY@` placeholders, which `tools/units.py` fills in; systemd doesn't
   expand `${VAR}` in `Environment=`.
 
 ## Commands
@@ -37,23 +37,23 @@ research, Code sandbox, System audit, …) before changing it.
     make units                     # render and install unit templates, restart what changed
     make <name>-logs               # follow a service (research, podcasts, sites, audit, sandbox, …)
 
-The repo root is one uv workspace (a member per `src/mcps/` subdirectory, one `uv.lock`, the dev
+The repo root is one uv workspace (a member per `packages/` subdirectory, one `uv.lock`, the dev
 venv in `.venv`). The root `pyproject.toml` holds what every member shares (the `workspace = true`
 sources and the dev group); a member's own lists its dependencies, extras and scripts. Run these
 from the repo root:
 
     uv run --all-packages --all-extras pytest -q                       # what make test runs
-    uv run --package podcasts --extra host pytest src/mcps/podcasts -q     # one member
-    uv run --package podcasts --extra host pytest src/mcps/podcasts/tests/test_scrub.py::test_name -q
+    uv run --package podcasts --extra host pytest packages/podcasts -q     # one member
+    uv run --package podcasts --extra host pytest packages/podcasts/tests/test_scrub.py::test_name -q
     uv lock                                                            # after editing a pyproject.toml
 
 After `uv.lock` changes, run `make mcp-sync` (or `make deploy`) so the container's venv catches
-up. Don't use `--no-dev` against `.venv`; it uninstalls pytest. `src/mcps/conftest.py`
+up. Don't use `--no-dev` against `.venv`; it uninstalls pytest. `packages/conftest.py`
 clears `PUBLIC_HOST` and `ANYTHINGLLM_STORAGE`, so tests ignore `host.env`.
 
 Host services run Python 3.12 (their venvs in `~/.local/share/everythingllm/`); the dev `.venv`
 is 3.13. Keep code 3.12-compatible, and check with
-`uv run --python 3.12 --isolated --all-packages --all-extras pytest -q src/mcps/<member>`.
+`uv run --python 3.12 --isolated --all-packages --all-extras pytest -q packages/<member>`.
 
 ## Architecture: thin fronts, host services
 
@@ -64,13 +64,13 @@ is 3.13. Keep code 3.12-compatible, and check with
 - Heavy, long-running or host-dependent work runs in a host service:
   `sandbox-runner`, `research-runner`, `podcasts-runner`, `sites-runner` and
   `audit-runner`. The MCP server or skill in the container is a thin front that forwards each
-  call over `storage/<name>/runner.sock` using `src/mcps/hostrpc`: one request per connection,
+  call over `storage/<name>/runner.sock` using `packages/hostrpc`: one request per connection,
   a line of JSON each way (`{"op","args"}` → `{"ok","result"|"error"}`).
   - A runner is `hostrpc.Service(tools.OPS, errors=…)`: its ops are the functions in the
     package's `tools.py`, which also holds `main()` (`hostrpc.run(...)`). A front's tools are
     signatures with docstrings and no body, registered by
     `hostrpc.forwarder(hostrpc.caller(folder, ENV, name, error=ToolError), mcp.add_tool)`.
-    `src/mcps/podcasts` (`server.py`, `tools.py`) is the reference example; research and the
+    `packages/podcasts` (`server.py`, `tools.py`) is the reference example; research and the
     sandbox keep state, so theirs are `Service` subclasses with `op_<name>` methods.
   - Skills speak the same protocol from node, through `anythingllm/agent-skills/_lib/hostrpc.js`:
     `deep-research`, and the sandbox's `run-code`, `write-file` and `publish`.
@@ -81,13 +81,13 @@ is 3.13. Keep code 3.12-compatible, and check with
   - Adding a service: the README's "Services on the host" lists every piece (console
     script, unit, the audit's `WATCHED` in `audit/services.py`).
 - Every MCP server is a thin front; nothing it serves runs in the container. Not every
-  member is an MCP server: `publicweb`, `llm` and `hostrpc` are libraries, and `splice`,
-  `research` and `sandbox` are host-only services. `src/relay` (outside `src/mcps/`) is a
-  host HTTP service for the Nilson app, not the agent; its secrets are in
-  `~/.config/everythingllm/relay.env`, never in the repo.
+  member is an MCP server: `publicweb`, `llm`, `linkcard` and `hostrpc` are libraries, and
+  `splice`, `research` and `sandbox` are host-only services. `relay` is a host HTTP service
+  for the Nilson app, not the agent; its secrets are in `~/.config/everythingllm/relay.env`,
+  never in the repo.
 - The agent does short judgment work through thin tools. For example, the
   `daily-news-page` scheduled job calls `headlines` and then `write_entry`. Code asks a
-  model itself (`src/mcps/llm`) only where there's no agent (background syncs, reader clicks,
+  model itself (`packages/llm`) only where there's no agent (background syncs, reader clicks,
   long research runs).
 - Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`),
   not in AnythingLLM's storage, laid out by kind: `venvs/<name>`, `pages/{public,entries}`,
@@ -123,4 +123,4 @@ is 3.13. Keep code 3.12-compatible, and check with
   `Config (environment):`. Keep them current when you add or change an env var.
 - Commit subjects are plain sentences saying what changed and why (e.g. "Decode episodes
   as they're heard, and only hold Whisper's deaths against one"), with no type prefixes.
-- `src/tools/sync.py` uses only the standard library and runs with the system `python3`.
+- `tools/sync.py` uses only the standard library and runs with the system `python3`.

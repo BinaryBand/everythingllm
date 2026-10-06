@@ -1,4 +1,4 @@
-// Write File: writes or deletes a file in the sandbox (src/mcps/sandbox), so long text doesn't
+// Write File: writes or deletes a file in the sandbox (packages/sandbox), so long text doesn't
 // have to go through a script, and a sandbox over its size limit can still be cleaned up.
 
 const { withSandbox } = require("../_lib/sandbox");

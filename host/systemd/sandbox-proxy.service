@@ -1,5 +1,5 @@
 [Unit]
-Description=Code sandbox proxy: the sandboxes' only way out, to PyPI (src/mcps/sandbox/containers/allowlist)
+Description=Code sandbox proxy: the sandboxes' only way out, to PyPI (host/containers/sandbox/allowlist)
 
 [Service]
 ExecStart=/usr/bin/podman run --rm --replace --name sandbox-proxy --network sandbox-net:ip=10.89.77.2 --network podman localhost/everythingllm-sandbox-proxy

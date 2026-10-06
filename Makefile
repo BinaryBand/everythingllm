@@ -14,49 +14,49 @@ help:            ## list the targets
 	@awk -F':.*## ' '/^[a-z%-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 install:         ## set this machine up from the repo, or bring it up to date; ends with what's left to do in AnythingLLM's UI
-	python3 src/tools/machine.py check
+	python3 tools/machine.py check
 	$(MAKE) --no-print-directory units
-	python3 src/tools/machine.py wait-api
+	python3 tools/machine.py wait-api
 	$(MAKE) --no-print-directory deploy
-	python3 src/tools/machine.py wait-api
-	python3 src/tools/machine.py search
+	python3 tools/machine.py wait-api
+	python3 tools/machine.py search
 	$(MAKE) --no-print-directory serve-setup sandbox-setup podcasts-setup news-audio-setup research-setup sites-setup audit-setup
-	python3 src/tools/machine.py wait-api
+	python3 tools/machine.py wait-api
 	-$(MAKE) --no-print-directory health
-	@python3 src/tools/machine.py checklist
+	@python3 tools/machine.py checklist
 
 units:           ## render host/quadlet/ and host/systemd/ into this machine's unit folders (backs up first), reload systemd, restart what changed
-	python3 src/tools/units.py install
+	python3 tools/units.py install
 
 diff:            ## show what deploy would change in live storage, and where the installed units differ from the repo's
-	python3 src/tools/sync.py diff
-	@python3 src/tools/units.py diff
+	python3 tools/sync.py diff
+	@python3 tools/units.py diff
 
 deploy:          ## write skills, jobs, slash commands, the system prompt and MCP config live (backs up first), refresh MCP deps, restart AnythingLLM, rebuild the sites
-	python3 src/tools/sync.py deploy
+	python3 tools/sync.py deploy
 	$(MAKE) --no-print-directory mcp-sync restart
 	$(MAKE) --no-print-directory sites-build
 
 import-skill:    ## copy a live skill into the repo: make import-skill NAME=foo
-	python3 src/tools/sync.py import-skill $(NAME)
+	python3 tools/sync.py import-skill $(NAME)
 
 import-job:      ## copy a live scheduled job into the repo: make import-job NAME="Daily News Page"
-	python3 src/tools/sync.py import-job "$(NAME)"
+	python3 tools/sync.py import-job "$(NAME)"
 
 import-command:  ## copy a live slash command into the repo: make import-command NAME=/foo
-	python3 src/tools/sync.py import-command "$(NAME)"
+	python3 tools/sync.py import-command "$(NAME)"
 
 restart:         ## restart AnythingLLM (deep-research runs carry on: they run in research-runner)
 	systemctl --user restart $(SERVICE)
 
-logs:
+logs:            ## follow AnythingLLM's container log
 	podman logs -f --tail 100 $(CONTAINER)
 
 status:          ## show AnythingLLM's unit status
 	systemctl --user status $(SERVICE) --no-pager
 
 health:          ## check every unit, local port, the sandbox and research runners and each MCP server (e.g. after a reboot)
-	src/tools/health.sh
+	tools/health.sh
 
 test:            ## run tests for all MCP servers and agent skills
 	uv run --all-packages --all-extras pytest -q
@@ -68,7 +68,7 @@ test-skills:     ## run agent skill and log filter tests inside the AnythingLLM 
 # The container's uv syncs one --package at a time: the first sync is exact (it removes
 # whatever no MCP server needs), the rest only add.
 mcp-sync:        ## install/refresh the MCP servers' deps inside the AnythingLLM container, and only theirs
-	set -e; mode=; for pkg in $$(python3 src/tools/sync.py mcp-packages); do \
+	set -e; mode=; for pkg in $$(python3 tools/sync.py mcp-packages); do \
 	  podman exec -w /tmp -e UV_PROJECT_ENVIRONMENT=/app/server/storage/mcp/venv \
 	    -e UV_CACHE_DIR=/app/server/storage/mcp/uv-cache -e UV_PYTHON_DOWNLOADS=never \
 	    $(CONTAINER) uv sync --frozen --no-dev --package $$pkg $$mode --project /mcp; \
@@ -81,7 +81,7 @@ enable-restart = systemctl --user enable $(1) && systemctl --user restart $(1)
 # $(call internal-net,name,subnet): a podman network with no route out and no DNS.
 internal-net = podman network exists $(1) || podman network create --internal --disable-dns --subnet $(2) $(1)
 
-SANDBOX := src/mcps/sandbox/containers
+SANDBOX := host/containers/sandbox
 SANDBOX_UNITS := sandbox-proxy.service sandbox-runner.service
 
 sandbox-setup: units ## build the sandbox images and network, enable and (re)start its host units
@@ -122,7 +122,7 @@ news-audio-logs: ## follow the Daily News read-aloud runs
 
 research-setup: units ## enable and (re)start research-runner, which runs deep research for the skill; asks first while a run is going (FORCE=1 doesn't)
 	systemctl --user enable research-runner.service
-	python3 src/tools/research_guard.py
+	python3 tools/research_guard.py
 	systemctl --user restart research-runner.service
 
 sites-setup: units serve-setup ## enable and (re)start sites-runner (and the article writer it serves at :8445/news/write), which writes the sites' entries and builds them for the sites MCP server
@@ -132,7 +132,7 @@ audit-setup: units ## enable and (re)start audit-runner, which runs the audit MC
 	$(call enable-restart,audit-runner.service)
 
 relay-setup: units serve-setup ## make the Nilson relay's secrets file (~/.config/everythingllm/relay.env) if missing, then enable and (re)start the relay (tailnet https :8446)
-	python3 src/tools/relay_env.py
+	python3 tools/relay_env.py
 	$(call enable-restart,relay.service)
 
 %-logs:          ## follow <name>-runner or <name> (research, sites, audit, relay)

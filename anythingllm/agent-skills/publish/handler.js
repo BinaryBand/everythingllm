@@ -1,4 +1,4 @@
-// Publish: copies a file or folder from the sandbox (src/mcps/sandbox) to `/<slug>/` on the
+// Publish: copies a file or folder from the sandbox (packages/sandbox) to `/<slug>/` on the
 // pages site, as a page that belongs to this workspace, or takes one down.
 
 const { withSandbox } = require("../_lib/sandbox");

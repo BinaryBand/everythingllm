@@ -1,4 +1,4 @@
-// Run Code: runs a script in sandbox-runner on the host (src/mcps/sandbox) and replies with its
+// Run Code: runs a script in sandbox-runner on the host (packages/sandbox) and replies with its
 // output. Waits for the whole run, showing in the chat that it's still going; if the chat
 // closes first, the run finishes on its own and its files stay.
 

@@ -1,5 +1,4 @@
 import pytest
-
 from hostctl import ctr_env
 
 ENV = """\

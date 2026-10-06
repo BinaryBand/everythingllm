@@ -148,7 +148,7 @@ def test_nothing_outside_the_root(base, dirs):
 def test_a_manifest_never_reaches_through_a_symlink(base, dirs, tmp_path):
     """The podcasts' containers write the audio and manifests folders; this runs on the
     host, so a link planted there must not serve a host file."""
-    root, manifests, audio = dirs
+    _, manifests, audio = dirs
     secret = tmp_path / "secret"
     m = Manifest("audio/mpeg", [["file", "x.mp3", 0, 2]])
     (manifests / "show" / "leak.mp3.json").write_text(m.to_json())

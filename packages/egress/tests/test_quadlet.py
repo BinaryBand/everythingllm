@@ -345,8 +345,10 @@ def test_sites_runner_mounts_only_what_it_uses():
             f"{data}/pages/public:{data}/pages/public",
             f"{storage}/everythingllm/sites:{storage}/everythingllm/sites",
             f"{storage}/everythingllm/sandbox-build:{storage}/everythingllm/sandbox-build:ro",
-            "%h/.config/everythingllm/ctr/sites-runner.env:"
-            "%h/.config/everythingllm/ctr/sites-runner.env:ro",
+            (
+                "%h/.config/everythingllm/ctr/sites-runner.env:"
+                "%h/.config/everythingllm/ctr/sites-runner.env:ro"
+            ),
             f"{data}/venvs/sites-runner-ctr:{data}/venvs/sites-runner-ctr",
         ]
     )

@@ -1,6 +1,6 @@
 """MCP server for the Zola sites' entries, and the news feeds' headlines the Daily News is
 written from. Free-form pages come from the sandbox's publish skill instead. Writing and
-deleting entries are skills (write-entry, delete-entry; sites.tools.SKILLS), not tools here.
+deleting entries are skills (write-entry, delete-entry; `skills` below), not tools here.
 
 A front for sites-runner on the host (sites/tools.py), which does the work: each tool
 call goes to it over a Unix socket in storage, and the text it sends back is the tool's
@@ -10,7 +10,7 @@ Config (environment):
   SITES_SOCKET  the runner's socket (default storage/everythingllm/sites/runner.sock, as the container sees it)
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import hostrpc
 from mcp.server.mcpserver import MCPServer
@@ -71,3 +71,41 @@ async def headlines(
     """Recent stories for one news section, read from reputable news feeds: up to 15,
     newest first, each with its headline, a short summary from the feed, the source, the
     article's own URL and when it was published (UTC). Duplicates are already removed."""
+
+
+# Writing and deleting entries are skills (anythingllm/agent-skills/write-entry, delete-entry,
+# generated from these by `make skills`), not tools here: they can refuse a delegated task.
+skills = hostrpc.Skills("sites", "SITES_SOCKET")
+
+
+@skills.add
+async def write_entry(
+    site: Site,
+    section: Section,
+    slug: Slug,
+    title: Annotated[str, Field(description="Entry title.")],
+    date: Annotated[str, Field(description="Entry date, YYYY-MM-DD.")],
+    extra: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="The site's fields for this entry, as described by list_sites."
+        ),
+    ] = None,
+    body: Annotated[
+        str, Field(description="Optional Markdown text. HTML is not allowed.")
+    ] = "",
+    overwrite: Annotated[
+        bool, Field(description="Set true to replace an existing entry.")
+    ] = False,
+) -> str:
+    """Save an entry on one of the Zola sites (news, research, status) and rebuild the site,
+    so the entry is live when this returns. If the site doesn't build with it, nothing is
+    saved and the error says why. Get the site's sections and fields from the sites tools'
+    list_sites first; to edit an entry, read it with get_entry and write it again with
+    overwrite."""
+
+
+@skills.add
+async def delete_entry(site: Site, section: Section, slug: Slug) -> str:
+    """Permanently delete an entry from one of the Zola sites and rebuild the site without
+    it. Ask the user first."""

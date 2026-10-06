@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 from sites import server, tools
@@ -57,14 +56,6 @@ def test_every_tool_is_an_op_of_the_runner():
     from sites import tools
 
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
-    assert names == {f.__name__ for f in tools.OPS} - {f.__name__ for f in tools.SKILLS}
-
-
-def test_the_ops_that_write_are_skills():
-    """Each op in SKILLS has its skill, which sends that op (anythingllm/agent-skills/<op>)."""
-    from sites import tools
-
-    skills = Path(__file__).resolve().parents[3] / "anythingllm" / "agent-skills"
-    for op in tools.SKILLS:
-        handler = skills / op.__name__.replace("_", "-") / "handler.js"
-        assert f'op: "{op.__name__}"' in handler.read_text(), op.__name__
+    assert names == {f.__name__ for f in tools.OPS} - {
+        f.__name__ for f in server.skills
+    }

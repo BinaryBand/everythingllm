@@ -747,7 +747,6 @@ def test_splice_web_knows_every_type_we_download():
 def test_the_mcp_server_forwards_to_the_runner(lib, monkeypatch):
     import asyncio
     import os
-    from pathlib import Path
 
     import hostrpc
     from mcp.server.mcpserver.exceptions import ToolError
@@ -766,7 +765,7 @@ def test_the_mcp_server_forwards_to_the_runner(lib, monkeypatch):
         try:
             listed = {t.name for t in await server.mcp.list_tools()}
             assert listed == {f.__name__ for f in tools.OPS} - {
-                f.__name__ for f in tools.SKILLS
+                f.__name__ for f in server.skills
             }
             assert (await server.list_podcasts()).startswith("No podcasts yet.")
             assert await server.refresh_podcasts() == "No podcasts to refresh."
@@ -781,11 +780,3 @@ def test_the_mcp_server_forwards_to_the_runner(lib, monkeypatch):
             await server.list_podcasts()
 
     asyncio.run(go())
-
-
-def test_the_ops_that_write_are_skills():
-    """Each op in SKILLS has its skill, which sends that op (anythingllm/agent-skills/<op>)."""
-    skills = Path(__file__).resolve().parents[3] / "anythingllm" / "agent-skills"
-    for op in tools.SKILLS:
-        handler = skills / op.__name__.replace("_", "-") / "handler.js"
-        assert f'op: "{op.__name__}"' in handler.read_text(), op.__name__

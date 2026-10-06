@@ -34,6 +34,7 @@ research, Code sandbox, System audit, …) before changing it.
     make test-skills               # just the skill and log filter tests
     make health                    # check every unit, port, runner and MCP server
     make diff / make deploy        # what would change live / push it live
+    make skills                    # regenerate the forwarding skills from the fronts' `skills`
     make units                     # render and install unit templates, restart what changed
     make <app>-logs / <app>-setup  # follow an app, or (re)start it (`make apps` lists them)
 
@@ -84,10 +85,12 @@ is 3.13. Keep code 3.12-compatible, and check with
     through `packages/apps`; app code never does. Adding one: its code, its unit template
     and an entry there; `packages/apps/tests/test_apps.py` says what's missing (README, "The apps").
 - MCP tools only read (or, like `refresh_podcasts`, only start background work). An op that
-  writes or acts is a skill (`anythingllm/agent-skills/<op>`, listed in its package's
-  `tools.SKILLS`), because a skill knows its workspace and refuses a delegated task
-  (`_lib/delegated.js`); an MCP call doesn't say where it came from. A test holds every skill
-  of ours to that refusal.
+  writes or acts is a skill (`anythingllm/agent-skills/<op>`), because a skill knows its
+  workspace and refuses a delegated task (`_lib/delegated.js`); an MCP call doesn't say where
+  it came from. A test holds every skill of ours to that refusal. A skill that only forwards
+  an op is declared in its front like a tool, with `@skills.add` (`hostrpc.Skills`), and
+  `make skills` generates its `plugin.json` and `handler.js` (`hostrpc.skillgen`); edit the
+  declaration, never those files. `make diff` and `make deploy` refuse stale ones.
 - Every MCP server is a thin front; nothing it serves runs in the container. Not every
   member is an MCP server: `publicweb`, `llm`, `chatimage` and `hostrpc` are libraries, and
   `splice`, `research` and `sandbox` are host-only services. `relay` is a host HTTP service

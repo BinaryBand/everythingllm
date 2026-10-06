@@ -3,14 +3,14 @@
 A front for audit-runner on the host (audit/tools.py), which runs the checks: each tool
 call goes to it over a Unix socket in storage, and the text it sends back is the tool's
 result. On the host the checks can read the journal, every service's socket and the sites.
-Publishing the report and running a job are skills (publish-report, run-job;
-audit.tools.SKILLS), not tools here.
+Publishing the report and running a job are skills (publish-report, run-job; `skills`
+below), not tools here.
 
 Config (environment):
   AUDIT_SOCKET  the runner's socket (default storage/everythingllm/audit/runner.sock, as the container sees it)
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 import hostrpc
 from mcp.server.mcpserver import MCPServer
@@ -85,3 +85,42 @@ async def research_run(
     Includes runs still going (status "running") and ones cut short without a result (status
     "interrupted", usually by a restart of the server). Look a run up by its `question`; with
     none matching, the recent runs are listed instead."""
+
+
+# Publishing the report and running a job are skills (anythingllm/agent-skills/publish-report,
+# run-job, generated from these by `make skills`), not tools here: they can refuse a
+# delegated task.
+skills = hostrpc.Skills("audit", "AUDIT_SOCKET")
+
+
+@skills.add
+async def publish_report(
+    summary: Annotated[
+        str,
+        Field(
+            description="One or two plain-text sentences: what's broken and what matters most."
+        ),
+    ],
+    suggestions: Annotated[
+        dict[str, str] | None,
+        Field(
+            description='Likely cause and a concrete fix per finding, keyed by its number from run_checks, e.g. {"1": "...", "3": "..."}. Plain text. Leave out findings with nothing to suggest.'
+        ),
+    ] = None,
+    status: Annotated[
+        Literal["ok", "warn", "fail"] | None,
+        Field(
+            description="Leave out: it follows from the findings (fail if any fails, else warn if any warns, else ok)."
+        ),
+    ] = None,
+) -> str:
+    """Publish today's audit report (Stockholm date) to the status site, replacing any earlier
+    one for the day: the audit tools' run_checks findings with your summary and suggestions.
+    Runs the checks itself if run_checks hasn't been called in the last hour."""
+
+
+@skills.add
+async def run_job(name: JobName) -> str:
+    """Run an existing scheduled job now, outside its schedule, e.g. to redo today's news. Use
+    this rather than creating a new job to run once. The run goes on in the background; the
+    audit tools' job_run(name) shows how it went."""

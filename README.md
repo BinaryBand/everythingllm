@@ -158,7 +158,13 @@ through its UI.
   - `write-entry/`, `delete-entry/`, `add-podcast/`, `remove-podcast/`, `publish-report/`,
     `run-job/` — the ops of the sites, podcasts and audit runners that write or act. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
-    to its runner (`_lib/runner.js`).
+    to its runner (`forwardSkill` in `_lib/runner.js`). They're generated: each is declared
+    in its front's `server.py` like a tool, a signature with a docstring and no body, under
+    `@skills.add` (`hostrpc.Skills`), and `make skills` writes its `plugin.json` and
+    `handler.js` from that (`hostrpc.skillgen`), so edit the declaration, not those files.
+    `make diff` and `make deploy` stop when they're stale. A param the agent leaves out is
+    left out of the op's args, so the op's own default applies; a test holds a declaration's
+    parameters and defaults to its op's.
   - `_lib/` — what the skills share (no `plugin.json`, so AnythingLLM doesn't load it as
     a skill): `hostrpc.js`, the node side of `packages/hostrpc`; `sandbox.js`; `runner.js`;
     and `delegated.js`, the check that makes every skill of ours that writes, acts or
@@ -428,7 +434,9 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
   `hostrpc.caller(folder, env, name, error=ToolError)`, which turns that into a tool error,
   and `hostrpc.forwarder(call, mcp.add_tool)` makes each tool from a signature and docstring
   alone: calling it sends every argument as the op of its name. The skills speak the same
-  protocol from node (`anythingllm/agent-skills/_lib/hostrpc.js`).
+  protocol from node (`anythingllm/agent-skills/_lib/hostrpc.js`); an op that writes or acts
+  is declared the same way under a front's `hostrpc.Skills` and becomes a generated skill
+  (`make skills`, see "Layout").
 - AnythingLLM gives up on a tool call after 60 s, so an op answers within 45 s, and work
   that takes longer carries on in the service (a run id to wait on) or in a unit of its own.
 - The container maps the host user (`UserNS=keep-id`), so what a service writes in storage

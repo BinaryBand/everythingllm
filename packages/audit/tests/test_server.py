@@ -32,16 +32,8 @@ def via_runner(monkeypatch, name, args):
 def test_every_tool_is_an_op_of_the_runner():
     tools = asyncio.run(server.mcp.list_tools())
     assert {t.name for t in tools} == {f.__name__ for f in audit_tools.OPS} - {
-        f.__name__ for f in audit_tools.SKILLS
+        f.__name__ for f in server.skills
     }
-
-
-def test_the_ops_that_write_are_skills():
-    """Each op in SKILLS has its skill, which sends that op (anythingllm/agent-skills/<op>)."""
-    skills = Path(__file__).resolve().parents[3] / "anythingllm" / "agent-skills"
-    for op in audit_tools.SKILLS:
-        handler = skills / op.__name__.replace("_", "-") / "handler.js"
-        assert f'op: "{op.__name__}"' in handler.read_text(), op.__name__
 
 
 def test_the_server_explains_a_missing_runner(monkeypatch, tmp_path):

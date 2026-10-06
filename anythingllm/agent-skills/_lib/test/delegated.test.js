@@ -5,7 +5,7 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 
-const { forward, asObject, asFlag } = require("../runner");
+const { asObject, asFlag, asInteger } = require("../runner");
 
 const SKILLS = path.join(__dirname, "..", "..");
 // Skills that only read, and so may run in a delegated task. None yet: every skill of ours
@@ -69,7 +69,7 @@ test("forward sends the op and its args to the service and gives back its text",
     assert.equal(reply, "write_entry ok");
     assert.deepEqual(service.requests[0], {
       op: "write_entry",
-      args: { site: "news", section: "editions", slug: "2026-10-06", title: "T", date: "2026-10-06", extra: { lede: "x" }, body: "", overwrite: true },
+      args: { site: "news", section: "editions", slug: "2026-10-06", title: "T", date: "2026-10-06", extra: { lede: "x" }, overwrite: true },
     });
     const deleteEntry = require("../../delete-entry/handler").runtime;
     assert.equal(await deleteEntry.handler.call(agent("career"), { site: "news", section: "editions", slug: "nope" }), "Error: there's no entry 'nope'");
@@ -89,18 +89,18 @@ test("forward sends the op and its args to the service and gives back its text",
   }
 });
 
-test("add-podcast sends keep as a number or 'all', and leaves unset settings unset", async () => {
+test("a generated skill sends what's set, coerced, and leaves the rest to the op's defaults", async () => {
   const service = await fakeService(() => ({ ok: true, result: "added" }));
   process.env.PODCASTS_SOCKET = service.socket;
   try {
     const addPodcast = require("../../add-podcast/handler").runtime;
     await addPodcast.handler.call(agent("career"), { url: "u", keep: "12" });
-    await addPodcast.handler.call(agent("career"), { url: "u", keep: "all", scrub_ads: false });
-    await addPodcast.handler.call(agent("career"), { url: "u" });
-    assert.deepEqual(service.requests.map((r) => [r.args.keep, r.args.scrub_ads, r.args.rules]), [
-      [12, null, null],
-      ["all", false, null],
-      [5, null, null],
+    await addPodcast.handler.call(agent("career"), { url: "u", keep: "all", scrub_ads: false, transcribe: "true" });
+    await addPodcast.handler.call(agent("career"), { url: "u", keep: null, ad_words: "", rules: "", other: 1 });
+    assert.deepEqual(service.requests.map((r) => r.args), [
+      { url: "u", keep: 12 },
+      { url: "u", keep: "all", scrub_ads: false, transcribe: true },
+      { url: "u", rules: "" }, // "" is a setting (every episode); an enum's "" isn't
     ]);
   } finally {
     delete process.env.PODCASTS_SOCKET;
@@ -115,6 +115,9 @@ test("arguments a model sends as text", () => {
   assert.equal(asFlag("true"), true);
   assert.equal(asFlag("False"), false);
   assert.equal(asFlag(undefined), null);
+  assert.equal(asInteger("7"), 7);
+  assert.equal(asInteger("all"), "all");
+  assert.equal(asInteger(3), 3);
 });
 
 test("delegate starts a delegation and hands back its card", async () => {

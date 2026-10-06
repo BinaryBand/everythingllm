@@ -8,7 +8,7 @@ STORAGE = $(or $(ANYTHINGLLM_STORAGE),$(error no ANYTHINGLLM_STORAGE: copy host.
 # The sites package follows ANYTHINGLLM_STORAGE; naming it here stops a target without host.env.
 HOST_SITES_ENV = ANYTHINGLLM_STORAGE=$(STORAGE)
 
-.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build apps serve-setup sandbox-images
+.PHONY: help install units diff deploy skills import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build apps serve-setup sandbox-images
 
 help:            ## list the targets
 	@awk -F':.*## ' '/^[a-z%-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -30,13 +30,18 @@ units:           ## render host/quadlet/ and host/systemd/ into this machine's u
 	python3 tools/units.py install
 
 diff:            ## show what deploy would change in live storage, and where the installed units differ from the repo's
+	uv run --all-packages python tools/skills.py --check
 	python3 tools/sync.py diff
 	@python3 tools/units.py diff
 
 deploy:          ## write skills, jobs, slash commands, the system prompt and MCP config live (backs up first), refresh MCP deps, restart AnythingLLM, rebuild the sites
+	uv run --all-packages python tools/skills.py --check
 	python3 tools/sync.py deploy
 	$(MAKE) --no-print-directory mcp-sync restart
 	$(MAKE) --no-print-directory sites-build
+
+skills:          ## write the agent skills that forward an op to a host service, from the fronts' `skills` (hostrpc.skillgen)
+	uv run --all-packages python tools/skills.py
 
 import-skill:    ## copy a live skill into the repo: make import-skill NAME=foo
 	python3 tools/sync.py import-skill $(NAME)

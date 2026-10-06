@@ -1,4 +1,5 @@
-"""The Nilson relay: a host service that owns every chat answer the Nilson app asks for.
+"""The Nilson relay: a service, in its own container on the host, that owns every chat answer
+the Nilson app asks for.
 
 AnythingLLM stops an answer when the client of `stream-chat` disconnects, and saves it to
 the thread only when the stream completes, so an answer whose app closes or loses its

@@ -1,7 +1,7 @@
 """`uv run hostctl relay-setup`'s first step: the Nilson relay's secrets file.
 
 Makes ~/.config/everythingllm/relay.env (mode 600) when it's missing, with a fresh RELAY_TOKEN and
-an empty ANYTHINGLLM_API_KEY, and exits 1 until that key is filled in, so the unit isn't
+an empty ANYTHINGLLM_API_KEY, and exits 1 until that key is filled in, so the container isn't
 started into a crash loop. The file stays outside the repo, which the AnythingLLM container
 mounts. Standard library only, like the rest of hostctl.
 
@@ -19,6 +19,7 @@ DEFAULT = Path("~/.config/everythingllm/relay.env").expanduser()
 
 TEMPLATE = """\
 # The Nilson relay's secrets (packages/relay; see the README's "Nilson relay"). Mode 600.
+# KEY=value lines without quotes: podman passes each value to the relay as it is.
 # A developer API key from AnythingLLM's Settings > Developer API.
 ANYTHINGLLM_API_KEY=
 # The token Nilson sends the relay; made by `uv run hostctl relay-setup`.

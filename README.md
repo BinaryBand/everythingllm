@@ -235,8 +235,8 @@ through its UI.
     current (see "Deep research")
 - `packages/egress/` — the egress proxy, the service containers' only way out, and
   `egress.toml`, their addresses and what each may reach (see "Service containers")
-- `packages/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
-  AnythingLLM's agent; also a workspace member (see "Nilson relay")
+- `packages/relay/` — the Nilson relay, a service (in its own container) for the Nilson chat
+  app rather than for AnythingLLM's agent; also a workspace member (see "Nilson relay")
 - `packages/gateway/` — the MCP gateway, a host service that serves the fronts' tools over
   HTTP to MCP clients other than AnythingLLM (see "MCP gateway")
 - `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`uv run hostctl units`);
@@ -249,8 +249,9 @@ through its UI.
   laid out by kind:
 
       venvs/<name>/        the host services' venvs (agents, audit, gateway, podcasts,
-                           relay, research, sandbox, sites, splice)
-      venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/)
+                           research, sandbox, sites, splice)
+      venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/):
+                           egress-proxy, relay
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
@@ -485,7 +486,12 @@ A host service can run in a container of its own instead of as a host unit, hard
 the sandbox's containers and with one way out, the egress proxy. Each service moves over
 on its own: its template goes from `host/systemd/<x>.service` to
 `host/quadlet/<x>.container.in`, and its app's `runner` and journal key follow (`apps.toml`'s
-`container`, `systemd-<x>`).
+`container`, `systemd-<x>`). The next `uv run hostctl units` retires the old host unit: it
+stops and disables it and moves its installed copy to the backups (systemd prefers
+`~/.config/systemd/user/<x>.service` to the unit Quadlet generates under the same name),
+then starts the container; a guarded runner with a run going is left for a later run.
+`uv run hostctl diff` lists what it would retire. So far the relay has moved; its old venv,
+`venvs/relay/`, can go.
 
 **The image.** Every service container runs `localhost/everythingllm-service`
 (`host/containers/service/Containerfile`): `python:3.12-slim`, the host's uv copied from its
@@ -499,7 +505,10 @@ the container runs `uv run --frozen --no-dev --project @REPO@ --package <pkg> [-
 storage, its socket folder, the sandbox's socket) is mounted at its host path too, so a path
 means the same inside and out: what the sandbox's `build_system_site` hands back, what a
 runner tells the container, what lands in a run log. `host.env` comes in through
-`EnvironmentFile=`. Each container has one folder of its own,
+`EnvironmentFile=`, as does an app's own secrets file (`relay.env`): podman reads them on
+the host and passes the values in, so they aren't mounted. It takes each value as it is,
+quotes included, and the template's own `Environment=` lines win over both. Each container
+has one folder of its own,
 `~/.local/share/everythingllm/venvs/<x>-ctr/`, with its venv (`UV_PROJECT_ENVIRONMENT=…/venv`)
 and its uv cache (`UV_CACHE_DIR=…/uv-cache`) in it: one mount, so uv can hardlink, and no
 container can touch another's packages. The first start syncs the venv from PyPI through
@@ -541,14 +550,18 @@ anyway.
 **Ports and addresses.** A service's HTTP port is published on the host's `127.0.0.1`, so
 `apps.toml`'s `serve` and health checks are unchanged. What comes through arrives from the
 container's own address, not its loopback, so a server in a container listens on `0.0.0.0`:
-`LIVE_HOST` (the live cards, `runs.live`) and `ARTICLES_HOST` (the article writer) say so
-in its template, and default to `127.0.0.1` on the host. Listening on `0.0.0.0` also lets
+`LIVE_HOST` (the live cards, `runs.live`), `ARTICLES_HOST` (the article writer) and
+`RELAY_HOST` (the relay) say so in its template, and default to `127.0.0.1` on the host.
+For the same reason a server that believes `tailscale serve`'s `X-Forwarded-For` and
+`X-Forwarded-Proto` believes them from its container's own address, not `127.0.0.1`: the
+relay's template sets uvicorn's `FORWARDED_ALLOW_IPS` to it. Listening on `0.0.0.0` also lets
 every other container on egress-net reach that port. Each of those ports is already on the
 tailnet through `tailscale serve`, so a container gets no more than any tailnet device
 does; this is accepted rather than split into a network per service. A container can't reach the
 host's loopback either, so it reaches AnythingLLM and SearXNG by their tailnet names
-through the proxy: `ANYTHINGLLM_API=https://<PUBLIC_HOST>:3001/api` (research) and
-`SEARXNG_URL=https://<PUBLIC_HOST>:8888/search` (research, the article writer). Both default
+through the proxy: `ANYTHINGLLM_API=https://<PUBLIC_HOST>:3001/api` (research),
+`ANYTHINGLLM_URL=https://<PUBLIC_HOST>:3001` (the relay) and
+`SEARXNG_URL=https://<PUBLIC_HOST>:8888/search` (research, the article writer). All default
 to the host's loopback.
 
 **The egress proxy** (`packages/egress`, the `egress` app) is egress-net's only way out.
@@ -1234,7 +1247,7 @@ client disconnects and saves it to the thread only when the stream completes, so
 whose app closes, sleeps or loses its network is lost. On 2026-10-06, with AnythingLLM
 1.16.2, an answer cut off after 15 chunks was missing from the thread three minutes later.
 
-The relay (`packages/relay`, `relay.service`, 127.0.0.1:8446, tailnet https :8446) makes that
+The relay (`packages/relay`, the `relay` service container, 127.0.0.1:8446, tailnet https :8446) makes that
 one call for Nilson and owns the answer. Each run streams from AnythingLLM to the end in its
 own task, which no follower owns; the relay never closes the upstream connection because a
 follower left, only when the run ends or is cancelled.
@@ -1275,10 +1288,26 @@ and `run=…,workspace=…,thread=…` as its tags; never the answer. A reset is
 The secrets live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
 AnythingLLM container mounts: `ANYTHINGLLM_API_KEY` (a developer API key), `RELAY_TOKEN`,
 and optionally `NTFY_URL` and `NTFY_TOKEN`. `uv run hostctl relay-setup` makes the file with a fresh
-token, refuses to go on until the API key is filled in, then maps the tailnet port and
-starts the unit; `uv run hostctl relay-logs` follows it (any app's `<app>-logs`). `relay.app`'s docstring lists the rest of the
+token, refuses to go on until the API key is filled in, builds the service image, then maps
+the tailnet port and starts the container; `uv run hostctl relay-logs` follows it (any app's `<app>-logs`). `relay.app`'s docstring lists the rest of the
 config. Neither the key nor the token appears in a response or a log line, and a test holds
 that.
+
+The relay runs in a service container (`host/quadlet/relay.container.in`, see "Service
+containers"), with 512 MB and one CPU. It mounts the repo read-only, its venv folder
+(`venvs/relay-ctr/`) and its database's folder (`relay/`), and nothing else: it has no
+socket and nothing in storage. Its secrets come in as values podman reads from `relay.env`
+on the host, not as a file. Its only way out is the egress proxy's `relay` profile:
+AnythingLLM at `https://<PUBLIC_HOST>:3001` (`ANYTHINGLLM_URL`, since the container can't
+reach the host's loopback), the ntfy host on :443 (`NTFY_HOST` in `host.env`, if it isn't
+`ntfy.sh`), and PyPI for its first sync; nothing else, public or not. So the developer API
+and stream-chat go through `tailscale serve`'s :3001 rather than straight to AnythingLLM.
+It listens on `0.0.0.0:8446` inside (`RELAY_HOST`), published on the host's
+`127.0.0.1:8446`, where `tailscale serve` and the health check reach it. Through that port
+every connection arrives from the container's own address (`10.89.79.10`), so that is the
+one peer whose `X-Forwarded-For` and `X-Forwarded-Proto` uvicorn believes
+(`FORWARDED_ALLOW_IPS`); another container on egress-net that reaches the port is logged
+by its own address.
 
 Where it differs from the original spec: the relay adds nothing to the body and doesn't
 interpret the answer (no `mode` default, no pieces or citations of its own); a

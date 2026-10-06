@@ -94,8 +94,9 @@ is 3.13. Keep code 3.12-compatible, and check with
   declaration, never those files. `uv run hostctl diff` and `uv run hostctl deploy` refuse stale ones.
 - Every MCP server is a thin front; nothing it serves runs in the container. Not every
   member is an MCP server: `publicweb`, `llm`, `chatimage` and `hostrpc` are libraries, `hostctl` is the host's command (`uv run hostctl`), and
-  `splice`, `research` and `sandbox` are host-only services. `relay` is a host HTTP service
-  for the Nilson app, not the agent; its secrets are in `~/.config/everythingllm/relay.env`,
+  `splice`, `research` and `sandbox` are host-only services. `relay` is an HTTP service
+  for the Nilson app, not the agent, in a service container (`host/quadlet/relay.container.in`,
+  README "Service containers"); its secrets are in `~/.config/everythingllm/relay.env`,
   never in the repo. `gateway` is the one MCP server on the host: it serves the fronts' own
   tools (each front's `tool.registered`), their skills (wrapped with `hostrpc.forwarder`
   there) and the agents ops (`agents_*`) over HTTP to other MCP clients, each with a token

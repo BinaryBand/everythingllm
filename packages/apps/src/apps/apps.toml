@@ -101,9 +101,9 @@ units = { "audit-runner.service" = "audit runner" }
 install = true
 
 [relay]
-summary = "the Nilson relay (tailnet https :8446)"
-units = { "relay.service" = "Nilson relay" }
-before = ["python3 -m hostctl.relay_env"]
+summary = "the Nilson relay, in its service container (tailnet https :8446)"
+container = { "systemd-relay" = "Nilson relay" }
+before = ["python3 -m hostctl.relay_env", "python3 -m hostctl service-images"]
 serve = [{ https = 8446, port = 8446 }]
 health = { "Nilson relay" = "http://127.0.0.1:8446/health" }
 why_not_installed = "it's only for the Nilson app, and its secrets file needs an AnythingLLM API key first"

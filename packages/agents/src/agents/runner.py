@@ -28,11 +28,11 @@ and, when it's done, its results.
 
 Holding runs and waiting on them is runs.service's (RunService).
 
-A delegation that reads a lot of pages costs real money (each agent step sends every page
-read so far again), and a running task can't be stopped, so a new delegation is refused
-once the delegations of the last 24 hours have cost DAILY_USD. That counts what the run log
-has: delegations still running (at most MAX_RUNS) count once they end, and the planner's
-GLM, which AnythingLLM doesn't price, not at all.
+A delegation that reads a lot of pages uses a lot of tokens (each agent step sends every
+page read so far again), and a running task can't be stopped, so a new delegation is
+refused once the delegations of the last 24 hours have cost DAILY_USD. That counts what
+the run log has: delegations still running (at most MAX_RUNS) count once they end, and
+GLM, which both profiles use and AnythingLLM doesn't price, not at all.
 
 Config (environment, from host.env and agents.env through the unit):
   AGENTS_SOCKET       socket to listen on (default <storage>/everythingllm/agents/runner.sock)

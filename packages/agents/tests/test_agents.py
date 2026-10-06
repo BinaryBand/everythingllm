@@ -137,8 +137,8 @@ def test_ensure_makes_the_profiles_workspaces_once_and_sets_them(fake):
         assert fake.created == ["agents-planner", "agents-worker"]
         worker = fake.workspaces["agents-worker"]
         assert (worker["agentProvider"], worker["agentModel"]) == (
-            "deepseek",
-            "deepseek-flash",
+            "generic-openai",
+            "glm-5-turbo",
         )
         assert "delegated task" in worker["openAiPrompt"]
         assert fake.workspaces["agents-planner"]["chatModel"] == "glm-5.3"

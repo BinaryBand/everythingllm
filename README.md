@@ -982,7 +982,8 @@ unused).
 - **Profiles are workspaces.** A task's `profile` is its role, and each role is an
   AnythingLLM workspace with its model and a system prompt (`agents/profiles.py`,
   `agents/prompts/`): `agents-planner` (GLM 5.3) plans, reviews and writes up;
-  `agents-worker` (DeepSeek flash) searches and reads, with AnythingLLM's own web tools.
+  `agents-worker` (GLM 5 Turbo, which thinks least) searches and reads, with AnythingLLM's own web tools.
+  Both are on the GLM plan, which AnythingLLM doesn't price.
   agents-runner makes and sets them through the developer API before its first delegation.
 - **Each task** gets a thread of its own in its workspace, gone when the task ends, and at
   most `AGENTS_SLOTS` (3) run at once across all delegations. `then`'s prompt has the
@@ -1002,11 +1003,14 @@ unused).
 - **The run log** is `~/.local/share/everythingllm/agents/runs/` (`runs.runlog`, as
   research's). The audit doesn't read it yet.
 - **The daily budget.** AnythingLLM's agent sends every page a task has read again with
-  each step, so a task that reads a lot costs real money ($0.20-0.60 for one that read
-  eight pages), and a running task can't be stopped. agents-runner refuses a new delegation
-  once those that started in the last 24 hours cost `AGENTS_DAILY_USD` (default 3; 0 turns
-  it off), counted from the run log: the planner's GLM isn't priced, and running
-  delegations count once they end. The worker prompt asks for few page reads.
+  each step, so a task that reads a lot uses a lot of tokens (millions, for one that read
+  eight pages), and a running task can't be stopped. On DeepSeek that was $0.20-0.60 a
+  task, which is why both roles are on the GLM plan now; there it's the plan's usage
+  limits that a big delegation runs into. For a profile on a priced model, agents-runner
+  refuses a new delegation once those that started in the last 24 hours cost
+  `AGENTS_DAILY_USD` (default 3; 0 turns it off), counted from the run log: AnythingLLM
+  doesn't price GLM, and running delegations count once they end. The worker prompt asks
+  for few page reads either way.
 - **The key.** agents-runner calls AnythingLLM with a developer API key of its own, in
   `~/.config/everythingllm/agents.env` (`ANYTHINGLLM_API_KEY`, mode 600, put there by hand);
   `make agents-setup` checks it. Like research-runner, it isn't restarted by `make units`

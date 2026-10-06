@@ -4,7 +4,11 @@ with `agents-`, so every skill of ours that writes, acts or delegates refuses it
 kept so by `ensure`, through the developer API.
 
   planner   plans, reviews and writes up: GLM 5.3 on Z.AI (AnythingLLM's generic-openai)
-  worker    searches and reads: DeepSeek's flash model
+  worker    searches and reads: GLM 5 Turbo, also on Z.AI, so a reading-heavy task draws
+            on the GLM plan rather than DeepSeek's per-token price. Of the plan's models it
+            thinks least (465 thinking tokens for a 250-word answer, where 5.3 Flash spent
+            2,156), so it's the quickest and leaves the most of AnythingLLM's reply cap
+            (GENERIC_OPEN_AI_MAX_TOKENS, 4,096 here) for the answer.
 """
 
 from dataclasses import dataclass
@@ -36,7 +40,7 @@ class Profile:
 
 PROFILES = {
     "planner": Profile("agents-planner", "generic-openai", "glm-5.3"),
-    "worker": Profile("agents-worker", "deepseek", "deepseek-flash"),
+    "worker": Profile("agents-worker", "generic-openai", "glm-5-turbo"),
 }
 
 

@@ -1,9 +1,9 @@
 [Unit]
-Description=Claude Remote Control for this repo (pick "anything" in the Claude app's Code tab or claude.ai/code)
+Description=Claude Remote Control for this repo (pick "everythingllm" in the Claude app's Code tab or claude.ai/code)
 
 [Service]
 WorkingDirectory=@REPO@
-ExecStart=/usr/bin/claude remote-control --name anything --permission-mode acceptEdits
+ExecStart=/usr/bin/claude remote-control --name everythingllm --permission-mode acceptEdits
 StandardInput=null
 Restart=on-failure
 RestartSec=30

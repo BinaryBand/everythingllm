@@ -85,7 +85,7 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
     } <= set(planned)
     for unit in planned.values():
         assert not units.PLACEHOLDER.search(unit.text), unit.source
-        assert "dev/anything" not in unit.source.read_text(), unit.source
+        assert "dev/everythingllm" not in unit.source.read_text(), unit.source
     assert "Volume=/repo:/mcp:ro" in planned["anythingllm.container"].text
     assert "EnvironmentFile=/repo/host.env" in planned["podcasts-web.service"].text
     assert (

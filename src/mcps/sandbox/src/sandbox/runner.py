@@ -23,7 +23,7 @@ Config (environment):
                     this machine's storage directory and tailnet name, from host.env
                     (default /srv/anythingllm/storage, and no name: links use 127.0.0.1)
   SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/sandbox/runner.sock)
-  SANDBOX_ROOT      workspace folders, host-only (default ~/.local/share/anything/sandbox);
+  SANDBOX_ROOT      workspace folders, host-only (default ~/.local/share/everythingllm/sandbox);
                     run scripts go in its `.runs` folder
   SANDBOX_SITE_DIR  the pages site's root, where pages are published (default <storage>/site)
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
@@ -63,10 +63,10 @@ class SandboxError(hostrpc.RunnerError):
 
 # Also named in the Makefile's sandbox-setup and host/systemd/sandbox-proxy.service; the proxy's
 # address (10.89.77.2:8888) is set in Containerfile.sandbox, that unit and tinyproxy.conf.
-IMAGE = "localhost/anything-sandbox"
+IMAGE = "localhost/everythingllm-sandbox"
 NETWORK = "sandbox-net"
 PROXY_CONTAINER = "sandbox-proxy"
-LABEL = "anything-sandbox=1"
+LABEL = "everythingllm-sandbox=1"
 
 LANGUAGES = {"python": ("main.py", "python"), "bash": ("main.sh", "bash")}
 KEY_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")  # workspace slugs and thread ids
@@ -178,7 +178,7 @@ class Config:
         return cls(
             socket=hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
             root=Path(
-                get("SANDBOX_ROOT", "~/.local/share/anything/sandbox")
+                get("SANDBOX_ROOT", "~/.local/share/everythingllm/sandbox")
             ).expanduser(),
             site_dir=Path(get("SANDBOX_SITE_DIR", storage / "site")),
             site_url=get(

@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 EnvironmentFile=@REPO@/host.env
-Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/podcasts-venv
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/podcasts-venv
 Type=oneshot
 # %i is a feed's slug, or _all for every feed (what the timer starts); podcasts-runner
 # starts either for chat. Takes

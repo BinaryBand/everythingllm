@@ -51,7 +51,7 @@ After `uv.lock` changes, run `make mcp-sync` (or `make deploy`) so the container
 up. Don't use `--no-dev` against `.venv`; it uninstalls pytest. `src/mcps/conftest.py`
 clears `PUBLIC_HOST` and `ANYTHINGLLM_STORAGE`, so tests ignore `host.env`.
 
-Host services run Python 3.12 (their venvs in `~/.local/share/anything/`); the dev `.venv`
+Host services run Python 3.12 (their venvs in `~/.local/share/everythingllm/`); the dev `.venv`
 is 3.13. Keep code 3.12-compatible, and check with
 `uv run --python 3.12 --isolated --all-packages --all-extras pytest -q src/mcps/<member>`.
 
@@ -84,7 +84,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   member is an MCP server: `publicweb`, `llm` and `hostrpc` are libraries, and `splice`,
   `research` and `sandbox` are host-only services. `src/relay` (outside `src/mcps/`) is a
   host HTTP service for the Nilson app, not the agent; its secrets are in
-  `~/.config/anything/relay.env`, never in the repo.
+  `~/.config/everythingllm/relay.env`, never in the repo.
 - The agent does short judgment work through thin tools. For example, the
   `daily-news-page` scheduled job calls `headlines` and then `write_entry`. Code asks a
   model itself (`src/mcps/llm`) only where there's no agent (background syncs, reader clicks,

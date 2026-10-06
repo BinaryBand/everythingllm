@@ -567,7 +567,7 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
     assert config.socket == Path("/data/allm/sandbox/runner.sock")
     assert config.site_dir == Path("/data/allm/site")
     assert config.site_url == "https://box.tail.ts.net:8445/"
-    assert config.root == Path("~/.local/share/anything/sandbox").expanduser()
+    assert config.root == Path("~/.local/share/everythingllm/sandbox").expanduser()
 
 
 def test_the_pages_site_lets_marked_pages_use_inline_css():

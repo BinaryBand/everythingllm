@@ -1,4 +1,4 @@
-# anything
+# EverythingLLM
 
 Source of truth for the local AnythingLLM instance (`anythingllm.service`, a Quadlet unit
 rendered from `host/quadlet/` into `~/.config/containers/systemd/`, storage in
@@ -8,7 +8,7 @@ rendered from `host/quadlet/` into `~/.config/containers/systemd/`, storage in
 
 On a new machine, or to bring this one up to date:
 
-    git clone <repo> && cd anything              # any folder; the units are rendered with its path
+    git clone <repo> && cd everythingllm         # any folder; the units are rendered with its path
     cp host.env.example host.env && $EDITOR host.env
     make install
 
@@ -172,7 +172,7 @@ through its UI.
   `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
   to cut MCP payloads from AnythingLLM's log. `claude-rc.service` runs `claude
   remote-control` in this repo for the Claude app's Code tab and claude.ai/code (environment
-  "anything"); edits are auto-accepted, shell commands still ask in the app.
+  "everythingllm"); edits are auto-accepted, shell commands still ask in the app.
 - Pages live in `/srv/anythingllm/storage/site`; the `static_agent` Caddy container
   mounts just that directory read-only and serves it on 127.0.0.1:8445
 - `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
@@ -342,7 +342,7 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
   is the container's to read and the other way round, and file locks work across both.
 - A new one: an `OPS` tuple and a `main()` that calls `hostrpc.run` in the package's
   `tools.py` (`src/mcps/podcasts` is the example), a `<name>-runner` console script, a unit
-  `host/systemd/<name>-runner.service` with its own venv in `~/.local/share/anything/`, and
+  `host/systemd/<name>-runner.service` with its own venv in `~/.local/share/everythingllm/`, and
   an entry in the audit's `WATCHED` (`audit/services.py`), which `RUNNERS` and a test
   follow. Its socket is `storage/<name>/runner.sock`, where `hostrpc.caller` looks.
 
@@ -385,7 +385,7 @@ Code never runs in the AnythingLLM container, which has SYS_ADMIN, the `.env` ke
 of storage. The skills (`anythingllm/agent-skills/`, sharing `_lib/`) only forward calls
 over a Unix socket, `storage/sandbox/runner.sock` (see "Services on the host"), to
 `sandbox-runner` on the host (`host/systemd/sandbox-runner.service`, its own venv in
-`~/.local/share/anything/sandbox-venv`).
+`~/.local/share/everythingllm/sandbox-venv`).
 
 **Scopes.** A call carries where it came from, which AnythingLLM gives the skill and the
 model never chooses: the workspace (`_jobs` for a scheduled job, which has none) and the
@@ -398,7 +398,7 @@ Each run mounts:
   install`s go to `/project/.local`, so they last too. To keep a file, move it here.
 - `/pages`: the workspace's published pages, read-only, so `ls /pages` lists them.
 
-They live in `~/.local/share/anything/sandbox/<workspace>/` (`project/` and
+They live in `~/.local/share/everythingllm/sandbox/<workspace>/` (`project/` and
 `threads/<thread>/`), out of the container's reach. A workspace's folders together are held
 to 5 GB: over that, runs and writes are refused until the agent deletes something with
 `write-file`, and the refusal names the biggest files and folders, since no run can look
@@ -406,14 +406,14 @@ for them. A run warns past 4 GB. Runs in one workspace take turns, since they sh
 `/project`; while one is going, a write or publish from any of the workspace's chats fails
 at once rather than waiting.
 
-**Each run** gets a fresh `localhost/anything-sandbox` container, with the script mounted
+**Each run** gets a fresh `localhost/everythingllm-sandbox` container, with the script mounted
 read-only from a host-only folder at `/sandbox`:
 
 - non-root (`--userns keep-id`), read-only root, `--cap-drop ALL`, `no-new-privileges`;
 - 1 CPU, 1 GB memory, 256 processes, 60 s by default (300 s max), then killed; a run
   that hits the memory limit is reported as such (podman's `OOMKilled`);
 - output clipped to the first and last part; at most 2 runs at once;
-- containers carry the label `anything-sandbox=1`; the runner removes any left over
+- containers carry the label `everythingllm-sandbox=1`; the runner removes any left over
   from a crash or restart when it starts.
 
 The host never follows a symlink out of a mount when it reads, writes or publishes for the
@@ -459,7 +459,7 @@ a show found only in such an app has no public feed.
   Podcasts' sync) can't reach a tailnet address.
 - The MCP server in the container only forwards each tool call to `podcasts-runner` on the
   host (`src/mcps/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
-  own venv in `~/.local/share/anything/podcasts-venv`, socket `storage/podcasts/runner.sock`;
+  own venv in `~/.local/share/everythingllm/podcasts-venv`, socket `storage/podcasts/runner.sock`;
   see "Services on the host"), which runs the tool and sends back its text.
   The feeds, the model's key and the audio stack never touch the container: the sync,
   transcription and the read-aloud run on the host too, from the same venv.
@@ -549,7 +549,7 @@ changed or undone, and nothing is stored twice.
   to are deleted. Originals wait a day, in case a download isn't in a record yet.
   `remove_podcast` deletes the show's at once.
 - `splice-web` (`src/mcps/splice`, standard library only, `host/systemd/podcasts-web.service`,
-  its own venv in `~/.local/share/anything/splice-venv`) is mapped to `:8445/podcasts` by
+  its own venv in `~/.local/share/everythingllm/splice-venv`) is mapped to `:8445/podcasts` by
   `tailscale serve`, ahead of the pages site's Caddy. It serves manifests with range
   requests, `HEAD`, `ETag`/`If-Range` and `sendfile`. Anything else under
   `storage/site/podcasts/` (feeds, transcripts, the index) it serves as a file, with the
@@ -688,7 +688,7 @@ agent itself is capped at 40 tool calls per reply, `AGENT_MAX_TOOL_CALLS` in `.e
 work happens outside the agent). The skill (`anythingllm/agent-skills/deep-research/`) is a
 thin front: it hands the question, its setup args and the workspace to `research-runner`
 on the host (`src/mcps/research`, `host/systemd/research-runner.service`, its own venv in
-`~/.local/share/anything/research-venv`), shows the runner's progress in the chat, and
+`~/.local/share/everythingllm/research-venv`), shows the runner's progress in the chat, and
 replies with what the runner says to tell the user. They talk over a Unix socket the
 container sees, `storage/research/runner.sock` (see "Services on the host"):
 `start` returns a run id, `wait(run_id, since)` long-polls up to 45 s for new
@@ -829,14 +829,14 @@ Every route but `/health` needs `Authorization: Bearer <RELAY_TOKEN>`; errors ar
 | `POST /runs/{id}/cancel` | closes the upstream connection and ends the run `cancelled`; a run that has ended is left as it is |
 | `GET /health` | 200, no token |
 
-Runs and their events are in SQLite (`~/.local/share/anything/relay/relay.db`, mode 600),
+Runs and their events are in SQLite (`~/.local/share/everythingllm/relay/relay.db`, mode 600),
 written as each event arrives. A restart fails the runs it cut short with "The relay
 restarted during the answer." and keeps their events; finished runs are deleted after 7
 days (`RUN_RETENTION_DAYS`). With `NTFY_URL` set, a finished or failed run posts "Answer
 ready" or "Answer failed" to that ntfy topic, with the question's first 120 characters
 and `run=…,workspace=…,thread=…` as its tags; never the answer.
 
-The secrets live in `~/.config/anything/relay.env` (mode 600), outside the repo, which the
+The secrets live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
 AnythingLLM container mounts: `ANYTHINGLLM_API_KEY` (a developer API key), `RELAY_TOKEN`,
 and optionally `NTFY_URL` and `NTFY_TOKEN`. `make relay-setup` makes the file with a fresh
 token, refuses to go on until the API key is filled in, then maps the tailnet port and

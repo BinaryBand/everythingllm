@@ -1,6 +1,6 @@
 """`make relay-setup`'s first step: the Nilson relay's secrets file.
 
-Makes ~/.config/anything/relay.env (mode 600) when it's missing, with a fresh RELAY_TOKEN and
+Makes ~/.config/everythingllm/relay.env (mode 600) when it's missing, with a fresh RELAY_TOKEN and
 an empty ANYTHINGLLM_API_KEY, and exits 1 until that key is filled in, so the unit isn't
 started into a crash loop. The file stays outside the repo, which the AnythingLLM container
 mounts. Standard library only, run with the system python3.
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from units import env_file
 
-DEFAULT = Path("~/.config/anything/relay.env").expanduser()
+DEFAULT = Path("~/.config/everythingllm/relay.env").expanduser()
 
 TEMPLATE = """\
 # The Nilson relay's secrets (src/relay; see the README's "Nilson relay"). Mode 600.

@@ -106,7 +106,7 @@ TYPE_EXT = {
     "video/quicktime": "mov",
 }
 EXT_TYPE = {ext: t for t, ext in reversed(TYPE_EXT.items())}
-USER_AGENT = "anything-podcasts/0.1 (private podcast mirror)"
+USER_AGENT = "everythingllm-podcasts/0.1 (private podcast mirror)"
 ALL_FEEDS = "_all"  # podcasts-sync's argument for every feed; no slug has an underscore
 
 

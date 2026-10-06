@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 EnvironmentFile=@REPO@/host.env
-Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/podcasts-venv
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/podcasts-venv
 # The edition comes from the news site: the repo's sources, storage's entries, the host's zola.
 Type=oneshot
 # Does nothing if the newest edition is already read aloud, so it can run twice a day.

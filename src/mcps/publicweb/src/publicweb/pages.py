@@ -85,7 +85,7 @@ def searxng_client() -> httpx.Client:
         timeout=30,
         headers={
             "Accept": "application/json",
-            "User-Agent": "anything-llm",
+            "User-Agent": "everythingllm",
         },
     )
 

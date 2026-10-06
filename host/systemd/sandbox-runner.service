@@ -5,7 +5,7 @@ Wants=sandbox-proxy.service
 
 [Service]
 EnvironmentFile=@REPO@/host.env
-Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/sandbox-venv
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/sandbox-venv
 ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package sandbox sandbox-runner
 Restart=on-failure
 RestartSec=10

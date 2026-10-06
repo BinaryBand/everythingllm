@@ -88,8 +88,8 @@ SANDBOX := src/mcps/sandbox/containers
 SANDBOX_UNITS := sandbox-proxy.service sandbox-runner.service
 
 sandbox-setup: units ## build the sandbox images and network, enable and (re)start its host units
-	podman build -t localhost/anything-sandbox -f $(SANDBOX)/Containerfile.sandbox $(SANDBOX)
-	podman build -t localhost/anything-sandbox-proxy -f $(SANDBOX)/Containerfile.proxy $(SANDBOX)
+	podman build -t localhost/everythingllm-sandbox -f $(SANDBOX)/Containerfile.sandbox $(SANDBOX)
+	podman build -t localhost/everythingllm-sandbox-proxy -f $(SANDBOX)/Containerfile.proxy $(SANDBOX)
 	$(call internal-net,sandbox-net,10.89.77.0/24)
 	$(call enable-restart,$(SANDBOX_UNITS))
 
@@ -136,7 +136,7 @@ sites-setup: units serve-setup ## enable and (re)start sites-runner (and the art
 audit-setup: units ## enable and (re)start audit-runner, which runs the audit MCP server's checks on the host
 	$(call enable-restart,audit-runner.service)
 
-relay-setup: units serve-setup ## make the Nilson relay's secrets file (~/.config/anything/relay.env) if missing, then enable and (re)start the relay (tailnet https :8446)
+relay-setup: units serve-setup ## make the Nilson relay's secrets file (~/.config/everythingllm/relay.env) if missing, then enable and (re)start the relay (tailnet https :8446)
 	python3 scripts/relay_env.py
 	$(call enable-restart,relay.service)
 

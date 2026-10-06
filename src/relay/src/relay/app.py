@@ -2,12 +2,12 @@
 tailnet through `tailscale serve` (https). Every route but /health needs the relay's token
 as a bearer token; see the README's "Nilson relay" for the routes.
 
-Config (environment; the unit reads host.env, then ~/.config/anything/relay.env, which
+Config (environment; the unit reads host.env, then ~/.config/everythingllm/relay.env, which
 holds the secrets, outside the repo and the AnythingLLM container's reach):
   ANYTHINGLLM_API_KEY  developer API key the relay calls AnythingLLM with (required)
   RELAY_TOKEN          the token Nilson sends the relay (required)
   ANYTHINGLLM_URL      AnythingLLM's base URL (default http://127.0.0.1:3001)
-  DATABASE_PATH        the SQLite file (default ~/.local/share/anything/relay/relay.db)
+  DATABASE_PATH        the SQLite file (default ~/.local/share/everythingllm/relay/relay.db)
   NTFY_URL, NTFY_TOKEN the ntfy topic told about finished runs, and its token; no
                        notifications without NTFY_URL
   RUN_RETENTION_DAYS   how long finished runs are kept (default 7)
@@ -39,7 +39,7 @@ from relay.store import STATUSES, Store, public
 log = logging.getLogger("relay")
 
 MODES = ("query", "chat")
-DATABASE = Path("~/.local/share/anything/relay/relay.db").expanduser()
+DATABASE = Path("~/.local/share/everythingllm/relay/relay.db").expanduser()
 
 
 @dataclass
@@ -60,7 +60,7 @@ class Config:
         missing = [k for k in ("ANYTHINGLLM_API_KEY", "RELAY_TOKEN") if not get(k)]
         if missing:
             raise SystemExit(
-                f"relay: set {' and '.join(missing)} in ~/.config/anything/relay.env"
+                f"relay: set {' and '.join(missing)} in ~/.config/everythingllm/relay.env"
             )
         return cls(
             api_key=get("ANYTHINGLLM_API_KEY", ""),

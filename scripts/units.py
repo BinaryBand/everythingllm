@@ -86,7 +86,7 @@ def rendered(template: Path, values: dict[str, str], root: Path = ROOT) -> str:
     """The unit from `template`, under a header that says where it came from."""
     where = template.relative_to(root / "host")
     return (
-        f"# Rendered by `make units` from {where} in the anything repo, with this\n"
+        f"# Rendered by `make units` from {where} in the EverythingLLM repo, with this\n"
         "# machine's host.env filled in. Edit the template and run it again, not this copy.\n"
         + render(template.read_text(), values)
     )
@@ -138,7 +138,7 @@ def planned(
 
 def meaning(text: str) -> list[str]:
     """What systemd acts on: no comments or blank lines, and %h spelled out (the old units
-    used %h/dev/anything where the rendered ones have the path)."""
+    used %h/dev/everythingllm where the rendered ones have the path)."""
     home = str(Path.home())
     return [
         line.strip().replace("%h", home)

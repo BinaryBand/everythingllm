@@ -170,10 +170,15 @@ through its UI.
   each one's `Description=` says what it does, and its `make <name>-setup` target installs it.
   `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
   to cut MCP payloads from AnythingLLM's log.
-- Pages live in `~/.local/share/everythingllm/site`, outside AnythingLLM's storage, since
-  only host services write them and the AnythingLLM container never reads them; the
-  `static_agent` Caddy container mounts just that directory read-only and serves it on
-  127.0.0.1:8445 (`hostrpc.site_dir()` is where the services get it)
+- What only host services read or write lives in `~/.local/share/everythingllm`
+  (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts: the
+  pages site (`site/`), the Zola entries (`zola/`), the podcasts (`podcasts/`), our speech
+  models (`models/whisper`, `models/kokoro`), the deep-research run logs
+  (`logs/deep-research/`), the sandbox's folders and the services' venvs. Storage keeps
+  AnythingLLM's own data, the runners' sockets (`storage/<name>/runner.sock`, which the
+  container reaches) and what AnythingLLM reads (`anythingllm-fs/research/`, `documents/`).
+- The `static_agent` Caddy container mounts just `site/` read-only and serves it on
+  127.0.0.1:8445
 - `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
 - `src/tools/sync.py` — diff/deploy/import between this repo and live storage; standard
@@ -458,7 +463,7 @@ The `logs` and `services` audit checks cover both units and ping the runner.
 
 The `podcasts` MCP server keeps private copies of podcasts: `add_podcast(url, keep)`
 subscribes to a show's RSS feed, and its newest `keep` episodes (default 5, up to 100, or
-`"all"` for the whole catalog) are downloaded to `storage/podcasts/audio/` and listed in a
+`"all"` for the whole catalog) are downloaded to `~/.local/share/everythingllm/podcasts/audio/` and listed in a
 feed of our own, `https://<PUBLIC_HOST>:8445/podcasts/<slug>/feed.xml`, which podcasts-web
 serves (range requests included, so players can seek). `/podcasts/` lists every feed. Ask the
 agent, e.g. `@agent download the last 10 episodes of Hard Fork`, then paste the feed URL
@@ -480,7 +485,7 @@ a show found only in such an app has no public feed.
   Podcasts' sync) can't reach a tailnet address.
 - The MCP server in the container only forwards each tool call to `podcasts-runner` on the
   host (`src/mcps/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
-  own venv in `~/.local/share/everythingllm/podcasts-venv`, socket `storage/podcasts/runner.sock`;
+  own venv in `~/.local/share/everythingllm/podcasts-venv`, socket `storage/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
   see "Services on the host"), which runs the tool and sends back its text.
   The feeds, the model's key and the audio stack never touch the container: the sync,
   transcription and the read-aloud run on the host too, from the same venv.
@@ -488,20 +493,20 @@ a show found only in such an app has no public feed.
   sync is a unit of its own, `podcasts-sync@<slug>.service`, or `podcasts-sync@_all.service`
   for every feed (what the timer starts), so restarting the runner, AnythingLLM or the
   container stops none. A sync that dies within a second is reported as a tool error with
-  the last line of its log. The sync takes `storage/podcasts/sync.lock` and exits at once if
+  the last line of its log. The sync takes `~/.local/share/everythingllm/podcasts/sync.lock` and exits at once if
   another holds it, and it takes
   one feed and one episode at a time, rewrites `feed.xml` after every download, deletes
   episodes that fall out of the newest `keep`, and picks up feeds added while it runs. Its
-  output goes to `storage/podcasts/sync.log`; what each show has is in
-  `storage/podcasts/shows/<slug>.json`, subscriptions in `storage/podcasts/feeds.json`, and
+  output goes to `~/.local/share/everythingllm/podcasts/sync.log`; what each show has is in
+  `~/.local/share/everythingllm/podcasts/shows/<slug>.json`, subscriptions in `~/.local/share/everythingllm/podcasts/feeds.json`, and
   when the last sync started and finished (and its traceback, if it crashed) in
-  `storage/podcasts/last_sync.json`, which `list_podcasts` reports on.
+  `~/.local/share/everythingllm/podcasts/last_sync.json`, which `list_podcasts` reports on.
 - A feed that fails to load, or crashes the sync, gets the error in its record and keeps
   its downloads; the other feeds still sync. A feed that comes back with no episodes keeps
   what it has too ("the feed lists no episodes right now"), rather than being pruned to
   nothing. Downloads pause for the rest of a sync when the disk has under 20 GB free.
 - New episodes are downloaded newest first, at most 30 a day per show (`DAILY_DOWNLOADS`,
-  counted in `storage/podcasts/downloads.json` by the day in `PODCASTS_TZ`). A show's
+  counted in `~/.local/share/everythingllm/podcasts/downloads.json` by the day in `PODCASTS_TZ`). A show's
   regular episodes never come near that; a catalog (`keep="all"`) comes down over days
   instead of filling one sync for hours, and the other shows' new episodes still get
   through. Its record says how many more wait.
@@ -515,7 +520,7 @@ a show found only in such an app has no public feed.
   don't count toward `keep`, and ones already downloaded are deleted at the next sync;
   `list_podcasts` lists the skipped ones with the model's reasons, and `sync.log` every
   verdict. `rules=""` downloads everything.
-  - Each verdict is asked for once and kept in `storage/podcasts/verdicts/<slug>.json`
+  - Each verdict is asked for once and kept in `~/.local/share/everythingllm/podcasts/verdicts/<slug>.json`
     until the rules change, since a model asked twice may answer differently, and an
     episode that flipped to skipped would be deleted.
   - When the model can't answer (no DeepSeek key, an error, an answer that doesn't cover
@@ -544,15 +549,15 @@ A downloaded episode is never changed. What to leave out of it is a list beside 
 an app downloads is put together from the two each time it's fetched, so a cut can be
 changed or undone, and nothing is stored twice.
 
-- `storage/podcasts/audio/<sha256>.<ext>`: each episode as downloaded, named by its hash.
+- `~/.local/share/everythingllm/podcasts/audio/<sha256>.<ext>`: each episode as downloaded, named by its hash.
   The fingerprints (`prints/<slug>/<sha256>.npy`) and transcripts
   (`transcripts/<slug>/<sha256>.json`, in the original's times) are keyed by the same
   hash, so they stay right whatever is cut.
-- `storage/podcasts/cuts/<sha256>.json`, the sidecar: `{audio, cuts: [{start, end, source,
+- `~/.local/share/everythingllm/podcasts/cuts/<sha256>.json`, the sidecar: `{audio, cuts: [{start, end, source,
   reason, active}], legacy_cut}`, in seconds of the original. `source` is `repeat` (the ad
   scrubber), `ad-read` (the transcript's ad reads) or `agent`. Inactive cuts stay in the
   list but aren't left out; that's how `ad_words="report"` keeps its reads.
-- `storage/podcasts/manifests/<slug>/<name>.json`: what podcasts-web serves at
+- `~/.local/share/everythingllm/podcasts/manifests/<slug>/<name>.json`: what podcasts-web serves at
   `/podcasts/<slug>/<name>`. For an MP3, it's byte ranges of the original with the frames
   (26 ms each) that start inside a cut left out, plus a new Info/Xing frame with the new
   frame count and seek table, so apps show the right length and seek right. Nothing is
@@ -596,7 +601,7 @@ episode and by what, and the sync logs each episode's cuts to `sync.log`.
   Theme music with talk over it stays. A repeat longer than 8 minutes is kept, since that
   is a rerun or a replayed segment.
 - Each episode's fingerprint, taken from its original, is kept in
-  `storage/podcasts/prints/<slug>/` (about 2 MB an hour; the newest 10 per show), so a
+  `~/.local/share/everythingllm/podcasts/prints/<slug>/` (about 2 MB an hour; the newest 10 per show), so a
   new episode is compared with the earlier ones without decoding them again, including
   ones pruned. With `keep` 1, the first episode has nothing to compare with and goes out
   as it is.
@@ -611,7 +616,7 @@ episode and by what, and the sync logs each episode's cuts to `sync.log`.
 
 `podcasts-transcribe.timer` transcribes every downloaded episode with Whisper's `base` model,
 newest first, half an hour after each sync. It transcribes the original, and keeps the
-segments in its times in `storage/podcasts/transcripts/<slug>/`. Each transcript is published
+segments in its times in `~/.local/share/everythingllm/podcasts/transcripts/<slug>/`. Each transcript is published
 as `<episode>.vtt`, named and shifted to match what's served (cut lines left out), and linked
 from `feed.xml` (`<podcast:transcript>`), so apps such as AntennaPod show it. The
 `search_podcasts(query)` tool searches the kept segments, shifted the same way. It returns
@@ -628,9 +633,9 @@ few lines of each other.
   waiting, so a show's new episode goes ahead of a catalog's backlog. It holds no lock while transcribing or looking for ad reads, then takes the sync lock briefly to save the
   result, but only if the episode's original and served file are still the ones it
   transcribed. A second run
-  exits at once while one is going (`storage/podcasts/transcribe.lock`); its output is in
+  exits at once while one is going (`~/.local/share/everythingllm/podcasts/transcribe.lock`); its output is in
   the journal (`make podcasts-logs`).
-- The model (about 150 MB) is downloaded on first use to `storage/models/whisper/base`.
+- The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/models/whisper/base`.
 - **Ad reads.** Audio fingerprints miss an ad heard for the first time, or one the host
   reads in their own words, so AnythingLLM's default model (DeepSeek, key and model from
   AnythingLLM's `.env`, through the shared `llm` package) reads each new transcript, half an hour at a time, and names
@@ -659,16 +664,16 @@ encoded to a 64 kbit/s MP3 and added to the `daily-news` feed,
 `https://<PUBLIC_HOST>:8445/podcasts/daily-news/feed.xml`, which keeps the newest
 14 editions. An edition already read is skipped, so the second run only catches a late
 edition. Speaking takes a minute or two of CPU at nice 19. The model (about 350 MB) is
-downloaded on first use to `storage/models/kokoro`.
+downloaded on first use to `~/.local/share/everythingllm/models/kokoro`.
 
-`daily-news` is a feed made on this server, kept in `storage/podcasts/local.json` rather
+`daily-news` is a feed made on this server, kept in `~/.local/share/everythingllm/podcasts/local.json` rather
 than `feeds.json`, so the sync never sees it; `list_podcasts` and the index show it, and
 `remove_podcast` refuses it.
 Run it by hand:
 
     systemctl --user start news-audio.service
 
-Run a sync by hand (every feed, or one, logging to `storage/podcasts/sync.log`):
+Run a sync by hand (every feed, or one, logging to `~/.local/share/everythingllm/podcasts/sync.log`):
 
     systemctl --user start podcasts-sync@_all.service
     systemctl --user start podcasts-sync@hard-fork.service
@@ -798,7 +803,7 @@ every run in it. Runs are bounded by their search budget either way. At most 2 r
 another waits its turn, and its progress says so.
 
 Only a restart of `research-runner` kills a run without a result, so while a run is going
-it has a marker in `storage/logs/deep-research/running/<id>.json` (its question and when it
+it has a marker in `~/.local/share/everythingllm/logs/deep-research/running/<id>.json` (its question and when it
 started), touched every minute. When the runner starts, it moves every marker into the
 log as status `interrupted`, since none of them can be its own; until then, a marker quiet
 for its `stale_ms` (3 minutes) reads as interrupted to the audit, and a fresh one as
@@ -810,7 +815,7 @@ before restarting the runner; with no terminal to ask they stop, unless `FORCE=1
 so they don't need to ask. The runner runs the code it started with: after changing
 `src/mcps/research`, `make research-setup` puts it live.
 
-Every run appends one line to `storage/logs/deep-research/YYYY-MM.jsonl`: the question,
+Every run appends one line to `~/.local/share/everythingllm/logs/deep-research/YYYY-MM.jsonl`: the question,
 how it ended (`ok` / `failed`, with the error; `interrupted` for one killed by a restart;
 older runs may say `stopped`), whether the
 chat closed before it finished (`chat_closed`), the report URL and whether it
@@ -835,8 +840,19 @@ whose app closes, sleeps or loses its network is lost. On 2026-10-06, with Anyth
 The relay (`src/relay`, `relay.service`, 127.0.0.1:8446, tailnet https :8446) makes that
 one call for Nilson and owns the answer. Each run streams from AnythingLLM to the end in its
 own task, which no follower owns; the relay never closes the upstream connection because a
-follower left, only when the run ends or is cancelled. Nilson calls AnythingLLM directly
-for everything else (workspaces, threads, history, documents, settings).
+follower left, only when the run ends or is cancelled.
+
+For everything else (workspaces, threads, history, documents, settings) the relay is
+AnythingLLM's developer API: `/api/v1/...` is passed through to AnythingLLM (`relay.proxy`)
+with the relay's token swapped for the developer API key. So any AnythingLLM client, of any
+version, can be pointed at the relay with `RELAY_TOKEN` as its API key, and the key itself
+stays on the host. The request and the answer go through as they are (method, path, query,
+body, headers, status, streamed and still-encoded body) but for the hop-by-hop headers; the
+`Authorization` header is replaced, not passed on. AnythingLLM being unreachable is a 502
+with the usual `{"error"}`; a client that leaves closes its call, so a `stream-chat` made
+through the proxy still dies with its client; only a run outlives it. Nothing outside
+`/api/v1/` (AnythingLLM's own web UI and its internal `/api/...`) is proxied. The token
+therefore grants all the developer API key does, admin endpoints included.
 
 Every route but `/health` needs `Authorization: Bearer <RELAY_TOKEN>`; errors are
 `{"error": "..."}`.
@@ -848,6 +864,7 @@ Every route but `/health` needs `Authorization: Bearer <RELAY_TOKEN>`; errors ar
 | `GET /runs/{id}` | the run (`id`, `clientId`, `workspace`, `thread`, `mode`, `status`, `createdAt`, `finishedAt`); 404 when unknown or expired |
 | `GET /runs/{id}/events` | server-sent events: `text` `{"text"}` per piece, then one of `done` `{"citations"}`, `failed` `{"error"}`, `cancelled` `{}`, and the stream closes. Ids count from 1; `Last-Event-ID: n` starts after n. `: ping` every 15 s while live. Any number of followers. |
 | `POST /runs/{id}/cancel` | closes the upstream connection and ends the run `cancelled`; a run that has ended is left as it is |
+| `/api/v1/...` (any method) | AnythingLLM's developer API, through the relay with its key |
 | `GET /health` | 200, no token |
 
 Runs and their events are in SQLite (`~/.local/share/everythingllm/relay/relay.db`, mode 600),

@@ -724,16 +724,14 @@ def test_start_sync_runs_the_real_sync(lib, tmp_path, monkeypatch):
     assert "another sync" not in (tmp_path / "state" / "sync.log").read_text()
 
 
-def test_from_env_defaults_to_host_storage_and_the_pages_site(tmp_path, monkeypatch):
+def test_from_env_defaults_to_everythingllms_data(tmp_path, monkeypatch):
     monkeypatch.setenv("PUBLIC_HOST", "box.ts.net")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     lib = Library.from_env()
-    assert (lib.state, lib.site) == (
-        tmp_path / "storage" / "podcasts",
-        tmp_path / "home" / ".local" / "share" / "everythingllm" / "site" / "podcasts",
-    )
+    data = tmp_path / "home" / ".local" / "share" / "everythingllm"
+    assert (lib.state, lib.site) == (data / "podcasts", data / "site" / "podcasts")
     assert lib.base_url == "https://box.ts.net:8445/podcasts"
-    assert library.models_dir("whisper") == tmp_path / "storage" / "models" / "whisper"
+    assert library.models_dir("whisper") == data / "models" / "whisper"
 
 
 def test_splice_web_knows_every_type_we_download():

@@ -108,7 +108,7 @@ podcasts-setup: units serve-setup ## enable and (re)start podcasts-runner and po
 	$(call enable-restart,podcasts-runner.service podcasts-web.service)
 	systemctl --user enable --now podcasts-sync.timer podcasts-transcribe.timer
 
-podcasts-logs:   ## follow podcasts-runner and the transcription runs (the syncs log to storage/podcasts/sync.log)
+podcasts-logs:   ## follow podcasts-runner and the transcription runs (the syncs log to ~/.local/share/everythingllm/podcasts/sync.log)
 	journalctl --user -fu podcasts-runner.service -u podcasts-transcribe.service
 
 podcasts-web-logs: ## follow podcasts-web, which serves the podcasts

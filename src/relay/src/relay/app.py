@@ -1,6 +1,7 @@
 """relay: the Nilson relay's HTTP API, served by uvicorn on the host and reached over the
 tailnet through `tailscale serve` (https). Every route but /health needs the relay's token
-as a bearer token; see the README's "Nilson relay" for the routes.
+as a bearer token; see the README's "Nilson relay" for the routes. Under /api/v1/ it is
+AnythingLLM's developer API (`relay.proxy`), so the token serves as any client's API key.
 
 Config (environment; the unit reads host.env, then ~/.config/everythingllm/relay.env, which
 holds the secrets, outside the repo and the AnythingLLM container's reach):
@@ -33,6 +34,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from relay import notify, upstream
+from relay.proxy import PREFIX, Proxy
 from relay.runs import Answer, Busy, Notify, Relay
 from relay.store import STATUSES, Store, public
 
@@ -102,11 +104,12 @@ def create_app(
     config: Config,
     answer: Answer | None = None,
     notify_finished: Notify | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> Starlette:
-    """The API, with its relay at `app.state.relay`. The relay asks AnythingLLM and ntfy
-    through one HTTP client; a test passes its own `answer` and `notify_finished` instead.
+    """The API, with its relay at `app.state.relay`. The relay, the proxy and ntfy share one
+    HTTP client; a test passes its own `answer`, `notify_finished` and `client` instead.
     The lifespan starts the relay and closes the client and the store."""
-    client = httpx.AsyncClient()
+    client = client or httpx.AsyncClient()
     store = Store(config.database)
     if answer is None:
         answer = partial(
@@ -190,6 +193,10 @@ def create_app(
         Route("/runs/{id}", get_run, methods=["GET"]),
         Route("/runs/{id}/events", events, methods=["GET"]),
         Route("/runs/{id}/cancel", cancel, methods=["POST"]),
+        Route(
+            PREFIX + "{path:path}",
+            Proxy(client, config.anythingllm_url, config.api_key),
+        ),
     ]
     app = Starlette(
         routes=routes,

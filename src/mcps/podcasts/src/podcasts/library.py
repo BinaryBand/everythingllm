@@ -1,7 +1,8 @@
 """Podcast subscriptions, and the sync that downloads their episodes.
 
 Two directories:
-  state  (PODCASTS_STATE)  feeds.json, the subscriptions:
+  state  (PODCASTS_STATE, default ~/.local/share/everythingllm/podcasts)
+                           feeds.json, the subscriptions:
                              {slug: {url, keep, added, scrub_ads, transcribe, ad_words,
                                       rules}};
                            local.json, feeds made on this server, not downloaded
@@ -57,7 +58,7 @@ from typing import get_args
 from urllib.parse import urlsplit
 
 import httpx
-from hostrpc import atomic_write, site_dir, storage
+from hostrpc import atomic_write, data_dir, site_dir, storage
 from llm import Chat, LLMError, deepseek, settings
 from publicweb import public_client, save, stream
 from publicweb import read as read_capped
@@ -244,7 +245,7 @@ def default_model() -> Chat | None:
 
 def models_dir(name: str) -> Path:
     """Where the speech and transcription models for `name` are kept."""
-    return Path(os.environ.get("PODCASTS_MODELS", storage() / "models")) / name
+    return Path(os.environ.get("PODCASTS_MODELS", data_dir() / "models")) / name
 
 
 class Units:
@@ -314,7 +315,7 @@ class Library:
 
     @classmethod
     def from_env(cls) -> "Library":
-        state = os.environ.get("PODCASTS_STATE", storage() / "podcasts")
+        state = os.environ.get("PODCASTS_STATE", data_dir() / "podcasts")
         host = os.environ.get("PUBLIC_HOST")
         return cls(
             os.environ.get("PODCASTS_DIR", site_dir() / "podcasts"),

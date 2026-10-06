@@ -3,7 +3,8 @@ without a report (a run writes its log line only at the end), so this lists live
 
   python3 src/tools/research_guard.py   exit 0 to go ahead, 1 to stop
 
-A run is live while its marker in <storage>/logs/deep-research/running/ has been touched
+A run is live while its marker in ~/.local/share/everythingllm/logs/deep-research/running/
+has been touched
 within the marker's stale_ms (see src/mcps/research/src/research/runlog.py). With no terminal to
 ask, it stops unless FORCE=1. Used by `make research-setup` and units.py. AnythingLLM's own
 restarts don't need it: runs live in research-runner, not in AnythingLLM.
@@ -20,9 +21,12 @@ from pathlib import Path
 SERVICE = "research-runner.service"
 
 
-def live_runs(storage: Path) -> list[dict]:
+DATA = Path.home() / ".local" / "share" / "everythingllm"  # hostrpc.data_dir()
+
+
+def live_runs(data: Path) -> list[dict]:
     runs = []
-    for f in sorted((storage / "logs" / "deep-research" / "running").glob("*.json")):
+    for f in sorted((data / "logs" / "deep-research" / "running").glob("*.json")):
         try:
             run, quiet = json.loads(f.read_text()), time.time() - f.stat().st_mtime
         except (OSError, ValueError):
@@ -34,8 +38,8 @@ def live_runs(storage: Path) -> list[dict]:
     return runs
 
 
-def ok_to_restart(storage: Path) -> bool:
-    runs = live_runs(storage)
+def ok_to_restart(data: Path = DATA) -> bool:
+    runs = live_runs(data)
     if not runs:
         return True
     print(
@@ -59,9 +63,7 @@ def ok_to_restart(storage: Path) -> bool:
 
 
 def main() -> None:
-    from units import storage  # units imports this module, so not at the top
-
-    sys.exit(0 if ok_to_restart(storage()) else 1)
+    sys.exit(0 if ok_to_restart() else 1)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,7 @@ class Settings:
     searxng_url: str
     api: str  # AnythingLLM's API, for embedding
     env_file: str  # AnythingLLM's .env, for the model keys
+    runlogs: Path  # the run log and live runs' markers, host-only
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -48,6 +49,7 @@ class Settings:
             searxng_url=SEARXNG,
             api="http://127.0.0.1:3001/api",
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
+            runlogs=hostrpc.data_dir() / "logs" / "deep-research",
         )
 
     @property
@@ -58,10 +60,6 @@ class Settings:
     @property
     def documents_dir(self) -> Path:
         return self.storage / "documents"
-
-    @property
-    def runlogs(self) -> Path:
-        return self.storage / "logs" / "deep-research"
 
 
 @dataclass

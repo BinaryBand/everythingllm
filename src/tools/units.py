@@ -239,9 +239,7 @@ def main() -> None:
     backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S") / "units"
     restart = install(todo, backup)
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    if research_guard.SERVICE in restart and not research_guard.ok_to_restart(
-        Path(values["ANYTHINGLLM_STORAGE"])
-    ):
+    if research_guard.SERVICE in restart and not research_guard.ok_to_restart():
         restart.remove(research_guard.SERVICE)
         print(
             f"units: left {research_guard.SERVICE} running; `make research-setup` applies its new unit later"

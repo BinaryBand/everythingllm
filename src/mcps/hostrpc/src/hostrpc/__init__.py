@@ -79,10 +79,16 @@ def storage() -> Path:
     return Path(os.environ.get("ANYTHINGLLM_STORAGE", "/srv/anythingllm/storage"))
 
 
+def data_dir() -> Path:
+    """EverythingLLM's own data on the host: what only host services read or write (the
+    pages site, the podcasts, our speech models, the deep-research run logs), kept out of
+    AnythingLLM's storage, which the container mounts."""
+    return Path("~/.local/share/everythingllm").expanduser()
+
+
 def site_dir() -> Path:
-    """The pages site's folder on the host, which Caddy serves on :8445. It's outside
-    storage: only host services write it, and the AnythingLLM container never reads it."""
-    return Path("~/.local/share/everythingllm/site").expanduser()
+    """The pages site's folder on the host, which Caddy serves on :8445."""
+    return data_dir() / "site"
 
 
 def socket_path(folder: str, env: str) -> Path:

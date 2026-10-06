@@ -89,6 +89,10 @@ is 3.13. Keep code 3.12-compatible, and check with
   `daily-news-page` scheduled job calls `headlines` and then `write_entry`. Code asks a
   model itself (`src/mcps/llm`) only where there's no agent (background syncs, reader clicks,
   long research runs).
+- Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`:
+  the pages site, Zola entries, podcasts, our speech models, run logs), not in AnythingLLM's
+  storage. Storage keeps AnythingLLM's own data, the runners' sockets and what AnythingLLM
+  itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.
 
 ## Sites and pages

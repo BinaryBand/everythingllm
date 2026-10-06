@@ -183,7 +183,7 @@ class Env:
             sites_source=sites.source,
             sites_content=sites.content,
             sites_output=sites.output,
-            runlogs=Path(os.environ.get("AUDIT_RUNLOGS", storage / "logs")),
+            runlogs=Path(os.environ.get("AUDIT_RUNLOGS", hostrpc.data_dir() / "logs")),
             settings=read_settings(
                 Path(os.environ.get("ANYTHINGLLM_ENV", storage / ".env"))
             ),

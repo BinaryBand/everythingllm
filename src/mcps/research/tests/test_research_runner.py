@@ -45,7 +45,13 @@ class Gate:
 @pytest.fixture
 def served(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "WAIT", 0.5)
-    settings = job.Settings(storage=tmp_path, searxng_url="", api="", env_file="")
+    settings = job.Settings(
+        storage=tmp_path,
+        searxng_url="",
+        api="",
+        env_file="",
+        runlogs=tmp_path / "logs" / "deep-research",
+    )
     gate = Gate()
     socket = tmp_path / "research" / "runner.sock"
 

@@ -16,6 +16,7 @@ def settings(tmp_path) -> job.Settings:
         searxng_url="http://searx/search",
         api="http://api",
         env_file=str(tmp_path / ".env"),
+        runlogs=tmp_path / "logs" / "deep-research",
     )
 
 

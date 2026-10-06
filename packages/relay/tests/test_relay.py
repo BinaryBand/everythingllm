@@ -621,10 +621,10 @@ def test_uvicorn_believes_forwarded_headers_only_from_the_configured_peer(
     monkeypatch.setenv("RELAY_HOST", "0.0.0.0")
     monkeypatch.setenv("ANYTHINGLLM_URL", "https://host.example.ts.net:3001")
     served = {}
-    monkeypatch.setattr(relay_app, "create_app", lambda config: "app")
+    monkeypatch.setattr(relay_app, "create_app", lambda config: who_asked)
     monkeypatch.setattr(relay_app.logging, "basicConfig", lambda **kwargs: None)
     monkeypatch.setattr(
-        relay_app.uvicorn, "run", lambda app, **kwargs: served.update(kwargs)
+        relay_app.uvicorn, "run", lambda app, **kwargs: served.update(kwargs, app=app)
     )
     httpx_log = logging.getLogger("httpx")
     level = httpx_log.level
@@ -633,5 +633,46 @@ def test_uvicorn_believes_forwarded_headers_only_from_the_configured_peer(
     finally:
         httpx_log.setLevel(level)
     assert served["host"] == "0.0.0.0" and served["port"] == 8446
-    assert served["proxy_headers"] is True
-    assert served["forwarded_allow_ips"] == "10.89.79.10"
+    # The proxy headers go inside the peer check (LocalPeers), which has to judge the
+    # connection's own peer.
+    assert served["proxy_headers"] is False
+    ask = partial(asked, served["app"], ("10.89.79.10", 8446))
+    assert go(ask(("10.89.79.10", 40000), "100.64.0.5")) == (200, "100.64.0.5 https")
+    assert go(ask(("10.89.79.13", 40000), "100.64.0.5")) == (403, "")
+    assert go(ask(("127.0.0.1", 40000), "100.64.0.5")) == (200, "127.0.0.1 http")
+
+
+async def who_asked(scope, receive, send):
+    """An app that answers with the client and scheme it was handed."""
+    body = f"{scope['client'][0]} {scope['scheme']}".encode()
+    await send({"type": "http.response.start", "status": 200, "headers": []})
+    await send({"type": "http.response.body", "body": body})
+
+
+async def asked(app, local, peer, forwarded_for=None):
+    """`app`'s status and body for a request from `peer` (the connection's own peer, as
+    uvicorn gives it) to `local` (the address it was accepted on), sent on by tailscale
+    serve for `forwarded_for`."""
+    headers = (
+        {"X-Forwarded-For": forwarded_for, "X-Forwarded-Proto": "https"}
+        if forwarded_for
+        else {}
+    )
+    transport = httpx.ASGITransport(app=app, client=peer)
+    async with httpx.AsyncClient(transport=transport) as client:
+        r = await client.get(f"http://{local[0]}:{local[1]}/health", headers=headers)
+    return r.status_code, "" if r.status_code == 403 else r.text
+
+
+def test_only_loopback_and_the_relays_own_address_are_served():
+    # In the container the published port delivers from its own address; another
+    # container on egress-net comes from an address of its own.
+    from relay.app import LocalPeers
+
+    ask = partial(asked, LocalPeers(who_asked, "10.89.79.10"), ("10.89.79.10", 8446))
+    assert go(ask(("10.89.79.10", 40000))) == (200, "10.89.79.10 http")
+    assert go(ask(("10.89.79.13", 40000))) == (403, "")
+    assert go(ask(("100.64.0.5", 40000))) == (403, "")
+    # On the host, where it listens on loopback.
+    ask = partial(asked, LocalPeers(who_asked, "10.89.79.10"), ("127.0.0.1", 8446))
+    assert go(ask(("127.0.0.1", 40000))) == (200, "127.0.0.1 http")

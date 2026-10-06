@@ -10,7 +10,10 @@ script, so it works under any CSP.
 It listens on 127.0.0.1:8448 (PORT; tailscale serve maps :8445/news/write to it) and
 searches the host's SearXNG. In sites-runner's container it listens on 0.0.0.0:8448, which
 the container publishes on the host's 127.0.0.1:8448, and reaches SearXNG by its tailnet
-name through the egress proxy (host/quadlet/sites-runner.container.in).
+name through the egress proxy (host/quadlet/sites-runner.container.in). A request from
+anywhere but loopback or the server's own address, where the published port delivers from
+(hostrpc.local_peer), is refused with a 403: in the container, that's another container on
+egress-net, which mustn't have articles written or the news site rebuilt.
 
 Config (environment, from host.env and sites-runner's unit):
   ARTICLES_HOST    the address to listen on (default 127.0.0.1). In a container, 0.0.0.0:
@@ -86,6 +89,15 @@ class Handler(BaseHTTPRequestHandler):
         cls.route = re.compile(
             rf"(?:{re.escape(cls.prefix)})?/(\d{{4}}-\d{{2}}-\d{{2}})/(\d{{1,2}})/(\d{{1,2}})/?"
         )
+
+    def parse_request(self) -> bool:
+        if not super().parse_request():
+            return False
+        if hostrpc.local_peer(self.client_address, self.connection.getsockname()):
+            return True
+        self.close_connection = True
+        self.send(HTTPStatus.FORBIDDEN, b"Not from here.\n", "text/plain")
+        return False
 
     def do_GET(self) -> None:
         url = urlsplit(self.path)

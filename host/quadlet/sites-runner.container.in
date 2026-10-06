@@ -28,7 +28,8 @@ Environment=HTTP_PROXY=http://10.89.79.2:3128
 Environment=EGRESS_PROXY=http://10.89.79.2:3129
 # The article writer, on the host's 127.0.0.1:8448 as before (apps.toml's serve and
 # health); in here it listens on every address, since what's published arrives from the
-# container's own.
+# container's own, and answers only that one and loopback (hostrpc.local_peer), not
+# another container on egress-net.
 PublishPort=127.0.0.1:8448:8448
 Environment=ARTICLES_HOST=0.0.0.0
 Environment=SEARXNG_URL=https://@PUBLIC_HOST@:8888/search

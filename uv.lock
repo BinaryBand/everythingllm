@@ -1654,6 +1654,7 @@ name = "relay"
 version = "0.1.0"
 source = { editable = "packages/relay" }
 dependencies = [
+    { name = "hostrpc" },
     { name = "httpx" },
     { name = "starlette" },
     { name = "uvicorn" },
@@ -1661,6 +1662,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", specifier = ">=0.28,<0.29" },
     { name = "starlette", specifier = ">=1" },
     { name = "uvicorn", specifier = ">=0.30" },

@@ -20,6 +20,9 @@ When a run starts, the service hands its caller a card line to paste (`Live.card
 A service subclasses Live and sets PATH, LABEL and its wording (`ended_line`, `body`). A run's
 id is the service's ID_PREFIX and 8 hex digits (RunService.new_run).
 
+A connection from anywhere but loopback or the server's own address is refused with a 403
+(hostrpc.local_peer): in a container, that's another container on egress-net.
+
 Config (environment):
   LIVE_HOST  the address to listen on (default 127.0.0.1). A service in a container sets
              0.0.0.0: its port is published on the host's 127.0.0.1, and what comes
@@ -35,6 +38,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, ClassVar
 
+import hostrpc
 from chatimage import alt, link, live, progress
 
 from runs.runlog import find
@@ -86,6 +90,10 @@ class Live:
             method, path = await asyncio.wait_for(live.read_request(reader), 10)
         except (live.BadRequest, TimeoutError):
             return await live.send(writer, "400 Bad Request", b"Bad request.\n")
+        if not hostrpc.local_peer(
+            writer.get_extra_info("peername"), writer.get_extra_info("sockname")
+        ):
+            return await live.send(writer, "403 Forbidden", b"Not from here.\n")
         if method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET only.\n")
         route = self.route.fullmatch(path)

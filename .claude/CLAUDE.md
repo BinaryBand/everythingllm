@@ -102,6 +102,8 @@ is 3.13. Keep code 3.12-compatible, and check with
   AnythingLLM's `.env` (its share, written by `hostctl.ctr_env` before each start).
   `packages/egress/tests` hold every template to that. A server in one listens on `0.0.0.0`
   (`LIVE_HOST`, `ARTICLES_HOST`, `RELAY_HOST`), published on the host's `127.0.0.1`, and
+  answers only loopback and its own address, where the published port delivers from
+  (`hostrpc.local_peer`), never another container on egress-net. It
   reaches AnythingLLM and SearXNG by the tailnet name. Its only way out is the egress proxy
   (`packages/egress`, the `egress` app): it knows a container by its address in
   `egress.toml` and lets it reach public hosts (publicweb's rule) and its profile's

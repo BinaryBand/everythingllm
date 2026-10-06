@@ -2,6 +2,7 @@ import json
 import threading
 import time
 from http.server import ThreadingHTTPServer
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -292,6 +293,31 @@ def test_web_retry_clears_a_failure_and_redirects_back(store):
         )
     finally:
         httpd.shutdown()
+
+
+def test_web_answers_only_loopback_and_its_own_address():
+    own = ("10.89.79.12", 8448)  # sites-runner's container
+
+    def status(peer, local=own):
+        class Seen(web.Handler):
+            def setup(self):
+                super().setup()
+                self.client_address = peer
+                if local:
+                    self.connection = SimpleNamespace(getsockname=lambda: local)
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Seen)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            return httpx.get(f"http://127.0.0.1:{httpd.server_port}/health").status_code
+        finally:
+            httpd.shutdown()
+
+    # Through the published port, from the container's own address; and on the host.
+    assert status(("10.89.79.12", 40000)) == 200
+    assert status(("127.0.0.1", 40000), None) == 200
+    # Another container on egress-net.
+    assert status(("10.89.79.13", 40000)) == 403
 
 
 def test_the_writer_listens_on_loopback_unless_told_otherwise(monkeypatch):

@@ -29,7 +29,8 @@ Environment=HTTPS_PROXY=http://10.89.79.2:3128
 Environment=HTTP_PROXY=http://10.89.79.2:3128
 Environment=EGRESS_PROXY=http://10.89.79.2:3129
 # The live cards, on the host's 127.0.0.1:8450 as before; inside, they listen on every
-# address, since what's published arrives from the container's own.
+# address, since what's published arrives from the container's own, and answer only that
+# one and loopback (hostrpc.local_peer), not another container on egress-net.
 PublishPort=127.0.0.1:8450:8450
 Environment=LIVE_HOST=0.0.0.0
 # The host's loopback isn't reachable from here: AnythingLLM (embedding the report) and

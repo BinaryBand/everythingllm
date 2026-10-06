@@ -133,3 +133,37 @@ def test_cards_listen_on_loopback_unless_told_otherwise(tmp_path, monkeypatch):
     assert asyncio.run(bound()) == "127.0.0.1"
     monkeypatch.setenv("LIVE_HOST", "0.0.0.0")  # in a container
     assert asyncio.run(bound()) == "0.0.0.0"
+
+
+class Seen:
+    """A connection's writer as the card server sees one from `peer` to `local`."""
+
+    def __init__(self, writer, peer, local):
+        self.writer, self.names = writer, {"peername": peer, "sockname": local}
+
+    def get_extra_info(self, name, default=None):
+        return self.names.get(name) or self.writer.get_extra_info(name, default)
+
+    def __getattr__(self, name):
+        return getattr(self.writer, name)
+
+
+def test_cards_answer_only_loopback_and_their_own_address(tmp_path):
+    cards = ThingLive(Things(), tmp_path, "")
+    own = ("10.89.79.11", 8450)  # research-runner's container
+
+    async def status(peer, local=own):
+        async def seen(reader, writer):
+            await cards.handle(reader, Seen(writer, peer, local))
+
+        server = await asyncio.start_server(seen, "127.0.0.1", 0)
+        head, _ = await get(server.sockets[0].getsockname()[1], "/th-99999999")
+        server.close()
+        await server.wait_closed()
+        return head.split(b"\r\n")[0]
+
+    # Through the published port, from the container's own address; and on the host.
+    assert asyncio.run(status(("10.89.79.11", 40000))) == b"HTTP/1.1 200 OK"
+    assert asyncio.run(status(("127.0.0.1", 40000), None)) == b"HTTP/1.1 200 OK"
+    # Another container on egress-net.
+    assert asyncio.run(status(("10.89.79.13", 40000))) == b"HTTP/1.1 403 Forbidden"

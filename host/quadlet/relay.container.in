@@ -41,7 +41,8 @@ Environment=EGRESS_PROXY=http://10.89.79.2:3129
 Environment=ANYTHINGLLM_URL=https://@PUBLIC_HOST@:3001
 # What comes through the published port arrives from the container's own address, so it
 # listens on all of them, and believes tailscale serve's X-Forwarded-* only from that one
-# (its address above); another container on egress-net reaching the port isn't believed.
+# (its address above). Another container on egress-net reaching the port is refused
+# (relay.app.LocalPeers).
 Environment=RELAY_HOST=0.0.0.0
 Environment=FORWARDED_ALLOW_IPS=10.89.79.10
 # host.env, then the relay's ntfy settings (NTFY_*, secrets), which

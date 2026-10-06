@@ -288,3 +288,20 @@ def test_a_refused_password_says_so_without_showing_it(anythingllm, tmp_path):
     with pytest.raises(RunnerError, match="refused the password") as e:
         hostrpc.anythingllm_headers(api, env)
     assert "wrong-one" not in str(e.value)
+
+
+def test_a_peer_is_local_from_loopback_or_the_servers_own_address_only():
+    # A host unit: everything comes from loopback.
+    assert hostrpc.local_peer(("127.0.0.1", 40000), ("127.0.0.1", 8448))
+    assert hostrpc.local_peer(("::1", 40000, 0, 0), ("::1", 8448, 0, 0))
+    # A service container: the published port delivers from its own address.
+    own = ("10.89.79.12", 8448)
+    assert hostrpc.local_peer(("10.89.79.12", 40000), own)
+    assert hostrpc.local_peer(("::ffff:10.89.79.12", 40000, 0, 0), own)
+    # Another container on egress-net, or anything else, is refused.
+    assert not hostrpc.local_peer(("10.89.79.13", 40000), own)
+    assert not hostrpc.local_peer(("10.89.79.1", 40000), own)
+    assert not hostrpc.local_peer(("100.64.0.5", 40000), own)
+    assert not hostrpc.local_peer(None, own)
+    assert not hostrpc.local_peer(("10.89.79.12", 40000), None)
+    assert not hostrpc.local_peer(("testclient", 50000), ("testserver", 80))

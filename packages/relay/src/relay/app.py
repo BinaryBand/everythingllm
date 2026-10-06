@@ -2,7 +2,10 @@
 reached over the tailnet at `/everythingllm/` on AnythingLLM's own port, through `tailscale
 serve` (https), which strips that prefix; the routes answer with or without it. Every route
 but /health needs an AnythingLLM developer API key as a bearer token (`relay.auth`), the one
-the client gives AnythingLLM itself; see the README's "Nilson relay" for the routes.
+the client gives AnythingLLM itself; see the README's "Nilson relay" for the routes. A
+request from anywhere but loopback or the relay's own address, where the container's
+published port delivers from, is refused with a 403 (`LocalPeers`): in the container,
+that's another container on egress-net.
 
 Config (environment; the container gets host.env, then ~/.config/everythingllm/relay.env,
 which holds the ntfy settings, outside the repo and the AnythingLLM container's reach, then
@@ -30,7 +33,9 @@ import sys
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from typing import Any
 
+import hostrpc
 import httpx
 import uvicorn
 from starlette.applications import Starlette
@@ -39,6 +44,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from relay import notify, upstream
 from relay.auth import KeyCheck, RequireKey
@@ -98,6 +104,26 @@ class StripPrefix:
             self.prefix + "/"
         ):
             scope = {**scope, "path": scope["path"][len(self.prefix) :] or "/"}
+        await self.app(scope, receive, send)
+
+
+class LocalPeers:
+    """Refuses a request whose connection comes from anywhere but loopback or the relay's
+    own address (hostrpc.local_peer), then has uvicorn's proxy headers believe tailscale
+    serve's X-Forwarded-For and X-Forwarded-Proto from `forwarded_allow_ips`. uvicorn's own
+    (`proxy_headers=True`) would go first and put the forwarded client in the place of the
+    peer judged here."""
+
+    def __init__(self, app: ASGIApp, forwarded_allow_ips: str) -> None:
+        # uvicorn types an ASGI app more narrowly than starlette does.
+        headers: Any = ProxyHeadersMiddleware
+        self.app: ASGIApp = headers(app, trusted_hosts=forwarded_allow_ips)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and not hostrpc.local_peer(
+            scope.get("client"), scope.get("server")
+        ):
+            return await error(403, "Not from here.")(scope, receive, send)
         await self.app(scope, receive, send)
 
 
@@ -223,13 +249,12 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     config = Config.from_env()
     uvicorn.run(
-        create_app(config),
+        # tailscale serve passes on who asked, and over https: believed only from the peer
+        # it reaches the relay through (FORWARDED_ALLOW_IPS above), by LocalPeers.
+        LocalPeers(create_app(config), config.forwarded_allow_ips),
         host=config.host,
         port=config.port,
         log_level="info",
-        # tailscale serve passes on who asked, and over https: believed only from the peer
-        # it reaches the relay through (FORWARDED_ALLOW_IPS above).
-        proxy_headers=True,
-        forwarded_allow_ips=config.forwarded_allow_ips,
+        proxy_headers=False,
         timeout_graceful_shutdown=5,
     )

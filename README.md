@@ -595,10 +595,15 @@ container's own address, not its loopback, so a server in a container listens on
 `RELAY_HOST` (the relay) say so in its template, and default to `127.0.0.1` on the host.
 For the same reason a server that believes `tailscale serve`'s `X-Forwarded-For` and
 `X-Forwarded-Proto` believes them from its container's own address, not `127.0.0.1`: the
-relay's template sets uvicorn's `FORWARDED_ALLOW_IPS` to it. Listening on `0.0.0.0` also lets
-every other container on egress-net reach that port. Each of those ports is already on the
-tailnet through `tailscale serve`, so a container gets no more than any tailnet device
-does; this is accepted rather than split into a network per service. A container can't reach the
+relay's template sets uvicorn's `FORWARDED_ALLOW_IPS` to it. Listening on `0.0.0.0` would
+also let every other container on egress-net reach that port (podman's bridge doesn't keep
+them apart), and a container that a feed or a page had taken over could have articles
+written and sites rebuilt. So each of these servers answers a connection only from
+loopback or its own address, the socket's local one (`hostrpc.local_peer`; the relay's
+`LocalPeers` runs it outside uvicorn's proxy headers, which would put the forwarded client
+in the peer's place), and refuses any other with a 403: it works unchanged as a host unit
+on `127.0.0.1` and behind the published port, and another container, coming from an
+address of its own, gets nothing. A container can't reach the
 host's loopback either, so it reaches AnythingLLM and SearXNG by their tailnet names
 through the proxy: `ANYTHINGLLM_API=https://<PUBLIC_HOST>:3001/api` (research),
 `ANYTHINGLLM_URL=https://<PUBLIC_HOST>:3001` (the relay) and
@@ -1521,8 +1526,9 @@ It listens on `0.0.0.0:8446` inside (`RELAY_HOST`), published on the host's
 `127.0.0.1:8446`, where `tailscale serve` and the health check reach it. Through that port
 every connection arrives from the container's own address (`10.89.79.10`), so that is the
 one peer whose `X-Forwarded-For` and `X-Forwarded-Proto` uvicorn believes
-(`FORWARDED_ALLOW_IPS`); another container on egress-net that reaches the port is logged
-by its own address.
+(`FORWARDED_ALLOW_IPS`), and with loopback the only one it answers (`LocalPeers`):
+another container on egress-net that reaches the port gets a 403, logged by its own
+address.
 
 Where it differs from the original spec: the relay adds nothing to the body and doesn't
 interpret the answer (no `mode` default, no pieces or citations of its own); a

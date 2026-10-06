@@ -1016,6 +1016,26 @@ def test_the_build_socket_serves_only_system_site_builds(cfg, tmp_path, monkeypa
     assert len(made) == 1  # one runner behind both
 
 
+def test_a_copy_refused_at_its_first_folder_leaves_no_fd_open(
+    cfg, tmp_path, monkeypatch
+):
+    """Something planted at .status.new itself stops the copy at its first folder; the
+    long-running runner mustn't keep the parent's fd each time it does."""
+    cfg = system_cfg(cfg, tmp_path)
+    r = make(cfg)
+    r.podman.effect = built
+
+    def planted(parent, name):
+        raise OSError(40, "Too many levels of symbolic links")
+
+    monkeypatch.setattr(runner, "make_dir", planted)
+    before = len(os.listdir("/proc/self/fd"))
+    for _ in range(3):
+        with pytest.raises(runner.SandboxError, match="couldn't copy the built site"):
+            go(r.op_build_system_site("status"))
+    assert len(os.listdir("/proc/self/fd")) == before
+
+
 def test_what_a_system_site_build_refuses(cfg, tmp_path):
     cfg = system_cfg(cfg, tmp_path)
     r = make(cfg)

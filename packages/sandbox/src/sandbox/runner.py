@@ -1072,8 +1072,10 @@ class Runner(hostrpc.Service):
         folders: dict[tuple[str, ...], int] = {}
         try:
             parent = open_dir(dest.parent)
-            folders[()] = make_dir(parent, dest.name)
-            os.close(parent)
+            try:
+                folders[()] = make_dir(parent, dest.name)
+            finally:
+                os.close(parent)
             for src, rel in files:
                 *parts, name = Path(rel).parts
                 for i in range(len(parts)):

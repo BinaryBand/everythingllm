@@ -32,7 +32,7 @@ TOOLS = {
     "zola": "/usr/local/bin/zola",
 }
 # Folders and files inside storage that the containers and services mount or serve.
-STORAGE_DIRS = ("site", "bin")
+STORAGE_DIRS = ("site",)
 
 
 def settings() -> dict[str, str]:

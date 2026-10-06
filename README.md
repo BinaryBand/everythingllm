@@ -243,7 +243,7 @@ archive, Atom feed; no scripts or inline styles, so it passes the CSP). Each
 `_index.md` files, and any templates or `static/` CSS it overrides or adds. Templates are
 Tera 2: reusable pieces are `{% component %}`s (global, no import), not macros.
 
-The `sites` MCP server writes entries to `storage/zola/<name>/<section>/<slug>.md`
+The `sites` MCP server writes entries to `~/.local/share/everythingllm/zola/<name>/<section>/<slug>.md`
 (JSON front matter, fields under `extra`) and then rebuilds that site itself, so an entry
 is live when `write_entry` returns; if the site doesn't build, the write or delete is
 undone ("not saved: the site didn't build: …"). Bodies can't use Zola shortcodes or Tera:
@@ -255,7 +255,8 @@ is stopped after 40 s. A machine without unprivileged user namespaces builds wit
 namespace and logs a warning. The
 front matter names the slug, so a file like `2026-10-01-notes.md` keeps its date in the URL. The build (`sites.build`, also the `sites-build`
 command) assembles the site from the repo plus its entries in a temp dir, builds it next
-to `storage/site/<name>/` and swaps it in, holding a lock on `storage/zola/.build.lock`.
+to `storage/site/<name>/` and swaps it in, holding a lock on `.build.lock` in the entries folder. Entries live outside storage because
+only host services read or write them; the AnythingLLM container never needs them.
 Built sites carry a `.zola-site` marker; the build won't replace a directory without one,
 and the sandbox won't publish over a directory that isn't its own page.
 
@@ -711,7 +712,7 @@ A run, step by step:
    edits are applied in code, citations are renumbered and the source list appended.
 6. **Publish** — the report is first saved as `storage/anythingllm-fs/research/<slug>.md`
    (slug from the title, as sites-write makes it), where the agent's filesystem tools can
-   read it, then saved and built in `storage/zola/research/reports/` through `SiteStore`,
+   read it, then saved and built in `~/.local/share/everythingllm/zola/research/reports/` through `SiteStore`,
    as the `sites` server does; the chat
    gets a summary, the link and the sources as citations. If publishing fails (the site
    doesn't keep an entry it couldn't build), the reply gives the saved file and the error.

@@ -295,3 +295,78 @@ def test_hold_back_leaves_a_guarded_runner_with_a_run_going(
         "x.service"
     ]
     assert "left research-runner.service running" in capsys.readouterr().out
+
+
+def test_a_host_unit_whose_container_took_over_is_retired(
+    tmp_path, monkeypatch, capsys
+):
+    # relay.service was a host unit; host/quadlet/relay.container.in makes it now, and the
+    # old installed copy would hide Quadlet's (~/.config/systemd/user comes first).
+    user = tmp_path / "user"
+    user.mkdir()
+    (user / "relay.service").write_text("[Service]\nExecStart=old\n")
+    (user / "gateway.service").write_text("[Service]\nExecStart=still a host unit\n")
+    planned = plan(tmp_path)
+    assert units.retired(planned, user) == [user / "relay.service"]
+
+    calls = []
+    monkeypatch.setattr(units.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    backup = tmp_path / "backup"
+    assert units.retire([user / "relay.service"], backup) == []
+    assert calls == [["systemctl", "--user", "disable", "--now", "relay.service"]]
+    assert not (user / "relay.service").exists()
+    assert (
+        backup / "user" / "relay.service"
+    ).read_text() == "[Service]\nExecStart=old\n"
+    assert units.retired(planned, user) == []
+
+    # A guarded runner with a run going stays a host unit until the next try.
+    calls.clear()
+    old = user / "research-runner.service"
+    old.write_text("[Service]\n")
+    monkeypatch.setitem(run_guard.GUARDED, "research-runner.service", ("r", "Runs"))
+    monkeypatch.setattr(run_guard, "ok_to_restart", lambda service: False)
+    assert units.retire([old], backup) == ["research-runner.service"]
+    assert calls == [] and old.exists()
+    assert (
+        "left the host unit research-runner.service running" in capsys.readouterr().out
+    )
+
+
+def test_units_retires_the_old_host_unit_then_starts_its_container(
+    tmp_path, monkeypatch, capsys
+):
+    import subprocess
+
+    user, containers = tmp_path / "user", tmp_path / "containers"
+    user.mkdir()
+    (user / "relay.service").write_text("[Service]\nExecStart=old\n")
+    # Everything else is installed as the repo has it, so only the old relay is left.
+    planned = plan(tmp_path)
+    for u in planned:
+        u.dest.parent.mkdir(parents=True, exist_ok=True)
+        u.dest.write_text(u.text)
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(units.subprocess, "run", run)
+    monkeypatch.setattr(units, "ROOT", tmp_path)  # not a worktree
+    monkeypatch.setattr(units, "BACKUPS", tmp_path / "backups")
+    monkeypatch.setattr(units, "host_settings", lambda f: {})
+    monkeypatch.setattr(units, "planned", lambda values, c, u: planned)
+    monkeypatch.setenv("UNITS_USER_DIR", str(user))
+    monkeypatch.setenv("UNITS_CONTAINER_DIR", str(containers))
+
+    units.main(["diff"])
+    assert f"retire {user / 'relay.service'}" in capsys.readouterr().out
+    units.main(["install"])
+    systemctl = [c[2:] for c in calls if c[:2] == ["systemctl", "--user"]]
+    assert systemctl == [
+        ["disable", "--now", "relay.service"],
+        ["daemon-reload"],
+        ["restart", "relay.service"],
+    ]
+    assert not (user / "relay.service").exists()

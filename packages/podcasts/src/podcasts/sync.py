@@ -8,7 +8,8 @@ worker asks for every feed's itself (worker.Every, which also runs a slot missed
 was down as soon as it starts, as the timer it replaced did). A sync of every feed takes
 the single feeds' requests waiting with it; what is asked for during a sync waits for the
 next. Each sync is Library.sync under sync.lock, as before: one that finds the lock held (a
-transcript being saved) is asked for again and tried after the next look. Its output goes
+transcript being saved, an old sync still finishing) is asked for again, said once, and
+taken again only once the lock is free. Its output goes
 to sync.log, as the unit's did, and a crash to last_sync.json, so list_podcasts can tell;
 the worker carries on with the next.
 
@@ -85,12 +86,15 @@ class SyncWorker:
         self.every = Every(self.queue.folder / f"{SYNC_WORKER}.last", EVERY_HOURS)
         self.library, self.client, self.log = library, client, log
         self.stop = threading.Event()
+        self.blocked = False  # the last sync found sync.lock held
 
     def step(self) -> bool:
         """Ask for the scheduled sync if it's due, and run the next sync asked for; False
         when there was none to run (or it has to wait), so the worker waits a moment."""
         if self.every.due():
             self.queue.ask_sync(ALL_FEEDS)
+        if self.blocked and self.library().sync_running():
+            return False  # still held: said already, and nothing taken meanwhile
         target = self.queue.take_sync()
         if target is None:
             return False
@@ -137,6 +141,7 @@ class SyncWorker:
                     print("another sync is running; asked for again", flush=True)
         stopped = " (stopped part-way)" if self.stop.is_set() else ""
         self.log(f"synced {what}{stopped}" if ran else "sync.lock is held; waiting")
+        self.blocked = not ran
         return ran
 
     def run(self) -> None:

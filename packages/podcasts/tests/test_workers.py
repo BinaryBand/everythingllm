@@ -157,8 +157,15 @@ def test_a_sync_that_finds_the_lock_held_is_asked_for_again(lib):
     lib.queue.ask_sync(ALL_FEEDS)
     with lib._lock("sync.lock"):  # a transcript being saved
         assert not w.step()
+        said = (lib.state / "sync.log").read_text()
+        # While it's held, the worker looks again without taking the request or saying
+        # so again (an old sync can hold it for hours).
+        for _ in range(3):
+            assert not w.step()
+        assert (lib.state / "sync.log").read_text() == said
+        assert w.lines.count("sync.lock is held; waiting") == 1
     assert lib.queue.syncs() == [ALL_FEEDS]
-    assert "another sync is running" in (lib.state / "sync.log").read_text()
+    assert "another sync is running" in said
     w.drain()
     assert lib.queue.syncs() == [] and lib.last_sync()["finished"]
 

@@ -20,6 +20,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import httpx
@@ -32,7 +33,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from relay import notify, upstream
-from relay.runs import Busy, Relay
+from relay.runs import Answer, Busy, Notify, Relay
 from relay.store import STATUSES, Store, public
 
 log = logging.getLogger("relay")
@@ -68,7 +69,7 @@ class Config:
             database=Path(get("DATABASE_PATH") or DATABASE).expanduser(),
             ntfy_url=get("NTFY_URL", ""),
             ntfy_token=get("NTFY_TOKEN", ""),
-            retention_days=float(get("RUN_RETENTION_DAYS") or 7),
+            retention_days=float(get("RUN_RETENTION_DAYS") or cls.retention_days),
             host=get("RELAY_HOST") or cls.host,
             port=int(get("RELAY_PORT") or cls.port),
         )
@@ -97,42 +98,31 @@ class RequireToken:
         await self.app(scope, receive, send)
 
 
-def create_app(config: Config, relay: Relay | None = None) -> Starlette:
-    """The API. By default the app builds its relay on startup, calling AnythingLLM and
-    ntfy with one HTTP client. A test passes its own `relay`, which the app serves at once;
-    the lifespan opens it too, but a test without one opens it itself."""
-    state: dict[str, Relay] = {"relay": relay} if relay else {}
+def create_app(
+    config: Config,
+    answer: Answer | None = None,
+    notify_finished: Notify | None = None,
+) -> Starlette:
+    """The API, with its relay at `app.state.relay`. The relay asks AnythingLLM and ntfy
+    through one HTTP client; a test passes its own `answer` and `notify_finished` instead.
+    The lifespan starts the relay and closes the client and the store."""
+    client = httpx.AsyncClient()
+    store = Store(config.database)
+    if answer is None:
+        answer = partial(
+            upstream.answer, client, config.anythingllm_url, config.api_key
+        )
+    if notify_finished is None and config.ntfy_url:
+        notify_finished = notify.publisher(client, config.ntfy_url, config.ntfy_token)
+    relay = Relay(store, answer, notify_finished, config.retention_days)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: Starlette):
-        async with contextlib.AsyncExitStack() as stack:
-            r = relay
-            if r is None:
-                client = await stack.enter_async_context(httpx.AsyncClient())
-                store = Store(config.database)
-                stack.callback(store.close)
-
-                def answer(workspace: str, thread: str, question: str, mode: str):
-                    return upstream.answer(
-                        client,
-                        config.anythingllm_url,
-                        config.api_key,
-                        workspace,
-                        thread,
-                        question,
-                        mode,
-                    )
-
-                r = Relay(
-                    store,
-                    answer,
-                    notify.publisher(client, config.ntfy_url, config.ntfy_token)
-                    if config.ntfy_url
-                    else None,
-                    config.retention_days,
-                )
-            state["relay"] = await stack.enter_async_context(r)
-            yield
+        try:
+            async with client, relay:
+                yield
+        finally:
+            store.close()
 
     async def health(_request: Request) -> Response:
         return JSONResponse({"ok": True})
@@ -154,7 +144,7 @@ def create_app(config: Config, relay: Relay | None = None) -> Starlette:
         if mode not in MODES:
             return error(400, "'mode' must be 'query' or 'chat'.")
         try:
-            run, created = await state["relay"].start(
+            run, created = await relay.start(
                 fields["clientId"],
                 fields["workspace"],
                 fields["thread"],
@@ -169,28 +159,28 @@ def create_app(config: Config, relay: Relay | None = None) -> Starlette:
         status = request.query_params.get("status")
         if status is not None and status not in STATUSES:
             return error(400, f"'status' must be one of {', '.join(STATUSES)}.")
-        return JSONResponse([public(r) for r in state["relay"].store.runs(status)])
+        return JSONResponse([public(r) for r in relay.store.runs(status)])
 
     async def get_run(request: Request) -> Response:
-        row = state["relay"].store.get(request.path_params["id"])
+        row = relay.store.get(request.path_params["id"])
         return JSONResponse(public(row)) if row else error(404, "No such run.")
 
     async def events(request: Request) -> Response:
         run_id = request.path_params["id"]
-        if state["relay"].store.get(run_id) is None:
+        if relay.store.get(run_id) is None:
             return error(404, "No such run.")
         try:
             after = max(0, int(request.headers.get("last-event-id", "0")))
         except ValueError:
             after = 0
         return StreamingResponse(
-            state["relay"].follow(run_id, after),
+            relay.follow(run_id, after),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     async def cancel(request: Request) -> Response:
-        run = await state["relay"].cancel(request.path_params["id"])
+        run = await relay.cancel(request.path_params["id"])
         return JSONResponse(run) if run else error(404, "No such run.")
 
     routes = [
@@ -201,11 +191,13 @@ def create_app(config: Config, relay: Relay | None = None) -> Starlette:
         Route("/runs/{id}/events", events, methods=["GET"]),
         Route("/runs/{id}/cancel", cancel, methods=["POST"]),
     ]
-    return Starlette(
+    app = Starlette(
         routes=routes,
         lifespan=lifespan,
         middleware=[Middleware(RequireToken, token=config.token)],
     )
+    app.state.relay = relay
+    return app
 
 
 def main() -> None:

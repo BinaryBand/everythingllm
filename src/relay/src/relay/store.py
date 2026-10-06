@@ -12,8 +12,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-TERMINAL = {"done": "done", "failed": "failed", "cancelled": "cancelled"}
-STATUSES = ("running", "done", "failed", "cancelled")
+TERMINAL = (
+    "done",
+    "failed",
+    "cancelled",
+)  # the events that end a run, named as its status
+STATUSES = ("running", *TERMINAL)
 
 SCHEMA = """
 create table if not exists runs (
@@ -61,6 +65,9 @@ class Store:
         self.db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("pragma journal_mode = wal")
+        # One commit per streamed piece: WAL without an fsync each time stays consistent, and
+        # a power cut that loses the last pieces ends the run anyway.
+        self.db.execute("pragma synchronous = normal")
         self.db.execute("pragma foreign_keys = on")
         self.db.executescript(SCHEMA)
         path.chmod(0o600)  # questions and answers
@@ -125,7 +132,7 @@ class Store:
             if name in TERMINAL:
                 self.db.execute(
                     "update runs set status = ?, finished_at = ? where id = ?",
-                    (TERMINAL[name], stamp(), run_id),
+                    (name, stamp(), run_id),
                 )
         return seq
 

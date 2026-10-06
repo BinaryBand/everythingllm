@@ -8,7 +8,7 @@ STORAGE = $(or $(ANYTHINGLLM_STORAGE),$(error no ANYTHINGLLM_STORAGE: copy host.
 # The sites package follows ANYTHINGLLM_STORAGE; naming it here stops a target without host.env.
 HOST_SITES_ENV = ANYTHINGLLM_STORAGE=$(STORAGE)
 
-.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync claude-rc-logs sites-build serve-setup claude-rc-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup relay-setup relay-logs
+.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync claude-rc-logs sites-build serve-setup claude-rc-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup relay-setup
 
 help:            ## list the targets
 	@awk -F':.*## ' '/^[a-z%-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -140,11 +140,8 @@ relay-setup: units serve-setup ## make the Nilson relay's secrets file (~/.confi
 	python3 scripts/relay_env.py
 	$(call enable-restart,relay.service)
 
-relay-logs:      ## follow the Nilson relay
-	journalctl --user -fu relay.service
-
-%-logs:          ## follow <name>-runner (research, sites, audit)
-	journalctl --user -fu $*-runner.service
+%-logs:          ## follow <name>-runner or <name> (research, sites, audit, relay)
+	journalctl --user -f -u $*-runner.service -u $*.service
 
 sites-build:     ## rebuild all Zola sites by hand (sites-runner does this on every write)
 	$(HOST_SITES_ENV) uv run --package sites sites-build

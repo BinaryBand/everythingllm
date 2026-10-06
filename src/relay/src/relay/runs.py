@@ -54,32 +54,25 @@ class Relay:
         self.ping = ping
         self.tasks: dict[str, asyncio.Task] = {}
         self.changed = asyncio.Condition()
-        self.purger: asyncio.Task | None = None
 
     # --- lifetime ---
 
-    async def open(self) -> None:
+    async def __aenter__(self) -> Self:
         """Fail the runs a restart cut short, drop old ones, and keep dropping them hourly."""
         for row in self.store.runs("running"):
             self.store.append(row["id"], "failed", {"error": RESTARTED})
             log.info("run %s was cut short by a restart", row["id"])
         self.purge()
         self.purger = asyncio.create_task(self._purge_hourly())
+        return self
 
-    async def close(self) -> None:
-        """Stop every task without ending its run: the next open() fails it as restarted."""
-        tasks = [*self.tasks.values(), *([self.purger] if self.purger else [])]
+    async def __aexit__(self, *exc: object) -> None:
+        """Stop every task without ending its run: the next start fails it as restarted."""
+        tasks = [*self.tasks.values(), self.purger]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.tasks.clear()
-
-    async def __aenter__(self) -> Self:
-        await self.open()
-        return self
-
-    async def __aexit__(self, *exc: object) -> None:
-        await self.close()
 
     def purge(self) -> None:
         if n := self.store.purge(self.retention_days):
@@ -113,30 +106,27 @@ class Relay:
         self, run_id: str, workspace: str, thread: str, question: str, mode: str
     ) -> None:
         events = self.answer(workspace, thread, question, mode)
-        ended = None
         try:
             async for name, data in events:
                 await self._append(run_id, name, data)
                 if name in TERMINAL:
-                    ended = name
                     break
-            else:
-                ended = "done"
+            else:  # an answer that just stops is done (relay.upstream always ends itself)
                 await self._append(run_id, "done", {"citations": []})
         except asyncio.CancelledError:
-            raise  # cancel() or close(); they decide what the run becomes
+            raise  # cancel() or shutdown; they decide what the run becomes
         except Exception:
             log.exception("run %s failed in the relay", run_id)
-            ended = "failed"
             await self._append(run_id, "failed", {"error": CRASHED})
         finally:
             await events.aclose()  # closes the connection to AnythingLLM
             self.tasks.pop(run_id, None)
-        log.info("run %s %s", run_id, ended)
-        if ended in ("done", "failed") and self.notify:
-            row = self.store.get(run_id)
-            if row is not None:
-                await self.notify(public(row), question)
+        row = self.store.get(run_id)
+        if row is None:
+            return
+        log.info("run %s %s", run_id, row["status"])
+        if self.notify is not None and row["status"] in ("done", "failed"):
+            await self.notify(public(row), question)
 
     async def _append(self, run_id: str, name: str, data: dict[str, Any]) -> None:
         async with self.changed:
@@ -171,10 +161,9 @@ class Relay:
                         return
                     try:
                         await asyncio.wait_for(self.changed.wait(), self.ping)
+                        continue  # something changed; read it
                     except TimeoutError:
                         pass
-                    else:
-                        continue
             if not events:
                 yield ": ping\n\n"
                 continue

@@ -40,14 +40,24 @@ class Unit:
     always: bool  # restart even if it isn't running (containers: that starts them)
 
 
+def env_file(file: Path) -> dict[str, str]:
+    """An env file's KEY=value lines, quotes dropped as systemd's EnvironmentFile= and
+    hostrpc.env_values drop them; {} when it can't be read. The scripts' one parser."""
+    try:
+        lines = file.read_text().splitlines()
+    except OSError:
+        return {}
+    values = {}
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if sep and not key.lstrip().startswith("#"):
+            values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
 def host_settings(file: Path) -> dict[str, str]:
     """host.env's KEY=value lines, under anything the environment already has."""
-    values = {}
-    if file.is_file():
-        for line in file.read_text().splitlines():
-            key, sep, value = line.partition("=")
-            if sep and not key.lstrip().startswith("#"):
-                values[key.strip()] = value.strip()
+    values = env_file(file)
     return {**values, **{k: v for k, v in os.environ.items() if k in values}}
 
 

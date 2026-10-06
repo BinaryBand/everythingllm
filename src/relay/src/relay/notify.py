@@ -16,10 +16,8 @@ def message(run: dict[str, Any], question: str) -> tuple[dict[str, str], bytes]:
     """The ntfy headers and body for a finished run."""
     headers = {
         "Title": "Answer ready" if run["status"] == "done" else "Answer failed",
+        # Subscribers get the tags, not other request headers.
         "Tags": f"run={run['id']},workspace={run['workspace']},thread={run['thread']}",
-        "X-Relay-Run": run["id"],
-        "X-Relay-Workspace": run["workspace"],
-        "X-Relay-Thread": run["thread"],
     }
     return headers, " ".join(question.split())[:QUESTION_CHARS].encode()
 

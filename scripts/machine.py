@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from units import ROOT, host_settings
+from units import ROOT, env_file, host_settings
 
 API = "http://127.0.0.1:3001/api"
 EXAMPLE_HOST = "machine.tailnet-name.ts.net"
@@ -137,16 +137,7 @@ def search() -> None:
 
 def env_keys(storage: Path) -> dict[str, bool]:
     """Which keys AnythingLLM's .env sets to something (values are never kept)."""
-    try:
-        lines = (storage / ".env").read_text().splitlines()
-    except OSError:
-        return {}
-    out = {}
-    for line in lines:
-        key, sep, value = line.partition("=")
-        if sep and not key.lstrip().startswith("#"):
-            out[key.strip()] = bool(value.strip().strip("'\""))
-    return out
+    return {k: bool(v) for k, v in env_file(storage / ".env").items()}
 
 
 def searxng_answers() -> bool:

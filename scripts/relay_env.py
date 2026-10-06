@@ -13,6 +13,8 @@ import secrets
 import sys
 from pathlib import Path
 
+from units import env_file
+
 DEFAULT = Path("~/.config/anything/relay.env").expanduser()
 
 TEMPLATE = """\
@@ -28,15 +30,6 @@ NTFY_TOKEN=
 """
 
 
-def values(path: Path) -> dict[str, str]:
-    out = {}
-    for line in path.read_text().splitlines():
-        key, sep, value = line.partition("=")
-        if sep and not key.lstrip().startswith("#"):
-            out[key.strip()] = value.strip()
-    return out
-
-
 def main() -> None:
     path = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else DEFAULT
     if not path.exists():
@@ -46,7 +39,7 @@ def main() -> None:
             f.write(TEMPLATE.format(token=secrets.token_urlsafe(32)))
         print(f"made {path} with a new RELAY_TOKEN")
     path.chmod(0o600)
-    found = values(path)
+    found = env_file(path)
     missing = [k for k in ("ANYTHINGLLM_API_KEY", "RELAY_TOKEN") if not found.get(k)]
     if missing:
         sys.exit(

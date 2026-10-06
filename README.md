@@ -834,13 +834,13 @@ written as each event arrives. A restart fails the runs it cut short with "The r
 restarted during the answer." and keeps their events; finished runs are deleted after 7
 days (`RUN_RETENTION_DAYS`). With `NTFY_URL` set, a finished or failed run posts "Answer
 ready" or "Answer failed" to that ntfy topic, with the question's first 120 characters
-and the run, workspace and thread in its tags and `X-Relay-*` headers; never the answer.
+and `run=…,workspace=…,thread=…` as its tags; never the answer.
 
 The secrets live in `~/.config/anything/relay.env` (mode 600), outside the repo, which the
 AnythingLLM container mounts: `ANYTHINGLLM_API_KEY` (a developer API key), `RELAY_TOKEN`,
 and optionally `NTFY_URL` and `NTFY_TOKEN`. `make relay-setup` makes the file with a fresh
 token, refuses to go on until the API key is filled in, then maps the tailnet port and
-starts the unit; `make relay-logs` follows it. `relay.app`'s docstring lists the rest of the
+starts the unit; `make relay-logs` follows it (the `%-logs` rule). `relay.app`'s docstring lists the rest of the
 config. Neither the key nor the token appears in a response or a log line, and a test holds
 that.
 

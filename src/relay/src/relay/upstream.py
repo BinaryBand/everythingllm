@@ -8,7 +8,7 @@ which is how a run is cancelled; nothing else closes it early.
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 from urllib.parse import quote
 
@@ -55,7 +55,7 @@ async def answer(
     thread: str,
     message: str,
     mode: str,
-) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+) -> AsyncGenerator[tuple[str, dict[str, Any]]]:
     url = (
         f"{base_url.rstrip('/')}/api/v1/workspace/{quote(workspace, safe='')}"
         f"/thread/{quote(thread, safe='')}/stream-chat"
@@ -88,12 +88,12 @@ async def answer(
                 if isinstance(text := c.get("textResponse"), str) and text:
                     yield "text", {"text": text}
                 sources = c.get("sources")
-                if isinstance(sources, list):
-                    found = [s for s in sources if isinstance(s, dict)]
-                    if found:
-                        citations = [
-                            s["title"] for s in found if isinstance(s.get("title"), str)
-                        ]
+                if isinstance(sources, list) and (
+                    found := [s for s in sources if isinstance(s, dict)]
+                ):
+                    citations = [
+                        s["title"] for s in found if isinstance(s.get("title"), str)
+                    ]
                 if c.get("close") is True:
                     break
     except httpx.TransportError as e:

@@ -35,7 +35,6 @@ from typing import Any
 
 import hostrpc
 from hostrpc import RunnerError
-from runs.runlog import sweep_interrupted
 from runs.service import Meter, Progress, Run, RunService
 
 from research import job, live
@@ -89,7 +88,7 @@ class Runner(RunService):
         check_split(args.get("sub_questions"), args.get("title") or None)
         req = job.Request.of(question, **args)
         run = self.new_run(req.question)
-        card = live.card(self.settings.pages_url, run.id, req.question)
+        card = live.Live.card_line(self.settings.pages_url, run.id, req.question)
         req = replace(req, run_id=run.id, card=card)
 
         async def work(run: Run, progress: Progress, meter: Meter) -> dict[str, Any]:
@@ -120,21 +119,8 @@ async def serve(
     settings: job.Settings, socket: Path, runner: Runner | None = None
 ) -> None:
     runner = runner or Runner(settings)
-    # Nothing in running/ can be ours yet: those runs died with an earlier runner.
-    for question in sweep_interrupted(settings.runlogs, everything=True):
-        log.info(
-            "logged a run an earlier runner left as interrupted: %s", question[:120]
-        )
-    # The live cards are a nicety: without their port, the runs still go.
-    try:
-        runner.live = await live.Live(runner).serve(settings.live_port)
-    except OSError as e:
-        log.error("no live cards: can't listen on port %s: %s", settings.live_port, e)
-    try:
-        await hostrpc.serve(runner, socket)
-    finally:
-        if runner.live:
-            runner.live.close()
+    card = live.Live(runner, settings.runlogs, settings.pages_url)
+    await runner.serve(socket, card, settings.live_port, settings.runlogs)
 
 
 def main() -> None:

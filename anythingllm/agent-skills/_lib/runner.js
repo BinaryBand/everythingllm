@@ -8,16 +8,17 @@ const { delegatedRefusal } = require("./delegated");
 
 /**
  * `service` is the runner's folder in storage and its unit's name (sites -> sites-runner),
- * `env` the variable that can point at another socket.
+ * `env` the variable that can point at another socket, `reply` what turns the op's result
+ * into the text to return (by default the result itself, or its JSON).
  */
-async function forward(self, { service, env, op, args, timeoutMs = 120_000 }) {
+async function forward(self, { service, env, op, args, timeoutMs = 120_000, reply = asText }) {
   const refused = delegatedRefusal(self);
   if (refused) return refused;
   const signal = self.super?.abortController?.signal ?? null;
   try {
     const result = await call(socketPath(service, env), op, args, { name: `the ${service} runner`, signal, timeoutMs });
     if (result === null) return "The chat closed.";
-    return typeof result === "string" ? result : JSON.stringify(result);
+    return reply(result);
   } catch (e) {
     self.logger?.(`${op}: ${e?.message || e}`);
     if (e instanceof Down)
@@ -25,6 +26,10 @@ async function forward(self, { service, env, op, args, timeoutMs = 120_000 }) {
     if (e instanceof Refused) return `Error: ${e.message}`;
     return `${op} failed: ${e?.message || e}`;
   }
+}
+
+function asText(result) {
+  return typeof result === "string" ? result : JSON.stringify(result);
 }
 
 /** An object argument, which a model sometimes sends as JSON text; null when there's none. */

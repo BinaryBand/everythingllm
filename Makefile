@@ -78,6 +78,10 @@ mcp-sync:        ## install/refresh the MCP servers' deps inside the AnythingLLM
 # $(call enable-restart,units): enable user units and (re)start them.
 enable-restart = systemctl --user enable $(1) && systemctl --user restart $(1)
 
+# $(call guarded-restart,unit): the same for a runner whose runs a restart would cut short;
+# tools/run_guard.py asks first while one is going (FORCE=1 doesn't).
+guarded-restart = systemctl --user enable $(1) && python3 tools/run_guard.py $(1) && systemctl --user restart $(1)
+
 # $(call internal-net,name,subnet): a podman network with no route out and no DNS.
 internal-net = podman network exists $(1) || podman network create --internal --disable-dns --subnet $(2) $(1)
 
@@ -126,9 +130,7 @@ news-audio-logs: ## follow the Daily News read-aloud runs
 	journalctl --user -fu news-audio.service
 
 research-setup: units ## enable and (re)start research-runner, which runs deep research for the skill; asks first while a run is going (FORCE=1 doesn't)
-	systemctl --user enable research-runner.service
-	python3 tools/run_guard.py research-runner.service
-	systemctl --user restart research-runner.service
+	$(call guarded-restart,research-runner.service)
 
 sites-setup: units serve-setup ## enable and (re)start sites-runner (and the article writer it serves at :8445/news/write), which writes the sites' entries and builds them for the sites MCP server
 	$(call enable-restart,sites-runner.service)
@@ -142,9 +144,7 @@ relay-setup: units serve-setup ## make the Nilson relay's secrets file (~/.confi
 
 agents-setup: units serve-setup ## check agents-runner's key (~/.config/everythingllm/agents.env), then enable and (re)start it, which runs delegations; asks first while one is going (FORCE=1 doesn't)
 	python3 tools/agents_env.py
-	systemctl --user enable agents-runner.service
-	python3 tools/run_guard.py agents-runner.service
-	systemctl --user restart agents-runner.service
+	$(call guarded-restart,agents-runner.service)
 
 %-logs:          ## follow <name>-runner or <name> (research, sites, audit, relay, agents)
 	journalctl --user -f -u $*-runner.service -u $*.service

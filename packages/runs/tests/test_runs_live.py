@@ -14,7 +14,6 @@ class Things(RunService):
 
 class ThingLive(live.Live):
     PATH = "/_live/things/"
-    ID = r"th-[0-9a-f]{8}"
     LABEL = "Thing"
 
 

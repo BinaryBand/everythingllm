@@ -8,24 +8,14 @@ Config (environment, from host.env and the unit):
 """
 
 import html
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from runs import live
 
-if TYPE_CHECKING:
-    from research.runner import Runner
-
-PATH = "/_live/research/"
-LABEL = "Deep research"
-
 
 class Live(live.Live):
-    PATH = PATH
-    ID = r"dr-[0-9a-f]{8}"
-    LABEL = LABEL
-
-    def __init__(self, runner: "Runner"):
-        super().__init__(runner, runner.settings.runlogs, runner.settings.pages_url)
+    PATH = "/_live/research/"
+    LABEL = "Deep research"
 
     def subject_of(self, record: dict[str, Any]) -> str:
         return str(record.get("question") or record.get("subject") or "")
@@ -56,13 +46,8 @@ class Live(live.Live):
         items = "".join(f"<li>{html.escape(e)}</li>" for e in events)
         opens = "" if done else " This page opens the report when it's published."
         return (
-            f"<h1>{html.escape(subject or LABEL)}</h1>\n"
-            f"<p>{html.escape(LABEL)}: {html.escape(status)}.{opens}</p>\n"
+            f"<h1>{html.escape(subject or self.LABEL)}</h1>\n"
+            f"<p>{html.escape(self.LABEL)}: {html.escape(status)}.{opens}</p>\n"
             f"<ol>{items}</ol>\n"
             f'<p><a href="{html.escape(research)}">Every report is on the research site.</a></p>'
         )
-
-
-def card(pages_url: str, run_id: str, question: str) -> str:
-    """The Markdown line that shows a run's live card as a link; "" without a public URL."""
-    return Live.card_line(pages_url, run_id, question)

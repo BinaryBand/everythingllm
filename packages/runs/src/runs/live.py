@@ -17,7 +17,8 @@ When a run starts, the service hands its caller a card line to paste (`Live.card
   it goes (no script). Pages are sent with a CSP that allows nothing but their own inline
   CSS, and everything a run says is escaped on them: a run's text is model output.
 
-A service subclasses Live and sets PATH, ID, LABEL and its wording (`ended_line`, `body`).
+A service subclasses Live and sets PATH, LABEL and its wording (`ended_line`, `body`). A run's
+id is the service's ID_PREFIX and 8 hex digits (RunService.new_run).
 """
 
 import asyncio
@@ -38,7 +39,6 @@ CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-acti
 
 class Live:
     PATH = "/_live/run/"
-    ID = r"run-[0-9a-f]{8}"
     LABEL = "Run"
     MAX_STREAM = 30 * 60  # seconds one connection is pushed frames; a reload asks again
     GAP = 1.0  # seconds between frames at least
@@ -57,7 +57,7 @@ class Live:
         self.pages_url = pages_url
         # A run's card (.png) or its link, with or without PATH: tailscale serve strips it.
         self.route = re.compile(
-            rf"(?:{re.escape(self.PATH.rstrip('/'))})?/({self.ID})(\.png)?"
+            rf"(?:{re.escape(self.PATH.rstrip('/'))})?/({re.escape(service.ID_PREFIX)}[0-9a-f]{{8}})(\.png)?"
         )
 
     @classmethod
@@ -89,9 +89,8 @@ class Live:
             if image and run:
                 await live.push(writer, self.frames(run))
             elif image:
-                await live.send(
-                    writer, "200 OK", self.logged_frame(run_id), "image/png"
-                )
+                frame = await asyncio.to_thread(self.logged_frame, run_id)
+                await live.send(writer, "200 OK", frame, "image/png")
             else:
                 await self.page(writer, run_id, run)
         except Exception:  # one viewer's trouble mustn't reach the runs
@@ -214,7 +213,7 @@ class Live:
             events = run.events[-12:]
             status = self.state_of(run.result) if done else "running"
         else:
-            result = find(self.runlogs, run_id) or {}
+            result = await asyncio.to_thread(find, self.runlogs, run_id) or {}
             subject, done = self.subject_of(result), True
             events = [e[1] for e in result.get("events", [])[-12:]]
             status = self.STATES.get(result.get("status", ""), "not known here")

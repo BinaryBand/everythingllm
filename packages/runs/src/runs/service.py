@@ -22,12 +22,16 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import hostrpc
 from hostrpc import RunnerError
 
-from runs.runlog import MAX_EVENTS
+from runs.runlog import MAX_EVENTS, sweep_interrupted
+
+if TYPE_CHECKING:
+    from runs.live import Live
 
 Progress = Callable[[str], None]
 Meter = Callable[[float], None]
@@ -180,6 +184,38 @@ class RunService(hostrpc.Service):
                 for r in self.runs.values()
             ]
         }
+
+    async def serve(
+        self,
+        socket: Path,
+        live: "Live",
+        port: int,
+        runlogs: Path,
+        limit: int = hostrpc.LIMIT,
+    ) -> None:
+        """Log what an earlier service left running as interrupted, serve the live cards on
+        `port` and answer on `socket` until stopped."""
+        # Nothing in running/ can be ours yet: those runs died with an earlier service.
+        for subject in sweep_interrupted(runlogs, everything=True):
+            self.log.info(
+                "logged a %s run an earlier runner left as interrupted: %s",
+                self.NOUN,
+                subject[:120],
+            )
+        # The live cards are a nicety: without their port, the runs still go.
+        try:
+            self.live = await live.serve(port)
+        except OSError as e:
+            self.log.error("no live cards: can't listen on port %s: %s", port, e)
+        try:
+            await hostrpc.serve(self, socket, limit=limit)
+        finally:
+            if self.live:
+                self.live.close()
+            await self.aclose()
+
+    async def aclose(self) -> None:
+        """Let go of what the service holds besides its runs, once it stops."""
 
     def prune(self) -> None:
         now = time.monotonic()

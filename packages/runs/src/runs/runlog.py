@@ -16,6 +16,7 @@ import os
 import secrets
 import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -83,6 +84,23 @@ def sweep_interrupted(
         except (OSError, ValueError):
             continue  # unreadable, or swept meanwhile; leave it
     return swept
+
+
+def since(dir: Path, started: str) -> Iterator[dict]:
+    """The lines of the runs that started at `started` (an iso time) or later, oldest month
+    first; a torn or odd line is skipped."""
+    for file in sorted(f for f in dir.glob("*.jsonl") if f.stem >= started[:7]):
+        try:
+            lines = file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and str(record.get("started") or "") >= started:
+                yield record
 
 
 def find(dir: Path, run_id: str, months: int = 2) -> dict | None:

@@ -18,7 +18,7 @@ sends the task as a plain chat rather than to the agent, for judgment over what 
 
 The result is {status: ok|partial|failed|cancelled, tasks: [{name, profile, status, text,
 error, seconds, cost, model, tokens}], then (the same, or None), cost, tokens (per model:
-{prompt, completion}), title}. `cost` is what AnythingLLM could price: it has no price for
+{prompt, completion})}. `cost` is what AnythingLLM could price: it has no price for
 generic-openai, the planner's provider, so `tokens` is the full count. Every task gets a thread of
 its own in its workspace, deleted when it ends, and at most SLOTS tasks run at once across
 all delegations. A task's reply is data: it goes into `then`'s prompt quoted and labelled,
@@ -45,7 +45,6 @@ Config (environment, from host.env and agents.env through the unit):
 
 import asyncio
 import html
-import json
 import logging
 import math
 import os
@@ -58,7 +57,7 @@ from typing import Any, ClassVar
 import hostrpc
 from hostrpc import RunnerError
 from runs import live
-from runs.runlog import RunLog, iso, month_file, sweep_interrupted
+from runs.runlog import RunLog, iso, since
 from runs.service import Meter, Progress, Run, RunService
 
 from agents.anythingllm import AnythingLLM, AnythingLLMError
@@ -107,21 +106,7 @@ class Settings:
 def spent(runlogs: Path, now: float | None = None) -> float:
     """What the delegations that started in the last 24 hours cost, from the run log."""
     now = time.time() if now is None else now
-    since = iso(now - 24 * 3600)
-    total = 0.0
-    for file in sorted({month_file(runlogs, since), month_file(runlogs, iso(now))}):
-        try:
-            lines = file.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            try:
-                record = json.loads(line)
-                if str(record.get("started") or "") >= since:
-                    total += float(record.get("cost") or 0)
-            except (ValueError, TypeError, AttributeError):
-                continue  # a torn or odd line doesn't stop the count
-    return total
+    return sum(float(r.get("cost") or 0) for r in since(runlogs, iso(now - 24 * 3600)))
 
 
 @dataclass(frozen=True)
@@ -214,19 +199,12 @@ def tokens_by_model(outcomes: list[Outcome]) -> dict[str, dict[str, int]]:
 
 class AgentsLive(live.Live):
     PATH = "/_live/agents/"
-    ID = r"dg-[0-9a-f]{8}"
     LABEL = "Delegation"
     STATES: ClassVar[dict[str, str]] = {
         **live.Live.STATES,
         "partial": "done",
         "cancelled": "interrupted",
     }
-
-    def subject_of(self, record: dict[str, Any]) -> str:
-        return str(record.get("subject") or "")
-
-    def destination(self, result: dict[str, Any]) -> str | None:
-        return None  # the results are on the page
 
     @staticmethod
     def tasks_of(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -304,6 +282,10 @@ class Runner(RunService):
             except AnythingLLMError as e:
                 raise RunnerError(str(e)) from None
         return self.client
+
+    async def aclose(self) -> None:
+        if self.client:
+            await self.client.aclose()
 
     async def op_delegate(
         self, goal: str, tasks: list, then: dict | None = None
@@ -439,24 +421,10 @@ class Runner(RunService):
                 "then": None,
                 "cost": 0.0,
                 "tokens": {},
-                "title": run.subject,
             }
         finally:
             self.cancelled.discard(run.id)
-        runlog.write(
-            {
-                "run_id": run.id,
-                "card": card,
-                "subject": run.subject,
-                "title": run.subject,
-                "status": result["status"],
-                "error": result.get("error"),
-                "cost": result["cost"],
-                "tokens": result["tokens"],
-                "tasks": result["tasks"],
-                "then": result["then"],
-            }
-        )
+        runlog.write({"run_id": run.id, "card": card, "subject": run.subject, **result})
         return result
 
     def summary(
@@ -478,7 +446,6 @@ class Runner(RunService):
             "then": last.record() if last else None,
             "cost": round(sum(o.cost for o in everything), 6),
             "tokens": tokens_by_model(everything),
-            "title": run.subject,
         }
 
     @staticmethod
@@ -540,24 +507,8 @@ class Runner(RunService):
 
 async def serve(settings: Settings, socket: Path, runner: Runner | None = None) -> None:
     runner = runner or Runner(settings)
-    # Nothing in running/ can be ours yet: those delegations died with an earlier runner.
-    for goal in sweep_interrupted(settings.runlogs, everything=True):
-        log.info(
-            "logged a delegation an earlier runner left as interrupted: %s", goal[:120]
-        )
-    try:
-        runner.live = await AgentsLive(
-            runner, settings.runlogs, settings.pages_url
-        ).serve(settings.live_port)
-    except OSError as e:
-        log.error("no live cards: can't listen on port %s: %s", settings.live_port, e)
-    try:
-        await hostrpc.serve(runner, socket, limit=LIMIT)
-    finally:
-        if runner.live:
-            runner.live.close()
-        if runner.client:
-            await runner.client.aclose()
+    card = AgentsLive(runner, settings.runlogs, settings.pages_url)
+    await runner.serve(socket, card, settings.live_port, settings.runlogs, limit=LIMIT)
 
 
 def main() -> None:

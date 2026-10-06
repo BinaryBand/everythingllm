@@ -178,8 +178,8 @@ def test_other_requests_are_turned_away(served):
 
 
 def test_no_public_host_means_no_card():
-    assert live.card("", "dr-0123abcd", "q") == ""
-    assert live.card("https://h:8445", "dr-0123abcd", "a [b]") == (
+    assert live.Live.card_line("", "dr-0123abcd", "q") == ""
+    assert live.Live.card_line("https://h:8445", "dr-0123abcd", "a [b]") == (
         "[![Deep research: a \\[b\\]](https://h:8445/_live/research/dr-0123abcd.png)]"
         "(https://h:8445/_live/research/dr-0123abcd)"
     )

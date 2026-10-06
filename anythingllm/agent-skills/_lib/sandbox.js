@@ -1,10 +1,12 @@
 // What the sandbox skills (run-code, write-file, publish) share: the runner's socket, the
-// scope of a call, and turning the runner's errors into replies for the agent.
+// scope of a call, turning the runner's errors into replies for the agent, and telling it
+// what a sync of /public put on the pages site.
 //
 // The scope is where the call came from, never what the model says: the workspace (a
 // scheduled job has none, and gets "_jobs") and the chat thread ("default" for a
 // workspace's main chat, and for API, Telegram and job runs, which carry no thread).
-// sandbox-runner (packages/sandbox) mounts /work, /project and /shared/<workspace> by it.
+// sandbox-runner (packages/sandbox) mounts /work, /project, /shared/<workspace> and /public
+// by it.
 
 const { call, socketPath, Down, Refused } = require("./hostrpc");
 
@@ -33,4 +35,20 @@ async function withSandbox(self, work) {
   }
 }
 
-module.exports = { withSandbox };
+/** The lines saying what a sync of /public did (a run's, a write's or publish's `published`). */
+function publishedLines(p) {
+  if (!p) return [];
+  const lines = [];
+  for (const page of p.live || []) {
+    lines.push(`live: ${page.url} (${page.files} file${page.files === 1 ? "" : "s"})`);
+    if (page.card) lines.push(`Card: ${page.card}`);
+    if (page.blocked?.length)
+      lines.push(`warning: the pages site blocks ${page.blocked.join(", ")} on ${page.slug}; the page will show without them`);
+  }
+  for (const slug of p.removed || []) lines.push(`taken down: the page '${slug}'`);
+  for (const s of p.skipped || []) lines.push(`not published: ${s.why}`);
+  if (p.error) lines.push(`publishing failed: ${p.error}`);
+  return lines;
+}
+
+module.exports = { withSandbox, publishedLines };

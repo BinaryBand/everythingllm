@@ -144,3 +144,31 @@ test("write-file and publish replies", async () => {
     await runner.close();
   }
 });
+
+test("what a sync published comes back with run-code, write-file and publish", async () => {
+  const published = {
+    live: [{ slug: "notes", url: "https://h/notes/", files: 1, blocked: ["scripts"], card: "[![Notes](c.png)](https://h/notes/)" }],
+    removed: ["old"],
+    skipped: [{ name: "Bad Name", slug: "Bad Name", why: "'Bad Name' isn't a page name" }],
+  };
+  const runner = await fakeRunner((op) => {
+    if (op === "run") return { ok: true, result: { ...done, changed: ["/public/notes/index.html"], published } };
+    if (op === "write") return { ok: true, result: { path: "/public/old", folder: true, published: { removed: ["old"] } } };
+    if (op === "publish") return { ok: true, result: { unchanged: true } };
+  });
+  try {
+    const { self } = agent();
+    const reply = await runCode.handler.call(self, { language: "bash", code: "x" });
+    assert.match(
+      reply,
+      /live: https:\/\/h\/notes\/ \(1 file\)\nCard: \[!\[Notes\]\(c\.png\)\]\(https:\/\/h\/notes\/\)\nwarning: the pages site blocks scripts on notes; the page will show without them\ntaken down: the page 'old'\nnot published: 'Bad Name' isn't a page name$/
+    );
+    assert.equal(
+      await writeFile.handler.call(self, { path: "/public/old", delete: true }),
+      "deleted folder /public/old\ntaken down: the page 'old'"
+    );
+    assert.equal(await publish.handler.call(self, {}), "/public and the pages site already match; nothing to publish");
+  } finally {
+    await runner.close();
+  }
+});

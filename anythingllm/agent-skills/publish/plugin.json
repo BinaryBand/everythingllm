@@ -4,7 +4,7 @@
   "name": "Publish",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Publish a file or folder from the sandbox to the private pages site and return its link: a standalone page to share (a plan, a table, a write-up), a chart, a CSV. An HTML file becomes the page; a folder is published whole, with its index.html as the page (keep charts and images beside it and link them relatively). Pages are static: scripts don't run and nothing loads from other hosts, but CSS in <style> or style=\"\" works. Publishing to a slug this workspace already has replaces it, and a slug another workspace has is taken; see what's published with run-code `ls /pages`. remove takes a page down.",
+  "description": "Publish a file or folder from the sandbox to the private pages site and return its link: a standalone page to share (a plan, a table, a write-up), a chart, a CSV. An HTML file becomes the page; a folder is published whole, with its index.html as the page (keep charts and images beside it and link them relatively). Pages are static: scripts don't run and nothing loads from other hosts, but CSS in <style> or style=\"\" works. This workspace's pages are its /public folder, synced to the site whenever a run or write-file there ends; publish copies a file or folder from elsewhere into /public/<slug> and syncs, and with no path it forces a sync (of the slug, or of everything). Publishing to a slug this workspace already has replaces it, and a slug another workspace has is taken; `ls /public` in run-code lists this workspace's pages. remove deletes /public's entry for the slug, taking the page down.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -22,7 +22,7 @@
     "file": "handler.js",
     "params": {
       "path": {
-        "description": "The file or folder in the sandbox, e.g. '/work/report' or '/project/chart.png'.",
+        "description": "The file or folder in the sandbox to copy into /public/<slug>, e.g. '/work/report' or '/project/chart.png'. Leave it out to sync what's already in /public.",
         "type": "string"
       },
       "slug": {

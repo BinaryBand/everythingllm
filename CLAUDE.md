@@ -102,10 +102,11 @@ is 3.13. Keep code 3.12-compatible, and check with
   `~/.local/share/everythingllm/pages/entries/<site>/<section>/<slug>.md` (host-only, outside storage), and `sites-runner` rebuilds that site with the
   host's zola. A write that doesn't build is undone. Other writers use the `sites-write`
   command or `SiteStore`, so the entry format has one implementation.
-- The exception is free-form pages: the `publish` skill has `sandbox-runner` copy a file or
-  folder from the sandbox to `~/.local/share/everythingllm/pages/public/<slug>/` (the pages site,
-  outside storage), with a `.page` marker naming the
-  workspace that owns it; Caddy allows inline CSS in marked folders.
+- The exception is free-form pages: a sandbox workspace's `/public` is its pages, and
+  `sandbox-runner` syncs it to `~/.local/share/everythingllm/pages/public/<slug>/` (plain
+  files only, swapped in whole) whenever a run, write or `publish` that changed it ends,
+  with a `.page` marker naming the workspace that owns each page; Caddy allows inline CSS
+  in marked folders and never serves a workspace folder directly.
 - Sites live in `zola/sites/<name>/` and share the `zola/themes/agent-site/` theme
   (Tera 2 `{% component %}`s, not macros). Each site documents its fields for the agent in
   `agent_help` in its `zola.toml`.

@@ -1,7 +1,8 @@
 # Plan: per-workspace sharing and publishing, shared themes, and sites the agent designs
 
-Status: proposed, 2026-10-06. Not started. Replaces an earlier draft built on one global
-`/shared` with a manifest of write zones (see "Rejected").
+Status: stages 0 and 1 done 2026-10-06 (per-workspace `shared/`, `/system/themes`, and
+`public/` synced to the pages site); stages 2 and 3 not started. Replaces an earlier draft
+built on one global `/shared` with a manifest of write zones (see "Rejected").
 
 ## Goal
 

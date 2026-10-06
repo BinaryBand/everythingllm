@@ -2,7 +2,7 @@
 // output. Waits for the whole run, showing in the chat that it's still going; if the chat
 // closes first, the run finishes on its own and its files stay.
 
-const { withSandbox } = require("../_lib/sandbox");
+const { withSandbox, publishedLines } = require("../_lib/sandbox");
 
 function format(r) {
   const lines = [];
@@ -15,6 +15,7 @@ function format(r) {
   if (r.changed.length)
     lines.push(`files created or changed: ${r.changed.join(", ")}${r.changed_more ? ` and ${r.changed_more} more` : ""}`);
   if (r.warning) lines.push(`warning: ${r.warning}`);
+  lines.push(...publishedLines(r.published));
   return lines.join("\n");
 }
 

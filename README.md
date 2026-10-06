@@ -378,13 +378,25 @@ app's, and a way to publish what it makes:
 - `run-code` runs a Python or bash script and replies with its output. It waits for the
   whole run (up to 300 s), showing in the chat that it's still going; skills, unlike MCP
   tools, have no 60 s limit. Reading, listing, moving and deleting files is bash.
-- `write-file` writes a text file, or deletes a file or folder (deleting `/work` or
-  `/project` empties it).
-- `publish` copies a file or folder to `/<slug>/` on the pages site (:8445), or takes a
-  page down. An HTML file becomes the page; a folder goes whole, with its `index.html` as
-  the page. The page belongs to the workspace that published it: only that workspace can
-  replace or remove it, and a slug that's taken by anything else (another workspace's
-  page, a Zola site, `/podcasts`) is refused. The root's `index.html` lists every page.
+- `write-file` writes a text file, or deletes a file or folder (deleting exactly one of the
+  workspace's folders empties it).
+- `publish` forces a sync of `/public` (below), copying a file or folder there first when
+  it's given one from elsewhere, or takes a page down.
+
+**Pages are `/public`.** A workspace's `/public` is its pages on the web: each top-level
+folder `public/<slug>/` is served as `https://<PUBLIC_HOST>:8445/<slug>/` (its
+`index.html` is the page), and a top-level file `public/<slug>.<ext>` as a one-file page.
+Whenever a run, a `write-file` or a `publish` that changed `/public` ends, `sandbox-runner`
+syncs it: changed pages are copied (plain files only, no symlinks, FIFOs or dotfiles, at
+most 500 MB a page) into a folder beside the live one and swapped in whole, and a page
+whose entry is gone from `/public` is taken down. The reply says what went live, what came
+down and what was skipped (a name that isn't a slug, a slug another workspace or a Zola
+site has, an empty folder). Caddy serves the copy, never a workspace folder: serving
+`/public` directly would follow its symlinks, serve FIFOs and half-written pages, and need
+a workspace prefix in every URL. Each page's `.page` marker names its workspace (only that
+workspace can replace or remove it) and a signature of its source, so an unchanged page
+isn't copied again. The root's `index.html` lists every page. A workspace's `/public`
+starts out holding the pages it had already published.
 
 **Link cards.** AnythingLLM's chat shows a Markdown image up to 800 px wide, and keeps it a
 link when it's inside one, even with "Render HTML in chat" off. So whatever publishes a page
@@ -421,7 +433,7 @@ Each run mounts:
   folders are mounted `noexec,nosuid,nodev` and are never on `PATH`.
 - `/system/themes`: the repo's Zola themes (`zola/themes`), read-only, for sites the agent
   builds.
-- `/pages`: the workspace's published pages, read-only, so `ls /pages` lists them.
+- `/public`: the workspace's pages on the web (see "Pages are `/public`").
 
 They live in `~/.local/share/everythingllm/sandbox/workspaces/<workspace>/` (`threads/<thread>/`,
 `project/` and `shared/`), out of the container's reach. The runner's own file operations
@@ -436,9 +448,10 @@ different workspaces overlap. `docs/shared-sites.md` has the design.
 **The lab site** is the one site the agent controls entirely: templates, stylesheets,
 `zola.toml` and content, in education's `/shared/education/sites/lab/`, where other
 workspaces can read it and copy it. It started as a copy of the `agent-site` theme and a
-welcome entry, with a `README.md` for the agent and a git repository so it can roll back. The sandbox image has the host's zola version; a run
-builds it (`zola build`, no network as always) and `publish` puts it at
-`https://<PUBLIC_HOST>:8445/lab/`. Nothing in the repo or on the host reads it, so it can
+welcome entry, with a `README.md` for the agent and a git repository so it can roll back.
+The sandbox image has the host's zola version; a run in education builds it into
+`/public/lab` (`zola build --output-dir /public/lab --force`, no network as always), and the
+sync puts it at `https://<PUBLIC_HOST>:8445/lab/`. Nothing in the repo or on the host reads it, so it can
 break without breaking anything else, and the CSP still holds for whatever it serves.
 
 **Each run** gets a fresh `localhost/everythingllm-sandbox` container, with the script mounted

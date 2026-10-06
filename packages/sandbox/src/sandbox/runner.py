@@ -10,8 +10,9 @@ AnythingLLM pass as a scope of {workspace, thread} (never chosen by the model):
   /project         the workspace's folder, shared by its threads and kept (pip installs go here)
   /shared/<ws>     the workspace's shared folder: it writes it, every other workspace reads it
   /shared/<other>  each other workspace's shared folder, read-only
+  /public          the workspace's pages on the web: synced to the pages site whenever a
+                   run, write or publish that changed it ends
   /system/themes   the repo's Zola themes, read-only
-  /pages           the workspace's published pages, read-only
 
 The shared and system folders are mounted noexec and never on PATH: they're data, and code
 in another workspace's folder isn't to be run. A workspace's folders together (its shared
@@ -23,10 +24,14 @@ needs: a run, a write and a publish in one workspace take turns, runs in differe
 workspaces overlap, and the runner's file operations only ever take paths in the caller's
 own folders, which no other workspace can change under them.
 
-Publishing copies a file or folder to `<site>/<slug>/`. The slug's `.page` marker holds the
-workspace that owns it: only that workspace can replace or remove it, and the pages site
-lets a marked folder use inline CSS (host/caddy/pages.Caddyfile). The site's root
-`index.html` lists every page and is rewritten after each change.
+Publishing is a sync of /public: each top-level folder `public/<slug>/` (or file
+`public/<slug>.<ext>`) is copied to `<site>/<slug>/`, plain files only, and swapped in
+whole; a page whose entry has gone from /public is taken down. Caddy serves the copy, never
+a workspace folder. The slug's `.page` marker holds the workspace that owns it (only that
+workspace can replace or remove it; the pages site lets a marked folder use inline CSS,
+host/caddy/pages.Caddyfile) and a signature of the source, so an unchanged page isn't
+copied again. The site's root `index.html` lists every page and is rewritten after each
+change. A workspace's /public starts out holding the pages it had already published.
 
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
@@ -45,6 +50,7 @@ Config (environment):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html as htmllib
 import json
 import logging
@@ -208,8 +214,8 @@ class Config:
 @dataclass(frozen=True)
 class Scope:
     """Where a call came from, and the host folders behind its writable mounts, all in the
-    workspace's folder (`home`): threads/<thread>/ (/work), project/ (/project) and
-    shared/ (/shared/<workspace>)."""
+    workspace's folder (`home`): threads/<thread>/ (/work), project/ (/project), shared/
+    (/shared/<workspace>) and public/ (/public)."""
 
     workspace: str
     thread: str
@@ -221,6 +227,7 @@ class Scope:
             "/work": self.home / "threads" / self.thread,
             "/project": self.home / "project",
             f"/shared/{self.workspace}": self.home / "shared",
+            "/public": self.home / "public",
         }
 
     def mount_of(self, parts: tuple[str, ...]) -> tuple[str, tuple[str, ...]] | None:
@@ -276,6 +283,11 @@ def snapshot(scope: Scope) -> Usage:
                     )
             usage.tops[key] = usage.tops.get(key, 0) + st.st_size
     return usage
+
+
+def public_files(usage: Usage) -> dict[str, tuple[int, int]]:
+    """The part of a snapshot under /public, to tell whether a run changed the pages."""
+    return {p: sig for p, sig in usage.files.items() if p.startswith("/public/")}
 
 
 def write_regular(target: Path, data: bytes, path: str) -> None:
@@ -447,6 +459,16 @@ def regular_files(source: Path) -> tuple[list[tuple[Path, str]], int]:
     return sorted(found, key=lambda f: f[1]), size
 
 
+def signature(files: list[tuple[Path, str]]) -> str:
+    """What a page's source looks like: its files' names, sizes and times. Stored in the
+    page's marker, so a sync skips a page whose source hasn't changed."""
+    h = hashlib.sha256()
+    for path, name in files:
+        st = os.lstat(path)
+        h.update(f"{name}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+    return h.hexdigest()[:16]
+
+
 @dataclass
 class Job:
     """A run, kept for RESULT_KEEP after it finishes so op_wait can still fetch its result."""
@@ -485,10 +507,28 @@ class Runner(hostrpc.Service):
             if not KEY_RE.match(key):
                 raise SandboxError(f"bad {what} '{key}'")
         s = Scope(workspace, thread, self.config.root / workspace)
+        fresh = not (s.home / "public").exists()
         for d in s.roots.values():
             d.mkdir(parents=True, exist_ok=True)
         os.utime(s.roots["/work"])
+        if fresh:
+            self.seed(s)
         return s
+
+    def seed(self, scope: Scope) -> None:
+        """Fill a new /public with the pages the workspace had already published, and note
+        each one's source in its marker, so the first sync leaves them as they are. The
+        pages are the runner's own copies, so this copy is safe."""
+        public = scope.home / "public"
+        for slug, page in self.pages(scope.workspace):
+            files, _ = regular_files(page)
+            for source, name in files:
+                (public / slug / name).parent.mkdir(parents=True, exist_ok=True)
+                copy_regular(source, public / slug / name)
+            m = marker(page) or {}
+            m["source"] = signature(regular_files(public / slug)[0])
+            hostrpc.atomic_write(page / PAGE_MARKER, json.dumps(m) + "\n")
+        log.info("seeded %s's /public", scope.workspace)
 
     def split(self, scope: Scope, path: str) -> tuple[str, Path, Path]:
         """`path` in the sandbox (under one of the caller's own mounts, or relative to /work)
@@ -678,6 +718,11 @@ class Runner(hostrpc.Service):
             finally:
                 await self.podman(["rm", "-f", "--ignore", name], 60, None)
                 await asyncio.to_thread(shutil.rmtree, run_dir, True)
+            published = (
+                await self.sync(scope)
+                if public_files(before) != public_files(after)
+                else None
+            )
         changed = sorted(
             p for p, sig in after.files.items() if before.files.get(p) != sig
         )
@@ -701,6 +746,7 @@ class Runner(hostrpc.Service):
             "stderr": err,
             "changed": changed[:LIST_MAX],
             "changed_more": max(0, len(changed) - LIST_MAX),
+            "published": published,
             "warning": (
                 f"this workspace's sandbox uses {after.total >> 20} MB of its {WORKSPACE_MAX_BYTES >> 20} MB; "
                 "delete what isn't needed"
@@ -712,18 +758,11 @@ class Runner(hostrpc.Service):
     def prepare(
         self, name: str, scope: Scope, run_dir: Path, script: str, code: str
     ) -> list[str]:
-        """Write the run's script and return its podman arguments. Each of the workspace's
-        pages is bound read-only onto an empty folder of its name under the run's own
-        read-only /pages, so a run sees its pages and nothing else there. Every other
-        workspace's shared folder, and the repo's themes, are bound read-only."""
+        """Write the run's script and return its podman arguments: the workspace's own
+        folders read-write, every other workspace's shared folder and the repo's themes
+        read-only."""
         (run_dir / "code").mkdir(parents=True)
         (run_dir / "code" / script).write_text(code)
-        pages = run_dir / "pages"
-        pages.mkdir()
-        binds = []
-        for slug, folder in self.pages(scope.workspace):
-            (pages / slug).mkdir()
-            binds += ["-v", f"{folder}:/pages/{slug}:ro"]
         # No --rm: the container is kept until execute has asked podman whether it ran out of memory.
         return [
             "run",
@@ -758,7 +797,11 @@ class Runner(hostrpc.Service):
                 for a in (
                     "-v",
                     f"{root}:{mount}"
-                    + (f":{DATA_RW}" if mount.startswith("/shared/") else ""),
+                    + (
+                        f":{DATA_RW}"
+                        if mount == "/public" or mount.startswith("/shared/")
+                        else ""
+                    ),
                 )
             ),
             *(
@@ -770,9 +813,6 @@ class Runner(hostrpc.Service):
             f"{self.config.system_themes}:/system/themes:{DATA_RO}",
             "-v",
             f"{run_dir / 'code'}:/sandbox:ro",
-            "-v",
-            f"{pages}:/pages:ro",
-            *binds,
             IMAGE,
         ]
 
@@ -798,21 +838,30 @@ class Runner(hostrpc.Service):
         its limit can get back under). Deleting exactly one of the workspace's mounts empties
         it."""
         s = self.scope(scope)
+        mount = self.split(s, path)[0]
         self.idle(s.workspace)
         async with self.lock(s.workspace):
-            if delete:
-                return await asyncio.to_thread(self.delete, s, path)
-            data = (content or "").encode()
-            if len(data) > WRITE_BYTES:
-                raise SandboxError(
-                    f"content is {len(data)} bytes; the limit is {WRITE_BYTES}"
-                )
-            if (usage := await asyncio.to_thread(snapshot, s)).total + len(
-                data
-            ) > WORKSPACE_MAX_BYTES:
-                raise self.over_quota(usage, "write files")
-            target = self.resolve(s, path)
-            await asyncio.to_thread(write_regular, target, data, path)
+            result = await self.write(s, path, content, delete)
+            if mount == "/public":
+                result["published"] = await self.sync(s)
+        return result
+
+    async def write(
+        self, s: Scope, path: str, content: str, delete: bool
+    ) -> dict[str, Any]:
+        """op_write's work, under the workspace's lock."""
+        if delete:
+            return await asyncio.to_thread(self.delete, s, path)
+        data = (content or "").encode()
+        if len(data) > WRITE_BYTES:
+            raise SandboxError(
+                f"content is {len(data)} bytes; the limit is {WRITE_BYTES}"
+            )
+        usage = await asyncio.to_thread(snapshot, s)
+        if usage.total + len(data) > WORKSPACE_MAX_BYTES:
+            raise self.over_quota(usage, "write files")
+        target = self.resolve(s, path)
+        await asyncio.to_thread(write_regular, target, data, path)
         return {"path": path.strip(), "bytes": len(data)}
 
     def delete(self, scope: Scope, path: str) -> dict[str, Any]:
@@ -853,62 +902,205 @@ class Runner(hostrpc.Service):
         )
 
     async def op_publish(
-        self, scope: dict[str, Any], slug: str, path: str = "", remove: bool = False
+        self,
+        scope: dict[str, Any],
+        slug: str = "",
+        path: str = "",
+        remove: bool = False,
     ) -> dict[str, Any]:
-        """Publish a file or folder as `/<slug>/` (an HTML file becomes its index.html, a
-        folder is copied whole), replacing what the workspace had there; or remove the slug."""
+        """Publishing is a sync of /public (see the module docstring); this forces one.
+        With `path` outside /public, that file or folder is first copied to
+        /public/<slug> (an HTML file as its index.html); with `remove`, /public's entry for
+        `slug` is deleted, which takes the page down. With a slug, the reply is that page's
+        (url, files, blocked, card, or removed); without one, the sync's."""
         s = self.scope(scope)
-        if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+        if (slug or remove or (path or "").strip()) and not (
+            isinstance(slug, str) and SLUG_RE.fullmatch(slug)
+        ):
             raise SandboxError(
                 "slug must be 1-63 lowercase letters, digits or hyphens, not starting "
                 "or ending with a hyphen, e.g. 'trip-plan'"
             )
-        dest = self.config.site_dir / slug
+        dest = self.config.site_dir / slug if slug else None
         self.idle(s.workspace)
-        async with self.lock(s.workspace), self._site:
+        async with self.lock(s.workspace):
             if (
-                os.path.lexists(dest)
+                dest
+                and os.path.lexists(dest)
                 and (marker(dest) or {}).get("workspace") != s.workspace
             ):
                 raise SandboxError(
                     f"'{slug}' is taken on the pages site; choose another slug"
                 )
+            public = s.home / "public"
             if remove:
-                if not os.path.lexists(dest):
+                entries = self.public_entries(public, slug)
+                if not entries and not (dest and os.path.lexists(dest)):
                     raise SandboxError(f"there's no page '{slug}'")
-                m = marker(dest) or {}
-                await asyncio.to_thread(remove_path, dest)
-                linkcard.remove(
-                    self.config.site_dir,
-                    self.page_url(slug, m.get("entry", "index.html")),
+                for e in entries:
+                    await asyncio.to_thread(remove_path, e)
+            elif path and path.strip() and self.split(s, path)[0] != "/public":
+                await asyncio.to_thread(self.stage, s, path, slug)
+            elif slug and not self.public_entries(public, slug):
+                raise SandboxError(
+                    f"there's nothing at /public/{slug} to publish; give the path of "
+                    "the file or folder to publish"
                 )
-                result: dict[str, Any] = {"slug": slug, "removed": True}
+            synced = await self.sync(s) or {}
+        if not slug:
+            return synced or {"unchanged": True}
+        if remove:
+            return {"slug": slug, "removed": True}
+        for why in (k["why"] for k in synced.get("skipped", []) if k["slug"] == slug):
+            raise SandboxError(why)
+        for page in synced.get("live", []):
+            if page["slug"] == slug:
+                return page
+        return await asyncio.to_thread(self.page_info, s.workspace, slug)  # unchanged
+
+    def public_entries(self, public: Path, slug: str) -> list[Path]:
+        """/public's entries for `slug`: its folder, or a file named <slug>.<ext>."""
+        if not public.is_dir():
+            return []
+        return [
+            e
+            for e in public.iterdir()
+            if e.name == slug or (Path(e.name).stem == slug and "." in e.name)
+        ]
+
+    def stage(self, scope: Scope, path: str, slug: str) -> None:
+        """Copy a file or folder from the workspace's own folders to /public/<slug>, in place
+        of whatever was there: an HTML file as its index.html, a folder whole (plain files
+        only)."""
+        source = self.resolve(scope, path)
+        if not source.exists():
+            raise SandboxError(f"there's no '{path}'")
+        files, size = regular_files(source)
+        if not files:
+            raise SandboxError(f"'{path}' has no files to publish")
+        if size > PUBLISH_MAX_BYTES:
+            raise SandboxError(
+                f"'{path}' is {size >> 20} MB; the most publish copies is {PUBLISH_MAX_BYTES >> 20} MB"
+            )
+        public = scope.home / "public"
+        new = Path(tempfile.mkdtemp(dir=public, prefix=f".{slug}."))
+        try:
+            for src, name in files:
+                (new / name).parent.mkdir(parents=True, exist_ok=True)
+                copy_regular(src, new / name)
+            for old in self.public_entries(public, slug):
+                remove_path(old)
+            os.rename(new, public / slug)
+        except BaseException:
+            remove_path(new)
+            raise
+
+    def page_info(self, workspace: str, slug: str) -> dict[str, Any]:
+        """A published page's details, as a sync reports one."""
+        page = self.config.site_dir / slug
+        m = marker(page) or {}
+        url = self.page_url(slug, m.get("entry", "index.html"))
+        return {
+            "slug": slug,
+            "url": url,
+            "files": len(regular_files(page)[0]),
+            "blocked": [],
+            "card": self.card(page, url, workspace),
+        }
+
+    def public_pages(
+        self, scope: Scope
+    ) -> tuple[dict[str, tuple[str, list[tuple[Path, str]]]], list[dict[str, str]]]:
+        """What /public makes pages of, by slug (the entry's name and its plain files), and
+        what it skips, with why. Hidden entries are left out without a word."""
+        public = scope.home / "public"
+        pages: dict[str, tuple[str, list[tuple[Path, str]]]] = {}
+        skipped: list[dict[str, str]] = []
+        for e in sorted(public.iterdir()) if public.is_dir() else []:
+            if e.name.startswith("."):
+                continue
+            mode = os.lstat(e).st_mode
+            slug = e.name if stat.S_ISDIR(mode) else Path(e.name).stem
+
+            why = ""
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                why = f"/public/{e.name} isn't a plain file or folder"
+            elif not SLUG_RE.fullmatch(slug):
+                why = f"'{slug}' isn't a page name: use lowercase letters, digits and hyphens"
+            elif slug in pages:
+                why = f"/public has two entries for '{slug}'; /public/{e.name} is left out"
             else:
-                if not path or not path.strip():
-                    raise SandboxError("give the path of the file or folder to publish")
-                source = self.resolve(s, path)
-                if not source.exists():
-                    raise SandboxError(f"there's no '{path}'")
-                files, size = await asyncio.to_thread(regular_files, source)
+                files, size = regular_files(e)
                 if not files:
-                    raise SandboxError(f"'{path}' has no files to publish")
-                if size > PUBLISH_MAX_BYTES:
-                    raise SandboxError(
-                        f"'{path}' is {size >> 20} MB; the most publish copies is {PUBLISH_MAX_BYTES >> 20} MB"
+                    why = f"/public/{e.name} has no files to publish"
+                elif size > PUBLISH_MAX_BYTES:
+                    why = (
+                        f"/public/{e.name} is {size >> 20} MB; a page can be at most "
+                        f"{PUBLISH_MAX_BYTES >> 20} MB"
                     )
-                entry, blocked = await asyncio.to_thread(
-                    self.replace, dest, files, s.workspace
+                else:
+                    pages[slug] = (e.name, files)
+            if why:
+                skipped.append({"name": e.name, "slug": slug, "why": why})
+        return pages, skipped
+
+    async def sync(self, scope: Scope) -> dict[str, Any] | None:
+        """Bring the workspace's pages in line with its /public; None when nothing changed
+        or needs saying. Callers hold the workspace's lock, so no run changes /public under
+        it."""
+        async with self._site:
+            try:
+                return await asyncio.to_thread(self.sync_pages, scope)
+            except (OSError, SandboxError) as e:
+                log.warning("sync of %s's /public failed: %s", scope.workspace, e)
+                return {"error": str(e)}
+
+    def sync_pages(self, scope: Scope) -> dict[str, Any] | None:
+        site, workspace = self.config.site_dir, scope.workspace
+        pages, skipped = self.public_pages(scope)
+        live, removed = [], []
+        for slug, (name, files) in pages.items():
+            dest = site / slug
+            m = marker(dest)
+            if os.path.lexists(dest) and (m or {}).get("workspace") != workspace:
+                skipped.append(
+                    {
+                        "name": name,
+                        "slug": slug,
+                        "why": f"'{slug}' is taken on the pages site; choose another slug",
+                    }
                 )
-                url = self.page_url(slug, entry)
-                result = {
+                continue
+            source = signature(files)
+            if m and m.get("source") == source:
+                continue
+            entry, blocked = self.replace(dest, files, workspace, source)
+            url = self.page_url(slug, entry)
+            live.append(
+                {
                     "slug": slug,
                     "url": url,
                     "files": len(files),
                     "blocked": blocked,
-                    "card": await asyncio.to_thread(self.card, dest, url, s.workspace),
+                    "card": self.card(dest, url, workspace),
                 }
-            await asyncio.to_thread(self.rebuild_index)
-        return result
+            )
+        for slug, page in self.pages(workspace):
+            if slug not in pages and not any(k["slug"] == slug for k in skipped):
+                m = marker(page) or {}
+                remove_path(page)
+                linkcard.remove(site, self.page_url(slug, m.get("entry", "index.html")))
+                removed.append(slug)
+        if live or removed:
+            self.rebuild_index()
+            log.info(
+                "synced %s's /public: live %s, removed %s",
+                workspace,
+                [p["slug"] for p in live],
+                removed,
+            )
+        result = {"live": live, "removed": removed, "skipped": skipped}
+        return {k: v for k, v in result.items() if v} or None
 
     def page_url(self, slug: str, entry: str) -> str:
         return f"{self.config.site_url.rstrip('/')}/{page_path(slug, entry)}"
@@ -931,7 +1123,7 @@ class Runner(hostrpc.Service):
         )
 
     def replace(
-        self, dest: Path, files: list[tuple[Path, str]], workspace: str
+        self, dest: Path, files: list[tuple[Path, str]], workspace: str, source: str
     ) -> tuple[str, list[str]]:
         """Build the page in a temp folder beside `dest` and swap it in, so the site never
         serves half of one. Returns its entry file and what in its HTML the CSP blocks."""
@@ -940,9 +1132,9 @@ class Runner(hostrpc.Service):
         entry = "index.html" if "index.html" in names else names[0]
         new = Path(tempfile.mkdtemp(dir=site, prefix=f".{dest.name}."))
         try:
-            for source, name in files:
+            for src, name in files:
                 (new / name).parent.mkdir(parents=True, exist_ok=True)
-                copy_regular(source, new / name)
+                copy_regular(src, new / name)
                 (new / name).chmod(0o644)
             html = {
                 n: (new / n).read_text(errors="replace")
@@ -952,7 +1144,14 @@ class Runner(hostrpc.Service):
             m = TITLE_RE.search(html.get(entry, ""))
             title = htmllib.unescape(" ".join(m.group(1).split())) if m else dest.name
             (new / PAGE_MARKER).write_text(
-                json.dumps({"workspace": workspace, "title": title, "entry": entry})
+                json.dumps(
+                    {
+                        "workspace": workspace,
+                        "title": title,
+                        "entry": entry,
+                        "source": source,
+                    }
+                )
                 + "\n"
             )
             new.chmod(0o755)

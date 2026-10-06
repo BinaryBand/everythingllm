@@ -81,6 +81,10 @@ def shared(cfg, scope):
     return cfg.root / scope["workspace"] / "shared"
 
 
+def public(cfg, scope):
+    return cfg.root / scope["workspace"] / "public"
+
+
 def test_a_run_mounts_its_threads_work_and_its_workspaces_project(cfg):
     seen = {}
 
@@ -96,9 +100,9 @@ def test_a_run_mounts_its_threads_work_and_its_workspaces_project(cfg):
     assert not any(cfg.scripts.iterdir())  # removed after the run
     args, timeout, kill = r.podman.runs()[0]
     assert args[-2:] == ["python", "/sandbox/main.py"]
-    assert any(a.endswith(":/sandbox:ro") for a in args) and any(
-        a.endswith(":/pages:ro") for a in args
-    )
+    assert any(a.endswith(":/sandbox:ro") for a in args)
+    assert f"{public(cfg, A)}:/public:rw,noexec,nosuid,nodev" in args
+    assert not any("/pages" in a for a in args)
     assert kill == args[args.index("--name") + 1]
     assert timeout == runner.DEFAULT_TIMEOUT
     assert r.podman.calls[-1][0][:2] == ["rm", "-f"]
@@ -515,11 +519,14 @@ def test_publish_a_folder_as_a_page(cfg):
     }
     page = cfg.site_dir / "plot"
     assert (page / "plot.svg").read_text() == "<svg/>"
-    assert json.loads((page / ".page").read_text()) == {
+    m = json.loads((page / ".page").read_text())
+    assert m.pop("source") and m == {
         "workspace": "career",
         "title": "Plot & notes",
         "entry": "index.html",
     }
+    # What's published is also in the workspace's /public, its source from now on.
+    assert sorted(os.listdir(public(cfg, A) / "plot")) == ["index.html", "plot.svg"]
     assert (page / "plot.svg").stat().st_mode & 0o777 == 0o644
     index = (cfg.site_dir / "index.html").read_text()
     assert '<a href="plot/">Plot &amp; notes</a>' in index and "career" in index
@@ -603,14 +610,12 @@ def test_a_page_belongs_to_its_workspace(cfg):
     for slug in ("news", "unowned", "index.html"):
         with pytest.raises(runner.SandboxError, match="taken|slug must"):
             go(r.op_publish(A, slug, "x.html"))
-    # Each workspace's runs see its own pages, read-only.
+    # Each workspace's runs see its own pages, in its /public.
     seen = []
-    r.podman.effect = lambda m: seen.append({k for k in m if k.startswith("/pages/")})
-    go(r.op_run(A, "bash", "ls /pages"))
-    go(r.op_run(B, "bash", "ls /pages"))
-    assert seen == [{"/pages/mine"}, set()]
-    args = r.podman.runs()[0][0]
-    assert f"{cfg.site_dir / 'mine'}:/pages/mine:ro" in args
+    r.podman.effect = lambda m: seen.append(sorted(os.listdir(m["/public"])))
+    go(r.op_run(A, "bash", "ls /public"))
+    go(r.op_run(B, "bash", "ls /public"))
+    assert seen == [["mine"], []]
 
 
 def test_links_on_the_sites_own_origin_arent_blocked(cfg):
@@ -636,7 +641,7 @@ def test_publish_refuses_bad_input(cfg, tmp_path, monkeypatch):
     for path, msg in [
         ("missing", "no 'missing'"),
         ("/work", "all of /work"),
-        ("", "give the path"),
+        ("", "nothing at /public/s"),
     ]:
         with pytest.raises(runner.SandboxError, match=msg):
             go(r.op_publish(A, "s", path))
@@ -693,3 +698,146 @@ def test_the_pages_site_lets_marked_pages_use_inline_css():
     ).read_text()
     assert f"@page file /{{path.0}}/{runner.PAGE_MARKER}\n" in caddy
     assert f"hide {runner.PAGE_MARKER} .zola-site" in caddy
+
+
+# --- /public, synced to the pages site ---
+
+
+def test_a_page_written_into_public_goes_live_when_the_run_ends(cfg):
+    seen_live = []
+
+    def effect(m):
+        (m["/public"] / "notes").mkdir()
+        (m["/public"] / "notes" / "index.html").write_text(
+            "<title>Notes</title><p>hi</p>"
+        )
+        seen_live.append((cfg.site_dir / "notes").exists())  # not while the run goes
+
+    r = make(cfg, effect=effect)
+    res = go(r.op_run(A, "bash", "make notes"))
+    assert seen_live == [False]
+    [page] = res["published"]["live"]
+    assert page["url"] == "https://pages.example/notes/" and page["files"] == 1
+    assert page["card"].startswith("[![Notes]")
+    assert (cfg.site_dir / "notes" / "index.html").read_text().endswith("<p>hi</p>")
+    # A run that leaves /public alone publishes nothing.
+    r.podman.effect = None
+    assert go(r.op_run(A, "bash", "true"))["published"] is None
+
+
+def test_an_unchanged_page_isnt_copied_again_and_a_removed_one_comes_down(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/public/a/index.html", "<title>A</title>"))
+    res = go(r.op_write(A, "/public/b.html", "<title>B</title>"))
+    assert [p["slug"] for p in res["published"]["live"]] == ["b"]  # a didn't change
+    copied = (cfg.site_dir / "a" / "index.html").stat().st_mtime_ns
+    assert go(r.op_publish(A)) == {"unchanged": True}
+    assert (cfg.site_dir / "a" / "index.html").stat().st_mtime_ns == copied
+    res = go(r.op_write(A, "/public/a", delete=True))
+    assert res["published"] == {"removed": ["a"]}
+    assert not (cfg.site_dir / "a").exists() and (cfg.site_dir / "b").exists()
+    assert len(os.listdir(cfg.site_dir / "_cards")) == 1  # a's card went too
+    index = (cfg.site_dir / "index.html").read_text()
+    assert 'href="b/"' in index and 'href="a/"' not in index
+
+
+def test_what_public_makes_pages_of(cfg, tmp_path):
+    r = make(cfg)
+    go(r.op_run(A, "bash", "true"))
+    pub = public(cfg, A)
+    (pub / "data.csv").write_text("a,b")
+    (pub / "Bad Name").mkdir()
+    (pub / "Bad Name" / "x.html").write_text("x")
+    (pub / "twin").mkdir()
+    (pub / "twin" / "index.html").write_text("folder")
+    (pub / "twin.html").write_text("file")
+    (pub / "empty").mkdir()
+    (pub / ".git").mkdir()
+    (pub / ".git" / "config").write_text("[core]")
+    os.mkfifo(pub / "pipe")
+    (pub / "site").mkdir()
+    (pub / "site" / "index.html").write_text("<p>s</p>")
+    (pub / "site" / ".env").write_text("SECRET=1")
+    (pub / "site" / "leak").symlink_to(tmp_path / "victim")
+    out = go(r.op_publish(A))
+    assert sorted(p["slug"] for p in out["live"]) == ["data", "site", "twin"]
+    assert {k["name"] for k in out["skipped"]} == {
+        "Bad Name",
+        "twin.html",
+        "empty",
+        "pipe",
+    }
+    assert (cfg.site_dir / "twin" / "index.html").read_text() == "folder"
+    assert sorted(os.listdir(cfg.site_dir / "site")) == [".page", "index.html"]
+    assert [p["url"] for p in out["live"] if p["slug"] == "data"] == [
+        "https://pages.example/data/data.csv"
+    ]
+
+
+def test_a_slug_another_workspace_owns_is_skipped_and_its_page_stays(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/public/notes.html", "career's"))
+    res = go(r.op_write(B, "/public/notes.html", "home's"))
+    [skip] = res["published"]["skipped"]
+    assert skip["name"] == "notes.html" and "taken" in skip["why"]
+    assert (cfg.site_dir / "notes" / "index.html").read_text() == "career's"
+    (cfg.site_dir / "news").mkdir()
+    (cfg.site_dir / "news" / ".zola-site").touch()
+    res = go(r.op_write(B, "/public/news/index.html", "x"))
+    assert "taken" in res["published"]["skipped"][-1]["why"]
+    assert not (cfg.site_dir / "news" / "index.html").exists()
+
+
+def test_a_page_over_the_cap_is_skipped_and_kept_as_it_was(cfg, monkeypatch):
+    r = make(cfg)
+    go(r.op_write(A, "/public/p.html", "ok"))
+    monkeypatch.setattr(runner, "PUBLISH_MAX_BYTES", 3)
+    res = go(r.op_write(A, "/public/p.html", "too big"))
+    assert "at most 0 MB" in res["published"]["skipped"][0]["why"]
+    assert (cfg.site_dir / "p" / "index.html").read_text() == "ok"
+
+
+def test_csp_warnings_come_back_with_the_sync(cfg):
+    res = go(make(cfg).op_write(A, "/public/p.html", "<script>x()</script>"))
+    assert res["published"]["live"][0]["blocked"] == ["scripts"]
+
+
+def test_a_workspaces_public_starts_with_the_pages_it_had(cfg):
+    page = cfg.site_dir / "old"
+    page.mkdir()
+    (page / "index.html").write_text("<title>Old</title>kept")
+    (page / "img").mkdir()
+    (page / "img" / "a.png").write_bytes(b"png")
+    (page / ".page").write_text(
+        json.dumps({"workspace": "career", "title": "Old", "entry": "index.html"})
+    )
+    other = cfg.site_dir / "theirs"
+    other.mkdir()
+    (other / "index.html").write_text("x")
+    (other / ".page").write_text(
+        json.dumps({"workspace": "home", "entry": "index.html"})
+    )
+    r = make(cfg)
+    assert go(r.op_publish(A)) == {"unchanged": True}  # seeded, so nothing to do
+    assert sorted(os.listdir(public(cfg, A))) == ["old"]
+    assert (public(cfg, A) / "old" / "img" / "a.png").read_bytes() == b"png"
+    assert (page / "index.html").read_text().endswith("kept")
+    # From then on /public is the source: deleting it there takes the page down.
+    go(r.op_write(A, "/public/old", delete=True))
+    assert not page.exists() and other.exists()
+
+
+def test_publish_copies_into_public_and_remove_deletes_from_it(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "trip/index.html", "<title>Trip</title>"))
+    res = go(r.op_publish(A, "trip-plan", "/work/trip"))
+    assert res["url"] == "https://pages.example/trip-plan/"
+    assert os.listdir(public(cfg, A) / "trip-plan") == ["index.html"]
+    # Publishing an unchanged page again answers with the page as it is.
+    assert go(r.op_publish(A, "trip-plan"))["url"] == res["url"]
+    assert go(r.op_publish(A, "trip-plan", remove=True)) == {
+        "slug": "trip-plan",
+        "removed": True,
+    }
+    assert not (public(cfg, A) / "trip-plan").exists()
+    assert not (cfg.site_dir / "trip-plan").exists()

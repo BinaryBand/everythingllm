@@ -283,7 +283,7 @@ through its UI.
   - `appctl` — the apps' setup, logs and tailnet mappings, from the registry
   - `run_guard` — asks before a runner with a live run restarts
   - `agents_env`, `relay_env`, `gateway_env` — the agents, relay and gateway setups' key
-    file checks
+    file checks; `gateway_env` also adds a gateway client (`uv run hostctl gateway-client`)
   - `skills` — writes the generated skills (`uv run hostctl skills`)
   - `health.sh` — `uv run hostctl health`
 
@@ -643,7 +643,8 @@ over a Unix socket, `storage/everythingllm/sandbox/runner.sock` (see "Services o
 **Scopes.** A call carries where it came from, which AnythingLLM gives the skill and the
 model never chooses: the workspace (`_jobs` for a scheduled job, which has none) and the
 chat thread (`default` for a workspace's main chat, and for API, Telegram and job runs).
-Each run mounts:
+A call through the MCP gateway carries the workspace `client-<name>`, from the client's
+token, and the thread `gateway` (see "MCP gateway"). Each run mounts:
 
 - `/work`: the thread's scratch folder, and where a run starts. It's deleted 7 days after
   the thread last used the sandbox.
@@ -1174,23 +1175,58 @@ it from starting.
   `run_job`. The gateway wraps each front's `skills` (signatures, as its tools are) with
   `hostrpc.forwarder` itself, so each call goes to the front's runner under the op's name,
   as the generated skill's does.
+- **Fronts declared in the gateway** (`agents`, `research`, `sandbox`): `gateway/agents.py`,
+  `gateway/research.py` and `gateway/sandbox.py`, declared like a front's tools (signatures
+  with docstrings) but never run as MCP servers of their own. Each names its tools with its
+  `PREFIX` (`agents_`, `research_`, `sandbox_`), so their `wait`s and `runs` don't clash;
+  the op sent to the runner keeps its own name (`delegate`, `start`, `run`, …).
 - **Delegation** (`agents`): `agents_delegate`, `agents_wait`, `agents_runs` and
-  `agents_cancel` over agents-runner (`gateway/agents.py`, declared like a front's tools).
-  A front declared in the gateway names its tools with its `PREFIX` (`agents_`), so they
-  don't clash with research's and the sandbox's; the op sent to the runner keeps its own
-  name (`delegate`, …). A client follows a run with `agents_wait`, advancing `since` by the
-  events it got, until `done`. The daily budget (`AGENTS_DAILY_USD`) counts these
-  delegations too.
-- **`research` and `sandbox`**, which a grant may name already; their tools come with the
-  gateway's next stage.
+  `agents_cancel` over agents-runner. A client follows a run with `agents_wait`, advancing
+  `since` by the events it got, until `done`. The daily budget (`AGENTS_DAILY_USD`) counts
+  these delegations too.
+- **Deep research** (`research`): `research_start(question, depth, sub_questions, title)`,
+  `research_wait(run_id, since)` and `research_runs()` over research-runner. A run started
+  here has no workspace (`workspace` None, `embed` false, whatever the arguments say), so
+  its report is published to the research site and saved to the runner's files, and added to
+  no workspace's documents; the models are the runner's defaults, not the deep-research
+  skill's setup args. `research_start` answers at once with `{run_id, queued, card}`; a
+  client follows the run with `research_wait` as with `agents_wait`, and once it's done
+  the result's `url` ends in the report's slug, which it reads with
+  `get_entry(site="research", section="reports", slug)` (the `sites` group).
+- **The code sandbox** (`sandbox`): `sandbox_run(language, code, timeout)`,
+  `sandbox_wait(run_id)`, `sandbox_write(path, content, delete)`,
+  `sandbox_publish(slug, path, remove)` and `sandbox_build_site(path, slug)` over
+  sandbox-runner, the ops behind `run-code`, `write-file`, `publish` and `build-site`. Each
+  call carries the scope `{workspace: "client-<name>", thread: "gateway"}`, made from the
+  calling client's name (`gateway.grants.client`), never from the model's arguments: a
+  `scope` argument is dropped, and the gateway's scope is the one sent. So a client has a
+  sandbox workspace of its own, `client-<name>`, with one thread: its `/work` is
+  `workspaces/client-<name>/threads/gateway`, and its pages are
+  `https://<PUBLIC_HOST>:8447/client-<name>/`. A run or a build answers within the runner's
+  45 s wait; one still going comes back as `{run_id, running: true, seconds}`, and the
+  client calls `sandbox_wait` until it's done. `sandbox_run` and `sandbox_build_site` wait
+  again themselves only while another 45 s wait fits in the call's 55 s (hostrpc's call
+  timeout), so a call never runs past what an MCP client's own 60 s limit allows.
 - **Sockets.** The fronts' `hostrpc.caller` falls back to the container's storage path, so
   at start the gateway sets each front's `<FRONT>_SOCKET` to the host's
   (`hostrpc.socket_path`), unless it's set already.
 
+What the scopes don't do, by design (one user, so documented rather than enforced):
+
+- Research runs aren't per client. `research_wait` and `research_runs` see every run
+  research-runner holds, AnythingLLM's included, and a client can follow any of them.
+- A `client-<name>` sandbox workspace is a workspace like any other: its runs read every
+  AnythingLLM workspace's `/shared/<workspace>` (read-only), and every workspace's runs
+  read its `/shared/client-<name>`. Its `/project`, `/work` and `/public` are its own, and
+  count toward its own size limit. An AnythingLLM workspace whose slug is `client-<name>`
+  would share that client's folders, so don't give one that name.
+
 **Clients and tokens.** Every path but `/health` needs `Authorization: Bearer <token>`. Each
 client has its own token, a `GATEWAY_TOKEN_<NAME>` line in
 `~/.config/everythingllm/gateway.env` (mode 600), and its name is `<name>` in lowercase,
-`_` as `-`. To revoke a client, delete its line and restart the gateway. The server is
+`_` as `-`. A name is at most 63 letters, digits and hyphens, not starting or ending with a
+hyphen, since it names the client's sandbox workspace too; the gateway won't start with a
+token whose name isn't one. To revoke a client, delete its line and restart the gateway. The server is
 stateless HTTP; DNS-rebinding protection allows only `127.0.0.1`, `localhost` and
 `PUBLIC_HOST` as the Host.
 
@@ -1207,8 +1243,7 @@ starting. The gateway reads it at start, so restart it after a change. One MCP m
 - it logs each call with the client's name and the tool's, never its arguments or the
   token (a refusal as a warning), and tests hold that;
 - it sets the ContextVar `gateway.grants.client` to the client's name around the call, so
-  a tool can tell who is calling (the next stage's research and sandbox tools take the
-  client's scope from it, never from the model).
+  a tool can tell who is calling (the sandbox tools make the client's scope from it).
 
 Why it may act where an MCP tool in AnythingLLM may not: writes are skills there because an
 MCP call doesn't say which workspace made it, so it can't refuse a delegated task. A
@@ -1216,15 +1251,28 @@ gateway call is named by its token, and the client's grant says what it may do.
 
 **Setting it up.** `uv run hostctl gateway-setup` makes `gateway.env` with a token for
 `claude-code` when it's missing, maps the port, and starts the unit. It isn't part of
-`uv run hostctl install`. Then, on the client's machine:
+`uv run hostctl install`. It never prints a token.
+
+**Adding a client.** `uv run hostctl gateway-client <name>` (`hostctl.gateway_env`) adds a
+`GATEWAY_TOKEN_<NAME>` line with a fresh token when `gateway.env` has none for that client
+(it never replaces one, and makes the file, mode 600, if there isn't one), then prints the
+command to run on the client's machine, with `PUBLIC_HOST` from `host.env`:
 
     claude mcp add --transport http everythingllm https://<PUBLIC_HOST>:8452/mcp \
-      --header "Authorization: Bearer <GATEWAY_TOKEN_CLAUDE_CODE from gateway.env>"
+      --header 'Authorization: Bearer <the client's token>'
 
-Another client needs a `GATEWAY_TOKEN_<NAME>` line and a `[clients.<name>]` grant.
-`uv run hostctl gateway-logs` follows it. A code change to a front's tools or skills, or to
-`grants.toml`, reaches the gateway when it restarts (`systemctl --user restart gateway`);
-`uv run hostctl deploy` doesn't restart it.
+That's the one place a token is printed, so it's run on purpose and its output kept out of
+anything shared. Run again, it prints the same command with the token the client already
+has. It also says what `grants.toml` grants the client: a new client needs a
+`[clients.<name>]` entry there before it gets any tools. Then restart the gateway, which
+reads the tokens and grants only when it starts (`systemctl --user restart gateway`).
+`uv run hostctl gateway-client claude-code` prints Claude Code's command after
+`gateway-setup`.
+
+`uv run hostctl gateway-logs` follows the gateway. A code change to a front's tools or
+skills, to the gateway's own fronts or to `grants.toml` reaches it when it restarts;
+`uv run hostctl deploy` doesn't restart it. A client already connected sees new or renamed
+tools once it reconnects.
 
 ## Nilson relay
 

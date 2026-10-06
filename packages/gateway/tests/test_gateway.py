@@ -17,6 +17,7 @@ from gateway import app, grants
 from gateway import research as gateway_research
 from gateway import sandbox as gateway_sandbox
 from gateway.app import Config, create_app
+from hostctl import gateway_env
 from mcp.server.mcpserver.exceptions import ToolError
 from starlette.testclient import TestClient
 
@@ -363,6 +364,15 @@ def test_config_refuses_a_client_name_the_sandbox_cant_take(monkeypatch):
     monkeypatch.setenv("GATEWAY_TOKEN__EDGE", "c")
     with pytest.raises(SystemExit, match=r"\['-edge', 'bad\.name'\]"):
         Config.from_env()
+
+
+def test_gateway_client_makes_the_names_and_keys_the_gateway_reads(monkeypatch):
+    assert gateway_env.NAME_RE.pattern == app.CLIENT_RE.pattern
+    for k in list(os.environ):
+        if k.startswith("GATEWAY_TOKEN_"):
+            monkeypatch.delenv(k)
+    monkeypatch.setenv(gateway_env.key("pi-2"), "t")
+    assert Config.from_env().clients == {"pi-2": "t"}
 
 
 # --- the sandbox, in the client's own workspace ---

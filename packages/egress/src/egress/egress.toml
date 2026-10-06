@@ -10,6 +10,10 @@
 # sandbox-net is 10.89.77.0/24 and the old browser-net 10.89.78.0/24.
 name = "egress-net"
 subnet = "10.89.79.0/24"
+# Where podman picks an address for a container that names none: apart from every address
+# below, so a stray container can never be given a stopped service's address, and its
+# profile with it.
+ip_range = "10.89.79.128/25"
 proxy = "10.89.79.2"  # egress-proxy's address, where it listens
 port = 3128
 # The port publicweb.public_client goes through (EGRESS_PROXY): the fetches of URLs that

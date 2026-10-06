@@ -600,7 +600,9 @@ to the host's loopback.
 
 **The egress proxy** (`packages/egress`, the `egress` app) is egress-net's only way out.
 `egress-net` is an internal podman network (`10.89.79.0/24`; `sandbox-net` is
-`10.89.77.0/24`), with no route and no DNS. `egress-proxy` runs in a container of the same
+`10.89.77.0/24`), with no route and no DNS. podman gives a container that names no
+address one from `10.89.79.128/25` (`ip_range`), apart from every service's, so a stray one
+can't take a stopped service's address and its profile. `egress-proxy` runs in a container of the same
 image, on egress-net at `10.89.79.2` and on podman's default network for its own way out,
 and listens at `10.89.79.2:3128`, and at `:3129`, its public port (below). It takes `CONNECT host:port` (https) and absolute-form
 plain-http requests, and judges each by the caller's address on egress-net and the host and

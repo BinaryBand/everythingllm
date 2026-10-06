@@ -269,12 +269,14 @@ def sandbox_images() -> None:
     internal_network(*SANDBOX_NET)
 
 
-def internal_network(name: str, subnet: str) -> None:
-    """Create a podman network with no route out and no DNS, unless it exists."""
+def internal_network(name: str, subnet: str, ip_range: str = "") -> None:
+    """Create a podman network with no route out and no DNS, unless it exists. `ip_range`
+    is where podman picks an address for a container that names none."""
     if run("podman", "network", "exists", name, check=False):
         run(
             "podman", "network", "create", "--internal", "--disable-dns",
-            "--subnet", subnet, name,
+            "--subnet", subnet, *(["--ip-range", ip_range] if ip_range else []),
+            name,
         )  # fmt: skip
 
 
@@ -289,7 +291,7 @@ def service_images() -> None:
     )
     with EGRESS_TOML.open("rb") as f:
         network = tomllib.load(f)["network"]
-    internal_network(network["name"], network["subnet"])
+    internal_network(network["name"], network["subnet"], network["ip_range"])
 
 
 @command(

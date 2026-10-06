@@ -67,6 +67,7 @@ class Config:
     port: int
     profiles: dict[str, Profile]
     public_port: int = 0  # where only `public` counts; none when 0
+    ip_range: str = ""  # podman's pick for a container that names no address
 
     @property
     def url(self) -> str:
@@ -138,13 +139,21 @@ def load(path: Path = FILE, env: Mapping[str, str] | None = None) -> Config:
         int(net["port"]),
         profiles,
         int(net["public_port"]),
+        str(ipaddress.ip_network(net["ip_range"])),
     )
     if config.public_port == config.port:
         raise ValueError("egress.toml: port and public_port are the same")
     taken = [config.proxy, *config.ips().values()]
     if len(set(taken)) != len(taken):
         raise ValueError("egress.toml: an address is used twice")
+    dynamic = ipaddress.ip_network(config.ip_range)
+    if not (dynamic.network_address in subnet and dynamic.broadcast_address in subnet):
+        raise ValueError(f"egress.toml: ip_range {dynamic} isn't in {subnet}")
     for address in taken:
         if ipaddress.ip_address(address) not in subnet:
             raise ValueError(f"egress.toml: {address} isn't in {subnet}")
+        if ipaddress.ip_address(address) in dynamic:
+            raise ValueError(
+                f"egress.toml: {address} is in ip_range {dynamic}, which podman hands out"
+            )
     return config

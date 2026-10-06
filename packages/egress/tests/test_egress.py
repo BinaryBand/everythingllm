@@ -60,6 +60,9 @@ def test_a_profile_without_its_host_doesnt_load(tmp_path):
     bad.write_text(text.replace('"10.89.79.12"', '"10.89.80.12"'))
     with pytest.raises(ValueError, match="isn't in 10.89.79.0/24"):
         egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})
+    bad.write_text(text.replace('"10.89.79.12"', '"10.89.79.200"'))
+    with pytest.raises(ValueError, match="which podman hands out"):
+        egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})
     bad.write_text(text.replace("public_port = 3129", "public_port = 3128"))
     with pytest.raises(ValueError, match="port and public_port are the same"):
         egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})

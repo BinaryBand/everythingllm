@@ -94,7 +94,8 @@ def test_service_images_builds_the_image_and_egress_net(ran):
     assert ran == [
         f"podman build -t localhost/everythingllm-service -f {folder}/Containerfile {folder}",
         "podman network exists egress-net",
-        "podman network create --internal --disable-dns --subnet 10.89.79.0/24 egress-net",
+        "podman network create --internal --disable-dns --subnet 10.89.79.0/24"
+        " --ip-range 10.89.79.128/25 egress-net",
     ]
 
 

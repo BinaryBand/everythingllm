@@ -904,6 +904,47 @@ def test_a_system_site_builds_in_the_sandbox_into_its_staging_folder(cfg, tmp_pa
     ]
 
 
+def test_a_system_site_copy_never_follows_a_symlink_planted_on_the_way(
+    cfg, tmp_path, monkeypatch
+):
+    """The pages site is writable by the sites and research containers as the same user,
+    so one could put a symlink in .status.new while the host copies into it."""
+    cfg = system_cfg(cfg, tmp_path)
+    r = make(cfg)
+    r.podman.effect = built
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    new = cfg.site_dir / ".status.new"
+    copy = runner.copy_into
+
+    def racing(source, folder, name):
+        copy(source, folder, name)
+        if not (new / "notes").exists():  # after the first file, before notes/
+            (new / "notes").symlink_to(outside)
+
+    monkeypatch.setattr(runner, "copy_into", racing)
+    with pytest.raises(runner.SandboxError, match="couldn't copy the built site"):
+        go(r.op_build_system_site("status"))
+    assert list(outside.iterdir()) == []
+
+    # Nor over a file planted where one is about to go (a hardlink, say).
+    monkeypatch.setattr(runner, "copy_into", copy)
+    planted = outside / "target"
+    planted.write_text("host file")
+
+    def plant(name, *args, **kwargs):
+        made = real_mkdir(name, *args, **kwargs)
+        if name == "notes":
+            os.link(planted, new / "notes" / "index.html")
+        return made
+
+    real_mkdir = os.mkdir
+    monkeypatch.setattr(runner.os, "mkdir", plant)
+    with pytest.raises(runner.SandboxError, match="couldn't copy the built site"):
+        go(r.op_build_system_site("status"))
+    assert planted.read_text() == "host file"
+
+
 def test_what_a_system_site_build_refuses(cfg, tmp_path):
     cfg = system_cfg(cfg, tmp_path)
     r = make(cfg)

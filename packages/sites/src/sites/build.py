@@ -270,7 +270,7 @@ class Builder:
         else:
             with tempfile.TemporaryDirectory(prefix=f"zola-{name}-") as tmp:
                 self._zola(name, self._assemble(name, Path(tmp)), new)
-        (new / MARKER).write_text("Built by sites-build; replaced on every build.\n")
+        mark(new)
 
         if dest.exists():
             os.rename(dest, old)
@@ -283,6 +283,27 @@ class Builder:
             raise
         shutil.rmtree(old, ignore_errors=True)
         return dest
+
+
+def mark(new: Path) -> None:
+    """Put MARKER in a fresh build. The pages site is writable by the sites and research
+    containers, and a host process (audit-runner) builds there too, so this follows no
+    symlink, neither for the folder nor for the file, and writes over nothing."""
+    try:
+        folder = os.open(new, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            fd = os.open(
+                MARKER,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o644,
+                dir_fd=folder,
+            )
+        finally:
+            os.close(folder)
+    except OSError as e:
+        raise BuildError(f"couldn't mark {new}: {e.strerror or e}") from None
+    with os.fdopen(fd, "w") as f:
+        f.write("Built by sites-build; replaced on every build.\n")
 
 
 def main() -> None:

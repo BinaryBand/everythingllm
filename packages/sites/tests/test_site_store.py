@@ -741,6 +741,43 @@ def test_a_theme_from_site_is_built_by_the_sandbox_and_swapped_in_here(tmp_path)
     assert not (tmp_path / "site" / ".status.new").exists()
 
 
+def test_marking_a_build_follows_no_symlink(tmp_path):
+    """The pages site is writable by the service containers, which could swap a symlink
+    in for the build or its marker before a host process (audit-runner) marks it."""
+    source = theme_from_site(tmp_path, "system")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("host file")
+
+    def as_link(name):
+        new = tmp_path / "site" / f".{name}.new"
+        new.symlink_to(outside)
+        return new
+
+    def marker_as_link(name):
+        new = tmp_path / "site" / f".{name}.new"
+        new.mkdir()
+        (new / MARKER).symlink_to(outside / "keep")
+        return new
+
+    for remote in (as_link, marker_as_link):
+        b = Builder(
+            source,
+            REPO_ZOLA / "themes",
+            tmp_path / "content",
+            tmp_path / "site",
+            "zola",
+            remote=remote,
+        )
+        with pytest.raises(BuildError, match="couldn't mark"):
+            b.build("status")
+        assert sorted(p.name for p in outside.iterdir()) == ["keep"]
+        assert (outside / "keep").read_text() == "host file"
+        assert not (tmp_path / "site" / "status").exists()
+        shutil.rmtree(tmp_path / "site" / ".status.new", ignore_errors=True)
+        (tmp_path / "site" / ".status.new").unlink(missing_ok=True)
+
+
 def test_a_sandbox_build_that_fails_or_lands_elsewhere_changes_nothing(tmp_path):
     source = theme_from_site(tmp_path, "system")
     live = tmp_path / "site" / "status"

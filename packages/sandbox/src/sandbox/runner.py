@@ -385,6 +385,42 @@ def copy_regular(source: Path, dest: Path) -> None:
             shutil.copyfileobj(src, out)
 
 
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def open_dir(path: Path) -> int:
+    """An fd for the folder `path`, refusing a symlink as its last part."""
+    return os.open(path, DIR_FLAGS)
+
+
+def make_dir(parent: int, name: str) -> int:
+    """Make the folder `name` in the open folder `parent` if it isn't there, and open it,
+    refusing a symlink in its place."""
+    try:
+        os.mkdir(name, 0o755, dir_fd=parent)
+    except FileExistsError:
+        pass
+    return os.open(name, DIR_FLAGS, dir_fd=parent)
+
+
+def copy_into(source: Path, folder: int, name: str) -> None:
+    """Copy the plain file `source` to a new file `name` in the open folder `folder`
+    (mode 644): never through a symlink, and never over a file that's already there."""
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as src:
+        if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):
+            raise SandboxError(f"'{source.name}' isn't a regular file")
+        out_fd = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o644,
+            dir_fd=folder,
+        )
+        with os.fdopen(out_fd, "wb") as out:
+            os.fchmod(out.fileno(), 0o644)
+            shutil.copyfileobj(src, out)
+
+
 def remove_path(path: Path) -> None:
     """Delete a file, symlink or folder; a symlink itself, never what it points to."""
     if path.is_dir() and not path.is_symlink():
@@ -618,7 +654,9 @@ class Runner(hostrpc.Service):
         if image[0] != 0:
             problems.append(f"image {IMAGE} is missing (uv run hostctl sandbox-setup)")
         if network[0] != 0:
-            problems.append(f"network {NETWORK} is missing (uv run hostctl sandbox-setup)")
+            problems.append(
+                f"network {NETWORK} is missing (uv run hostctl sandbox-setup)"
+            )
         if proxy[0] != 0 or proxy[1].strip() != "true":
             problems.append(
                 f"{PROXY_CONTAINER} isn't running (systemctl --user status sandbox-proxy)"
@@ -998,17 +1036,38 @@ class Runner(hostrpc.Service):
         ]
 
     def copy_out(self, source: Path, dest: Path) -> int:
-        """A system site's built files into `dest` (replaced), plain files only."""
+        """A system site's built files into `dest` (replaced), plain files only.
+
+        `dest` is in the pages site, which the sites and research containers can write as
+        this same user while the copy runs. So nothing here follows a symlink: each folder
+        is made and opened relative to its parent's open fd, never by path, and each file
+        is created new (O_EXCL), so a symlink planted on the way stops the copy instead of
+        sending a write outside the pages site."""
         files, size = regular_files(source) if source.is_dir() else ([], 0)
         if not files:
             raise SandboxError("the build produced no files")
         if size > PUBLISH_MAX_BYTES:
             raise SandboxError(f"the built site is {size >> 20} MB, over the cap")
         remove_path(dest)
-        for src, rel in files:
-            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
-            copy_regular(src, dest / rel)
-            (dest / rel).chmod(0o644)
+        folders: dict[tuple[str, ...], int] = {}
+        try:
+            parent = open_dir(dest.parent)
+            folders[()] = make_dir(parent, dest.name)
+            os.close(parent)
+            for src, rel in files:
+                *parts, name = Path(rel).parts
+                for i in range(len(parts)):
+                    key = tuple(parts[: i + 1])
+                    if key not in folders:
+                        folders[key] = make_dir(folders[key[:-1]], parts[i])
+                copy_into(src, folders[tuple(parts)], name)
+        except OSError as e:
+            raise SandboxError(
+                f"couldn't copy the built site into {dest.name}: {e.strerror or e}"
+            ) from None
+        finally:
+            for fd in folders.values():
+                os.close(fd)
         return len(files)
 
     def prepare_build(self, name: str, scope: Scope, run_dir: Path) -> list[str]:

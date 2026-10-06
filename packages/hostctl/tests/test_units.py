@@ -436,3 +436,52 @@ def test_units_retires_the_old_host_unit_then_starts_its_container(
         ["restart", "relay.service"],
     ]
     assert not (user / "relay.service").exists()
+
+
+def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, capsys):
+    """`uv run hostctl units relay` switches the relay alone; sites-runner's old host unit
+    and the podcasts' old timer wait for their own runs."""
+    import subprocess
+
+    user, containers = tmp_path / "user", tmp_path / "containers"
+    user.mkdir()
+    for name in ("relay.service", "sites-runner.service", "podcasts-sync.timer"):
+        (user / name).write_text(RENDERED + "[Service]\nExecStart=old\n")
+    planned = plan(tmp_path)
+    for u in planned:  # installed as the repo has them, but the two containers
+        if u.service not in ("relay.service", "sites-runner.service"):
+            u.dest.parent.mkdir(parents=True, exist_ok=True)
+            u.dest.write_text(u.text)
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(units.subprocess, "run", run)
+    monkeypatch.setattr(units, "ROOT", tmp_path)  # not a worktree
+    monkeypatch.setattr(units, "BACKUPS", tmp_path / "backups")
+    monkeypatch.setattr(units, "host_settings", lambda f: {})
+    monkeypatch.setattr(units, "planned", lambda values, c, u: planned)
+    monkeypatch.setenv("UNITS_USER_DIR", str(user))
+    monkeypatch.setenv("UNITS_CONTAINER_DIR", str(containers))
+
+    units.main(["install", "relay"])
+    systemctl = [c[2:] for c in calls if c[:2] == ["systemctl", "--user"]]
+    assert systemctl == [
+        ["disable", "--now", "relay.service"],
+        ["daemon-reload"],
+        ["restart", "relay.service"],
+    ]
+    assert (containers / "relay.container").exists()
+    assert not (containers / "sites-runner.container").exists()
+    assert not (user / "relay.service").exists()
+    assert (user / "podcasts-sync.timer").exists()
+    assert (user / "sites-runner.service").exists()
+    calls.clear()
+    units.main(["install", "podcasts"])  # a timer the registry no longer has
+    assert ["systemctl", "--user", "disable", "--now", "podcasts-sync.timer"] in calls
+    assert not (user / "podcasts-sync.timer").exists()
+    assert (user / "sites-runner.service").exists()
+    with pytest.raises(SystemExit, match="no app nope"):
+        units.main(["install", "nope"])

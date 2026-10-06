@@ -17,6 +17,9 @@ repo's path and @KEY@ with KEY from host.env:
            or moved to host/quadlet as a container) is retired: stopped and disabled, and
            its installed copy moved to the backups. A container that took its name over is
            started then, since the old copy would hide Quadlet's unit; `diff` lists them.
+           Given app names (`uv run hostctl units relay`), it installs and retires only
+           those apps' units, so services can move into containers one at a time; the
+           rest wait for a later run.
 
 Standard library only, like the rest of hostctl.
 """
@@ -342,6 +345,15 @@ def retire(
     return start, left
 
 
+def belongs(unit: str, names: list[str]) -> bool:
+    """Whether `unit` is one of the apps `names`': the registry says so, or, for a unit
+    the registry no longer has (a retired timer), its name starts with the app's."""
+    app = apps.app_of(unit)
+    if app is not None:
+        return app.name in names
+    return any(unit == f"{n}.service" or unit.startswith(f"{n}-") for n in names)
+
+
 def active(service: str) -> bool:
     return (
         subprocess.run(
@@ -356,7 +368,10 @@ def main(argv: list[str] | None = None) -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("action", choices=["diff", "install"])
+    parser.add_argument("apps", nargs="*", help="only these apps' units (default all)")
     args = parser.parse_args(argv)
+    if unknown := set(args.apps) - set(apps.load()):
+        sys.exit(f"units: no app {', '.join(sorted(unknown))}; `uv run hostctl apps`")
     containers = Path(
         os.environ.get("UNITS_CONTAINER_DIR", "~/.config/containers/systemd")
     ).expanduser()
@@ -365,6 +380,9 @@ def main(argv: list[str] | None = None) -> None:
     plan = planned(values, containers, user)
     todo = changed(plan)
     old = retired(plan, user)
+    if args.apps:
+        todo = [u for u in todo if belongs(u.service, args.apps)]
+        old = [p for p in old if belongs(p.name, args.apps)]
 
     if args.action == "diff":
         for unit in todo:

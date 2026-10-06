@@ -98,7 +98,10 @@ A host unit it rendered whose template is gone is retired: stopped, disabled and
 the backups. That is how the podcasts' old timers go, and how a host runner gives way to
 its container, whose Quadlet unit of the same name the old copy would hide (the container
 is started then, unless it's a guarded runner with a run going). `uv run hostctl diff`
-lists what it would retire. Units it didn't render are left alone.
+lists what it would retire. Units it didn't render are left alone. Given app names, `uv run
+hostctl units relay` installs and retires only those apps' units (a unit the registry no
+longer has counts as an app's by its name), so services move into their containers one at
+a time; the rest wait for a later run.
 
 Run it from the main checkout. It refuses to run in a worktree, since the units run the
 repo they were rendered from. Edit the templates, never the installed copies; `uv run hostctl diff`

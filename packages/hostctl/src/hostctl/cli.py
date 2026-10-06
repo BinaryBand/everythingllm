@@ -90,10 +90,10 @@ def install() -> None:
 
 @command(
     "units",
-    "render host/quadlet/ and host/systemd/ into this machine's unit folders (backs up first), reload systemd, restart what changed",
+    "render host/quadlet/ and host/systemd/ into this machine's unit folders (backs up first), reload systemd, restart what changed; with app names, only theirs",
 )
-def install_units() -> None:
-    units.main(["install"])
+def install_units(*names: str) -> None:
+    units.main(["install", *names])
 
 
 @command(

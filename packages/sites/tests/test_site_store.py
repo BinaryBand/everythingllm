@@ -870,6 +870,32 @@ def test_every_repo_site_is_built_in_the_sandbox():
         assert b.theme_from(name), f"{name}'s zola.toml names no theme_from"
 
 
+def test_a_sandbox_runner_without_its_build_socket_builds_through_its_own(
+    tmp_path, monkeypatch
+):
+    """Deploy rebuilds the sites before anyone restarts sandbox-runner onto the new code,
+    which is what makes sandbox-build/runner.sock: until then the host builds through the
+    runner's own socket, as it did before."""
+    monkeypatch.delenv("SANDBOX_BUILD_SOCKET", raising=False)
+    monkeypatch.delenv("SANDBOX_SOCKET", raising=False)
+    monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
+    socks = tmp_path / "everythingllm"
+    new, old = socks / "sandbox-build" / "runner.sock", socks / "sandbox" / "runner.sock"
+    old.parent.mkdir(parents=True)
+    old.touch()
+    assert build.build_socket() == old
+    new.parent.mkdir(parents=True)
+    new.touch()
+    assert build.build_socket() == new
+    # Named, or with neither there (a container), it's the build socket, as named.
+    new.unlink()
+    old.unlink()
+    assert build.build_socket() == new
+    monkeypatch.setenv("SANDBOX_BUILD_SOCKET", str(tmp_path / "x.sock"))
+    old.touch()
+    assert build.build_socket() == tmp_path / "x.sock"
+
+
 def test_the_sandbox_build_turns_runner_errors_into_build_errors(monkeypatch):
     def refuse(*a, **kw):
         raise hostrpc.RunnerError("The sandbox runner isn't running on the host")

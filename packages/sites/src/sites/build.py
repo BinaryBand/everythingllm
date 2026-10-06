@@ -42,7 +42,10 @@ Config (environment):
   SITES_SANDBOX_ONLY  1: build nothing here, only through the sandbox (sites-runner's
                       container sets it)
   SANDBOX_BUILD_SOCKET  the sandbox runner's socket for system site builds, which serves
-                      nothing else (default <storage>/everythingllm/sandbox-build/runner.sock)
+                      nothing else (default <storage>/everythingllm/sandbox-build/runner.sock;
+                      on the host, unset and missing, the runner's own socket)
+  SANDBOX_SOCKET      the sandbox runner's own socket, that fallback (default
+                      <storage>/everythingllm/sandbox/runner.sock)
 """
 
 import argparse
@@ -99,11 +102,24 @@ def sandboxed() -> bool:
     return ok
 
 
+def build_socket() -> Path:
+    """The sandbox runner's build socket, or, on the host, while the runner predates it
+    (a deploy before `uv run hostctl sandbox-setup`), its own socket, which serves
+    build_system_site too. A service container mounts only the first."""
+    sock = hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET")
+    if not sock.exists() and not os.environ.get("SANDBOX_BUILD_SOCKET"):
+        old = hostrpc.socket_path("sandbox", "SANDBOX_SOCKET")
+        if old.exists():
+            log.warning("no %s yet; building through %s", sock, old)
+            return old
+    return sock
+
+
 def sandbox_build(name: str) -> Path:
     """Have the sandbox runner build a theme_from site; where its output went."""
     try:
         result = hostrpc.request_sync(
-            hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET"),
+            build_socket(),
             "build_system_site",
             {"site": name},
             BUILD_SECONDS + 10,

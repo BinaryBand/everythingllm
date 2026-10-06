@@ -84,7 +84,7 @@ class Builder:
     @classmethod
     def from_env(cls) -> "Builder":
         """Paths from the environment, with the host's defaults: builds run on the host, in
-        storage (hostrpc.storage()), with its zola (scripts/machine.py checks it's there),
+        storage (hostrpc.storage()), with its zola (src/tools/machine.py checks it's there),
         from the sites in the repo this package is in."""
         get = os.environ.get
         source = Path(get("SITES_SOURCE", REPO_SITES))

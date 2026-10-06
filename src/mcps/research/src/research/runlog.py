@@ -8,7 +8,7 @@ touches the marker every minute while the run is alive. A restart of research-ru
 its runs without letting them write their lines, so the runner, when it starts, moves every
 marker into the log as an "interrupted" line (none of them can be its own). A marker quiet
 for stale_ms belongs to a run that's gone too; the audit (checks.py) and
-scripts/research_guard.py read it so, taking stale_ms from the marker.
+src/tools/research_guard.py read it so, taking stale_ms from the marker.
 """
 
 import json

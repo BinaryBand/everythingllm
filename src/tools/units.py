@@ -26,7 +26,7 @@ from pathlib import Path
 
 import research_guard
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 BACKUPS = ROOT / ".backups"
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
 

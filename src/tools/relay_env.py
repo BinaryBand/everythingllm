@@ -5,7 +5,7 @@ an empty ANYTHINGLLM_API_KEY, and exits 1 until that key is filled in, so the un
 started into a crash loop. The file stays outside the repo, which the AnythingLLM container
 mounts. Standard library only, run with the system python3.
 
-    python3 scripts/relay_env.py [path]
+    python3 src/tools/relay_env.py [path]
 """
 
 import os

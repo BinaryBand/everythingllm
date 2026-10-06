@@ -1,7 +1,7 @@
 """Before research-runner restarts: is a deep-research run going? A restart kills it
 without a report (a run writes its log line only at the end), so this lists live runs and asks.
 
-  python3 scripts/research_guard.py   exit 0 to go ahead, 1 to stop
+  python3 src/tools/research_guard.py   exit 0 to go ahead, 1 to stop
 
 A run is live while its marker in <storage>/logs/deep-research/running/ has been touched
 within the marker's stale_ms (see src/mcps/research/src/research/runlog.py). With no terminal to

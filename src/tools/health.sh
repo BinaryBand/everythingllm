@@ -3,7 +3,7 @@
 # anything failed. Meant for after a reboot, or whenever something seems off. The unit list
 # and the in-container checks live in src/mcps/audit (audit.health), next to the audit's own.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 CONTAINER=systemd-anythingllm
 VENV_PY=/app/server/storage/mcp/venv/bin/python

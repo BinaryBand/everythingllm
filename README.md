@@ -43,7 +43,7 @@ up, copy `host.env.example` and fill it in:
 These read it:
 
 - the Makefile, which exports both values
-- `scripts/sync.py`, for `ANYTHINGLLM_STORAGE`
+- `src/tools/sync.py`, for `ANYTHINGLLM_STORAGE`
 - the host's systemd units, through `EnvironmentFile=@REPO@/host.env` (filled in by `make units`)
 - the site builds, which read `PUBLIC_HOST` from it and pass zola
   `--base-url https://<PUBLIC_HOST>:8445/<site>`, so `zola.toml` doesn't name the host.
@@ -177,10 +177,10 @@ through its UI.
   mounts just that directory read-only and serves it on 127.0.0.1:8445
 - `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
-- `scripts/sync.py` — diff/deploy/import between this repo and live storage; standard
+- `src/tools/sync.py` — diff/deploy/import between this repo and live storage; standard
   library only, run with the system `python3`
-- `scripts/units.py` — renders and installs `host/quadlet/` and `host/systemd/` (`make units`)
-- `scripts/machine.py` — `make install`'s checks, its wait for AnythingLLM, the web search
+- `src/tools/units.py` — renders and installs `host/quadlet/` and `host/systemd/` (`make units`)
+- `src/tools/machine.py` — `make install`'s checks, its wait for AnythingLLM, the web search
   setting and the closing checklist
 
 ## Workflow
@@ -232,7 +232,7 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
   the container.
 - After `uv.lock` changes, run `make mcp-sync` (or `make deploy`, which runs it) so the
   container's venv catches up. It installs exactly the members `mcp_servers.json` runs
-  (`scripts/sync.py mcp-packages`), and removes anything else.
+  (`src/tools/sync.py mcp-packages`), and removes anything else.
 
 ## Zola sites
 
@@ -785,7 +785,7 @@ for its `stale_ms` (3 minutes) reads as interrupted to the audit, and a fresh on
 so the agent can tell the user what happened instead of finding no such run.
 `make research-setup` and `make units` (when the unit changed) list the live runs and ask
 before restarting the runner; with no terminal to ask they stop, unless `FORCE=1`
-(`scripts/research_guard.py`). `make restart` and `make deploy` restart AnythingLLM only,
+(`src/tools/research_guard.py`). `make restart` and `make deploy` restart AnythingLLM only,
 so they don't need to ask. The runner runs the code it started with: after changing
 `src/mcps/research`, `make research-setup` puts it live.
 

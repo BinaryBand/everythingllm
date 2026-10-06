@@ -25,7 +25,7 @@ research, Code sandbox, System audit, …) before changing it.
 - Dropped ideas (browser, quiz, whatsapp-mcp) and the history before this repo went public
   are kept in a private archive, not here. Don't recreate them from memory.
 - Machine settings come from `host.env` (git-ignored; see `host.env.example`). Unit
-  templates use `@KEY@` placeholders, which `scripts/units.py` fills in; systemd doesn't
+  templates use `@KEY@` placeholders, which `src/tools/units.py` fills in; systemd doesn't
   expand `${VAR}` in `Environment=`.
 
 ## Commands
@@ -116,4 +116,4 @@ is 3.13. Keep code 3.12-compatible, and check with
   `Config (environment):`. Keep them current when you add or change an env var.
 - Commit subjects are plain sentences saying what changed and why (e.g. "Decode episodes
   as they're heard, and only hold Whisper's deaths against one"), with no type prefixes.
-- `scripts/sync.py` uses only the standard library and runs with the system `python3`.
+- `src/tools/sync.py` uses only the standard library and runs with the system `python3`.

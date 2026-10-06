@@ -179,6 +179,29 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     assert {int(p) for p in re.findall(r"^:(\d+) \{", caddy, re.MULTILINE)} == pages
 
 
+def test_a_container_publishes_its_apps_ports_on_the_hosts_loopback():
+    """`serve` and the health checks reach a container's port on the host's 127.0.0.1, at
+    the port its code listens on: a port a container publishes is one of its app's, the
+    same inside and out. An app that runs only containers serves nothing else."""
+    for app in apps.load().values():
+        published = set()
+        for container in app.container:
+            name = container.removeprefix("systemd-")
+            template = HOST / "quadlet" / f"{name}.container.in"
+            if not template.is_file():  # deployed by something else
+                continue
+            for port in re.findall(
+                r"^PublishPort=(\S+)", template.read_text(), re.MULTILINE
+            ):
+                host, outside, inside = port.split(":")
+                assert host == "127.0.0.1" and outside == inside, (name, port)
+                published.add(int(outside))
+        ports = {m.port for m in app.serve}
+        assert published <= ports, app.name
+        if app.managed and app.container and not app.units:
+            assert ports == published, app.name
+
+
 def test_the_skills_socket_list_is_the_registrys():
     test = REPO / "anythingllm" / "agent-skills" / "_lib" / "test" / "delegated.test.js"
     named = set(re.findall(r'"([A-Z]+)_SOCKET"', test.read_text()))

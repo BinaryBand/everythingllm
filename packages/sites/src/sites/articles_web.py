@@ -8,7 +8,9 @@ starts writing it and answers a page that reloads itself every few seconds; ther
 script, so it works under any CSP.
 
 It listens on 127.0.0.1:8448 (PORT; tailscale serve maps :8445/news/write to it) and
-searches the host's SearXNG.
+searches the host's SearXNG. In sites-runner's container it listens on 0.0.0.0:8448, which
+the container publishes on the host's 127.0.0.1:8448, and reaches SearXNG by its tailnet
+name through the egress proxy (host/quadlet/sites-runner.container.in).
 
 Config (environment, from host.env and sites-runner's unit):
   ARTICLES_HOST    the address to listen on (default 127.0.0.1). In a container, 0.0.0.0:

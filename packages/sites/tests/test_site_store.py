@@ -781,8 +781,56 @@ def test_without_the_sandbox_only_a_repo_theme_builds_here(tmp_path):
     assert not (tmp_path / "site" / "status").exists()
 
 
-def test_from_env_builds_theme_from_sites_in_the_sandbox():
-    assert build.Builder.from_env().remote is build.sandbox_build
+def test_from_env_builds_theme_from_sites_in_the_sandbox(monkeypatch):
+    b = build.Builder.from_env()
+    assert b.remote is build.sandbox_build and not b.sandbox_only
+    monkeypatch.setenv("SITES_SANDBOX_ONLY", "1")  # as in sites-runner's container
+    assert build.Builder.from_env().sandbox_only
+
+
+def test_sandbox_only_refuses_a_site_the_sandbox_wont_build(tmp_path, monkeypatch):
+    """sites-runner's container has no zola and no unshare: a site without theme_from
+    fails with a reason, rather than running zola there (or without its namespace)."""
+    source = theme_from_site(tmp_path, "system")
+    toml = source / "status" / "zola.toml"
+    toml.write_text(toml.read_text().replace('theme_from = "system"', ""))
+
+    def no_zola(*a, **kw):
+        raise AssertionError("zola ran")
+
+    monkeypatch.setattr("sites.build.subprocess.run", no_zola)
+    monkeypatch.setattr("sites.build.subprocess.call", no_zola)
+    asked = []
+
+    def remote(name):
+        asked.append(name)
+        new = tmp_path / "site" / f".{name}.new"
+        new.mkdir()
+        return new
+
+    b = Builder(
+        source,
+        REPO_ZOLA / "themes",
+        tmp_path / "content",
+        tmp_path / "site",
+        "zola",
+        remote=remote,
+        sandbox_only=True,
+    )
+    with pytest.raises(BuildError, match=r"status can't be built here.*theme_from"):
+        b.build("status")
+    assert not (tmp_path / "site" / "status").exists()
+    [dest] = b.build("news")  # theme_from = "system": the sandbox's, as ever
+    assert asked == ["news"] and (dest / ".zola-site").exists()
+
+
+def test_every_repo_site_is_built_in_the_sandbox():
+    """sites-runner runs in a container without zola (SITES_SANDBOX_ONLY), so a repo site
+    without [extra.build] theme_from couldn't be written to. Add theme_from = "system"."""
+    b = Builder.from_env()
+    assert b.site_names()
+    for name in b.site_names():
+        assert b.theme_from(name), f"{name}'s zola.toml names no theme_from"
 
 
 def test_the_sandbox_build_turns_runner_errors_into_build_errors(monkeypatch):

@@ -121,8 +121,8 @@ is 3.13. Keep code 3.12-compatible, and check with
 ## Sites and pages
 
 - The agent writes entries, not HTML. The `sites` tools save JSON-front-matter Markdown to
-  `~/.local/share/everythingllm/pages/entries/<site>/<section>/<slug>.md` (host-only, outside storage), and `sites-runner` rebuilds that site with the
-  host's zola. A write that doesn't build is undone. Other writers use the `sites-write`
+  `~/.local/share/everythingllm/pages/entries/<site>/<section>/<slug>.md` (host-only, outside storage), and `sites-runner` (a service container) has the
+  sandbox rebuild that site. A write that doesn't build is undone. Other writers use the `sites-write`
   command or `SiteStore`, so the entry format has one implementation.
 - The exception is free-form pages: a sandbox workspace's `/public` is its pages, kept in
   `~/.local/share/everythingllm/sandbox/public/<workspace>/` (a tree holding nothing else)
@@ -138,7 +138,8 @@ is 3.13. Keep code 3.12-compatible, and check with
 - zola always builds without a network (`unshare --net`), with a 40 s limit (`sites.build`). A
   site whose `zola.toml` has `[extra.build] theme_from` (news, research and status do) is
   built in a sandbox container instead (`build_system_site`), and only there may a theme
-  from a workspace's `/shared` be used.
+  from a workspace's `/shared` be used. Every repo site names one (a test holds them to
+  it): `sites-runner`'s container has no zola (`SITES_SANDBOX_ONLY`).
 - Templates, stylesheets, `zola.toml` and sections change only in the repo; the agent has
   no tool for them, and `uv run hostctl deploy` rebuilds the sites. The exception is the lab site, an
   experiment the agent owns whole in education's sandbox folder (`/shared/education/sites/lab/`)

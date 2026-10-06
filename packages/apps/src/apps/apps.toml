@@ -87,9 +87,10 @@ health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-0000
 why_not_installed = "it needs a developer API key in ~/.config/everythingllm/agents.env first"
 
 [sites]
-summary = "sites-runner, which writes and builds the sites' entries, and the article writer (:8445/news/write)"
+summary = "sites-runner, in its container: writes the sites' entries and has the sandbox build them, and serves the article writer (:8445/news/write)"
 runner = "sites-runner.service"
-units = { "sites-runner.service" = "sites runner" }
+container = { "systemd-sites-runner" = "sites runner" }
+before = ["python3 -m hostctl service-images"]
 serve = [{ https = 8445, path = "/news/write", port = 8448 }]
 health = { "article writer" = "http://127.0.0.1:8448/" }
 install = true

@@ -14,6 +14,7 @@ def no_host_settings(monkeypatch):
         "ANYTHINGLLM_API",
         "LIVE_HOST",
         "ARTICLES_HOST",
+        "SITES_SANDBOX_ONLY",
     ):
         monkeypatch.delenv(key, raising=False)
     # Nor does any test reach this machine's sandbox runner (site builds would ask it).

@@ -19,8 +19,10 @@ from pydantic import Field
 mcp = MCPServer("podcasts")
 
 
+# The runner's socket, for the tools here and the skills below.
+skills = hostrpc.Skills("podcasts", "PODCASTS_SOCKET")
 tool = hostrpc.forwarder(
-    hostrpc.caller("podcasts", "PODCASTS_SOCKET", "podcasts runner", error=ToolError),
+    hostrpc.caller(skills.folder, skills.env, "podcasts runner", error=ToolError),
     mcp.add_tool,
 )
 
@@ -75,7 +77,6 @@ async def refresh_podcasts(
 # Adding and removing a podcast are skills (anythingllm/agent-skills/add-podcast,
 # remove-podcast, generated from these by `make skills`), not tools here: they can refuse a
 # delegated task. refresh_podcasts stays a tool: it only starts a sync.
-skills = hostrpc.Skills("podcasts", "PODCASTS_SOCKET")
 
 
 @skills.add

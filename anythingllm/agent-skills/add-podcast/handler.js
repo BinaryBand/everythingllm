@@ -3,7 +3,7 @@
 
 const { forwardSkill } = require("../_lib/runner");
 
-const SPEC = {"service": "podcasts", "env": "PODCASTS_SOCKET", "op": "add_podcast", "params": {"url": "string", "keep": "integer-or-string", "slug": "string", "scrub_ads": "boolean", "transcribe": "boolean", "ad_words": "enum", "rules": "string"}};
+const SPEC = {"service": "podcasts", "env": "PODCASTS_SOCKET", "op": "add_podcast", "params": {"url": "string", "keep": "integer", "slug": "string", "scrub_ads": "boolean", "transcribe": "boolean", "ad_words": "enum", "rules": "string"}};
 
 module.exports.runtime = {
   handler: async function (params) {

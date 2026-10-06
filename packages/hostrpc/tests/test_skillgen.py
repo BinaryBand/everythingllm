@@ -19,17 +19,18 @@ def test_the_generated_skills_are_up_to_date():
     assert skillgen.stale(ROOT) == [], "run `make skills`"
 
 
+FRONTS = dict(skillgen.declared(ROOT))
+
+
 def test_every_front_with_skills_is_found():
-    assert {"sites.server", "podcasts.server", "audit.server"} <= set(
-        skillgen.fronts(ROOT)
-    )
+    assert {"sites.server", "podcasts.server", "audit.server"} <= set(FRONTS)
 
 
-@pytest.mark.parametrize("module", skillgen.fronts(ROOT))
+@pytest.mark.parametrize("module", sorted(FRONTS))
 def test_a_skill_takes_what_its_op_takes(module):
     """Each skill is an op of its runner (<package>.tools.OPS), with the same parameters
     and defaults, as the generated handler leaves a param out to get the op's default."""
-    skills = importlib.import_module(module).skills
+    skills = FRONTS[module]
     tools = importlib.import_module(module.replace(".server", ".tools"))
     ops = {f.__name__: f for f in tools.OPS}
     for skill in skills:
@@ -80,7 +81,7 @@ def test_render_writes_a_manifest_and_a_handler(repo):
     assert handler.startswith(skillgen.GENERATED)
     assert (
         '"service": "demo", "env": "DEMO_SOCKET", "op": "example", "params": {"url": "string", '
-        '"keep": "integer-or-string", "flag": "boolean", "mode": "enum", "extra": "object"}'
+        '"keep": "integer", "flag": "boolean", "mode": "enum", "extra": "object"}'
     ) in handler
 
 

@@ -273,7 +273,7 @@ def forwarder(call: Callable, register: Callable[[Callable], Any]):
     return decorate
 
 
-class Skills:
+class Skills(list):
     """A front's ops that are agent skills rather than MCP tools (ops that write or act, so
     that they can refuse a delegated task): each is declared like a tool, a signature with a
     docstring and no body, with `@skills.add`. Nothing serves them here; hostrpc.skillgen
@@ -281,16 +281,13 @@ class Skills:
     to the service whose socket is $<env>, else storage/everythingllm/<folder>/runner.sock."""
 
     def __init__(self, folder: str, env: str):
+        super().__init__()
         self.folder = folder
         self.env = env
-        self.ops: list[Callable] = []
 
     def add(self, fn: Callable) -> Callable:
-        self.ops.append(fn)
+        self.append(fn)
         return fn
-
-    def __iter__(self):
-        return iter(self.ops)
 
 
 class Service:

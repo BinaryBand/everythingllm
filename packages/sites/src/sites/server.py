@@ -34,8 +34,10 @@ Slug = Annotated[
 # sites.feeds.FEEDS, which the front can't import (it needs the host extra); a test holds them equal.
 SECTIONS = ("US", "Sweden", "World")
 
+# The runner's socket, for the tools here and the skills below.
+skills = hostrpc.Skills("sites", "SITES_SOCKET")
 tool = hostrpc.forwarder(
-    hostrpc.caller("sites", "SITES_SOCKET", "sites runner", error=ToolError),
+    hostrpc.caller(skills.folder, skills.env, "sites runner", error=ToolError),
     mcp.add_tool,
 )
 
@@ -75,7 +77,6 @@ async def headlines(
 
 # Writing and deleting entries are skills (anythingllm/agent-skills/write-entry, delete-entry,
 # generated from these by `make skills`), not tools here: they can refuse a delegated task.
-skills = hostrpc.Skills("sites", "SITES_SOCKET")
 
 
 @skills.add

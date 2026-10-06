@@ -29,8 +29,10 @@ JobName = Annotated[
 ]
 
 
+# The runner's socket, for the tools here and the skills below.
+skills = hostrpc.Skills("audit", "AUDIT_SOCKET")
 tool = hostrpc.forwarder(
-    hostrpc.caller("audit", "AUDIT_SOCKET", "audit runner", error=ToolError),
+    hostrpc.caller(skills.folder, skills.env, "audit runner", error=ToolError),
     mcp.add_tool,
 )
 
@@ -90,7 +92,6 @@ async def research_run(
 # Publishing the report and running a job are skills (anythingllm/agent-skills/publish-report,
 # run-job, generated from these by `make skills`), not tools here: they can refuse a
 # delegated task.
-skills = hostrpc.Skills("audit", "AUDIT_SOCKET")
 
 
 @skills.add

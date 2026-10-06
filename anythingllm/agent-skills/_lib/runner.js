@@ -40,7 +40,7 @@ async function forwardSkill(self, { service, env, op, params: kinds }, params) {
     if (value == null || (kind === "enum" && value === "")) continue;
     if (kind === "boolean") value = asFlag(value);
     else if (kind === "object") value = asObject(value);
-    else if (kind === "integer" || kind === "integer-or-string") value = asInteger(value);
+    else if (kind === "integer") value = asInteger(value);
     if (value != null) args[name] = value;
   }
   return forward(self, { service, env, op, args });

@@ -238,12 +238,12 @@ def active(service: str) -> bool:
     )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("action", choices=["diff", "install"])
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     containers = Path(
         os.environ.get("UNITS_CONTAINER_DIR", "~/.config/containers/systemd")
     ).expanduser()

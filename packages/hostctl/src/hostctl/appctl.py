@@ -75,7 +75,7 @@ def setup(app: apps.App) -> None:
         systemctl("enable", "--now", *app.timers)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
@@ -85,7 +85,7 @@ def main() -> None:
     sub.add_parser("serve")
     sub.add_parser("logs").add_argument("app")
     sub.add_parser("health")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     registry = apps.load()
 
     if args.cmd == "list":

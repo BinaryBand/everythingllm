@@ -375,7 +375,7 @@ def mcp_packages() -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("diff", help="show what deploy would change")
@@ -393,7 +393,7 @@ def main() -> None:
     sub.add_parser(
         "mcp-packages", help="print the workspace members the MCP servers run"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.cmd == "mcp-packages":
         print(" ".join(mcp_packages()))

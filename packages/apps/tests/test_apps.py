@@ -72,14 +72,15 @@ def test_mappings_and_ports_dont_collide():
 
 
 def test_setup_steps_exist_and_install_says_why_not():
-    makefile = (REPO / "Makefile").read_text()
+    from hostctl import cli
+
     for app in apps.load().values():
         for step in app.before:
             if module := re.fullmatch(r"python3 -m hostctl\.(\w+)", step):
                 hostctl = REPO / "packages" / "hostctl" / "src" / "hostctl"
                 assert (hostctl / f"{module[1]}.py").is_file(), step
-            elif target := re.fullmatch(r"make .*?(\S+)", step):
-                assert re.search(rf"^{target[1]}:", makefile, re.MULTILINE), step
+            elif command := re.fullmatch(r"python3 -m hostctl (\S+)", step):
+                cli.lookup(command[1])  # exits if there's no such command
             else:
                 raise AssertionError(
                     f"{app.name}: a step this test doesn't know: {step}"

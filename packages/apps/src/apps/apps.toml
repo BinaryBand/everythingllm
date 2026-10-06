@@ -43,7 +43,7 @@ health = { "pages site" = "http://127.0.0.1:8445/news/", "workspace pages" = "ht
 summary = "the code sandbox's runner and PyPI proxy, with their images and network"
 runner = "sandbox-runner.service"
 units = { "sandbox-proxy.service" = "code sandbox PyPI proxy", "sandbox-runner.service" = "code sandbox runner" }
-before = ["make --no-print-directory sandbox-images"]
+before = ["python3 -m hostctl sandbox-images"]
 install = true
 
 [podcasts]

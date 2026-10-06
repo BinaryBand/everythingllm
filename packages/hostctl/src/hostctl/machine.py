@@ -209,12 +209,12 @@ def checklist() -> list[tuple[bool | None, str]]:
     ]
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("action", choices=["check", "wait-api", "search", "checklist"])
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.action == "check":
         problems = check()
         for p in problems:

@@ -4,7 +4,7 @@
   "name": "Publish",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Publish a file or folder from the sandbox to the private pages site and return its link: a standalone page to share (a plan, a table, a write-up), a chart, a CSV. An HTML file becomes the page; a folder is published whole, with its index.html as the page (keep charts and images beside it and link them relatively). Pages are static: scripts don't run and nothing loads from other hosts, but CSS in <style> or style=\"\" works. Publishing to a slug this workspace already has replaces it; see what's published with run-code `ls /pages`. remove takes a page down.",
+  "description": "Publish a file or folder from the sandbox to the private pages site and return its link: a standalone page to share (a plan, a table, a write-up), a chart, a CSV. An HTML file becomes the page; a folder is published whole, with its index.html as the page (keep charts and images beside it and link them relatively). Pages are static: scripts don't run and nothing loads from other hosts, but CSS in <style> or style=\"\" works. Publishing to a slug this workspace already has replaces it; a page published from /shared (like the lab site, slug 'lab') belongs to every workspace, so any of them can republish it from /shared or remove it; see what's published with run-code `ls /pages`. remove takes a page down.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

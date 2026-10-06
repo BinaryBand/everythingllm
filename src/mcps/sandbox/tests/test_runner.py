@@ -54,6 +54,7 @@ def cfg(tmp_path):
     return Config(
         socket=tmp_path / "sock" / "runner.sock",
         root=tmp_path / "sandbox",
+        shared=tmp_path / "shared",
         site_dir=tmp_path / "site",
         site_url="https://pages.example/",
     )
@@ -130,6 +131,90 @@ def test_threads_share_the_project_and_workspaces_share_nothing(cfg):
     go(r.op_run(B, "bash", "ls"))
     assert seen[0] == {"/work": [], "/project": ["notes.txt"]}
     assert seen[1] == {"/work": [], "/project": []}
+
+
+def test_every_workspace_mounts_the_same_shared_folder_as_data(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/shared/notes.txt", "for everyone"))
+    seen = []
+
+    def effect(m):
+        seen.append(sorted(os.listdir(m["/shared"])))
+        (m["/shared"] / "from-b.txt").write_text("b")
+
+    r.podman.effect = effect
+    res = go(r.op_run(B, "bash", "ls /shared"))
+    assert seen == [["notes.txt"]] and res["changed"] == ["/shared/from-b.txt"]
+    assert (cfg.shared / "from-b.txt").read_text() == "b"
+    args = r.podman.runs()[0][0]
+    assert f"{cfg.shared}:/shared:rw,noexec,nosuid,nodev" in args
+    # It isn't inside any workspace's folder.
+    assert not (cfg.root / "career" / "shared").exists()
+    assert go(r.op_write(A, "/shared/notes.txt", delete=True)) == {
+        "path": "/shared/notes.txt",
+        "folder": False,
+    }
+
+
+def test_shared_paths_must_stay_in_shared(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/project/secret", "career's"))
+    cfg.shared.mkdir(exist_ok=True)
+    (cfg.shared / "peek").symlink_to(
+        project(cfg, A)
+    )  # planted by a run in another workspace
+    for op in (
+        r.op_write(B, "/shared/peek/secret", "x"),
+        r.op_publish(B, "leak", "/shared/peek"),
+    ):
+        with pytest.raises(runner.SandboxError, match="outside /shared"):
+            go(op)
+    assert (project(cfg, A) / "secret").read_text() == "career's"
+
+
+def test_runs_take_turns_across_workspaces_and_shared_writes_wait_for_none(
+    cfg, monkeypatch
+):
+    monkeypatch.setattr(runner, "WAIT", 0.05)
+    order = []
+
+    async def main():
+        r = make(cfg, delay=0.2)
+        r.podman.effect = lambda m: order.append(m["/project"].parent.name)
+        first = await r.op_run(A, "python", "slow()")
+        # Anything under /shared fails at once while any workspace runs code...
+        for op in [
+            r.op_write(B, "/shared/x", "x"),
+            r.op_write(B, "/shared/x", delete=True),
+            r.op_publish(B, "p", "/shared/x"),
+        ]:
+            with pytest.raises(runner.SandboxError, match="can change /shared"):
+                await asyncio.wait_for(op, 0.05)
+        # ...the rest of another workspace doesn't wait,
+        await r.op_write(B, "a", "a")
+        # and its run queues behind the first.
+        monkeypatch.setattr(runner, "WAIT", 5)
+        await asyncio.gather(r.op_wait(A, first["run_id"]), r.op_run(B, "bash", "2"))
+        await r.op_write(B, "/shared/x", "x")
+
+    go(main())
+    assert order == ["career", "home"]
+
+
+def test_shared_quota_stops_runs_and_writes_there(cfg, monkeypatch):
+    monkeypatch.setattr(runner, "SHARED_MAX_BYTES", 10)
+    r = make(cfg)
+    cfg.shared.mkdir(exist_ok=True)
+    (cfg.shared / "big.bin").write_bytes(b"x" * 11)
+    with pytest.raises(
+        runner.SandboxError, match=r"/shared uses 0 MB.*biggest: /shared/big\.bin 0 MB"
+    ):
+        go(r.op_run(B, "python", "1"))
+    with pytest.raises(runner.SandboxError, match="can write there"):
+        go(r.op_write(A, "/shared/c", "c"))
+    go(r.op_write(A, "/project/c", "c"))  # a workspace's own folders are unaffected
+    go(r.op_write(B, "/shared/big.bin", delete=True))
+    assert go(r.op_run(B, "python", "1"))["exit_code"] == 0
 
 
 def test_scope_keys_are_checked(cfg):
@@ -519,6 +604,50 @@ def test_a_page_belongs_to_its_workspace(cfg):
     assert f"{cfg.site_dir / 'mine'}:/pages/mine:ro" in args
 
 
+def test_a_page_published_from_shared_belongs_to_every_workspace(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/shared/lab/index.html", "<title>Lab</title>one"))
+    go(r.op_publish(A, "lab", "/shared/lab"))
+    assert json.loads((cfg.site_dir / "lab" / ".page").read_text())["workspace"] == (
+        runner.SHARED_OWNER
+    )
+    assert "<span>shared · " in (cfg.site_dir / "index.html").read_text()
+    # Another workspace replaces it from /shared...
+    go(r.op_write(B, "/shared/lab/index.html", "<title>Lab</title>two"))
+    go(r.op_publish(B, "lab", "/shared/lab"))
+    assert (cfg.site_dir / "lab" / "index.html").read_text().endswith("two")
+    # ...but not from its own folders, which would make it that workspace's.
+    go(r.op_write(B, "/project/mine.html", "mine"))
+    with pytest.raises(runner.SandboxError, match="replaced only from /shared"):
+        go(r.op_publish(B, "lab", "/project/mine.html"))
+    # Nor can /shared take a workspace's page.
+    go(r.op_publish(B, "minepage", "/project/mine.html"))
+    with pytest.raises(runner.SandboxError, match="taken"):
+        go(r.op_publish(A, "minepage", "/shared/lab"))
+    # Every workspace's runs see the shared page.
+    seen = []
+    r.podman.effect = lambda m: seen.append({k for k in m if k.startswith("/pages/")})
+    go(r.op_run(A, "bash", "ls /pages"))
+    go(r.op_run(B, "bash", "ls /pages"))
+    assert seen == [{"/pages/lab"}, {"/pages/lab", "/pages/minepage"}]
+    # Any workspace can take it down.
+    assert go(r.op_publish(A, "lab", remove=True))["removed"]
+
+
+def test_links_on_the_sites_own_origin_arent_blocked(cfg):
+    r = make(cfg)
+    go(
+        r.op_write(
+            A,
+            "site/index.html",
+            '<link rel="stylesheet" href="https://pages.example/lab/a.css">'
+            '<img src="https://pages.example.evil/x.png">',
+        )
+    )
+    res = go(r.op_publish(A, "s", "site"))
+    assert res["blocked"] == ["images, media or frames from another host"]
+
+
 def test_publish_refuses_bad_input(cfg, tmp_path, monkeypatch):
     r = make(cfg)
     go(r.op_write(A, "a.txt", "abc"))
@@ -556,6 +685,7 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
     for var in (
         "SANDBOX_SOCKET",
         "SANDBOX_ROOT",
+        "SANDBOX_SHARED",
         "SANDBOX_SITE_DIR",
         "SANDBOX_SITE_URL",
     ):
@@ -568,6 +698,7 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
     assert config.site_dir == Path("/data/allm/site")
     assert config.site_url == "https://box.tail.ts.net:8445/"
     assert config.root == Path("~/.local/share/everythingllm/sandbox").expanduser()
+    assert config.shared == Path("~/.local/share/everythingllm/shared").expanduser()
 
 
 def test_the_pages_site_lets_marked_pages_use_inline_css():

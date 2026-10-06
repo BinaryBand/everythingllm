@@ -21,7 +21,7 @@ research, Code sandbox, System audit, …) before changing it.
   old code until `make <name>-setup` or `systemctl --user restart <unit>`. Code shared
   across packages (e.g. `sites.store`) is loaded by several services (`sites-runner`,
   `audit-runner`, `research-runner`). Don't restart `research-runner` or `agents-runner`
-  while a run is going (`tools/run_guard.py` asks).
+  while a run is going (`tools/run_guard.py` asks; `guard` in the apps registry says which).
 - Dropped ideas (browser, quiz, whatsapp-mcp) and the history before this repo went public
   are kept in a private archive, not here. Don't recreate them from memory.
 - Machine settings come from `host.env` (git-ignored; see `host.env.example`). Unit
@@ -35,7 +35,7 @@ research, Code sandbox, System audit, …) before changing it.
     make health                    # check every unit, port, runner and MCP server
     make diff / make deploy        # what would change live / push it live
     make units                     # render and install unit templates, restart what changed
-    make <name>-logs               # follow a service (research, podcasts, sites, audit, sandbox, …)
+    make <app>-logs / <app>-setup  # follow an app, or (re)start it (`make apps` lists them)
 
 The repo root is one uv workspace (a member per `packages/` subdirectory, one `uv.lock`, the dev
 venv in `.venv`). The root `pyproject.toml` holds what every member shares (the `workspace = true`
@@ -79,8 +79,10 @@ is 3.13. Keep code 3.12-compatible, and check with
     going in the service (the caller waits on a run id) or in its own systemd unit.
   - A front's package keeps its base dependencies to what the front imports, and puts the
     rest (Whisper, PyAV, …) in a `host` extra that the units run with.
-  - Adding a service: the README's "Services on the host" lists every piece (console
-    script, unit, the audit's `WATCHED` in `audit/services.py`).
+  - Every app (its units, socket, tailnet mappings, guard, health checks, setup steps) is
+    declared once in `packages/apps/src/apps/apps.toml`, which the tools and the audit read
+    through `packages/apps`; app code never does. Adding one: its code, its unit template
+    and an entry there; `packages/apps/tests/test_apps.py` says what's missing (README, "The apps").
 - MCP tools only read (or, like `refresh_podcasts`, only start background work). An op that
   writes or acts is a skill (`anythingllm/agent-skills/<op>`, listed in its package's
   `tools.SKILLS`), because a skill knows its workspace and refuses a delegated task

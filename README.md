@@ -90,7 +90,7 @@ templates too. `make units` renders all of them:
 It fills in `@REPO@` (the checkout's path) and the `host.env` settings, and saves older
 versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and restarts what changed: a container
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
-restarts nothing. Enabling a host unit is up to its `make *-setup` target.
+restarts nothing. Enabling a host unit is up to its app's `make <app>-setup` (see "The apps" below).
 
 Run it from the main checkout. It refuses to run in a worktree, since the units run the
 repo they were rendered from. Edit the templates, never the installed copies; `make diff`
@@ -99,10 +99,28 @@ shows where the two differ.
 An Ansible playbook used to install the two containers' units and `/srv/static-agent-config/`.
 It must leave them alone now, or its next run undoes `make units`.
 
-`make serve-setup` maps this setup's tailnet ports with `tailscale serve`: the pages site on
-:8445 (with `/news/write` to the article writer, `/podcasts` to podcasts-web and
-`/_live/research` to research-runner's live cards), SearXNG on :8888, AnythingLLM's UI on
-:3001 and the Nilson relay on :8446. Other mappings on the machine are left alone.
+### The apps
+
+Every app this repo runs is declared once, in `packages/apps/src/apps/apps.toml`: its units
+and the audit's label for each, its socket, its tailnet mappings, whether its restarts wait
+for a run (the guard), its health checks, the steps its setup runs first, and whether
+`make install` sets it up (and if not, why). The tools and the audit read it through
+`packages/apps` (standard library only, so the system `python3` tools import it by path);
+app code never does. `make apps` lists the apps; for each:
+
+- `make <app>-setup` runs its `before` steps (the sandbox's image build, the agents and relay
+  key files), maps its tailnet paths, enables and (re)starts its units, asking first while
+  a guarded one has a run going (`FORCE=1` doesn't ask), and starts its timers
+  (`tools/appctl.py`).
+- `make <app>-logs` follows its units and the ones it watches.
+- `make serve-setup` maps every app's tailnet paths that aren't mapped yet with
+  `sudo tailscale serve`, and leaves other mappings on the machine alone.
+- `make health` checks every app's units, health URLs and sockets.
+
+Adding an app: its code, its unit template in `host/`, and one entry in `apps.toml`.
+`packages/apps/tests/test_apps.py` says what's missing: a template no app owns, a unit
+without a template, two mappings on one port, or a port that isn't the one the code or the
+unit uses.
 
 ### AnythingLLM's password
 
@@ -208,7 +226,8 @@ through its UI.
 - `packages/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
   AnythingLLM's agent; also a workspace member (see "Nilson relay")
 - `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`make units`);
-  each one's `Description=` says what it does, and its `make <name>-setup` target installs it.
+  each one's `Description=` says what it does, and its app's `make <app>-setup` (see "The
+  apps") enables it.
   `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
   to cut MCP payloads from AnythingLLM's log.
 - What only host services read or write lives in `~/.local/share/everythingllm`
@@ -417,8 +436,8 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
 - A new one: an `OPS` tuple and a `main()` that calls `hostrpc.run` in the package's
   `tools.py` (`packages/podcasts` is the example), a `<name>-runner` console script, a unit
   `host/systemd/<name>-runner.service` with its own venv in `~/.local/share/everythingllm/`, and
-  an entry in the audit's `WATCHED` (`audit/services.py`), which `RUNNERS` and a test
-  follow. Its socket is `storage/everythingllm/<name>/runner.sock`, where `hostrpc.caller` looks.
+  an app `<name>` in `apps.toml` with `runner` naming that unit (see "The apps"). Its socket
+  is `storage/everythingllm/<name>/runner.sock`, where `hostrpc.caller` looks.
 
 Code edits go live the next time AnythingLLM starts the server (restart it from the
 Agent Skills > MCP Servers page, `make restart`, or `make deploy`, which restarts). Note
@@ -1069,10 +1088,10 @@ suggests a fix per finding. Its tools:
   Fail and warn come in full; info is trimmed to the 5 a report keeps (taken an area, then
   a title, at a time), one line each:
   - logs: error-like lines from AnythingLLM, SearXNG, the pages Caddy,
-    and the host services (`WATCHED` in `audit/services.py`) in the host journal, grouped with counts (SearXNG's per-engine errors become
+    and the host services (the apps' units, `WATCHED` in `audit/services.py`) in the host journal, grouped with counts (SearXNG's per-engine errors become
     counts per engine; known noise is skipped, see `NOISE` in `checks.py`);
   - search: a test query to SearXNG, and which engines refuse it;
-  - services: every host service in `RUNNERS` (`audit/services.py`) answers `ping` on its
+  - services: every app's runner (`RUNNERS` in `audit/services.py`) answers `ping` on its
     socket, and the sandbox runner with no problems (its image, network and proxy are up);
   - llm: when `LLM_PROVIDER` is openrouter, what's left on the key's limit and the account
     (OpenRouter's `/api/v1/key` and `/api/v1/credits`, with `OPENROUTER_API_KEY` from

@@ -373,7 +373,7 @@ def browser_images() -> None:
 
 @command(
     "browser-reset",
-    "wipe a workspace's browser profile (its logins, cookies and history), stopping its browser first: browser-reset <workspace>",
+    "wipe a workspace's browser profile (its sessions, cookies and history; not its saved logins), stopping its browser first: browser-reset <workspace>",
 )
 def browser_reset(workspace: str) -> None:
     if not WORKSPACE_RE.fullmatch(workspace):

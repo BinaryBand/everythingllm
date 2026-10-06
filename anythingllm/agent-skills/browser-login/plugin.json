@@ -1,0 +1,59 @@
+{
+  "active": true,
+  "hubId": "browser-login",
+  "name": "Browser Login",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Log in with a login the user saved in this workspace's browser vault, without ever seeing the password: the browser fills it into the fields you name, on the login's own site only. action list shows the saved logins (id, site, username) and which fit this chat's page; login fills one into the username field (user_ref) and/or the password field (pass_ref) from the last read, and submit presses Enter; code fills the current 2FA code into the code field (ref). Some logins ask the user first: this waits for their OK in the browser view. If there's no saved login for the site, hand the browser to the user with browser-handoff. Never ask the user for a password in the chat.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "(on LinkedIn's sign-in page)",
+      "call": "{\"action\": \"list\"}"
+    },
+    {
+      "prompt": "(the list shows 3f2a9c1d for linkedin.com)",
+      "call": "{\"action\": \"login\", \"login\": \"3f2a9c1d\", \"user_ref\": \"e4\", \"pass_ref\": \"e5\", \"submit\": true}"
+    },
+    {
+      "prompt": "(the site asks for a 2FA code)",
+      "call": "{\"action\": \"code\", \"login\": \"3f2a9c1d\", \"ref\": \"e2\", \"submit\": true}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "list",
+          "login",
+          "code"
+        ],
+        "description": "list the saved logins, fill one in (login), or fill its 2FA code (code)."
+      },
+      "login": {
+        "type": "string",
+        "description": "The saved login's id, from list."
+      },
+      "user_ref": {
+        "type": "string",
+        "description": "login: the ref of the username or email field (e12), if the page has one."
+      },
+      "pass_ref": {
+        "type": "string",
+        "description": "login: the ref of the password field, if the page has one."
+      },
+      "ref": {
+        "type": "string",
+        "description": "code: the ref of the 2FA code field."
+      },
+      "submit": {
+        "type": "boolean",
+        "description": "Press Enter in the last field filled, to send the form."
+      }
+    }
+  }
+}

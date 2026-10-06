@@ -1,6 +1,7 @@
-// What the browser skills (browse, browser-act, browser-read, browser-handoff) share: the
-// runner's socket, the call's scope (_lib/scope.js: browser-runner keeps a browser per
-// workspace and a tab per chat thread by it), and turning the runner's errors into replies.
+// What the browser skills (browse, browser-act, browser-read, browser-handoff,
+// browser-login) share: the runner's socket, the call's scope (_lib/scope.js: browser-runner
+// keeps a browser per workspace and a tab per chat thread by it), and turning the runner's
+// errors into replies.
 
 const { call, socketPath, Down, Refused } = require("./hostrpc");
 const { delegatedRefusal } = require("./delegated");

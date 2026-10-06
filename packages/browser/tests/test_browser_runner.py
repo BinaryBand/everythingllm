@@ -274,12 +274,12 @@ def test_taking_over_from_the_view_stops_the_agent_until_handed_back(tmp_path):
     async def test(r, podman, clock):
         await r.op_open(scope(), "example.com")
         s = r.sessions["career"]
-        r.take(s)
+        await r.take(s)
         assert s.control == "user" and s.reason == "you took over"
         with pytest.raises(RunnerError, match="you took over"):
             await r.op_act(scope(), "click", "e1")
         assert r.threads[("career", "7")].last == "You took over the browser"
-        r.give_back(s)
+        await r.give_back(s)
         await r.op_act(scope(), "click", "e1")
 
     test(tmp_path)
@@ -336,5 +336,167 @@ def test_the_starting_runner_removes_its_old_containers(tmp_path):
     async def test(r, podman, clock):
         await r.cleanup()
         assert podman.calls == [["rm", "-f", "--filter", f"label={runner_mod.LABEL}"]]
+
+    test(tmp_path)
+
+
+RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+
+
+def test_the_agent_logs_in_with_a_saved_login_without_seeing_it(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        saved = r.vault.add(
+            "career", "linkedin.com", "alice", "hunter2", totp=RFC_SECRET
+        )
+        r.vault.add("education", "linkedin.com", "bob", "other")
+        await r.op_open(scope(), "https://www.linkedin.com/login")
+        listed = await r.op_logins(scope())
+        assert listed == {
+            "site": "www.linkedin.com",
+            "logins": [{**r.vault.logins("career")[0], "here": True}],
+        }
+        assert "hunter2" not in str(listed) and RFC_SECRET not in str(listed)
+        done = await r.op_login(scope(), saved["id"], "e1", "e2", True)
+        assert "hunter2" not in str(done) and "Sign in" in done["page"]
+        driver = podman.drivers["everythingllm-browser-career"]
+        assert driver.filled[-1] == {"thread": "7", "site": "linkedin.com", "username": "alice",
+                                     "password": "hunter2", "user_ref": "e1", "pass_ref": "e2", "submit": True}  # fmt: skip
+        assert r.threads[("career", "7")].last == "Logged in for linkedin.com as alice"
+        assert r.vault.logins("career")[0]["used"]
+        coded = await r.op_code(scope(), saved["id"], "e3")
+        assert "Sign in" in coded["page"] and len(driver.filled[-1]["code"]) == 6
+        # Another workspace's login isn't there, and a login fills only on its site.
+        await r.op_open(scope("education"), "https://www.linkedin.com/login")
+        with pytest.raises(RunnerError, match="no saved login"):
+            await r.op_login(scope("education"), saved["id"], "e1", "e2")
+        await r.op_open(scope(), "https://evil.example/login")
+        with pytest.raises(
+            RunnerError,
+            match="that login is for linkedin.com, and this chat's page is on evil.example",
+        ):
+            await r.op_login(scope(), saved["id"], "e1", "e2")
+
+    test(tmp_path)
+
+
+def test_a_login_without_2fa_has_no_code(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        saved = r.vault.add("career", "linkedin.com", "alice", "pw")
+        await r.op_open(scope(), "https://linkedin.com/")
+        with pytest.raises(RunnerError, match="no 2FA secret"):
+            await r.op_code(scope(), saved["id"], "e3")
+
+    test(tmp_path)
+
+
+def test_a_login_that_asks_waits_for_the_users_ok(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_mod, "WAIT", 0.05)
+
+    @run
+    async def test(r, podman, clock):
+        saved = r.vault.add("career", "linkedin.com", "alice", "pw", ask=True)
+        await r.op_open(scope(), "https://linkedin.com/")
+        driver = podman.drivers["everythingllm-browser-career"]
+        waiting = await r.op_login(scope(), saved["id"], "e1", "e2")
+        assert waiting["card"] and driver.filled == []
+        s = r.sessions["career"]
+        assert s.approval.id == waiting["approval"]
+        assert (
+            r.threads[("career", "7")].last
+            == "Waiting for your OK to use your linkedin.com login"
+        )
+        assert await r.op_wait_approval(scope(), waiting["approval"]) == {
+            "done": False,
+            "approved": False,
+        }
+        again = await r.op_login(scope(), saved["id"], "e1", "e2")
+        assert (
+            again["approval"] == waiting["approval"]
+        )  # the same request, not a new one
+        r.answer(s, waiting["approval"], False)
+        assert await r.op_wait_approval(scope(), waiting["approval"]) == {
+            "done": True,
+            "approved": False,
+        }
+        asked = await r.op_login(scope(), saved["id"], "e1", "e2")
+        r.answer(s, asked["approval"], True)
+        assert (await r.op_login(scope(), saved["id"], "e1", "e2"))["page"]
+        assert driver.filled[-1]["password"] == "pw"
+        clock.t += runner_mod.GRANT + 1  # the OK runs out
+        assert "approval" in await r.op_login(scope(), saved["id"], "e1", "e2")
+        with pytest.raises(RunnerError, match="isn't waiting"):
+            r.answer(s, "nope", True)
+
+    test(tmp_path)
+
+
+def test_a_request_no_longer_asked_is_stale_not_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_mod, "WAIT", 5)
+    stale = {"done": True, "approved": False, "stale": True}
+
+    @run
+    async def test(r, podman, clock):
+        alice = r.vault.add("career", "linkedin.com", "alice", "pw", ask=True)
+        bob = r.vault.add("career", "linkedin.com", "bob", "pw", ask=True)
+        await r.op_open(scope(), "https://linkedin.com/")
+        first = (await r.op_login(scope(), alice["id"], "e1", "e2"))["approval"]
+        waiting = asyncio.create_task(r.op_wait_approval(scope(), first))
+        await asyncio.sleep(0)
+        # Another login's request takes its place: the waiter hears at once.
+        second = (await r.op_login(scope(), bob["id"], "e1", "e2"))["approval"]
+        assert second != first
+        assert await asyncio.wait_for(waiting, 1) == stale
+        assert await r.op_wait_approval(scope(), first) == stale
+        assert await r.op_wait_approval(scope(), "nope") == stale
+        # So does one whose browser stops, and it stays stale.
+        waiting = asyncio.create_task(r.op_wait_approval(scope(), second))
+        await asyncio.sleep(0)
+        await r.stop("career")
+        assert await asyncio.wait_for(waiting, 1) == stale
+        assert await r.op_wait_approval(scope(), second) == stale
+
+    test(tmp_path)
+
+
+def test_an_offer_is_kept_when_its_save_would_be_refused(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://linkedin.com/")
+        s = r.sessions["career"]
+        driver = podman.drivers[s.name]
+        await r.op_handoff(scope(), "log in")
+        driver.offers["ab12cd34"] = {"site": "linkedin.com", "username": "alice", "password": "typed"}  # fmt: skip
+        with pytest.raises(RunnerError, match="too long"):
+            await r.save_offer(s, "ab12cd34", "a" * 1001, False)
+        assert "ab12cd34" in driver.offers and r.vault.logins("career") == []
+
+    test(tmp_path)
+
+
+def test_logins_are_offered_for_saving_only_while_the_user_has_the_browser(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://linkedin.com/")
+        s = r.sessions["career"]
+        driver = podman.drivers[s.name]
+        await r.op_handoff(scope(), "log in")
+        assert driver.capturing
+        driver.offers["ab12cd34"] = {
+            "site": "linkedin.com",
+            "username": "alice",
+            "password": "typed",
+        }
+        assert await r.offers(s) == [
+            {"id": "ab12cd34", "site": "linkedin.com", "username": "alice"}
+        ]
+        saved = await r.save_offer(s, "ab12cd34", "alice@example.com", True)
+        assert saved["username"] == "alice@example.com" and saved["ask"]
+        assert r.vault.get("career", saved["id"])["password"] == "typed"
+        await r.op_handoff(scope(), done=True)
+        assert not driver.capturing
+        await r.take(s)
+        assert driver.capturing
 
     test(tmp_path)

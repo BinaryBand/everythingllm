@@ -19,7 +19,8 @@ def test_a_frame_is_the_strip_over_the_screenshot_dimmed_once_closed():
             )
         )
         assert image.format == "JPEG" and image.size == (live.WIDTH, live.STRIP + 800)
-        middle = image.getpixel((live.WIDTH // 2, live.STRIP + 400))
+        middle = image.convert("RGB").getpixel((live.WIDTH // 2, live.STRIP + 400))
+        assert isinstance(middle, tuple)
         assert (middle[0] > 200) == (state != "closed")
     blank = Image.open(io.BytesIO(live.picture(b"", "career", "agent", "", "", "")))
     assert blank.size == (live.WIDTH, live.STRIP + 360)
@@ -107,14 +108,14 @@ def test_a_closed_tab_shows_its_last_look_until_its_opened_again(tmp_path):
             await r.op_close(scope())
             closed = Image.open(io.BytesIO(await anext(frames)))
             assert (
-                closed.getpixel((live.WIDTH // 2, live.STRIP + 300))[0] < 120
+                closed.convert("L").getpixel((live.WIDTH // 2, live.STRIP + 300)) < 120  # ty: ignore[unsupported-operator]
             )  # dimmed
             waiting = asyncio.ensure_future(anext(frames))
             await asyncio.sleep(0.1)
             assert not waiting.done()  # a closed tab waits to be used again
             await r.op_open(scope(), "example.com")
             await asyncio.wait_for(waiting, 2)
-            await frames.aclose()
+            await frames.aclose()  # ty: ignore[unresolved-attribute] - a generator's
             assert tab.viewers == 0
         finally:
             await podman.close()

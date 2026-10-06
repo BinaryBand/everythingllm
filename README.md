@@ -175,8 +175,8 @@ through its UI.
     `research` site; hands the work to `research-runner` on the host (see "Deep research")
   - `run-code/`, `write-file/`, `publish/`, `build-site/` — the code sandbox, run by
     `sandbox-runner` on the host (see "Code sandbox")
-  - `browse/`, `browser-act/`, `browser-read/`, `browser-handoff/` — the workspace's
-    browser, run by `browser-runner` on the host (see "Browser")
+  - `browse/`, `browser-act/`, `browser-read/`, `browser-handoff/`, `browser-login/` — the
+    workspace's browser and its saved logins, run by `browser-runner` on the host (see "Browser")
   - `write-entry/`, `delete-entry/`, `add-podcast/`, `remove-podcast/`, `publish-report/`,
     `run-job/` — the ops of the sites, podcasts and audit runners that write or act. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
@@ -281,8 +281,9 @@ through its UI.
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
                            shared/), and beside them the workspace's browser profile
                            (browser/, browser-runner's)
-      browser/             browser-runner's: each running browser's sockets (sockets/<slot>/)
-                           and noVNC for the take-over view (novnc/)
+      browser/             browser-runner's: each running browser's sockets (sockets/<slot>/),
+                           noVNC for the take-over view (novnc/) and the saved logins
+                           (vault/<workspace>.vault, sealed)
       podcasts/            the podcasts' state, audio, transcripts and manifests
       podcasts/models/     Whisper's
       research/runs/       the deep-research run log and live runs' markers
@@ -850,6 +851,9 @@ watch and take over, like the browser in Meta's Muse but split by workspace: a l
   back, its actions are refused. Hand it back in the take-over view, or tell the agent you're
   done, and it calls `browser-handoff` with `done: true`.
 
+- `browser-login` logs in with a login saved in the workspace's vault, without the agent
+  ever seeing it (see "Saved logins" below).
+
 They're skills, not MCP tools, because they act and must know their workspace: each call's
 scope is `{workspace, thread}` from AnythingLLM's invocation (`_lib/scope.js`, as the
 sandbox's), never from the model, and each refuses a delegated task. Gateway clients get no
@@ -877,6 +881,42 @@ listens on a port. A POST or a WebSocket must come from the page's own origin. n
 come from the browser image (`uv run hostctl browser-images` copies `/opt/novnc` to
 `~/.local/share/everythingllm/browser/novnc/`), so the page and the image's x11vnc are from one
 build.
+
+**Saved logins.** Like Muse's credential vault, the workspace's logins are the agent's to
+use and never to read. They live in browser-runner, outside both the agent and the browser
+(`browser.vault`): one file per workspace, `~/.local/share/everythingllm/browser/vault/<workspace>.vault`
+(0600), sealed with AES-GCM under a key kept apart from the data dir and its backups,
+`~/.config/everythingllm/browser-vault.key` (made on first use, 0600), with the workspace's
+name bound in so one workspace's file can't stand in for another's.
+
+- **Using one.** `browser-login` lists the logins (id, site, username, whether it has 2FA
+  and whether it asks first; never a password or 2FA secret) and which fit this chat's
+  page. The agent names a login and the fields from its last read; the runner sends the
+  secret to the driver, which types it in. It never comes back in a reply, a log or the
+  card, and the agent never types a password itself.
+- **Only on its own site.** A login is saved for a site (`linkedin.com`: the host, without
+  `www.`) and fills only there or on a subdomain (`browser.origin`), checked by the runner
+  against the tab and again by the driver against the frame the field is really in, and a
+  password goes only into a password field. So a page that talks the agent into it can't
+  have your LinkedIn password typed into another site. A site is never a public suffix
+  (`github.io`, `co.uk`, from the Public Suffix List kept in `browser/public_suffix_list.dat`),
+  whose subdomains belong to anyone.
+- **2FA.** A login can carry a TOTP secret (the text under the QR code, or its
+  `otpauth://` address); `browser-login` with `code` fills the current code. That puts both
+  factors in one vault on this machine; leave the secret out for accounts where that's too much.
+- **Asking first.** A login marked "ask me before each use" makes the agent wait for your
+  OK: the card says so, and the take-over view shows "The agent wants to use your login for
+  …" with Allow and Don't allow. An OK lasts 10 minutes for that login (`GRANT`), long enough
+  for the password and the code. The skill waits up to 5 minutes, then has the agent ask.
+- **Adding one.** Never through the chat, where the model would see it. The take-over
+  view has a Saved logins panel to add, list, mark and delete them; it can save and delete,
+  never show a password. And while you have the browser (you took over, or the agent handed
+  it to you), a form you send with a password in it is offered for saving there ("Save the
+  login you just used on …?"), with the site taken from the frame it came from, whatever the
+  page says (`capture.js`). Offers last 10 minutes and are only ever made while you have it.
+- Chromium's own password saving is off in every profile, so what you type stays out of
+  the profile. `browser-reset` wipes a profile but leaves the workspace's saved logins;
+  delete those in the panel.
 
 **Where things are.** A workspace's browser is a container,
 `everythingllm-browser-<workspace>` (image `localhost/everythingllm-browser`,

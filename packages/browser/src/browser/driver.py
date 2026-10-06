@@ -13,16 +13,30 @@ to /downloads (the workspace's /project/downloads in the sandbox); dialogs are a
 on their own (alerts accepted, confirms and prompts dismissed) and reported in the next
 read, as downloads are.
 
-Every op takes the thread and returns the tab's view: {title, url, elements, text, more,
+Saved logins (browser.vault) come from the runner and go only into fields on their own
+site: the page and the frame a field is in must be on the login's site (browser.origin), as
+Playwright sees them, not the page's scripts; a password goes only into a password field;
+and nothing filled is ever said back. Chromium's own password saving is off. While the user
+has the browser, capture.js offers what they log in with for saving; the runner asks the
+user in the take-over view, and takes the offer.
+
+The ops that take a thread return the tab's view: {title, url, elements, text, more,
 notes}, snapshot.js's reading of the page (browser.page renders it).
 
   open(thread, url)                 go to url in the thread's tab, made if need be
   act(thread, action, ref, text)    one of ACTIONS on the element `ref` from a read
   read(thread)                      the view as it is
+  fill_login(thread, site, username, password, user_ref, pass_ref, submit)
+                                    a saved login into the fields with those refs
+  fill_code(thread, site, code, ref, submit)  a 2FA code into the field `ref`
   screenshot(thread)                {jpeg (base64), title, url}; the front tab's without a thread
   front(thread)                     bring the thread's tab to the front of the window
   close(thread)                     close the thread's tab (and its popups)
   tabs()                            [{thread, title, url}]
+  capture(on)                       whether logins the user sends are offered for saving
+  offers()                          [{id, site, username}] of those, for OFFER_SECONDS
+  take_offer(id)                    {site, username, password}, and forget it
+  drop_offer(id)                    forget it
 
 Config (environment):
   BROWSER_PROXY      where Chromium sends every request: the egress proxy's public port (required)
@@ -36,19 +50,24 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
+import secrets
 import signal
+import time
 from pathlib import Path
 from typing import Any
 
 import hostrpc
 
+from browser.origin import host_of, normal_site, site_matches
 from browser.page import MAX_ELEMENTS, REF_RE
 
 log = logging.getLogger("browser-driver")
 
 SNAPSHOT = (Path(__file__).with_name("snapshot.js")).read_text()
+CAPTURE = (Path(__file__).with_name("capture.js")).read_text()
 ACTIONS = (
     "click", "fill", "type", "press", "select", "check", "uncheck", "hover",
     "scroll_down", "scroll_up", "back", "forward", "reload", "wait",
@@ -62,6 +81,11 @@ MAX_WAIT = 10  # seconds the `wait` action waits at most
 SCROLL = 600  # pixels a scroll moves
 JPEG_QUALITY = 65
 SCHEMES = ("http://", "https://")
+USERLIKE = {"text", "email", "tel", ""}  # input types a username goes into
+CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
+MAX_OFFERS = 5
+OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
+MAX_SECRET = 1000
 
 
 def check_act(action: str, ref: str, text: str) -> None:
@@ -102,6 +126,10 @@ class Driver(hostrpc.Service):
         # thread -> its pages, the newest (a popup) last; and what to tell it next read
         self.stacks: dict[str, list[Any]] = {}
         self.notes: dict[str, list[str]] = {}
+        self.capturing = False
+        self.offers: dict[
+            str, dict[str, Any]
+        ] = {}  # id -> {site, username, password, at}
 
     # --- tabs ---
 
@@ -289,6 +317,183 @@ class Driver(hostrpc.Service):
     async def op_read(self, thread: str) -> dict[str, Any]:
         return await self.view(thread, self.existing(thread))
 
+    # --- saved logins ---
+
+    async def field(self, page: Any, ref: str, site: str, kind: str) -> Any:
+        """The input `ref` (its element handle, which is what gets filled, not whatever
+        the ref finds later), once it's sure to be of `kind` on `site`. Where it is comes
+        from Playwright (the page's address, the element's frame), and what it is from
+        its selector and get_attribute, which run apart from the page's scripts: a page
+        can rewrite what its own scripts see (`ownerDocument`, `getAttribute`), and the
+        runner's idea of the page can be stale (a popup on the site, closed by the page
+        that opened it, leaves that page behind)."""
+        if not REF_RE.fullmatch(ref or ""):
+            raise hostrpc.RunnerError(
+                f"the {kind} field needs a ref from the last read, like e12"
+            )
+        host = host_of(page.url)
+        if not site_matches(host, site):
+            raise hostrpc.RunnerError(
+                f"this chat's page is on {host or 'no site'}, not {site}: a saved login "
+                "fills only on its own site; read the page again"
+            )
+        if not await page.locator(f'[data-bw-ref="{ref}"]').count():
+            raise hostrpc.RunnerError(
+                f"{ref} isn't on the page any more; read it again"
+            )
+        kinds = {"password": {"password"}, "username": USERLIKE, "code": CODELIKE}[kind]
+        target = page.locator(f'input[data-bw-ref="{ref}"]').first
+        handle, kind_of = None, None
+        try:
+            if await target.count():
+                handle = await target.element_handle(timeout=ACT_MS)
+                frame = await handle.owner_frame()
+                kind_of = ((await handle.get_attribute("type")) or "").lower()
+        except Exception:  # noqa: BLE001 - gone mid-check
+            raise hostrpc.RunnerError(
+                f"{ref} couldn't be checked; read the page again"
+            ) from None
+        if handle is not None:
+            where = host_of(frame.url if frame is not None else "")
+            if not site_matches(where, site):
+                raise hostrpc.RunnerError(
+                    f"{ref} is on {where or 'no site'}, not {site}: a saved login fills "
+                    "only on its own site"
+                )
+        if kind_of not in kinds:
+            raise hostrpc.RunnerError(
+                f"{ref} isn't a {kind} field"
+                + (
+                    " (a password goes only into a password field)"
+                    if kind == "password"
+                    else ""
+                )
+            )
+        return handle
+
+    async def fill(
+        self, page: Any, fields: list[tuple[Any, str]], submit: bool
+    ) -> None:
+        """Fill each (field, value) and press Enter in the last if `submit`. Errors say
+        nothing of the value, nor pass on Playwright's text."""
+        for target, value in fields:
+            try:
+                await target.fill(value, timeout=ACT_MS)
+            except Exception:  # noqa: BLE001 - its text could hold the call
+                raise hostrpc.RunnerError(
+                    "a field couldn't be filled (hidden, read-only, or gone); read the page again"
+                ) from None
+        if submit and fields:
+            try:
+                await fields[-1][0].press("Enter", timeout=ACT_MS)
+            except Exception:  # noqa: BLE001 - as above
+                raise hostrpc.RunnerError(
+                    "pressing Enter in the field failed"
+                ) from None
+        await self.settle(page)
+
+    async def op_fill_login(
+        self,
+        thread: str,
+        site: str,
+        username: str = "",
+        password: str = "",
+        user_ref: str = "",
+        pass_ref: str = "",
+        submit: bool = False,
+    ) -> dict[str, Any]:
+        page = self.existing(thread)
+        if not user_ref and not pass_ref:
+            raise hostrpc.RunnerError(
+                "give the ref of the username field, the password field, or both"
+            )
+        if pass_ref and not password:
+            raise hostrpc.RunnerError("this saved login has no password")
+        if user_ref and not username:
+            raise hostrpc.RunnerError(
+                "this saved login has no username; give only pass_ref"
+            )
+        fields = []  # every check before any filling
+        if user_ref:
+            fields.append(
+                (await self.field(page, user_ref, site, "username"), username)
+            )
+        if pass_ref:
+            fields.append(
+                (await self.field(page, pass_ref, site, "password"), password)
+            )
+        await self.fill(page, fields, submit)
+        return await self.view(thread, self.existing(thread))
+
+    async def op_fill_code(
+        self, thread: str, site: str, code: str, ref: str, submit: bool = False
+    ) -> dict[str, Any]:
+        page = self.existing(thread)
+        await self.fill(
+            page, [(await self.field(page, ref, site, "code"), code)], submit
+        )
+        return await self.view(thread, self.existing(thread))
+
+    # --- offering what the user logs in with ---
+
+    def on_capture(self, source: dict[str, Any], data: Any) -> None:
+        """capture.js's call (window.__bwCapture): kept only while the user has the browser,
+        and for the site of the frame it came from, whatever the page says."""
+        if not self.capturing or not isinstance(data, dict):
+            return
+        frame = source.get("frame")
+        try:  # as the vault will save it: a frame on an address can't be offered
+            site = normal_site(host_of(getattr(frame, "url", "") or ""))
+        except ValueError:
+            return
+        username, password = data.get("username"), data.get("password")
+        if not (
+            site
+            and isinstance(username, str)
+            and isinstance(password, str)
+            and password
+        ):
+            return
+        if len(username) > MAX_SECRET or len(password) > MAX_SECRET:
+            return
+        for key in [
+            k
+            for k, o in self.offers.items()
+            if (o["site"], o["username"]) == (site, username)
+        ]:
+            del self.offers[key]
+        while len(self.offers) >= MAX_OFFERS:
+            del self.offers[min(self.offers, key=lambda k: self.offers[k]["at"])]
+        self.offers[secrets.token_hex(4)] = {
+            "site": site, "username": username, "password": password, "at": time.monotonic(),
+        }  # fmt: skip
+
+    def live_offers(self) -> dict[str, dict[str, Any]]:
+        now = time.monotonic()
+        for key in [k for k, o in self.offers.items() if now - o["at"] > OFFER_SECONDS]:
+            del self.offers[key]
+        return self.offers
+
+    async def op_capture(self, on: bool) -> dict[str, Any]:
+        self.capturing = bool(on)
+        return {}
+
+    async def op_offers(self) -> list[dict[str, Any]]:
+        return [
+            {"id": k, "site": o["site"], "username": o["username"]}
+            for k, o in self.live_offers().items()
+        ]
+
+    async def op_take_offer(self, id: str) -> dict[str, Any]:
+        offer = self.live_offers().pop(id, None)
+        if offer is None:
+            raise hostrpc.RunnerError("that login isn't waiting to be saved any more")
+        return {k: offer[k] for k in ("site", "username", "password")}
+
+    async def op_drop_offer(self, id: str) -> dict[str, Any]:
+        self.live_offers().pop(id, None)
+        return {}
+
     async def op_screenshot(self, thread: str = "") -> dict[str, Any]:
         page = self.current(thread) if thread else self.front_page()
         if page is None:
@@ -363,6 +568,20 @@ def chromium_args(proxy: str, screen: tuple[int, int]) -> list[str]:
     ]
 
 
+def quiet_password_manager(profile: Path) -> None:
+    """Turn Chromium's own password saving off in the profile, so what the user types in
+    the take-over view isn't kept there: the vault is where logins go."""
+    prefs = profile / "Default" / "Preferences"
+    try:
+        data = json.loads(prefs.read_text())
+    except (OSError, ValueError):
+        data = {}
+    data["credentials_enable_service"] = False
+    data.setdefault("profile", {})["password_manager_enabled"] = False
+    prefs.parent.mkdir(parents=True, exist_ok=True)
+    prefs.write_text(json.dumps(data))
+
+
 def screen_size(value: str) -> tuple[int, int]:
     width, _, height = value.partition("x")
     return int(width), int(height)
@@ -380,23 +599,27 @@ async def serve() -> None:
     run = Path(get("BROWSER_RUN", "/run/browser"))
     downloads = Path(get("BROWSER_DOWNLOADS", "/downloads"))
     screen = screen_size(get("BROWSER_SCREEN", "1280x800"))
+    profile = Path(get("BROWSER_PROFILE", "/profile"))
+    quiet_password_manager(profile)
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(
-            get("BROWSER_PROFILE", "/profile"),
+            str(profile),
             headless=False,
             no_viewport=True,
             accept_downloads=True,
             args=chromium_args(proxy, screen),
         )
+        driver = Driver(context, downloads)
+        await context.expose_binding("__bwCapture", driver.on_capture)
+        await context.add_init_script(script=CAPTURE)
         stop = asyncio.Event()
-        context.on(
-            "close", lambda _: stop.set()
-        )  # the window was closed: end the container
+        # The window was closed: end the container.
+        context.on("close", lambda _: stop.set())
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGTERM, stop.set)
         try:
             await hostrpc.serve(
-                Driver(context, downloads),
+                driver,
                 run / "driver.sock",
                 limit=8 << 20,
                 stop=stop,

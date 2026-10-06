@@ -159,7 +159,8 @@ def data_dir() -> Path:
       sandbox/workspaces/  the sandbox's folders, per workspace: threads/, project/, shared/,
                            and browser/, the workspace's browser profile (browser-runner's)
       sandbox/public/      each sandbox workspace's /public, served as it is on :8447
-      browser/             browser-runner's: sockets/<slot>/ (each browser's) and novnc/
+      browser/             browser-runner's: sockets/<slot>/ (each browser's), novnc/ and
+                           vault/ (the saved logins, sealed)
       podcasts/            the podcasts' state and audio; podcasts/models/, Whisper's
       research/runs/       the deep-research run log and live runs' markers
       agents/runs/         the delegations' run log and live runs' markers

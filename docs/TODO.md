@@ -58,6 +58,15 @@ Left open by the gateway's stages 1–3 (2026-10-06):
   runner holds, AnythingLLM's included. That's documented, not enforced, and matters only
   once a second client has the `research` grant.
 
+## Saved logins in the browser: loose ends
+
+Left open by the code review of the browser's saved logins (2026-10-07):
+
+- **The view's poll does more than it needs.** `Takeover.state()` (`takeover.py`) runs
+  every 2 s per open view and each time decrypts the vault and asks the driver for its
+  offers, even when nothing is being captured. Cheap today; caching on the vault file's
+  mtime and returning offers only while one is pending would cut it.
+
 ## Format hostctl's older modules
 
 `cli.py`, `appctl.py` and `machine.py` in `packages/hostctl` aren't ruff-formatted, and

@@ -25,6 +25,9 @@ class FakeDriver(hostrpc.Service):
         super().__init__()
         self.pages: dict[str, str] = {}  # thread -> url
         self.calls: list[tuple[str, dict]] = []
+        self.filled: list[dict] = []
+        self.capturing = False
+        self.offers: dict[str, dict] = {}
 
     def view(self, thread):
         url = self.pages[thread]
@@ -65,6 +68,45 @@ class FakeDriver(hostrpc.Service):
 
     async def op_front(self, thread):
         self.calls.append(("front", {"thread": thread}))
+        return {}
+
+    async def op_fill_login(
+        self,
+        thread,
+        site,
+        username="",
+        password="",
+        user_ref="",
+        pass_ref="",
+        submit=False,
+    ):
+        self.filled.append({"thread": thread, "site": site, "username": username, "password": password,
+                            "user_ref": user_ref, "pass_ref": pass_ref, "submit": submit})  # fmt: skip
+        return self.view(thread)
+
+    async def op_fill_code(self, thread, site, code, ref, submit=False):
+        self.filled.append(
+            {"thread": thread, "site": site, "code": code, "ref": ref, "submit": submit}
+        )
+        return self.view(thread)
+
+    async def op_capture(self, on):
+        self.capturing = on
+        return {}
+
+    async def op_offers(self):
+        return [
+            {"id": k, "site": o["site"], "username": o["username"]}
+            for k, o in self.offers.items()
+        ]
+
+    async def op_take_offer(self, id):
+        if id not in self.offers:
+            raise hostrpc.RunnerError("that login isn't waiting to be saved any more")
+        return self.offers.pop(id)
+
+    async def op_drop_offer(self, id):
+        self.offers.pop(id, None)
         return {}
 
     async def op_close(self, thread):
@@ -131,6 +173,7 @@ def config(tmp_path, **kw) -> runner_mod.Config:
         pages_url=kw.pop("pages_url", "https://host.example.ts.net:8445/"),
         takeover_url="https://host.example.ts.net:8454/",
         repo=Path("/repo"),
+        vault_key=tmp_path / "config" / "browser-vault.key",
         **kw,
     )
 

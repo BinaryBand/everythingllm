@@ -11,15 +11,22 @@ container, so a stopped browser's old address goes nowhere.
   GET  /<token>/app.js, style.css  the page's script and style (static/ beside this file)
   GET  /<token>/novnc/<path>     noVNC's core and vendor files (copied from the browser image
                                  into <data>/novnc by hostctl browser-images)
-  GET  /<token>/state            {workspace, control, reason, tabs}
+  GET  /<token>/state            {workspace, control, reason, waiting, tabs, approval,
+                                 offers, logins}: logins and offers without their secrets
   POST /<token>/take             the user takes the browser
   POST /<token>/give             the user hands it back to the agent
+  POST /<token>/approve/<id>, deny/<id>   answer the agent's wish to use a saved login
+  POST /<token>/logins           save a login {site, username, password, totp, ask}
+  POST /<token>/logins/<id>/delete, logins/<id>/ask {ask}
+  POST /<token>/offers/<id>/save {username, ask}, offers/<id>/drop
+                                 save, or not, a login the user just sent in the browser
   GET  /<token>/websockify       the WebSocket noVNC speaks, carried to the container's
                                  x11vnc socket (browser.websocket)
   GET  /health                   ok
 
 A POST or a WebSocket must come from the page's own origin (its Origin header), so no
-other page can drive the browser. Connections are taken only from loopback or the
+other page can drive the browser. Nothing here ever sends a password or 2FA secret back:
+the page can save and delete logins, not read them. Connections are taken only from loopback or the
 server's own address (hostrpc.local_peer), where tailscale serve delivers them.
 """
 
@@ -44,6 +51,7 @@ if TYPE_CHECKING:
 HOST = "127.0.0.1"
 STATIC = Path(__file__).with_name("static")
 MAX_HEAD = 16 * 1024
+MAX_BODY = 16 * 1024
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
     "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -71,6 +79,27 @@ PAGE = """<!doctype html>
   <button id="give" hidden>Hand back to the agent</button>
 </header>
 <p id="reason" hidden></p>
+<p id="problem" class="error" hidden></p>
+<section id="approval" class="ask" hidden>
+  <span id="approval-text"></span>
+  <button id="allow">Allow</button>
+  <button id="deny" class="quiet">Don't allow</button>
+</section>
+<section id="offers"></section>
+<details id="logins">
+  <summary>Saved logins</summary>
+  <p class="note">The agent can use these on their own sites, but never read them.</p>
+  <ul id="login-list"></ul>
+  <form id="add">
+    <input name="site" placeholder="Site, like linkedin.com" required autocomplete="off">
+    <input name="username" placeholder="Username or email" autocomplete="off">
+    <input name="password" type="password" placeholder="Password" autocomplete="new-password">
+    <input name="totp" placeholder="2FA secret (optional)" autocomplete="off">
+    <label><input name="ask" type="checkbox"> Ask me before each use</label>
+    <button>Save login</button>
+    <span id="add-error" class="error"></span>
+  </form>
+</details>
 <main id="screen"></main>
 <script type="module" src="app.js"></script>
 </body>
@@ -92,6 +121,25 @@ class Request:
         parts = urlsplit(target)
         self.method, self.path, self.headers = method, parts.path, headers
         self.query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+        self.body: dict = {}
+
+    async def read_body(self, reader: asyncio.StreamReader) -> None:
+        """A POST's JSON object, if it has one; live.BadRequest for anything else."""
+        try:
+            n = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            raise live.BadRequest("bad Content-Length") from None
+        if not n:
+            return
+        if not 0 < n <= MAX_BODY:
+            raise live.BadRequest("body too big")
+        try:
+            body = json.loads(await asyncio.wait_for(reader.readexactly(n), 10))
+        except (asyncio.IncompleteReadError, TimeoutError, ValueError):
+            raise live.BadRequest("the body isn't JSON") from None
+        if not isinstance(body, dict):
+            raise live.BadRequest("the body isn't a JSON object")
+        self.body = body
 
     def same_origin(self) -> bool:
         """Whether Origin names this server, as the Host header does."""
@@ -175,13 +223,16 @@ class Takeover:
         if req.method == "POST":
             if not req.same_origin():
                 return await live.send(writer, "403 Forbidden", b"Not from the page.\n")
-            if what == "take":
-                self.runner.take(s)
-            elif what == "give":
-                self.runner.give_back(s)
-            else:
+            try:
+                await req.read_body(reader)
+                done = await self.post(s, what, req.body)
+            except live.BadRequest as e:
+                return await live.send(writer, "400 Bad Request", f"{e}\n".encode())
+            except hostrpc.RunnerError as e:
+                return await self.json(writer, {"error": str(e)}, "400 Bad Request")
+            if not done:
                 return await live.send(writer, "404 Not Found", b"No such thing.\n")
-            return await self.json(writer, self.state(s))
+            return await self.json(writer, await self.state(s))
         if req.method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET or POST.\n")
         if what == "":
@@ -198,29 +249,85 @@ class Takeover:
                 writer, self.novnc / what.removeprefix("novnc/"), self.novnc
             )
         if what == "state":
-            return await self.json(writer, self.state(s))
+            return await self.json(writer, await self.state(s))
         if what == "websockify":
             return await self.bridge(req, reader, writer, s)
         await live.send(writer, "404 Not Found", b"No such thing.\n")
 
-    def state(self, s: Session) -> dict:
+    async def post(self, s: Session, what: str, body: dict) -> bool:
+        """Do what a POST asks; False for a path that isn't one."""
+        r, ws = self.runner, s.workspace
+        parts = what.split("/")
+        match parts:
+            case ["take"]:
+                await r.take(s)
+            case ["give"]:
+                await r.give_back(s)
+            case ["approve" | "deny" as answer, approval]:
+                r.answer(s, approval, answer == "approve")
+            case ["logins"]:
+                await asyncio.to_thread(
+                    r.vault.add, ws, text(body, "site"), text(body, "username"),
+                    text(body, "password"), text(body, "totp"), body.get("ask") is True,
+                )  # fmt: skip
+            case ["logins", login, "delete"]:
+                await asyncio.to_thread(r.vault.delete, ws, login)
+            case ["logins", login, "ask"]:
+                await asyncio.to_thread(
+                    r.vault.update, ws, login, ask=body.get("ask") is True
+                )
+            case ["offers", offer, "save"]:
+                name = body.get("username")
+                await r.save_offer(
+                    s,
+                    offer,
+                    name if isinstance(name, str) else None,
+                    body.get("ask") is True,
+                )
+            case ["offers", offer, "drop"]:
+                await r.call(s, "drop_offer", {"id": offer})
+            case _:
+                return False
+        return True
+
+    async def state(self, s: Session) -> dict:
         tabs = [
             {"id": t.id, "title": t.title, "url": t.url}
             for t in self.runner.tabs.values()
             if t.workspace == s.workspace and t.open
         ]
+        approval = s.approval
+        try:
+            logins = await asyncio.to_thread(self.runner.vault.logins, s.workspace)
+        except hostrpc.RunnerError as e:
+            logins = [{"error": str(e)}]
         return {
             "workspace": s.workspace,
             "control": s.control,
             "reason": s.reason,
             "waiting": s.asked and s.control == "user",
             "tabs": tabs,
+            "approval": {
+                "id": approval.id,
+                "site": approval.site,
+                "username": approval.username,
+            }
+            if approval is not None
+            else None,
+            "offers": await self.runner.offers(s),
+            "logins": logins,
         }
 
-    async def send(self, writer: asyncio.StreamWriter, body: bytes, kind: str) -> None:
+    async def send(
+        self,
+        writer: asyncio.StreamWriter,
+        body: bytes,
+        kind: str,
+        status: str = "200 OK",
+    ) -> None:
         await live.send(
             writer,
-            "200 OK",
+            status,
             body,
             kind,
             headers={
@@ -229,8 +336,10 @@ class Takeover:
             },
         )
 
-    async def json(self, writer: asyncio.StreamWriter, data: dict) -> None:
-        await self.send(writer, json.dumps(data).encode(), "application/json")
+    async def json(
+        self, writer: asyncio.StreamWriter, data: dict, status: str = "200 OK"
+    ) -> None:
+        await self.send(writer, json.dumps(data).encode(), "application/json", status)
 
     async def file(
         self, writer: asyncio.StreamWriter, path: Path, root: Path | None = None
@@ -298,3 +407,8 @@ class Takeover:
                     writer.write(websocket.frame(websocket.CLOSE, b"\x03\xe8"))
                 await live.close(writer)
                 s.used = self.runner.now()
+
+
+def text(body: dict, key: str) -> str:
+    value = body.get(key)
+    return value if isinstance(value, str) else ""

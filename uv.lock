@@ -160,6 +160,7 @@ version = "0.1.0"
 source = { editable = "packages/browser" }
 dependencies = [
     { name = "chatimage" },
+    { name = "cryptography" },
     { name = "egress" },
     { name = "hostrpc" },
     { name = "pillow" },
@@ -168,6 +169,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "chatimage", editable = "packages/chatimage" },
+    { name = "cryptography", specifier = ">=45" },
     { name = "egress", editable = "packages/egress" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "pillow", specifier = ">=11" },

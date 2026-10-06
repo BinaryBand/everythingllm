@@ -97,6 +97,122 @@ def test_only_web_addresses_open():
         driver.check_url("  ")
 
 
+class FakeFrame:
+    def __init__(self, url):
+        self.url = url
+
+
+class FakeElement:
+    """An element as Playwright reports it: its tag, its real type attribute and frame."""
+
+    def __init__(self, tag, kind, frame_url):
+        self.tag, self.kind, self.frame = tag, kind, FakeFrame(frame_url)
+        self.filled, self.pressed = None, None
+
+    async def owner_frame(self):
+        return self.frame
+
+    async def get_attribute(self, name):
+        assert name == "type"
+        return self.kind
+
+    async def fill(self, value, timeout):
+        self.filled = value
+
+    async def press(self, key, timeout):
+        self.pressed = key
+
+
+class FakeLocator:
+    def __init__(self, found):
+        self.found, self.first = found, self
+
+    async def count(self):
+        return len(self.found)
+
+    async def element_handle(self, timeout):
+        return self.found[0]
+
+
+class FakePage:
+    """A page whose own scripts are never asked: nothing here has an evaluate."""
+
+    def __init__(self, url, elements, closed=False):
+        self.url, self.elements, self.closed = url, elements, closed
+
+    def is_closed(self):
+        return self.closed
+
+    def locator(self, selector):
+        tag, _, ref = selector.partition('[data-bw-ref="')
+        ref = ref.removesuffix('"]')
+        found = [e for r, e in self.elements.items() if r == ref and tag in ("", e.tag)]
+        return FakeLocator(found)
+
+    async def wait_for_load_state(self, state, timeout):
+        pass
+
+
+def fill_login(page, *popups, **args):
+    d = driver.Driver(None, None)
+    d.stacks["t1"] = [page, *popups]
+
+    async def view(thread, page):
+        return {"url": page.url}
+
+    d.view = view
+    login = ("t1", "linkedin.com", "me@x.org", "hunter2")
+    return asyncio.run(d.op_fill_login(*login, **args))
+
+
+def login_page(url="https://www.linkedin.com/login", frame="https://www.linkedin.com/login",
+               password="password"):  # fmt: skip
+    return FakePage(url, {
+        "e1": FakeElement("input", "email", frame),
+        "e2": FakeElement("input", password, frame),
+        "e3": FakeElement("div", None, frame),
+    })  # fmt: skip
+
+
+def test_a_saved_login_fills_the_fields_it_checked_on_its_site():
+    page = login_page()
+    fill_login(page, user_ref="e1", pass_ref="e2", submit=True)
+    user, password = page.elements["e1"], page.elements["e2"]
+    assert (user.filled, password.filled) == ("me@x.org", "hunter2")
+    assert password.pressed == "Enter"
+
+
+def test_a_login_doesnt_fill_where_the_runner_thought_the_page_was():
+    # A popup on the site, closed by the page that opened it, leaves that page in the tab;
+    # it can tag its own fields with the popup's refs, and fake what its scripts see.
+    page = login_page(url="https://evil.example/", frame="https://evil.example/")
+    popup = login_page()
+    popup.closed = True
+    with pytest.raises(RunnerError, match="page is on evil.example, not linkedin.com"):
+        fill_login(page, popup, user_ref="e1", pass_ref="e2")
+    assert page.elements["e2"].filled is None
+
+
+def test_a_login_doesnt_fill_a_field_in_a_frame_from_another_site():
+    page = login_page(frame="https://evil.example/frame")
+    with pytest.raises(RunnerError, match="e1 is on evil.example, not linkedin.com"):
+        fill_login(page, user_ref="e1", pass_ref="e2")
+    assert page.elements["e1"].filled is None
+
+
+@pytest.mark.parametrize("password", ["text", None])
+def test_a_password_goes_only_into_a_password_field(password):
+    page = login_page(password=password)
+    with pytest.raises(RunnerError, match="e2 isn't a password field"):
+        fill_login(page, user_ref="e1", pass_ref="e2")
+    # Nothing is filled until both are checked.
+    assert page.elements["e1"].filled is None
+    with pytest.raises(RunnerError, match="e3 isn't a password field"):
+        fill_login(login_page(), pass_ref="e3")
+    with pytest.raises(RunnerError, match="e9 isn't on the page"):
+        fill_login(login_page(), pass_ref="e9")
+
+
 def test_chromium_goes_through_the_proxy_alone():
     args = driver.chromium_args("http://10.89.79.2:3129", (1280, 800))
     assert "--proxy-server=http://10.89.79.2:3129" in args
@@ -145,7 +261,7 @@ def test_websocket_messages_join_fragments_answer_pings_and_refuse_unmasked_fram
             + client(websocket.CLOSE, b"\x03\xe8")
         )
         writer = Writer()
-        got = [m async for m in websocket.messages(reader, writer)]
+        got = [m async for m in websocket.messages(reader, writer)]  # ty: ignore[invalid-argument-type] - a fake writer
         assert got == [b"abcd"]
         assert writer.out == websocket.frame(websocket.PONG, b"hi") + websocket.frame(
             websocket.CLOSE, b"\x03\xe8"
@@ -153,6 +269,6 @@ def test_websocket_messages_join_fragments_answer_pings_and_refuse_unmasked_fram
         bad = asyncio.StreamReader()
         bad.feed_data(bytes([0x82, 0x02]) + b"no")
         with pytest.raises(websocket.Closed, match="masked"):
-            await anext(websocket.messages(bad, Writer()))
+            await anext(websocket.messages(bad, Writer()))  # ty: ignore[invalid-argument-type]
 
     asyncio.run(main())

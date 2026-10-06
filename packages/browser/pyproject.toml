@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "browser-runner: one Chromium per AnythingLLM workspace in a hardened container, with live chat cards and a take-over view"
 requires-python = ">=3.12"
 # The driver (browser.driver) runs in the browser image, with its own Playwright.
-dependencies = ["chatimage", "egress", "hostrpc", "pillow>=11"]
+dependencies = ["chatimage", "cryptography>=45", "egress", "hostrpc", "pillow>=11"]
 
 [project.scripts]
 browser-runner = "browser.runner:main"

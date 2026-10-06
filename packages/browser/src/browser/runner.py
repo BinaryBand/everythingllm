@@ -1,6 +1,6 @@
 """browser-runner: one Chromium per AnythingLLM workspace, for the browse skills
-(anythingllm/agent-skills/browse, browser-act, browser-read, browser-handoff), with a live
-card in the chat and a take-over view on the tailnet.
+(anythingllm/agent-skills/browse, browser-act, browser-read, browser-handoff,
+browser-login), with a live card in the chat and a take-over view on the tailnet.
 
 A workspace's browser is a podman container (host/containers/browser) started on its first
 call and stopped when nobody has used or watched it for IDLE seconds. Its profile (cookies,
@@ -28,6 +28,12 @@ its reply so the card shows). While the user has it, the agent's actions are ref
 comes back when the user hands it back in the view, or says in the chat that they're done
 (`handoff` with `done`), or when the browser is stopped.
 
+Saved logins (browser.vault, one vault per workspace) are the agent's to use and never to
+read: it names a login and the fields, and the runner has the driver fill them on the
+login's own site. A login the user marked `ask` waits for their OK in the take-over view
+(and on the card) before each use, good for GRANT minutes. While the user has the browser,
+logins they send are offered for saving there too.
+
 Ops (each takes `scope`):
   open(url)                      go to url in the thread's tab -> {page, card, new}
   act(action, ref?, text?)       one browser.driver action -> {page}
@@ -35,6 +41,11 @@ Ops (each takes `scope`):
   handoff(reason)                give the user the browser -> {card, takeover}
   handoff(done=true)             take it back -> {page}
   close()                        close the thread's tab
+  logins()                       the workspace's saved logins, no secrets -> {logins, site}
+  login(login, user_ref?, pass_ref?, submit?)  fill a saved login -> {page}, or
+                                 {approval, card} while it waits for the user's OK
+  code(login, ref, submit?)      fill a saved login's 2FA code -> as login
+  wait_approval(approval)        up to WAIT s -> {done, approved}
 
 `page` is browser.page's text; `card` the tab's live card line (browser.live), "" without
 PUBLIC_HOST; `new` whether the card is new to this chat (the tab was just made).
@@ -48,6 +59,8 @@ Config (environment):
                          sockets/<slot>/ and novnc/ (copied from the image by hostctl browser-images)
   BROWSER_LIVE_PORT      the live cards' port (default 8453), on LIVE_HOST (default 127.0.0.1)
   BROWSER_TAKEOVER_PORT  the take-over view's port (default 8454), on 127.0.0.1
+  BROWSER_VAULT_KEY      the saved logins' key (default ~/.config/everythingllm/browser-vault.key,
+                         made on first use); the vaults are in <data>/vault/
 """
 
 from __future__ import annotations
@@ -71,6 +84,8 @@ from egress import config as egress_config
 from hostrpc import RunnerError
 
 from browser import page as pagetext
+from browser.origin import host_of, site_matches
+from browser.vault import MAX_FIELD, Vault, VaultError, totp
 
 log = logging.getLogger("browser-runner")
 
@@ -85,6 +100,10 @@ KEY_RE = re.compile(r"[a-z0-9_][a-z0-9_-]{0,99}")
 SCREEN = "1280x800"
 MEMORY = "2g"
 IDLE = 20 * 60  # seconds unused and unwatched before a browser is stopped
+GRANT = 10 * 60  # seconds the user's OK to use a login lasts
+WAIT = 40  # what wait_approval waits at most, inside a skill call's patience
+MAX_ANSWERS = 20  # the user's last answers kept, for a wait_approval that comes late
+VAULT_KEY = Path("~/.config/everythingllm/browser-vault.key").expanduser()
 START_SECONDS = 40  # for a container's driver to answer
 # An op in the driver: its own limits are shorter (30 s for a page load).
 DRIVER_SECONDS = 42
@@ -126,6 +145,7 @@ class Config:
     live_port: int = LIVE_PORT
     takeover_port: int = TAKEOVER_PORT
     repo: Path = REPO
+    vault_key: Path = VAULT_KEY
 
     @classmethod
     def from_env(cls) -> Config:
@@ -146,6 +166,7 @@ class Config:
             else f"http://127.0.0.1:{TAKEOVER_PORT}/",
             live_port=int(get("BROWSER_LIVE_PORT", LIVE_PORT)),
             takeover_port=int(get("BROWSER_TAKEOVER_PORT", TAKEOVER_PORT)),
+            vault_key=Path(get("BROWSER_VAULT_KEY", VAULT_KEY)),
         )
 
     def sockets(self, slot: str) -> Path:
@@ -177,6 +198,18 @@ class Tab:
 
 
 @dataclass(eq=False)
+class Approval:
+    """The agent waiting for the user's OK to use a saved login."""
+
+    id: str
+    login: str  # the login's id
+    site: str
+    username: str
+    answer: bool | None = None
+    answered: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+@dataclass(eq=False)
 class Session:
     """A workspace's running browser container."""
 
@@ -190,6 +223,9 @@ class Session:
     reason: str = ""  # why the user has it
     asked: bool = False  # whether the agent asked for it (a handoff)
     viewers: int = 0  # take-over views open
+    approval: Approval | None = None  # the OK the agent waits for
+    granted: dict[str, float] = field(default_factory=dict)  # login id -> OK until
+    answers: dict[str, bool] = field(default_factory=dict)  # approval id -> the user's
 
     @property
     def name(self) -> str:
@@ -243,6 +279,7 @@ class Runner(hostrpc.Service):
         # from one container to the next
         self.threads: dict[tuple[str, str], Tab] = {}
         self.locks: dict[str, asyncio.Lock] = {}
+        self.vault = Vault(config.data / "vault", config.vault_key)
 
     # --- containers ---
 
@@ -351,6 +388,8 @@ class Runner(hostrpc.Service):
         s = self.sessions.pop(workspace, None)
         if s is None:
             return
+        if s.approval is not None:  # its waiter hears it's stale
+            s.approval.answered.set()
         await self.podman(["stop", "-t", "5", s.name], 30)
         self.forget(workspace)
         log.info("stopped %s's browser", workspace)
@@ -489,7 +528,7 @@ class Runner(hostrpc.Service):
                 raise RunnerError(
                     "this workspace's browser isn't open; open a page first"
                 )
-            self.give_back(s)
+            await self.give_back(s)
             tab = self.threads.get((workspace, thread))
             if tab is None or not tab.open:
                 return {"page": ""}
@@ -499,6 +538,7 @@ class Runner(hostrpc.Service):
         s = await self.session(workspace)
         tab, _ = self.tab(workspace, thread)
         s.control, s.reason, s.asked = "user", (reason or "").strip()[:200], True
+        await self.capture(s, True)
         tab.moved(f"Waiting for you: {s.reason}" if s.reason else "Waiting for you")
         if tab.url:
             await self.call(s, "front", {"thread": thread})
@@ -514,6 +554,176 @@ class Runner(hostrpc.Service):
         if (s := self.sessions.get(workspace)) is not None:
             await self.call(s, "close", {"thread": thread})
         return {}
+
+    # --- saved logins ---
+
+    async def op_logins(self, scope: dict[str, Any]) -> dict[str, Any]:
+        """The workspace's saved logins (never a password or 2FA secret), and the site of
+        the thread's page, whose logins are the ones that can fill there."""
+        workspace, thread = check_scope(scope)
+        logins = await asyncio.to_thread(self.vault.logins, workspace)
+        tab = self.threads.get((workspace, thread))
+        host = host_of(tab.url) if tab is not None and tab.open else ""
+        for login in logins:
+            login["here"] = bool(host) and site_matches(host, login["site"])
+        return {"logins": logins, "site": host}
+
+    async def op_login(
+        self,
+        scope: dict[str, Any],
+        login: str,
+        user_ref: str = "",
+        pass_ref: str = "",
+        submit: bool = False,
+    ) -> dict[str, Any]:
+        workspace, thread = check_scope(scope)
+        s, tab = await self.running(workspace, thread)
+        self.agent_may_act(s)
+        entry = await self.usable(workspace, login, tab)
+        if (waiting := self.approval(s, tab, entry)) is not None:
+            return {"approval": waiting.id, "card": self.card(tab)}
+        view = await self.call(
+            s,
+            "fill_login",
+            {
+                "thread": thread,
+                "site": entry["site"],
+                "username": entry["username"],
+                "password": entry.get("password", ""),
+                "user_ref": user_ref or "",
+                "pass_ref": pass_ref or "",
+                "submit": bool(submit),
+            },
+        )
+        await self.used(workspace, entry)
+        who = f" as {entry['username']}" if entry["username"] else ""
+        tab.moved(
+            f"{'Logged in' if submit else 'Filled in the login'} for {entry['site']}{who}",
+            view,
+        )
+        return {"page": pagetext.render(view)}
+
+    async def op_code(
+        self, scope: dict[str, Any], login: str, ref: str, submit: bool = False
+    ) -> dict[str, Any]:
+        workspace, thread = check_scope(scope)
+        s, tab = await self.running(workspace, thread)
+        self.agent_may_act(s)
+        entry = await self.usable(workspace, login, tab)
+        if not entry.get("totp"):
+            raise RunnerError(
+                f"the {entry['site']} login has no 2FA secret saved; hand the browser to the user for the code"
+            )
+        if (waiting := self.approval(s, tab, entry)) is not None:
+            return {"approval": waiting.id, "card": self.card(tab)}
+        view = await self.call(
+            s,
+            "fill_code",
+            {"thread": thread, "site": entry["site"], "code": totp(entry["totp"]),
+             "ref": ref or "", "submit": bool(submit)},
+        )  # fmt: skip
+        await self.used(workspace, entry)
+        tab.moved(f"Filled in the 2FA code for {entry['site']}", view)
+        return {"page": pagetext.render(view)}
+
+    async def op_wait_approval(
+        self, scope: dict[str, Any], approval: str
+    ) -> dict[str, Any]:
+        workspace, _ = check_scope(scope)
+        s = self.sessions.get(workspace)
+        # Unanswered and no longer asked (another login's request took its place, or the
+        # browser restarted): not the user's no.
+        stale = {"done": True, "approved": False, "stale": True}
+        if s is None:
+            return stale
+        if approval in s.answers:
+            return {"done": True, "approved": s.answers[approval]}
+        waiting = s.approval
+        if waiting is None or waiting.id != approval:
+            return stale
+        try:
+            await asyncio.wait_for(waiting.answered.wait(), WAIT)
+        except TimeoutError:
+            return {"done": False, "approved": False}
+        if waiting.answer is None:
+            return stale
+        return {"done": True, "approved": waiting.answer}
+
+    async def usable(self, workspace: str, login: str, tab: Tab) -> dict[str, Any]:
+        """The saved login, if the tab's page is on its site."""
+        entry = await asyncio.to_thread(self.vault.get, workspace, str(login or ""))
+        host = host_of(tab.url)
+        if not site_matches(host, entry["site"]):
+            raise RunnerError(
+                f"that login is for {entry['site']}, and this chat's page is on {host or 'no site'}; "
+                f"open {entry['site']}'s login page first"
+            )
+        return entry
+
+    def approval(self, s: Session, tab: Tab, entry: dict[str, Any]) -> Approval | None:
+        """The OK the agent must wait for before using `entry`, or None when it needs none
+        (the login doesn't ask, or the user said yes in the last GRANT seconds)."""
+        if not entry.get("ask") or s.granted.get(entry["id"], 0) > self.now():
+            return None
+        if s.approval is None or s.approval.login != entry["id"]:
+            if s.approval is not None:  # its waiter hears it's stale
+                s.approval.answered.set()
+            s.approval = Approval(
+                secrets.token_hex(4), entry["id"], entry["site"], entry["username"]
+            )
+        tab.moved(f"Waiting for your OK to use your {entry['site']} login")
+        return s.approval
+
+    def answer(self, s: Session, approval: str, yes: bool) -> None:
+        """The user's answer in the take-over view."""
+        waiting = s.approval
+        if waiting is None or waiting.id != approval:
+            raise RunnerError("that request isn't waiting any more")
+        waiting.answer = bool(yes)
+        if yes:
+            s.granted[waiting.login] = self.now() + GRANT
+        s.answers[waiting.id] = waiting.answer
+        while len(s.answers) > MAX_ANSWERS:
+            del s.answers[next(iter(s.answers))]
+        s.approval = None
+        waiting.answered.set()
+        for tab in self.tabs.values():
+            if tab.workspace == s.workspace and tab.open:
+                tab.moved(
+                    f"You {'allowed' if yes else 'refused'} the {waiting.site} login"
+                )
+
+    async def used(self, workspace: str, entry: dict[str, Any]) -> None:
+        await asyncio.to_thread(
+            self.vault.update, workspace, entry["id"], used=time.strftime("%Y-%m-%d")
+        )
+
+    async def capture(self, s: Session, on: bool) -> None:
+        """Whether logins the user sends in the browser are offered for saving: while they
+        have it."""
+        try:
+            await self.call(s, "capture", {"on": on})
+        except RunnerError:
+            pass  # a browser that's gone captures nothing
+
+    async def offers(self, s: Session) -> list[dict[str, Any]]:
+        try:
+            return await self.call(s, "offers", {})
+        except RunnerError:
+            return []
+
+    async def save_offer(
+        self, s: Session, offer: str, username: str | None, ask: bool
+    ) -> dict[str, Any]:
+        # Taking an offer forgets it in the browser, so what the vault would refuse is
+        # refused first, while the user can still fix it.
+        if username is not None and len(username) > MAX_FIELD:
+            raise VaultError("that's too long for a login")
+        taken = await self.call(s, "take_offer", {"id": offer})
+        name = taken["username"] if username is None else str(username)
+        return await asyncio.to_thread(
+            self.vault.add, s.workspace, taken["site"], name, taken["password"], "", ask
+        )
 
     async def op_ping(self) -> dict[str, Any]:
         image, network = await asyncio.gather(
@@ -535,17 +745,19 @@ class Runner(hostrpc.Service):
 
     # --- for the live card and the take-over view ---
 
-    def give_back(self, s: Session) -> None:
+    async def give_back(self, s: Session) -> None:
         """The agent has the browser again."""
         s.control, s.reason, s.asked = "agent", "", False
+        await self.capture(s, False)
         for tab in self.tabs.values():
             if tab.workspace == s.workspace and tab.open:
                 tab.moved("The agent has the browser again")
 
-    def take(self, s: Session) -> None:
+    async def take(self, s: Session) -> None:
         """The user takes the browser from the take-over view."""
         if s.control != "user":
             s.control, s.reason, s.asked = "user", "you took over", False
+            await self.capture(s, True)
             for tab in self.tabs.values():
                 if tab.workspace == s.workspace and tab.open:
                     tab.moved("You took over the browser")

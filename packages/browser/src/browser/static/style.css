@@ -9,4 +9,16 @@ header span { color: var(--muted); flex: 1; min-width: 12rem; }
 button { font: inherit; padding: 0.35rem 0.9rem; border-radius: 6px; border: 0; cursor: pointer; background: var(--agent); color: #10131a; }
 #give { background: var(--user); }
 #reason { margin: 0; padding: 0.4rem 1rem; background: #3a2f1f; color: var(--user); }
+#problem { margin: 0; padding: 0.4rem 1rem; }
 main { flex: 1; min-height: 0; }
+#approval, #offers > div { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; margin: 0; padding: 0.5rem 1rem; background: #3a2f1f; color: var(--user); }
+#approval[hidden] { display: none; }
+button.quiet { background: transparent; color: var(--muted); border: 1px solid #3a3f4b; }
+#logins { padding: 0.3rem 1rem; border-top: 1px solid #2c313b; }
+#logins summary { cursor: pointer; color: var(--muted); }
+#logins ul { list-style: none; padding: 0; margin: 0.5rem 0; }
+#logins li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.25rem 0; }
+#add { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.6rem; }
+input:not([type=checkbox]) { font: inherit; padding: 0.3rem 0.5rem; border-radius: 6px; border: 1px solid #3a3f4b; background: #12151b; color: var(--fg); min-width: 10rem; }
+.note { color: var(--muted); margin: 0.3rem 0; }
+.error { color: #f07178; }

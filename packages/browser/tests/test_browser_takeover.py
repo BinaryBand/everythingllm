@@ -34,7 +34,7 @@ def with_view(test):
             r = Runner(config(tmp_path), podman=podman, now=Clock())
             server = await takeover.Takeover(r).serve(0)
             try:
-                await r.op_open(scope(), "example.com")
+                await r.op_open(scope(), "https://example.com/")
                 await test(r, server.sockets[0].getsockname()[1], podman, tmp_path)
             finally:
                 server.close()
@@ -59,6 +59,7 @@ def test_the_page_its_files_and_its_state(tmp_path):
         head, body = await answer(port, "GET", f"/{s.token}/?tab={tab.id}")
         assert "200 OK" in head and f"Content-Security-Policy: {takeover.CSP}" in head
         assert b"Browser \xc2\xb7 career" in body and b'src="app.js"' in body
+        assert b'id="problem"' in body  # where a button's failure shows
         assert ("front", {"thread": "7"}) in podman.drivers[s.name].calls
         head, body = await answer(port, "GET", f"/{s.token}/app.js")
         assert "text/javascript" in head and b"novnc/core/rfb.js" in body
@@ -165,5 +166,98 @@ def test_the_websocket_is_carried_to_the_browsers_screen(tmp_path):
         await asyncio.sleep(0.05)
         assert s.viewers == 0
         server.close()
+
+    test(tmp_path)
+
+
+async def post(port, path, body=None, origin=f"https://{HOST}"):
+    data = json.dumps(body).encode() if body is not None else b""
+    headers = {
+        "Origin": origin,
+        "Content-Type": "application/json",
+        "Content-Length": str(len(data)),
+    }
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    lines = [
+        f"POST {path} HTTP/1.1",
+        f"Host: {HOST}",
+        *(f"{k}: {v}" for k, v in headers.items()),
+    ]
+    writer.write(("\r\n".join(lines) + "\r\n\r\n").encode() + data)
+    await writer.drain()
+    head, _, rest = (await reader.read()).partition(b"\r\n\r\n")
+    return head.decode(), rest
+
+
+def test_the_view_saves_and_deletes_logins_but_never_shows_a_secret(tmp_path):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        head, body = await post(port, f"/{s.token}/logins", {
+            "site": "https://www.linkedin.com/", "username": "alice", "password": "hunter2",
+            "totp": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", "ask": True,
+        })  # fmt: skip
+        assert "200 OK" in head and b"hunter2" not in body and b"GEZDGNBV" not in body
+        [login] = json.loads(body)["logins"]
+        assert login["site"] == "linkedin.com" and login["totp"] and login["ask"]
+        head, body = await post(
+            port, f"/{s.token}/logins", {"site": "localhost", "password": "x"}
+        )
+        assert "400" in head and "isn't a site's name" in json.loads(body)["error"]
+        head, _ = await post(
+            port,
+            f"/{s.token}/logins",
+            {"site": "x.com", "password": "x"},
+            origin="https://evil.example",
+        )
+        assert "403" in head
+        await post(port, f"/{s.token}/logins/{login['id']}/ask", {"ask": False})
+        assert not r.vault.logins("career")[0]["ask"]
+        state = (await answer(port, "GET", f"/{s.token}/state"))[1]
+        assert b"hunter2" not in state and b"GEZDGNBV" not in state
+        await post(port, f"/{s.token}/logins/{login['id']}/delete")
+        assert r.vault.logins("career") == []
+        assert "404" in (await post(port, f"/{s.token}/logins/x/frobnicate"))[0]
+        head, _ = await post(port, f"/{s.token}/logins", None)  # no body: no site
+        assert "400" in head
+
+    test(tmp_path)
+
+
+def test_the_view_answers_the_agents_request_and_saves_offers(tmp_path):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        saved = r.vault.add("career", "example.com", "alice", "pw", ask=True)
+        waiting = await r.op_login(scope(), saved["id"], "e1", "e2")
+        state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
+        assert state["approval"] == {
+            "id": waiting["approval"],
+            "site": "example.com",
+            "username": "alice",
+        }
+        head, body = await post(port, f"/{s.token}/approve/{waiting['approval']}")
+        assert "200 OK" in head and json.loads(body)["approval"] is None
+        assert (await r.op_login(scope(), saved["id"], "e1", "e2"))["page"]
+        driver = podman.drivers[s.name]
+        driver.offers["0a1b2c3d"] = {
+            "site": "example.com",
+            "username": "bob",
+            "password": "typed",
+        }
+        state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
+        assert state["offers"] == [
+            {"id": "0a1b2c3d", "site": "example.com", "username": "bob"}
+        ]
+        head, body = await post(
+            port, f"/{s.token}/offers/0a1b2c3d/save", {"username": "bob@example.com"}
+        )
+        assert b"typed" not in body and json.loads(body)["offers"] == []
+        assert (
+            r.vault.get("career", r.vault.logins("career")[1]["id"])["password"]
+            == "typed"
+        )
+        head, body = await post(port, f"/{s.token}/offers/0a1b2c3d/save", {})
+        assert "400" in head and "isn't waiting" in json.loads(body)["error"]
 
     test(tmp_path)

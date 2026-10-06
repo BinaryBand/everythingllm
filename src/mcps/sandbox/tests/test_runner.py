@@ -695,7 +695,7 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
     monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
     config = runner.Config.from_env()
     assert config.socket == Path("/data/allm/sandbox/runner.sock")
-    assert config.site_dir == Path("/data/allm/site")
+    assert config.site_dir == Path("~/.local/share/everythingllm/site").expanduser()
     assert config.site_url == "https://box.tail.ts.net:8445/"
     assert config.root == Path("~/.local/share/everythingllm/sandbox").expanduser()
     assert config.shared == Path("~/.local/share/everythingllm/shared").expanduser()

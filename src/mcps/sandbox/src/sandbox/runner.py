@@ -35,7 +35,8 @@ Config (environment):
                     run scripts go in its `.runs` folder
   SANDBOX_SHARED    the folder behind /shared, host-only (default
                     ~/.local/share/everythingllm/shared)
-  SANDBOX_SITE_DIR  the pages site's root, where pages are published (default <storage>/site)
+  SANDBOX_SITE_DIR  the pages site's root, where pages are published (default
+                    ~/.local/share/everythingllm/site)
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
 """
 
@@ -189,7 +190,6 @@ class Config:
     @classmethod
     def from_env(cls) -> Config:
         get = os.environ.get
-        storage = hostrpc.storage()
         host = get("PUBLIC_HOST")
         return cls(
             socket=hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
@@ -199,7 +199,7 @@ class Config:
             shared=Path(
                 get("SANDBOX_SHARED", "~/.local/share/everythingllm/shared")
             ).expanduser(),
-            site_dir=Path(get("SANDBOX_SITE_DIR", storage / "site")),
+            site_dir=Path(get("SANDBOX_SITE_DIR", hostrpc.site_dir())),
             site_url=get(
                 "SANDBOX_SITE_URL",
                 f"https://{host}:8445/" if host else "http://127.0.0.1:8445/",

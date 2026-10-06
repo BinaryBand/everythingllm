@@ -31,8 +31,8 @@ TOOLS = {
     "uv": "/usr/local/bin/uv",
     "zola": "/usr/local/bin/zola",
 }
-# Folders and files inside storage that the containers and services mount or serve.
-STORAGE_DIRS = ("site",)
+# The pages site's folder, which the static_agent container mounts, so it must exist first.
+SITE_DIR = Path.home() / ".local" / "share" / "everythingllm" / "site"
 
 
 def settings() -> dict[str, str]:
@@ -82,6 +82,7 @@ def check() -> list[str]:
         )
     if not shutil.which("tailscale") or run("tailscale", "status").returncode:
         problems.append("tailscale isn't installed or isn't up (`tailscale status`).")
+    SITE_DIR.mkdir(parents=True, exist_ok=True)
     if storage:
         root = Path(storage)
         if not root.is_dir():
@@ -90,8 +91,6 @@ def check() -> list[str]:
             )
         else:
             try:
-                for name in STORAGE_DIRS:
-                    (root / name).mkdir(exist_ok=True)
                 env = root / ".env"
                 if not env.exists():  # the container mounts it; AnythingLLM fills it in
                     env.touch(mode=0o600)

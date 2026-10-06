@@ -98,7 +98,8 @@ is 3.13. Keep code 3.12-compatible, and check with
   host's zola. A write that doesn't build is undone. Other writers use the `sites-write`
   command or `SiteStore`, so the entry format has one implementation.
 - The exception is free-form pages: the `publish` skill has `sandbox-runner` copy a file or
-  folder from the sandbox to `storage/site/<slug>/`, with a `.page` marker naming the
+  folder from the sandbox to `~/.local/share/everythingllm/site/<slug>/` (the pages site,
+  outside storage), with a `.page` marker naming the
   workspace that owns it; Caddy allows inline CSS in marked folders.
 - Sites live in `zola/sites/<name>/` and share the `zola/themes/agent-site/` theme
   (Tera 2 `{% component %}`s, not macros). Each site documents its fields for the agent in

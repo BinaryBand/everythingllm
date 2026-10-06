@@ -85,11 +85,10 @@ class Builder:
     @classmethod
     def from_env(cls) -> "Builder":
         """Paths from the environment, with the host's defaults: builds run on the host, from
-        entries in ~/.local/share/everythingllm/zola into storage (hostrpc.storage()), with its zola (src/tools/machine.py checks it's there),
+        entries in ~/.local/share/everythingllm/zola into the pages site (hostrpc.site_dir()), with its zola (src/tools/machine.py checks it's there),
         from the sites in the repo this package is in."""
         get = os.environ.get
         source = Path(get("SITES_SOURCE", REPO_SITES))
-        storage = hostrpc.storage()
         content = Path(
             get("SITES_CONTENT", "~/.local/share/everythingllm/zola")
         ).expanduser()
@@ -97,7 +96,7 @@ class Builder:
             source=source,
             themes=source.parent / "themes",
             content=content,
-            output=Path(get("SITES_OUTPUT", storage / "site")),
+            output=Path(get("SITES_OUTPUT", hostrpc.site_dir())),
             zola=get("ZOLA", "/usr/local/bin/zola"),
         )
 

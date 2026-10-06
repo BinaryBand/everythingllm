@@ -8,8 +8,8 @@ an episode without a manifest) is served as a file from the root, like Caddy wou
 the pages site's headers. Range requests work for both, so podcast apps can seek and
 resume.
 
-Config (command line, defaults under ANYTHINGLLM_STORAGE from host.env):
-  --root       the served folder      (storage/site/podcasts)
+Config (command line, defaults under ANYTHINGLLM_STORAGE from host.env, but the root):
+  --root       the served folder      (~/.local/share/everythingllm/site/podcasts)
   --manifests  manifests by slug      (storage/podcasts/manifests)
   --audio      what manifests point to (storage/podcasts/audio)
 """
@@ -322,7 +322,11 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8449)
     parser.add_argument("--prefix", default="/podcasts")
-    parser.add_argument("--root", type=Path, default=storage / "site" / "podcasts")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("~/.local/share/everythingllm/site/podcasts").expanduser(),
+    )
     parser.add_argument(
         "--manifests", type=Path, default=storage / "podcasts" / "manifests"
     )

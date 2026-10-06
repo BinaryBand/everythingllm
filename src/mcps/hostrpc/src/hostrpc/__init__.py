@@ -79,6 +79,12 @@ def storage() -> Path:
     return Path(os.environ.get("ANYTHINGLLM_STORAGE", "/srv/anythingllm/storage"))
 
 
+def site_dir() -> Path:
+    """The pages site's folder on the host, which Caddy serves on :8445. It's outside
+    storage: only host services write it, and the AnythingLLM container never reads it."""
+    return Path("~/.local/share/everythingllm/site").expanduser()
+
+
 def socket_path(folder: str, env: str) -> Path:
     """A service's socket on the host: $<env>, else <storage>/<folder>/runner.sock."""
     return Path(os.environ.get(env) or storage() / folder / "runner.sock")

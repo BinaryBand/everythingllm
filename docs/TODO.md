@@ -27,3 +27,28 @@ Work that's been looked into but not done yet. Remove an entry when it lands.
 
 Tests are a small part of how long sessions take. Run one package's tests while
 iterating (1–3 s), and the full suite before committing.
+
+## Push notifications for Nilson through UnifiedPush
+
+The relay can post to ntfy (`NTFY_URL`, `NTFY_TOKEN` in `relay.env`) when an answer is ready
+or fails. Push to Nilson itself would make those two settings unnecessary.
+
+- **Why not AnythingLLM's push.** AnythingLLM's `storage/push-notifications/vapid-keys.json`
+  is browser Web Push. It reaches only a browser that subscribed through AnythingLLM's web UI
+  and its service worker. In single-user mode that subscription would be
+  `primary-subscription.json`, and no browser has subscribed. Nilson is a native Flutter
+  app, so it can't receive this.
+- **What would.** UnifiedPush. Nilson registers with a distributor (on Android, the ntfy
+  app or an FCM-backed one; on Linux, a D-Bus distributor such as KUnifiedPush) and sends
+  the relay its endpoint. The relay then sends encrypted Web Push (RFC 8291) there, signed
+  with VAPID.
+- **Relay side.**
+  - A VAPID key pair of the relay's own, made on first start in
+    `~/.local/share/everythingllm/relay/`, not AnythingLLM's.
+  - A `POST /push` route (bearer token, as for the other routes) that keeps the endpoint
+    in `relay.db`.
+  - `pywebpush`.
+  - The same "Answer ready" and "Answer failed" payloads as now, never the answer.
+  - Remove `NTFY_*` from `relay.env`, `relay_env.py` and the README.
+- **Nilson side.** The `unifiedpush` Flutter package, plus a distributor installed on each
+  device.

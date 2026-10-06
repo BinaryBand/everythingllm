@@ -57,7 +57,7 @@ from typing import get_args
 from urllib.parse import urlsplit
 
 import httpx
-from hostrpc import atomic_write, storage
+from hostrpc import atomic_write, site_dir, storage
 from llm import Chat, LLMError, deepseek, settings
 from publicweb import public_client, save, stream
 from publicweb import read as read_capped
@@ -317,7 +317,7 @@ class Library:
         state = os.environ.get("PODCASTS_STATE", storage() / "podcasts")
         host = os.environ.get("PUBLIC_HOST")
         return cls(
-            os.environ.get("PODCASTS_DIR", storage() / "site" / "podcasts"),
+            os.environ.get("PODCASTS_DIR", site_dir() / "podcasts"),
             state,
             os.environ.get(
                 "PODCASTS_BASE_URL",

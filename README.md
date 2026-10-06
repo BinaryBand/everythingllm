@@ -170,8 +170,10 @@ through its UI.
   each one's `Description=` says what it does, and its `make <name>-setup` target installs it.
   `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
   to cut MCP payloads from AnythingLLM's log.
-- Pages live in `/srv/anythingllm/storage/site`; the `static_agent` Caddy container
-  mounts just that directory read-only and serves it on 127.0.0.1:8445
+- Pages live in `~/.local/share/everythingllm/site`, outside AnythingLLM's storage, since
+  only host services write them and the AnythingLLM container never reads them; the
+  `static_agent` Caddy container mounts just that directory read-only and serves it on
+  127.0.0.1:8445 (`hostrpc.site_dir()` is where the services get it)
 - `host/quadlet/` — the AnythingLLM and pages-site Quadlet units, as templates (`make units`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
 - `src/tools/sync.py` — diff/deploy/import between this repo and live storage; standard
@@ -252,7 +254,7 @@ is stopped after 40 s. A machine without unprivileged user namespaces builds wit
 namespace and logs a warning. The
 front matter names the slug, so a file like `2026-10-01-notes.md` keeps its date in the URL. The build (`sites.build`, also the `sites-build`
 command) assembles the site from the repo plus its entries in a temp dir, builds it next
-to `storage/site/<name>/` and swaps it in, holding a lock on `.build.lock` in the entries folder. Entries live outside storage because
+to `~/.local/share/everythingllm/site/<name>/` and swaps it in, holding a lock on `.build.lock` in the entries folder. Entries live outside storage because
 only host services read or write them; the AnythingLLM container never needs them.
 Built sites carry a `.zola-site` marker; the build won't replace a directory without one,
 and the sandbox won't publish over a directory that isn't its own page.
@@ -571,7 +573,7 @@ changed or undone, and nothing is stored twice.
   its own venv in `~/.local/share/everythingllm/splice-venv`) is mapped to `:8445/podcasts` by
   `tailscale serve`, ahead of the pages site's Caddy. It serves manifests with range
   requests, `HEAD`, `ETag`/`If-Range` and `sendfile`. Anything else under
-  `storage/site/podcasts/` (feeds, transcripts, the index) it serves as a file, with the
+  `~/.local/share/everythingllm/site/podcasts/` (feeds, transcripts, the index) it serves as a file, with the
   pages site's CSP and `nosniff`, never following a symlink or leaving that folder.
   `make health` checks it, and the audit reads its journal.
 - Episodes downloaded before this kept only their cut file. The first sync after the change

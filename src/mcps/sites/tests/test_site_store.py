@@ -620,19 +620,18 @@ def test_built_links_use_the_public_host(repo_store, tmp_path, monkeypatch):
     assert "127.0.0.1" not in home
 
 
-def test_from_env_puts_entries_on_the_host_and_sites_in_storage(monkeypatch):
+def test_from_env_puts_entries_and_sites_on_the_host(monkeypatch):
     for var in ("SITES_SOURCE", "SITES_CONTENT", "SITES_OUTPUT", "ZOLA"):
         monkeypatch.delenv(var, raising=False)
     b = Builder.from_env()
     assert b.source == REPO_ZOLA / "sites"
     assert (b.content, b.output, b.zola) == (
         Path("~/.local/share/everythingllm/zola").expanduser(),
-        Path("/srv/anythingllm/storage/site"),
+        Path("~/.local/share/everythingllm/site").expanduser(),
         "/usr/local/bin/zola",
     )
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")
-    b = Builder.from_env()
-    assert b.output == Path("/data/allm/site")
+    assert Builder.from_env().output == b.output  # storage doesn't move the site
 
 
 # --- zola runs without a network, and not for long -------------------------------------

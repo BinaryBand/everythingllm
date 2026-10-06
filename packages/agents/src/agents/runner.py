@@ -38,7 +38,7 @@ Config (environment, from host.env and agents.env through the unit):
   AGENTS_SOCKET       socket to listen on (default <storage>/everythingllm/agents/runner.sock)
   AGENTS_LIVE_PORT    port on 127.0.0.1 for the live cards (default 8451)
   AGENTS_SLOTS        tasks running at once, across delegations (default 3)
-  AGENTS_DAILY_USD    what delegations may cost in 24 hours, in USD (default 1; 0 = no cap)
+  AGENTS_DAILY_USD    what delegations may cost in 24 hours, in USD (default 3; 0 = no cap)
   PUBLIC_HOST         the tailnet name in the cards' URLs (no card without it)
   and what agents.anythingllm reads (ANYTHINGLLM_URL, ANYTHINGLLM_API_KEY).
 """
@@ -90,7 +90,7 @@ class Settings:
     pages_url: str = ""
     live_port: int = 8451
     slots: int = 3
-    daily_usd: float = 1.0  # 0: no cap
+    daily_usd: float = 3.0  # 0: no cap
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -100,7 +100,7 @@ class Settings:
             pages_url=f"https://{host}:8445/" if host else "",
             live_port=int(os.environ.get("AGENTS_LIVE_PORT", "8451")),
             slots=int(os.environ.get("AGENTS_SLOTS", "3")),
-            daily_usd=float(os.environ.get("AGENTS_DAILY_USD", "1")),
+            daily_usd=float(os.environ.get("AGENTS_DAILY_USD", "3")),
         )
 
 

@@ -523,7 +523,9 @@ def test_delegation_stops_at_its_daily_budget(fake, tmp_path):
     ok = [{"name": "a", "profile": "worker", "instructions": "x"}]
 
     async def main():
-        r = make(fake, tmp_path)  # its default cap is $1
+        r = make(fake, tmp_path)
+        assert r.settings.daily_usd == 3.0  # the default
+        r.settings.daily_usd = 1.0
         with pytest.raises(
             RunnerError, match=r"daily budget \(\$1\.00\) is spent \(\$1\.10"
         ):

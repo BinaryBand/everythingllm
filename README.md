@@ -1004,7 +1004,7 @@ unused).
 - **The daily budget.** AnythingLLM's agent sends every page a task has read again with
   each step, so a task that reads a lot costs real money ($0.20-0.60 for one that read
   eight pages), and a running task can't be stopped. agents-runner refuses a new delegation
-  once those that started in the last 24 hours cost `AGENTS_DAILY_USD` (default 1; 0 turns
+  once those that started in the last 24 hours cost `AGENTS_DAILY_USD` (default 3; 0 turns
   it off), counted from the run log: the planner's GLM isn't priced, and running
   delegations count once they end. The worker prompt asks for few page reads.
 - **The key.** agents-runner calls AnythingLLM with a developer API key of its own, in

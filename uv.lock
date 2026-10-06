@@ -12,6 +12,7 @@ members = [
     "apps",
     "audit",
     "chatimage",
+    "egress",
     "gateway",
     "hostctl",
     "hostrpc",
@@ -528,6 +529,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/c7/5d/bd21ba1519b6b1e22
 wheels = [
     { url = "https://files.pythonhosted.org/packages/30/5f/63f927b5ffd1cc2c030fc2bd362bf920890e8806cf42f701198de5b3f9c7/dateparser-1.4.3-py3-none-any.whl", hash = "sha256:cbce86c64e0cea5c54c84c015d34c903d46c51bfad50632bf2f05a6141d10c05", size = 322384, upload-time = "2026-09-03T10:07:52.913Z" },
 ]
+
+[[package]]
+name = "egress"
+version = "0.1.0"
+source = { editable = "packages/egress" }
+dependencies = [
+    { name = "publicweb" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "publicweb", editable = "packages/publicweb" }]
 
 [[package]]
 name = "faster-whisper"

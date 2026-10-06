@@ -1,0 +1,13 @@
+[project]
+name = "egress"
+version = "0.1.0"
+description = "The service containers' only way out: an HTTP proxy that lets each through to public hosts and its own named exceptions, by the caller's address on egress-net"
+requires-python = ">=3.12"
+dependencies = ["publicweb"]
+
+[project.scripts]
+egress-proxy = "egress.proxy:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

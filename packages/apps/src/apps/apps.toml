@@ -6,14 +6,19 @@
 # [<app>]                 the app's name: also its socket folder (storage/everythingllm/<app>/)
 #                         and its hostctl commands (uv run hostctl <app>-setup, <app>-logs)
 # summary                 one line, for `uv run hostctl apps`
-# runner                  the unit serving storage/everythingllm/<app>/runner.sock (hostrpc)
+# runner                  the unit serving storage/everythingllm/<app>/runner.sock (hostrpc):
+#                         one of its units, or its container's <x>.service
 # units                   host user units: unit -> label (enabled and restarted by setup,
 #                         watched by the audit)
 # timers                  timers setup enables and starts
 # watch                   more units the audit and logs follow, which setup leaves alone
 #                         (a timer's service): unit -> label
-# container               a Quadlet container: journal name (systemd-<x>) -> label; its
-#                         template is host/quadlet/<x>.container.in
+# container               Quadlet containers: journal name (systemd-<x>) -> label; each one's
+#                         template is host/quadlet/<x>.container.in, its unit <x>.service
+#                         (restarted by setup; Quadlet's [Install] enables it). A template
+#                         mustn't set ContainerName=: systemd-<x> is what the journal knows
+#                         it by. One with an egress-net address is a service container
+#                         (README, "Service containers")
 # managed = false         deployed by something else (no template here)
 # before                  commands setup runs first, from the repo's root with hostctl on PYTHONPATH
 # guard                   restarts wait while a run is going: {runs (under the data dir), noun}
@@ -44,6 +49,12 @@ summary = "the code sandbox's runner and PyPI proxy, with their images and netwo
 runner = "sandbox-runner.service"
 units = { "sandbox-proxy.service" = "code sandbox PyPI proxy", "sandbox-runner.service" = "code sandbox runner" }
 before = ["python3 -m hostctl sandbox-images"]
+install = true
+
+[egress]
+summary = "the egress proxy: the service containers' only way out of egress-net, to what egress.toml allows each"
+container = { "systemd-egress-proxy" = "egress proxy" }
+before = ["python3 -m hostctl service-images"]
 install = true
 
 [podcasts]

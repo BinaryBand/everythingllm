@@ -10,7 +10,9 @@ repo's path and @KEY@ with KEY from host.env:
            ~/.local/share/everythingllm/backups/) and reload systemd.
            A container whose unit or drop-in changed is (re)started; a host unit is
            restarted only if it's running. Enabling host units is up to each `uv run hostctl *-setup`.
-           A change to comments alone restarts nothing.
+           A change to comments alone restarts nothing. Either waits while it's a guarded
+           runner with a run going (run_guard), and a container also while its local
+           image or its network isn't there yet (its app's setup makes them).
 
 Standard library only, like the rest of hostctl.
 """
@@ -229,6 +231,57 @@ def install(todo: list[Unit], backup: Path) -> list[str]:
     )
 
 
+# Networks podman has without anyone creating them, or that aren't networks.
+BUILTIN_NETWORKS = {"podman", "host", "none", "private", "slirp4netns", "pasta"}
+
+
+def podman_has(kind: str, name: str) -> bool:
+    """Whether podman has the image or network `name` (kind "image" or "network")."""
+    return (
+        subprocess.run(
+            ["podman", kind, "exists", name], capture_output=True, check=False
+        ).returncode
+        == 0
+    )
+
+
+def missing(unit: Unit) -> list[str]:
+    """What a container's unit needs that podman doesn't have yet: an image of ours
+    (localhost/, built by its app's `before` step) or a network it doesn't create itself.
+    Starting it without them only fails."""
+    needs = []
+    for line in unit.text.splitlines():
+        key, _, value = line.strip().partition("=")
+        if key == "Image" and value.startswith("localhost/"):
+            needs.append(("image", value))
+        elif key == "Network":
+            name = value.split(":")[0]
+            if name not in BUILTIN_NETWORKS and not name.endswith(".network"):
+                needs.append(("network", name))
+    return [f"{kind} {name}" for kind, name in needs if not podman_has(kind, name)]
+
+
+def hold_back(restart: list[str], todo: list[Unit]) -> list[str]:
+    """The units of `restart` to restart now. Left out, each with a word on why: a
+    container podman can't start yet, and a guarded runner, host unit or container, with
+    a run going that the restart would kill (run_guard asks, or FORCE=1)."""
+    now = []
+    for service in restart:
+        app = apps.app_of(service)
+        setup = f"`uv run hostctl {app.name if app else service}-setup`"
+        containers = [u for u in todo if u.always and u.service == service]
+        lacking = [need for u in containers for need in missing(u)]
+        if lacking:
+            print(
+                f"units: not starting {service}: no {', '.join(lacking)} yet; {setup} makes them"
+            )
+        elif service in run_guard.GUARDED and not run_guard.ok_to_restart(service):
+            print(f"units: left {service} running; {setup} applies its new unit later")
+        else:
+            now.append(service)
+    return now
+
+
 def active(service: str) -> bool:
     return (
         subprocess.run(
@@ -277,15 +330,7 @@ def main(argv: list[str] | None = None) -> None:
     backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S") / "units"
     restart = install(todo, backup)
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    for guarded in run_guard.GUARDED:
-        if guarded in restart and not run_guard.ok_to_restart(guarded):
-            restart.remove(guarded)
-            app = apps.app_of(guarded)
-            setup = app.name if app else guarded
-            print(
-                f"units: left {guarded} running; `uv run hostctl {setup}-setup` applies its new unit later"
-            )
-    for service in restart:
+    for service in hold_back(restart, todo):
         subprocess.run(["systemctl", "--user", "restart", service], check=True)
         print(f"restarted {service}")
     if backup.exists():

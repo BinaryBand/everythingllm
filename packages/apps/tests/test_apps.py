@@ -60,9 +60,39 @@ def test_every_app_unit_has_a_template():
 def test_a_runner_is_one_of_its_apps_units_and_only_runners_are_guarded():
     for app in apps.load().values():
         if app.runner:
-            assert app.runner in app.units, app.name
+            assert app.runner in app.all_units and app.runner.endswith(".service"), (
+                app.name
+            )
+            assert not app.runner.endswith(".timer") and app.runner not in app.watch
         if app.guard:
             assert app.runner, f"{app.name} is guarded but has no runner"
+
+
+def test_a_runner_may_be_a_containers_service(tmp_path):
+    registry = tmp_path / "apps.toml"
+    registry.write_text(
+        '[research]\nsummary = "x"\nrunner = "research-runner.service"\n'
+        'container = { "systemd-research-runner" = "deep-research runner" }\n'
+        'guard = { runs = "research/runs", noun = "Deep-research runs" }\n'
+    )
+    loaded = apps.load(registry)
+    research = loaded["research"]
+    assert research.container_units == research.all_units == ["research-runner.service"]
+    assert apps.runners(loaded) == {"research-runner": "research"}
+    assert set(apps.guarded(loaded)) == {"research-runner.service"}
+    assert apps.app_of("research-runner.service", loaded) is research
+    # The audit reads its logs by the container's name, Quadlet's systemd-<x>.
+    assert apps.watched(loaded) == {
+        "systemd-research-runner": ("CONTAINER_NAME", "deep-research runner")
+    }
+
+
+def test_no_container_template_names_its_container():
+    # Quadlet names it systemd-<x>, which is how the registry, the audit and <app>-logs
+    # know it; ContainerName= would change that.
+    for template in (HOST / "quadlet").glob("*.container.in"):
+        text = template.read_text()
+        assert not re.search(r"^ContainerName=", text, re.MULTILINE), template
 
 
 def test_mappings_and_ports_dont_collide():

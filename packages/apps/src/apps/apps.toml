@@ -73,7 +73,7 @@ before = ["python3 tools/agents_env.py"]
 guard = { runs = "agents/runs", noun = "Delegations" }
 serve = [{ https = 8445, path = "/_live/agents", port = 8451 }]
 health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-00000000.png" }
-why_not_installed = "it needs its developer API key in ~/.config/everythingllm/agents.env, made by hand"
+why_not_installed = "it needs a developer API key in ~/.config/everythingllm/agents.env first"
 
 [sites]
 summary = "sites-runner, which writes and builds the sites' entries, and the article writer (:8445/news/write)"
@@ -95,4 +95,4 @@ units = { "relay.service" = "Nilson relay" }
 before = ["python3 tools/relay_env.py"]
 serve = [{ https = 8446, port = 8446 }]
 health = { "Nilson relay" = "http://127.0.0.1:8446/health" }
-why_not_installed = "it's only for the Nilson app, and its secrets file needs an AnythingLLM API key filled in by hand"
+why_not_installed = "it's only for the Nilson app, and its secrets file needs an AnythingLLM API key first"

@@ -8,7 +8,7 @@ STORAGE = $(or $(ANYTHINGLLM_STORAGE),$(error no ANYTHINGLLM_STORAGE: copy host.
 # The sites package follows ANYTHINGLLM_STORAGE; naming it here stops a target without host.env.
 HOST_SITES_ENV = ANYTHINGLLM_STORAGE=$(STORAGE)
 
-.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build serve-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs research-setup sites-setup audit-setup relay-setup agents-setup
+.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build apps serve-setup sandbox-images
 
 help:            ## list the targets
 	@awk -F':.*## ' '/^[a-z%-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -20,7 +20,8 @@ install:         ## set this machine up from the repo, or bring it up to date; e
 	$(MAKE) --no-print-directory deploy
 	python3 tools/machine.py wait-api
 	python3 tools/machine.py search
-	$(MAKE) --no-print-directory serve-setup sandbox-setup podcasts-setup research-setup sites-setup audit-setup
+	$(MAKE) --no-print-directory serve-setup
+	python3 tools/appctl.py setup --installed
 	python3 tools/machine.py wait-api
 	-$(MAKE) --no-print-directory health
 	@python3 tools/machine.py checklist
@@ -55,7 +56,7 @@ logs:            ## follow AnythingLLM's container log
 status:          ## show AnythingLLM's unit status
 	systemctl --user status $(SERVICE) --no-pager
 
-health:          ## check every unit, local port, the sandbox and research runners and each MCP server (e.g. after a reboot)
+health:          ## check every app's units, ports and runners, and each MCP server (e.g. after a reboot)
 	tools/health.sh
 
 test:            ## run tests for all MCP servers and agent skills
@@ -75,75 +76,29 @@ mcp-sync:        ## install/refresh the MCP servers' deps inside the AnythingLLM
 	  mode=--inexact; done
 
 
-# $(call enable-restart,units): enable user units and (re)start them.
-enable-restart = systemctl --user enable $(1) && systemctl --user restart $(1)
-
-# $(call guarded-restart,unit): the same for a runner whose runs a restart would cut short;
-# tools/run_guard.py asks first while one is going (FORCE=1 doesn't).
-guarded-restart = systemctl --user enable $(1) && python3 tools/run_guard.py $(1) && systemctl --user restart $(1)
-
 # $(call internal-net,name,subnet): a podman network with no route out and no DNS.
 internal-net = podman network exists $(1) || podman network create --internal --disable-dns --subnet $(2) $(1)
 
 SANDBOX := host/containers/sandbox
-SANDBOX_UNITS := sandbox-proxy.service sandbox-runner.service
+
+# The apps (packages/apps/src/apps/apps.toml) are set up, mapped and followed by
+# tools/appctl.py: `make apps` lists them.
+apps:            ## list the apps, for make <app>-setup and make <app>-logs
+	@python3 tools/appctl.py list
+
+%-setup: units   ## set an app up: its steps, tailnet paths, units (restarted; asks first while one of its runs is going, FORCE=1 doesn't) and timers
+	python3 tools/appctl.py setup $*
+
+%-logs:          ## follow an app's units (make apps lists them)
+	python3 tools/appctl.py logs $*
+
+serve-setup:     ## map the apps' tailnet HTTPS paths with tailscale serve (other mappings are left alone)
+	python3 tools/appctl.py serve
 
 sandbox-images:  ## build the sandbox's images and its internal network (make sandbox-setup runs this first)
 	podman build -t localhost/everythingllm-sandbox -f $(SANDBOX)/Containerfile.sandbox $(SANDBOX)
 	podman build -t localhost/everythingllm-sandbox-proxy -f $(SANDBOX)/Containerfile.proxy $(SANDBOX)
 	$(call internal-net,sandbox-net,10.89.77.0/24)
-
-sandbox-setup: units sandbox-images ## build the sandbox images and network, enable and (re)start its host units
-	$(call enable-restart,$(SANDBOX_UNITS))
-
-sandbox-logs:    ## follow the sandbox runner and its proxy (host, systemd user units)
-	journalctl --user -fu sandbox-runner.service -u sandbox-proxy.service
-
-
-serve-setup:     ## map this setup's tailnet HTTPS ports with tailscale serve (other mappings are left alone)
-	tailscale serve status | grep -q ':8445 ' || sudo tailscale serve --bg --https=8445 http://127.0.0.1:8445
-	tailscale serve status | grep -q '/news/write' || \
-	  sudo tailscale serve --bg --https=8445 --set-path=/news/write http://127.0.0.1:8448
-	tailscale serve status | grep -q '/podcasts' || \
-	  sudo tailscale serve --bg --https=8445 --set-path=/podcasts http://127.0.0.1:8449
-	tailscale serve status | grep -q '/_live/research' || \
-	  sudo tailscale serve --bg --https=8445 --set-path=/_live/research http://127.0.0.1:8450
-	tailscale serve status | grep -q '/_live/agents' || \
-	  sudo tailscale serve --bg --https=8445 --set-path=/_live/agents http://127.0.0.1:8451
-	tailscale serve status | grep -q ':8447 ' || sudo tailscale serve --bg --https=8447 http://127.0.0.1:8447
-	tailscale serve status | grep -q ':8888 ' || sudo tailscale serve --bg --https=8888 http://127.0.0.1:8888
-	tailscale serve status | grep -q ':3001 ' || sudo tailscale serve --bg --https=3001 http://127.0.0.1:3001
-	tailscale serve status | grep -q ':8446 ' || sudo tailscale serve --bg --https=8446 http://127.0.0.1:8446
-
-podcasts-setup: units serve-setup ## enable and (re)start podcasts-runner and podcasts-web (:8445/podcasts), and start the 6-hourly sync and transcription timers
-	$(call enable-restart,podcasts-runner.service podcasts-web.service)
-	systemctl --user enable --now podcasts-sync.timer podcasts-transcribe.timer
-
-podcasts-logs:   ## follow podcasts-runner and the transcription runs (the syncs log to ~/.local/share/everythingllm/podcasts/sync.log)
-	journalctl --user -fu podcasts-runner.service -u podcasts-transcribe.service
-
-podcasts-web-logs: ## follow podcasts-web, which serves the podcasts
-	journalctl --user -fu podcasts-web.service
-
-research-setup: units ## enable and (re)start research-runner, which runs deep research for the skill; asks first while a run is going (FORCE=1 doesn't)
-	$(call guarded-restart,research-runner.service)
-
-sites-setup: units serve-setup ## enable and (re)start sites-runner (and the article writer it serves at :8445/news/write), which writes the sites' entries and builds them for the sites MCP server
-	$(call enable-restart,sites-runner.service)
-
-audit-setup: units ## enable and (re)start audit-runner, which runs the audit MCP server's checks on the host
-	$(call enable-restart,audit-runner.service)
-
-relay-setup: units serve-setup ## make the Nilson relay's secrets file (~/.config/everythingllm/relay.env) if missing, then enable and (re)start the relay (tailnet https :8446)
-	python3 tools/relay_env.py
-	$(call enable-restart,relay.service)
-
-agents-setup: units serve-setup ## check agents-runner's key (~/.config/everythingllm/agents.env), then enable and (re)start it, which runs delegations; asks first while one is going (FORCE=1 doesn't)
-	python3 tools/agents_env.py
-	$(call guarded-restart,agents-runner.service)
-
-%-logs:          ## follow <name>-runner or <name> (research, sites, audit, relay, agents)
-	journalctl --user -f -u $*-runner.service -u $*.service
 
 sites-build:     ## rebuild all Zola sites by hand (sites-runner does this on every write)
 	$(HOST_SITES_ENV) uv run --package sites sites-build

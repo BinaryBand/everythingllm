@@ -36,16 +36,7 @@ while IFS='|' read -r name url; do
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url")
   # Any answer below 500 means the server is up; some roots are a 404 by design.
   if [ "$code" != 000 ] && [ "$code" -lt 500 ]; then ok "$name ($code)"; else fail "$name ($url: ${code/000/no answer})"; fi
-done <<'EOF'
-AnythingLLM|http://127.0.0.1:3001/api/ping
-pages site|http://127.0.0.1:8445/news/
-workspace pages|http://127.0.0.1:8447/
-article writer|http://127.0.0.1:8448/
-podcasts-web|http://127.0.0.1:8449/health
-Nilson relay|http://127.0.0.1:8446/health
-research live cards|http://127.0.0.1:8450/_live/research/dr-00000000.png
-delegation live cards|http://127.0.0.1:8451/_live/agents/dg-00000000.png
-EOF
+done < <(python3 tools/appctl.py health)
 # Without a password, AnythingLLM's internal API answers anyone who reaches :3001 (the tailnet).
 case "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/api/scheduled-jobs)" in
   401) ok "AnythingLLM asks for a login" ;;

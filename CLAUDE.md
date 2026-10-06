@@ -82,7 +82,9 @@ is 3.13. Keep code 3.12-compatible, and check with
     script, unit, the audit's `WATCHED` in `audit/services.py`).
 - Every MCP server is a thin front; nothing it serves runs in the container. Not every
   member is an MCP server: `publicweb`, `llm` and `hostrpc` are libraries, and `splice`,
-  `research` and `sandbox` are host-only services.
+  `research` and `sandbox` are host-only services. `src/relay` (outside `src/mcps/`) is a
+  host HTTP service for the Nilson app, not the agent; its secrets are in
+  `~/.config/anything/relay.env`, never in the repo.
 - The agent does short judgment work through thin tools. For example, the
   `daily-news-page` scheduled job calls `headlines` and then `write_entry`. Code asks a
   model itself (`src/mcps/llm`) only where there's no agent (background syncs, reader clicks,

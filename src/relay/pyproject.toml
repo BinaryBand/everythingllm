@@ -1,0 +1,13 @@
+[project]
+name = "relay"
+version = "0.1.0"
+description = "Host service that owns the Nilson app's chat answers: streams each from AnythingLLM to the end even when the app goes away, keeps its events, and lets the app rejoin"
+requires-python = ">=3.12"
+dependencies = ["httpx>=0.28,<0.29", "starlette>=1", "uvicorn>=0.30"]
+
+[project.scripts]
+relay = "relay.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

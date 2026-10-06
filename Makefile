@@ -8,7 +8,7 @@ STORAGE = $(or $(ANYTHINGLLM_STORAGE),$(error no ANYTHINGLLM_STORAGE: copy host.
 # The sites package follows ANYTHINGLLM_STORAGE; naming it here stops a target without host.env.
 HOST_SITES_ENV = ANYTHINGLLM_STORAGE=$(STORAGE)
 
-.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync claude-rc-logs sites-build serve-setup claude-rc-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup
+.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync claude-rc-logs sites-build serve-setup claude-rc-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup relay-setup relay-logs
 
 help:            ## list the targets
 	@awk -F':.*## ' '/^[a-z%-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -107,6 +107,7 @@ serve-setup:     ## map this setup's tailnet HTTPS ports with tailscale serve (o
 	  sudo tailscale serve --bg --https=8445 --set-path=/podcasts http://127.0.0.1:8449
 	tailscale serve status | grep -q ':8888 ' || sudo tailscale serve --bg --https=8888 http://127.0.0.1:8888
 	tailscale serve status | grep -q ':3001 ' || sudo tailscale serve --bg --https=3001 http://127.0.0.1:3001
+	tailscale serve status | grep -q ':8446 ' || sudo tailscale serve --bg --https=8446 http://127.0.0.1:8446
 
 podcasts-setup: units serve-setup ## enable and (re)start podcasts-runner and podcasts-web (:8445/podcasts), and start the 6-hourly sync and transcription timers
 	$(call enable-restart,podcasts-runner.service podcasts-web.service)
@@ -134,6 +135,13 @@ sites-setup: units serve-setup ## enable and (re)start sites-runner (and the art
 
 audit-setup: units ## enable and (re)start audit-runner, which runs the audit MCP server's checks on the host
 	$(call enable-restart,audit-runner.service)
+
+relay-setup: units serve-setup ## make the Nilson relay's secrets file (~/.config/anything/relay.env) if missing, then enable and (re)start the relay (tailnet https :8446)
+	python3 scripts/relay_env.py
+	$(call enable-restart,relay.service)
+
+relay-logs:      ## follow the Nilson relay
+	journalctl --user -fu relay.service
 
 %-logs:          ## follow <name>-runner (research, sites, audit)
 	journalctl --user -fu $*-runner.service

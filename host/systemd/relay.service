@@ -1,0 +1,18 @@
+[Unit]
+Description=Nilson relay: owns the Nilson app's chat answers, streaming each from AnythingLLM to the end even when the app goes away (127.0.0.1:8446, tailnet via tailscale serve https :8446)
+After=network.target
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Service]
+# The relay's secrets (ANYTHINGLLM_API_KEY, RELAY_TOKEN, NTFY_*) live in relay.env, outside
+# the repo, which the AnythingLLM container mounts; `make relay-setup` makes it.
+EnvironmentFile=@REPO@/host.env
+EnvironmentFile=%h/.config/anything/relay.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/anything/relay-venv
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package relay relay
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

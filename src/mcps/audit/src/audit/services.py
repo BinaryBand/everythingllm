@@ -18,6 +18,7 @@ WATCHED = {
     "podcasts-runner.service": ("_SYSTEMD_USER_UNIT", "podcasts runner"),
     "sites-runner.service": ("_SYSTEMD_USER_UNIT", "sites runner"),
     "audit-runner.service": ("_SYSTEMD_USER_UNIT", "audit runner"),
+    "relay.service": ("_SYSTEMD_USER_UNIT", "Nilson relay"),
 }
 
 # Host services the MCP servers and skills hand work to (<folder>-runner.service), by the

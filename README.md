@@ -94,8 +94,8 @@ An Ansible playbook used to install the two containers' units and `/srv/static-a
 It must leave them alone now, or its next run undoes `make units`.
 
 `make serve-setup` maps this setup's tailnet ports with `tailscale serve`: the pages site on
-:8445 (with `/news/write` to the article writer), SearXNG on :8888 and AnythingLLM's UI on
-:3001. Other mappings on the machine are left alone.
+:8445 (with `/news/write` to the article writer), SearXNG on :8888, AnythingLLM's UI on
+:3001 and the Nilson relay on :8446. Other mappings on the machine are left alone.
 
 Not in this repo, so a new machine needs them first: rootless podman with Quadlet, systemd
 lingering for the user, tailscale, uv, zola in `/usr/local/bin`, SearXNG (deployed by Ansible,
@@ -165,6 +165,8 @@ through its UI.
     it that the article writer and research share
   - `src/mcps/linkcard/` — a library, not a server: draws the link cards the chat shows for a
     published page (see "Code sandbox")
+- `src/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
+  AnythingLLM's agent; also a workspace member (see "Nilson relay")
 - `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`make units`);
   each one's `Description=` says what it does, and its `make <name>-setup` target installs it.
   `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
@@ -800,6 +802,53 @@ To run one by hand, in this process rather than the runner (it logs and publishe
 
     set -a && . ./host.env && set +a && \
       uv run --package research research-run "Why is the sky blue?" --depth quick
+
+## Nilson relay
+
+Nilson is a Flutter chat client (Linux desktop, Android) that talks to
+AnythingLLM's developer API. Asked with `stream-chat`, AnythingLLM stops the answer when the
+client disconnects and saves it to the thread only when the stream completes, so an answer
+whose app closes, sleeps or loses its network is lost. On 2026-10-06, with AnythingLLM
+1.16.2, an answer cut off after 15 chunks was missing from the thread three minutes later.
+
+The relay (`src/relay`, `relay.service`, 127.0.0.1:8446, tailnet https :8446) makes that
+one call for Nilson and owns the answer. Each run streams from AnythingLLM to the end in its
+own task, which no follower owns; the relay never closes the upstream connection because a
+follower left, only when the run ends or is cancelled. Nilson calls AnythingLLM directly
+for everything else (workspaces, threads, history, documents, settings).
+
+Every route but `/health` needs `Authorization: Bearer <RELAY_TOKEN>`; errors are
+`{"error": "..."}`.
+
+| Route | Does |
+| --- | --- |
+| `POST /runs` | `{"workspace", "thread", "message", "mode", "clientId"}` starts a run: 201 with the run. A `clientId` already used answers 200 with that run and starts nothing; a thread with a running run answers 409. |
+| `GET /runs?status=running` | runs with that status (`running`, `done`, `failed`, `cancelled`), oldest first; every kept run without `status` |
+| `GET /runs/{id}` | the run (`id`, `clientId`, `workspace`, `thread`, `mode`, `status`, `createdAt`, `finishedAt`); 404 when unknown or expired |
+| `GET /runs/{id}/events` | server-sent events: `text` `{"text"}` per piece, then one of `done` `{"citations"}`, `failed` `{"error"}`, `cancelled` `{}`, and the stream closes. Ids count from 1; `Last-Event-ID: n` starts after n. `: ping` every 15 s while live. Any number of followers. |
+| `POST /runs/{id}/cancel` | closes the upstream connection and ends the run `cancelled`; a run that has ended is left as it is |
+| `GET /health` | 200, no token |
+
+Runs and their events are in SQLite (`~/.local/share/anything/relay/relay.db`, mode 600),
+written as each event arrives. A restart fails the runs it cut short with "The relay
+restarted during the answer." and keeps their events; finished runs are deleted after 7
+days (`RUN_RETENTION_DAYS`). With `NTFY_URL` set, a finished or failed run posts "Answer
+ready" or "Answer failed" to that ntfy topic, with the question's first 120 characters
+and the run, workspace and thread in its tags and `X-Relay-*` headers; never the answer.
+
+The secrets live in `~/.config/anything/relay.env` (mode 600), outside the repo, which the
+AnythingLLM container mounts: `ANYTHINGLLM_API_KEY` (a developer API key), `RELAY_TOKEN`,
+and optionally `NTFY_URL` and `NTFY_TOKEN`. `make relay-setup` makes the file with a fresh
+token, refuses to go on until the API key is filled in, then maps the tailnet port and
+starts the unit; `make relay-logs` follows it. `relay.app`'s docstring lists the rest of the
+config. Neither the key nor the token appears in a response or a log line, and a test holds
+that.
+
+Where it differs from the original spec: `mode` defaults to `chat` when it's left out; a
+connection to AnythingLLM that breaks mid-answer, or ten silent minutes, fails the run
+("The connection to AnythingLLM broke during the answer.") rather than completing it with
+what came; and a `clientId` is remembered as long as its run is kept, so reusing it later
+returns that old run.
 
 ## System audit
 

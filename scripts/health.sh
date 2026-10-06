@@ -41,6 +41,7 @@ AnythingLLM|http://127.0.0.1:3001/api/ping
 pages site|http://127.0.0.1:8445/
 article writer|http://127.0.0.1:8448/
 podcasts-web|http://127.0.0.1:8449/health
+Nilson relay|http://127.0.0.1:8446/health
 EOF
 
 echo "Sockets"

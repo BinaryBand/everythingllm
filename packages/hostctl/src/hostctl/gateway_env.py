@@ -24,7 +24,8 @@ PREFIX = "GATEWAY_TOKEN_"
 TEMPLATE = """\
 # The MCP gateway's client tokens (packages/gateway; see the README's "MCP gateway"). Mode 600.
 # One GATEWAY_TOKEN_<NAME> per client; delete a line to revoke that client, then restart
-# the gateway (systemctl --user restart gateway). Make a new token with
+# the gateway (systemctl --user restart gateway). A client's tools are its grant in
+# packages/gateway/src/gateway/grants.toml; one with no grant gets none. Make a new token with
 # python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 GATEWAY_TOKEN_CLAUDE_CODE={token}
 """

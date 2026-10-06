@@ -2,18 +2,20 @@
 AnythingLLM (Claude Code, …), served by uvicorn on the host and reached over the tailnet
 through `tailscale serve` (https). See the README's "MCP gateway".
 
-Its tools are the fronts' own: the read tools of sites, podcasts and audit (each front's
-`tool.registered`, so the same schemas and docstrings AnythingLLM sees), and the agents
-ops in gateway.agents. A front's skills (the ops that write or act) aren't tools, so they
-aren't here. Each call goes to its runner's socket as the host sees it.
+Its tools are the fronts' own, in groups a client is granted (gateway.grants, grants.toml):
+each front's read tools (its `tool.registered`, so the same schemas and docstrings
+AnythingLLM sees) as `<front>`, its skills (the ops that write or act, signatures as its
+tools are) as `<front>:write`, and the fronts declared in the gateway (gateway.agents), whose
+tools are named with their PREFIX. Each call goes to its runner's socket as the host sees it.
 
-Every path but /health needs `Authorization: Bearer <token>`, one token per client. Each
-tool call is logged with the client's name and the tool's, never its arguments.
+Every path but /health needs `Authorization: Bearer <token>`, one token per client. A client
+sees and calls only the tools it's granted, and each call is logged with the client's name
+and the tool's, never its arguments.
 
 Config (environment; the unit reads host.env, then ~/.config/everythingllm/gateway.env,
 which holds the tokens, outside the repo and the AnythingLLM container's reach):
   GATEWAY_TOKEN_<NAME>    a client's token; the client is <name>, lowercase, _ as -
-                          (at least one)
+                          (at least one; its tools are in grants.toml)
   PUBLIC_HOST             the tailnet name, whose Host header is allowed (from host.env)
   GATEWAY_HOST, GATEWAY_PORT  where to listen (default 127.0.0.1:8452; tailnet https is
                           the same port)
@@ -25,8 +27,8 @@ import hmac
 import logging
 import os
 import sys
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
 
 import audit.server
 import hostrpc
@@ -34,21 +36,24 @@ import podcasts.server
 import sites.server
 import uvicorn
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from gateway import agents
+from gateway import agents, grants
+from gateway.grants import CLIENT_KEY
 
 log = logging.getLogger("gateway")
 
+# Each front's read tools are the group named after it (its skills' folder), its skills
+# `<that>:write`. A front declared in the gateway names its tools with its PREFIX.
 FRONTS = (sites.server, podcasts.server, audit.server, agents)
+# Groups a grant may name already, whose tools come with a later stage of the gateway.
+LATER = ("research", "sandbox")
 
 TOKEN_PREFIX = "GATEWAY_TOKEN_"
-
-# Where RequireToken leaves the client's name for the call log.
-CLIENT_KEY = "gateway.client"
 
 
 @dataclass
@@ -111,38 +116,70 @@ class RequireToken:
         await self.app(scope, receive, send)
 
 
-async def log_calls(ctx: Any, call_next: Any) -> Any:
-    """MCP middleware: a line for each tool call, naming the client and the tool."""
-    if ctx.method == "tools/call":
-        scope = getattr(ctx.request, "scope", None) or {}
-        log.info(
-            "%s called %s",
-            scope.get(CLIENT_KEY, "?"),
-            (ctx.params or {}).get("name", "?"),
-        )
-    return await call_next(ctx)
+def write_tools(front) -> list:
+    """A front's skills as tools: each forwarded to the front's runner, as its tools are,
+    by the op's own name."""
+    skills = front.skills
+    tool = hostrpc.forwarder(
+        hostrpc.caller(
+            skills.folder, skills.env, f"{skills.folder} runner", error=ToolError
+        ),
+        lambda fn: None,  # build_mcp registers them, under their names
+    )
+    for fn in skills:
+        tool(fn)
+    return tool.registered
 
 
-def build_mcp() -> MCPServer:
+def tool_groups() -> dict[str, dict[str, Callable]]:
+    """Every group a client may be granted: group -> {tool name -> function}. Two fronts
+    with a tool of the same name stop the gateway from starting."""
+    groups: dict[str, dict[str, Callable]] = {name: {} for name in LATER}
+    owner: dict[str, str] = {}
+    for front in FRONTS:
+        group = front.skills.folder
+        prefix = getattr(front, "PREFIX", "")
+        for name, fns in (
+            (group, front.tool.registered),
+            (f"{group}:write", write_tools(front) if front.skills else ()),
+        ):
+            if not fns:
+                continue
+            tools = groups.setdefault(name, {})
+            for fn in fns:
+                tool = prefix + fn.__name__
+                if tool in owner:
+                    raise RuntimeError(
+                        f"{front.__name__} and {owner[tool]} both have a tool {tool}"
+                    )
+                owner[tool] = front.__name__
+                tools[tool] = fn
+    return groups
+
+
+def build_mcp(
+    groups: dict[str, dict[str, Callable]], granted: Mapping[str, Iterable[str]]
+) -> MCPServer:
+    """The MCP server with every group's tools, each client held to its `granted` groups."""
+    unknown = {group for names in granted.values() for group in names} - set(groups)
+    if unknown:
+        raise ValueError(f"unknown group(s) {sorted(unknown)}")
+    allowed = {
+        client: {tool for group in names for tool in groups[group]}
+        for client, names in granted.items()
+    }
     mcp = MCPServer(
         "everythingllm",
         instructions=(
             "EverythingLLM's runners: the sites' entries and the news feeds, the "
             "podcasts, the system audit's checks, and delegations to AnythingLLM's own "
-            "agents."
+            "agents. A client has the tools it was granted."
         ),
-        middleware=[log_calls],
+        middleware=[grants.Grants(allowed)],
     )
-    seen: dict[str, str] = {}
-    for front in FRONTS:
-        for fn in front.tool.registered:
-            if fn.__name__ in seen:
-                raise RuntimeError(
-                    f"{front.__name__} and {seen[fn.__name__]} both have a tool "
-                    f"{fn.__name__}"
-                )
-            seen[fn.__name__] = front.__name__
-            mcp.add_tool(fn)
+    for tools in groups.values():
+        for name, fn in tools.items():
+            mcp.add_tool(fn, name=name)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> Response:
@@ -151,11 +188,22 @@ def build_mcp() -> MCPServer:
     return mcp
 
 
-def create_app(config: Config) -> ASGIApp:
+def create_app(
+    config: Config, granted: Mapping[str, Iterable[str]] | None = None
+) -> ASGIApp:
+    """The gateway's ASGI app; `granted` (client -> groups) defaults to grants.toml's."""
+    groups = tool_groups()
+    if granted is None:
+        granted = grants.load(groups)
+    for client in sorted(config.clients):
+        if client in granted:
+            log.info("%s may use %s", client, ", ".join(sorted(granted[client])) or "-")
+        else:
+            log.warning("%s has a token but no grant in grants.toml: no tools", client)
     hosts = [f"127.0.0.1:{config.port}", f"localhost:{config.port}"]
     if config.public_host:
         hosts += [config.public_host, f"{config.public_host}:{config.port}"]
-    app = build_mcp().streamable_http_app(
+    app = build_mcp(groups, granted).streamable_http_app(
         stateless_http=True,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True, allowed_hosts=hosts
@@ -172,7 +220,6 @@ def main() -> None:
     )
     config = Config.from_env()
     host_sockets()
-    log.info("clients: %s", ", ".join(sorted(config.clients)))
     uvicorn.run(
         create_app(config),
         host=config.host,

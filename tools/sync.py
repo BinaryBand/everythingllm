@@ -10,8 +10,10 @@ Scheduled jobs live in the database, so they go through the AnythingLLM API
 the enabled toggle stays whatever it is live.
 
 The system prompt (system-prompt.md) also goes through the API: it is set on
-every workspace and as the default for new ones. Scheduled jobs have no
-workspace, so AnythingLLM gives them its built-in prompt instead.
+every workspace and as the default for new ones, except the agents-* workspaces,
+whose prompts are their delegation roles' (packages/agents, agents.profiles).
+Scheduled jobs have no workspace, so AnythingLLM gives them its built-in prompt
+instead.
 
 Slash command presets are in the database too and are matched by command name.
 Presets made only in the UI are left alone.
@@ -42,6 +44,8 @@ REPO_JOBS = REPO / "scheduled-jobs"
 API = os.environ.get("ANYTHINGLLM_API", "http://127.0.0.1:3001/api")
 JOB_FIELDS = ("prompt", "tools", "schedule")
 REPO_PROMPT = REPO / "system-prompt.md"
+# Delegation's role workspaces: agents-runner sets their prompts (agents.profiles).
+DELEGATED = "agents-"
 REPO_COMMANDS = REPO / "slash-commands"
 COMMAND_FIELDS = ("prompt", "description")
 
@@ -141,6 +145,7 @@ def planned_prompts() -> list[tuple[str, str]]:
     live += [
         (w["slug"], w["openAiPrompt"] or "")
         for w in api("GET", "/workspaces")["workspaces"]
+        if not w["slug"].startswith(DELEGATED)
     ]
     return [(target, text) for target, text in live if text.strip() != prompt]
 

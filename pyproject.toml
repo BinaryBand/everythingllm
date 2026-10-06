@@ -40,5 +40,10 @@ testpaths = ["packages"]
 
 # An MCP server's tools are signatures whose bodies hostrpc.forwarder supplies.
 [[tool.ty.overrides]]
-include = ["packages/*/src/*/server.py", "packages/gateway/src/gateway/agents.py"]
+include = [
+  "packages/*/src/*/server.py",
+  "packages/gateway/src/gateway/agents.py",
+  "packages/gateway/src/gateway/research.py",
+  "packages/gateway/src/gateway/sandbox.py",
+]
 rules = { empty-body = "ignore" }

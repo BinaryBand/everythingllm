@@ -20,8 +20,8 @@ research, Code sandbox, System audit, …) before changing it.
   restarts AnythingLLM, and so the MCP fronts, but not the host services: a runner keeps its
   old code until `make <name>-setup` or `systemctl --user restart <unit>`. Code shared
   across packages (e.g. `sites.store`) is loaded by several services (`sites-runner`,
-  `audit-runner`, `research-runner`). Don't restart `research-runner`
-  while a run is going.
+  `audit-runner`, `research-runner`). Don't restart `research-runner` or `agents-runner`
+  while a run is going (`tools/run_guard.py` asks).
 - Dropped ideas (browser, quiz, whatsapp-mcp) and the history before this repo went public
   are kept in a private archive, not here. Don't recreate them from memory.
 - Machine settings come from `host.env` (git-ignored; see `host.env.example`). Unit
@@ -62,7 +62,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   `uv run --frozen --project /mcp --package <name>`. The container can't reach the
   host's loopback.
 - Heavy, long-running or host-dependent work runs in a host service:
-  `sandbox-runner`, `research-runner`, `podcasts-runner`, `sites-runner` and
+  `sandbox-runner`, `research-runner`, `agents-runner`, `podcasts-runner`, `sites-runner` and
   `audit-runner`. The MCP server or skill in the container is a thin front that forwards each
   call over `storage/everythingllm/<name>/runner.sock` using `packages/hostrpc`: one request per connection,
   a line of JSON each way (`{"op","args"}` → `{"ok","result"|"error"}`).
@@ -97,7 +97,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   long research runs).
 - Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`),
   not in AnythingLLM's storage, laid out by kind: `venvs/<name>`, `pages/{public,entries}`,
-  `sandbox/{workspaces,public}`, `podcasts/` (with `models/`), `research/runs`, `relay/`.
+  `sandbox/{workspaces,public}`, `podcasts/` (with `models/`), `research/runs`, `agents/runs`, `relay/`.
   Put new data in the folder of its kind, not at the root. Storage keeps AnythingLLM's own data, the runners' sockets (under `everythingllm/`) and what AnythingLLM
   itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.

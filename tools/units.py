@@ -28,12 +28,10 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-import research_guard
+import run_guard
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKUPS = (
-    research_guard.DATA / "backups"
-)  # outside the repo, which the container mounts
+BACKUPS = run_guard.DATA / "backups"  # outside the repo, which the container mounts
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
 
 
@@ -276,11 +274,13 @@ def main() -> None:
     backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S") / "units"
     restart = install(todo, backup)
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    if research_guard.SERVICE in restart and not research_guard.ok_to_restart():
-        restart.remove(research_guard.SERVICE)
-        print(
-            f"units: left {research_guard.SERVICE} running; `make research-setup` applies its new unit later"
-        )
+    for guarded in run_guard.GUARDED:
+        if guarded in restart and not run_guard.ok_to_restart(guarded):
+            restart.remove(guarded)
+            setup = guarded.removesuffix("-runner.service")
+            print(
+                f"units: left {guarded} running; `make {setup}-setup` applies its new unit later"
+            )
     for service in restart:
         subprocess.run(["systemctl", "--user", "restart", service], check=True)
         print(f"restarted {service}")

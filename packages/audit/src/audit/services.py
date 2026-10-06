@@ -14,6 +14,7 @@ WATCHED = {
     "sandbox-runner.service": ("_SYSTEMD_USER_UNIT", "code sandbox runner"),
     "sandbox-proxy.service": ("_SYSTEMD_USER_UNIT", "code sandbox PyPI proxy"),
     "research-runner.service": ("_SYSTEMD_USER_UNIT", "deep-research runner"),
+    "agents-runner.service": ("_SYSTEMD_USER_UNIT", "delegation runner"),
     "podcasts-runner.service": ("_SYSTEMD_USER_UNIT", "podcasts runner"),
     "sites-runner.service": ("_SYSTEMD_USER_UNIT", "sites runner"),
     "audit-runner.service": ("_SYSTEMD_USER_UNIT", "audit runner"),

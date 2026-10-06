@@ -10,7 +10,7 @@ from test_research_runner import Gate, call
 
 @pytest.fixture
 def served(tmp_path, monkeypatch):
-    monkeypatch.setattr(live, "GAP", 0.01)
+    monkeypatch.setattr(live.Live, "GAP", 0.01)
     settings = job.Settings(
         storage=tmp_path,
         searxng_url="",

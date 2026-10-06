@@ -2,7 +2,7 @@ import json
 import os
 import time
 
-from research.runlog import MAX_EVENTS, STALE_MS, RunLog, iso, sweep_interrupted
+from runs.runlog import MAX_EVENTS, STALE_MS, RunLog, iso, sweep_interrupted
 
 
 def lines(dir, month="2026-10"):

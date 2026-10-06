@@ -8,7 +8,7 @@ STORAGE = $(or $(ANYTHINGLLM_STORAGE),$(error no ANYTHINGLLM_STORAGE: copy host.
 # The sites package follows ANYTHINGLLM_STORAGE; naming it here stops a target without host.env.
 HOST_SITES_ENV = ANYTHINGLLM_STORAGE=$(STORAGE)
 
-.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build serve-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup relay-setup
+.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build serve-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup relay-setup agents-setup
 
 help:            ## list the targets
 	@awk -F':.*## ' '/^[a-z%-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -102,6 +102,8 @@ serve-setup:     ## map this setup's tailnet HTTPS ports with tailscale serve (o
 	  sudo tailscale serve --bg --https=8445 --set-path=/podcasts http://127.0.0.1:8449
 	tailscale serve status | grep -q '/_live/research' || \
 	  sudo tailscale serve --bg --https=8445 --set-path=/_live/research http://127.0.0.1:8450
+	tailscale serve status | grep -q '/_live/agents' || \
+	  sudo tailscale serve --bg --https=8445 --set-path=/_live/agents http://127.0.0.1:8451
 	tailscale serve status | grep -q ':8447 ' || sudo tailscale serve --bg --https=8447 http://127.0.0.1:8447
 	tailscale serve status | grep -q ':8888 ' || sudo tailscale serve --bg --https=8888 http://127.0.0.1:8888
 	tailscale serve status | grep -q ':3001 ' || sudo tailscale serve --bg --https=3001 http://127.0.0.1:3001
@@ -125,7 +127,7 @@ news-audio-logs: ## follow the Daily News read-aloud runs
 
 research-setup: units ## enable and (re)start research-runner, which runs deep research for the skill; asks first while a run is going (FORCE=1 doesn't)
 	systemctl --user enable research-runner.service
-	python3 tools/research_guard.py
+	python3 tools/run_guard.py research-runner.service
 	systemctl --user restart research-runner.service
 
 sites-setup: units serve-setup ## enable and (re)start sites-runner (and the article writer it serves at :8445/news/write), which writes the sites' entries and builds them for the sites MCP server
@@ -138,7 +140,13 @@ relay-setup: units serve-setup ## make the Nilson relay's secrets file (~/.confi
 	python3 tools/relay_env.py
 	$(call enable-restart,relay.service)
 
-%-logs:          ## follow <name>-runner or <name> (research, sites, audit, relay)
+agents-setup: units serve-setup ## check agents-runner's key (~/.config/everythingllm/agents.env), then enable and (re)start it, which runs delegations; asks first while one is going (FORCE=1 doesn't)
+	python3 tools/agents_env.py
+	systemctl --user enable agents-runner.service
+	python3 tools/run_guard.py agents-runner.service
+	systemctl --user restart agents-runner.service
+
+%-logs:          ## follow <name>-runner or <name> (research, sites, audit, relay, agents)
 	journalctl --user -f -u $*-runner.service -u $*.service
 
 sites-build:     ## rebuild all Zola sites by hand (sites-runner does this on every write)

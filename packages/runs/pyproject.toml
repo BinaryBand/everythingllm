@@ -1,0 +1,10 @@
+[project]
+name = "runs"
+version = "0.1.0"
+description = "Long runs a host service holds for its callers: run state with long-poll waiting and slots, the run log, and live progress cards"
+requires-python = ">=3.12"
+dependencies = ["chatimage", "hostrpc"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

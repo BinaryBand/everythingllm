@@ -12,6 +12,7 @@ chatimage = { workspace = true }
 hostrpc = { workspace = true }
 llm = { workspace = true }
 publicweb = { workspace = true }
+runs = { workspace = true }
 sandbox = { workspace = true }
 sites = { workspace = true }
 splice = { workspace = true }

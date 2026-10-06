@@ -195,6 +195,10 @@ through its UI.
     cuts and podcasts-web" below)
   - `packages/research/` — not an MCP server: `research-runner` runs the deep-research skill's
     runs on the host, and `research-run` runs one by hand (see "Deep research")
+  - `packages/agents/` — not an MCP server: `agents-runner` runs delegations, tasks done by
+    AnythingLLM's own agents, and `agents-run` starts one by hand (see "Delegation")
+  - `packages/runs/` — a library, not a server: what research-runner and agents-runner share
+    for long runs: run state with long-poll waiting and slots, the run log, live cards
   - `packages/publicweb/` — a library, not a server: the HTTP client podcasts, sites and research use,
     which refuses LAN, tailnet and loopback hosts, and `publicweb.pages`, the page reader on
     it that the article writer and research share
@@ -212,8 +216,8 @@ through its UI.
   (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's
   laid out by kind:
 
-      venvs/<name>/        the host services' venvs (audit, podcasts, relay, research,
-                           sandbox, sites, splice)
+      venvs/<name>/        the host services' venvs (agents, audit, podcasts, relay,
+                           research, sandbox, sites, splice)
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
@@ -221,6 +225,7 @@ through its UI.
       podcasts/            the podcasts' state, audio, transcripts and manifests
       podcasts/models/     Whisper and Kokoro
       research/runs/       the deep-research run log and live runs' markers
+      agents/runs/         the delegations' run log and live runs' markers
       relay/               the Nilson relay's database
 
   Storage keeps AnythingLLM's own data, the runners' sockets (`storage/everythingllm/<name>/runner.sock`,
@@ -384,7 +389,7 @@ loopback, so servers run inside it over stdio rather than as host HTTP services.
 
 Work that is heavy, long or needs the host goes to a service on the host instead, with the
 MCP server or skill in the container as a thin front: `sandbox-runner` (the code sandbox),
-`research-runner` (deep research), `podcasts-runner` (the podcasts tools),
+`research-runner` (deep research), `agents-runner` (delegation), `podcasts-runner` (the podcasts tools),
 `sites-runner` (the sites tools and their builds) and `audit-runner` (the audit's
 checks). Each listens
 on a Unix socket in storage, `storage/everythingllm/<name>/runner.sock` (mode 0660), which the container
@@ -929,7 +934,7 @@ for its `stale_ms` (3 minutes) reads as interrupted to the audit, and a fresh on
 so the agent can tell the user what happened instead of finding no such run.
 `make research-setup` and `make units` (when the unit changed) list the live runs and ask
 before restarting the runner; with no terminal to ask they stop, unless `FORCE=1`
-(`tools/research_guard.py`). `make restart` and `make deploy` restart AnythingLLM only,
+(`tools/run_guard.py`). `make restart` and `make deploy` restart AnythingLLM only,
 so they don't need to ask. The runner runs the code it started with: after changing
 `packages/research`, `make research-setup` puts it live.
 
@@ -946,6 +951,48 @@ To run one by hand, in this process rather than the runner (it logs and publishe
 
     set -a && . ./host.env && set +a && \
       uv run --package research research-run "Why is the sky blue?" --depth quick
+
+## Delegation
+
+`agents-runner` (`packages/agents`, `host/systemd/agents-runner.service`, its own venv in
+`~/.local/share/everythingllm/venvs/agents`) runs **delegations**: a set of tasks the
+caller defines, each done by AnythingLLM's own agent, headless, and an optional `then` task
+that gets their replies. It's stage 2 of `docs/.proposals/agents.md` (kept out of git):
+deep research is to become a recipe on it, and the `delegate` skill is offered to the main
+agent then. Until that, `delegate` is deployed turned off (a deploy keeps the live
+`active` flag, so it's switched on in AnythingLLM's skill settings), and `agents-run`
+starts a delegation by hand:
+
+    set -a && . ./host.env && set +a && uv run --package agents agents-run \
+      "Compare two heat pumps" --task a:worker:"Find the COP of model A, with sources" \
+      --task b:worker:"Find the COP of model B, with sources" \
+      --then planner:"Compare them in a short table"
+
+Over its socket, `storage/everythingllm/agents/runner.sock`: `delegate(goal, tasks: [{name,
+profile, instructions}], then?)` answers at once with a run id and a live card; `wait`,
+`runs` and `cancel` (tasks that haven't started won't; running ones finish, unused).
+
+- **Profiles are workspaces.** A task's `profile` is its role, and each role is an
+  AnythingLLM workspace with its model and a system prompt (`agents/profiles.py`,
+  `agents/prompts/`): `agents-planner` (GLM 5.3) plans, reviews and writes up;
+  `agents-worker` (DeepSeek flash) searches and reads, with AnythingLLM's own web tools.
+  agents-runner makes and sets them through the developer API before its first delegation.
+- **Each task** gets a thread of its own in its workspace, gone when the task ends, and at
+  most `AGENTS_SLOTS` (3) run at once across all delegations. `then`'s prompt has the
+  replies quoted in `<result>` tags as material, never instructions.
+- **Containment.** Every tool loads in a headless run, so every skill of ours that writes,
+  acts or delegates refuses a call from an `agents-*` workspace (`_lib/delegated.js`, held
+  by a test). A task can read and report; it can't write, run code or delegate again.
+- **The live card** is served on 127.0.0.1:8451 (`AGENTS_LIVE_PORT`) and mapped to
+  `https://<PUBLIC_HOST>:8445/_live/agents/` by `make serve-setup`. Its page shows the
+  progress, and every task's reply once the delegation is done, escaped and under a CSP
+  that allows nothing but the page's own CSS (`runs.live`).
+- **The run log** is `~/.local/share/everythingllm/agents/runs/` (`runs.runlog`, as
+  research's). The audit doesn't read it yet.
+- **The key.** agents-runner calls AnythingLLM with a developer API key of its own, in
+  `~/.config/everythingllm/agents.env` (`ANYTHINGLLM_API_KEY`, mode 600, put there by hand);
+  `make agents-setup` checks it. Like research-runner, it isn't restarted by `make units`
+  while a delegation is going (`tools/run_guard.py`).
 
 ## Nilson relay
 

@@ -132,6 +132,7 @@ def data_dir() -> Path:
       sandbox/public/      each sandbox workspace's /public, served as it is on :8447
       podcasts/            the podcasts' state and audio; podcasts/models/, Whisper and Kokoro
       research/runs/       the deep-research run log and live runs' markers
+      agents/runs/         the delegations' run log and live runs' markers
       relay/               the Nilson relay's database
       backups/             what make units and make deploy replaced"""
     return Path("~/.local/share/everythingllm").expanduser()

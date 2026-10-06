@@ -1,0 +1,29 @@
+{
+  "active": false,
+  "hubId": "delegate",
+  "name": "Delegate",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Hand a piece of work to other agents to do in parallel, when it splits into parts that each take searching or reading of their own (compare several options, check several claims, survey several sources). You decide the split: give each task a short name, a profile ('worker' searches and reads; 'planner' plans, reviews and writes up) and complete, self-contained instructions, since the task sees nothing of this chat. Optionally give `then`, one more task that gets every task's reply and combines them. It answers at once with a live card; the work runs on the server for a few minutes and the card shows the results when it's done. The tasks can only read: say in your instructions what they should report back, not do.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "goal": {
+        "type": "string",
+        "description": "What the whole piece of work is for, in a sentence or two; every task sees it."
+      },
+      "tasks": {
+        "type": "array",
+        "description": "1 to 8 tasks, each {\"name\": \"short-name\", \"profile\": \"worker\" or \"planner\", \"instructions\": \"what to do and what to report back\"}."
+      },
+      "then": {
+        "type": "object",
+        "description": "Optional: {\"profile\": \"planner\", \"instructions\": \"...\"}, a last task that gets every task's reply, e.g. to compare or combine them."
+      }
+    }
+  }
+}

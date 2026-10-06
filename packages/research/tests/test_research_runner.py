@@ -49,7 +49,7 @@ class Gate:
 
 @pytest.fixture
 def served(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner, "WAIT", 0.5)
+    monkeypatch.setattr(runner.Runner, "WAIT", 0.5)
     settings = job.Settings(
         storage=tmp_path,
         searxng_url="",
@@ -138,7 +138,7 @@ def test_two_runs_go_at_once_and_a_third_waits_its_turn(served):
 
 def test_a_run_nobody_waits_on_counts_the_chat_as_closed(served, monkeypatch):
     _settings, gate, socket, start = served
-    monkeypatch.setattr(runner, "FOLLOW_GRACE", 0.05)
+    monkeypatch.setattr(runner.Runner, "FOLLOW_GRACE", 0.05)
 
     async def go():
         server = await start()

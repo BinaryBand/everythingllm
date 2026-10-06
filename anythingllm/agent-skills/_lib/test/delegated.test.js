@@ -37,7 +37,7 @@ function agent(workspace) {
 
 test("every skill that writes, acts or delegates refuses a delegated task, before reaching any service", async () => {
   const service = await fakeService(() => ({ ok: true, result: "done" }));
-  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "SITES_SOCKET", "PODCASTS_SOCKET", "AUDIT_SOCKET"];
+  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "SITES_SOCKET", "PODCASTS_SOCKET", "AUDIT_SOCKET", "AGENTS_SOCKET"];
   for (const env of envs) process.env[env] = service.socket;
   try {
     const skills = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, "plugin.json")));
@@ -115,4 +115,26 @@ test("arguments a model sends as text", () => {
   assert.equal(asFlag("true"), true);
   assert.equal(asFlag("False"), false);
   assert.equal(asFlag(undefined), null);
+});
+
+test("delegate starts a delegation and hands back its card", async () => {
+  const service = await fakeService((op, args) =>
+    op === "delegate" ? { ok: true, result: { run_id: "dg-1", queued: 0, card: "[![D](c.png)](p)" } } : { ok: false, error: "?" }
+  );
+  process.env.AGENTS_SOCKET = service.socket;
+  try {
+    const delegate = require("../../delegate/handler").runtime;
+    const reply = await delegate.handler.call(agent("career"), {
+      goal: "compare",
+      tasks: '[{"name": "a", "profile": "worker", "instructions": "x"}]',
+    });
+    assert.match(reply, /Delegation started \(run dg-1\)[\s\S]*Card: \[!\[D\]\(c\.png\)\]\(p\)/);
+    assert.deepEqual(service.requests[0], {
+      op: "delegate",
+      args: { goal: "compare", tasks: [{ name: "a", profile: "worker", instructions: "x" }], then: null },
+    });
+  } finally {
+    delete process.env.AGENTS_SOCKET;
+    await service.close();
+  }
 });

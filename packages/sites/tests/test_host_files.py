@@ -219,7 +219,7 @@ def test_env_keys_says_which_keys_are_set_but_keeps_no_values(tmp_path):
     assert machine.env_keys(tmp_path / "missing") == {}
 
 
-research_guard = load("research_guard")
+run_guard = load("run_guard")
 
 
 def test_restart_asks_while_deep_research_runs(tmp_path, capsys, monkeypatch):
@@ -230,7 +230,9 @@ def test_restart_asks_while_deep_research_runs(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     monkeypatch.delenv("FORCE", raising=False)
     running = tmp_path / "research" / "runs" / "running"
-    assert research_guard.ok_to_restart(tmp_path)  # no folder: nothing runs
+    assert run_guard.ok_to_restart(
+        "research-runner.service", tmp_path
+    )  # no folder: nothing runs
     running.mkdir(parents=True)
     quiet = running / "quiet.json"
     quiet.write_text(
@@ -243,7 +245,7 @@ def test_restart_asks_while_deep_research_runs(tmp_path, capsys, monkeypatch):
         )
     )
     os.utime(quiet, (time.time() - 600, time.time() - 600))
-    assert research_guard.ok_to_restart(tmp_path)  # not live
+    assert run_guard.ok_to_restart("research-runner.service", tmp_path)  # not live
     (running / "live.json").write_text(
         json.dumps(
             {
@@ -253,14 +255,40 @@ def test_restart_asks_while_deep_research_runs(tmp_path, capsys, monkeypatch):
             }
         )
     )
-    assert not research_guard.ok_to_restart(tmp_path)
+    assert not run_guard.ok_to_restart("research-runner.service", tmp_path)
     err = capsys.readouterr().err
     assert "Bitcoin teaching?" in err and "research-runner" in err
     monkeypatch.setenv("FORCE", "1")
-    assert research_guard.ok_to_restart(tmp_path)
+    assert run_guard.ok_to_restart("research-runner.service", tmp_path)
     monkeypatch.delenv("FORCE")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda q: "y")
-    assert research_guard.ok_to_restart(tmp_path)
+    assert run_guard.ok_to_restart("research-runner.service", tmp_path)
     monkeypatch.setattr("builtins.input", lambda q: "")
-    assert not research_guard.ok_to_restart(tmp_path)
+    assert not run_guard.ok_to_restart("research-runner.service", tmp_path)
+
+
+def test_restart_asks_while_a_delegation_runs(tmp_path, monkeypatch, capsys):
+    import json
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.delenv("FORCE", raising=False)
+    running = tmp_path / "agents" / "runs" / "running"
+    running.mkdir(parents=True)
+    (running / "live.json").write_text(
+        json.dumps(
+            {
+                "started": "2026-10-06T07:00:00Z",
+                "subject": "compare",
+                "stale_ms": 180000,
+            }
+        )
+    )
+    assert run_guard.ok_to_restart(
+        "research-runner.service", tmp_path
+    )  # not research's
+    assert not run_guard.ok_to_restart("agents-runner.service", tmp_path)
+    err = capsys.readouterr().err
+    assert (
+        "Delegations going (1)" in err and "compare" in err and "agents-runner" in err
+    )

@@ -296,6 +296,8 @@ through its UI.
   - `run_guard` — asks before a runner with a live run restarts
   - `agents_env`, `relay_env`, `gateway_env` — the agents, relay and gateway setups' key
     file checks; `gateway_env` also adds a gateway client (`uv run hostctl gateway-client`)
+  - `ctr_env` — a service container's share of AnythingLLM's `.env`, which its template's
+    `ExecStartPre` writes before each start
   - `skills` — writes the generated skills (`uv run hostctl skills`)
   - `health.sh` — `uv run hostctl health`
 
@@ -531,8 +533,15 @@ means the same inside and out: what the sandbox's `build_system_site` hands back
 runner tells the container, what lands in a run log. `host.env` comes in through
 `EnvironmentFile=`, as does an app's own secrets file (`relay.env`): podman reads them on
 the host and passes the values in, so they aren't mounted. It takes each value as it is,
-quotes included, and the template's own `Environment=` lines win over both. Each container
-has one folder of its own,
+quotes included, and the template's own `Environment=` lines win over both.
+AnythingLLM's `.env` is never mounted: it holds every provider's key, the password and the
+signing secrets. A container that needs a key of it gets its share instead, a file with
+just those keys that `hostctl.ctr_env` writes on the host before every start (the
+template's `ExecStartPre`), in `~/.config/everythingllm/ctr/<x>.env` (mode 600), mounted
+read-only and named by `ANYTHINGLLM_ENV`. The template lists the keys; a key whose value
+isn't needed, only whether it's set (`JWT_SECRET`, by which `hostrpc.anythingllm_headers`
+knows the password is on), goes in as `set`. A key changed in AnythingLLM's settings
+reaches a container at its next restart. Each container has one folder of its own,
 `~/.local/share/everythingllm/venvs/<x>-ctr/`, with its venv (`UV_PROJECT_ENVIRONMENT=…/venv`)
 and its uv cache (`UV_CACHE_DIR=…/uv-cache`) in it: one mount, so uv can hardlink, and no
 container can touch another's packages. The first start syncs the venv from PyPI through
@@ -642,7 +651,8 @@ its own venv folder (`venvs/sites-runner-ctr/`), it mounts, each at its host pat
   at the same path and swaps in. Connecting to a socket needs no write access to its
   folder, and a folder rather than the socket itself keeps working when the sandbox runner
   makes a new one
-- `storage/.env`, read-only, for the article writer's DeepSeek key and model
+- its share of AnythingLLM's `.env` (`~/.config/everythingllm/ctr/sites-runner.env`),
+  read-only: the article writer's DeepSeek key and model, nothing else
 
 Nothing else of storage or the data dir; no podman socket. There's no zola in the image and
 no `unshare` in a cap-dropped container, so `SITES_SANDBOX_ONLY=1` has the sandbox build
@@ -832,8 +842,8 @@ a show found only in such an app has no public feed.
   on another port is refused too. Each mounts only what it uses, at its host path: the
   state folder (`~/.local/share/everythingllm/podcasts/`, with the queue and `models/`) and
   the served folder (`pages/public/podcasts/`), plus the runner's socket folder (the only
-  one that writes in storage, so the only one with `GroupAdd=keep-groups`) or AnythingLLM's
-  `.env` read-only (the workers', for DeepSeek); the repo, read-only, gives the
+  one that writes in storage, so the only one with `GroupAdd=keep-groups`) or its share
+  of AnythingLLM's `.env`, read-only (the workers': the DeepSeek key and model); the repo, read-only, gives the
   transcription worker `host.env`. Locks (`sync.lock`, `transcribe.lock`, `feeds.lock`)
   work across them, as they're all on the host's filesystem. `podcasts-web` stays a host
   unit: it only reads what they write. Each first start syncs its venv (the `host` extra:
@@ -1058,8 +1068,8 @@ and read-only. Without a DeepSeek key, `sites-runner` logs that and serves the t
   results with trafilatura (up to 4 readable pages). Only public hosts are fetched,
   redirects included. DeepSeek (AnythingLLM's model, thinking off) then writes 250–600 words from the pages that actually report the story,
   or refuses if none do. Its key and model are read from AnythingLLM's `.env`, and only
-  those, once when `sites-runner` starts (the container mounts that one file read-only), so
-  a new key or model takes `uv run hostctl sites-setup`.
+  those, once when `sites-runner` starts (the container mounts its share of the file,
+  written as it starts), so a new key or model takes `uv run hostctl sites-setup`.
 - The article is an ordinary `sites` entry in the `articles` section, saved and built from
   the host like `uv run hostctl sites-build`. It ends with "Based on reporting by …", linking the
   pages it used. It's rewritten only if the edition's story changes.
@@ -1222,17 +1232,19 @@ host path:
   mount (the link cards go in its `_cards/`)
 - in storage: its socket folder; the sandbox's build socket's (`sandbox-build/`, which
   serves only `build_system_site`), read-only (connecting needs no more): the research site has `theme_from = "system"`, so no zola runs in the
-  container; AnythingLLM's `.env`, read-only, for the model keys and its password;
-  `anythingllm-fs/research/` and `documents/deep-research/`
+  container; `anythingllm-fs/research/` and `documents/deep-research/`
+- its share of AnythingLLM's `.env` (`~/.config/everythingllm/ctr/research-runner.env`),
+  read-only: the DeepSeek and Z.AI keys, DeepSeek's model and AnythingLLM's password, with
+  `JWT_SECRET` only as being set
 
 It goes out only through the egress proxy, with the `research` profile: any public host
 (the pages it reads, DeepSeek and Z.AI), and AnythingLLM and SearXNG by the tailnet name
 (`ANYTHINGLLM_API=https://<PUBLIC_HOST>:3001/api`, `SEARXNG_URL`). A page the proxy refuses
 (a LAN or tailnet address) is skipped as any unreadable page is. Only the research site's
 entries are mounted, so a `SITE` setup arg naming another site can't publish there: the
-report is still saved to the agent's files, and the reply says why. `.env` is mounted as one
-file, so if AnythingLLM ever replaced it rather than writing it in place, the runner would
-read the old one until it restarts.
+report is still saved to the agent's files, and the reply says why. Its share of `.env` is
+written when it starts, so a model key changed in AnythingLLM reaches it at its next
+restart (`uv run hostctl research-setup`, with no run going).
 
 To run one by hand, in this process rather than the runner (it logs and publishes as usual):
 

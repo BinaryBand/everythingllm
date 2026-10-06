@@ -51,8 +51,10 @@ Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/podcasts-transcribe
 Volume=%h/.local/share/everythingllm/podcasts:%h/.local/share/everythingllm/podcasts
 # The served folder (PODCASTS_DIR): each transcript's .vtt and the feed that links it.
 Volume=%h/.local/share/everythingllm/pages/public/podcasts:%h/.local/share/everythingllm/pages/public/podcasts
-# AnythingLLM's .env, read-only: the DeepSeek key and model that find ad reads.
-Volume=@ANYTHINGLLM_STORAGE@/.env:@ANYTHINGLLM_STORAGE@/.env:ro
+# Its share of AnythingLLM's .env, read-only (ExecStartPre writes it): the DeepSeek key
+# and model that find ad reads.
+Volume=%h/.config/everythingllm/ctr/podcasts-transcribe-worker.env:%h/.config/everythingllm/ctr/podcasts-transcribe-worker.env:ro
+Environment=ANYTHINGLLM_ENV=%h/.config/everythingllm/ctr/podcasts-transcribe-worker.env
 # huggingface_hub keeps its own bits (a token, if any; its download cache) under HF_HOME,
 # which would be ~/.cache, read-only here; the model itself goes to models/.
 Environment=HF_HOME=/tmp/huggingface
@@ -60,6 +62,10 @@ Environment=HF_HOME=/tmp/huggingface
 EnvironmentFile=@REPO@/host.env
 
 [Service]
+# Its share of AnythingLLM's .env (the DeepSeek key and model that find ad reads),
+# never the file, which holds every key and secret AnythingLLM has: written on the host
+# before each start (hostctl.ctr_env), so a restart takes up a changed key.
+ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src:@REPO@/packages/apps/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/podcasts-transcribe-worker.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF
 # podman won't bind-mount what isn't there.
 ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/podcasts-transcribe-worker-ctr %h/.local/share/everythingllm/podcasts %h/.local/share/everythingllm/pages/public/podcasts
 # Whisper takes every core it's given; anything else goes first. The container's processes

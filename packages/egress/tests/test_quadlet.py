@@ -146,6 +146,9 @@ def test_relay_mounts_only_its_database_and_venv(egress):
 # reads outside the repo, and nothing more.
 DATA = "%h/.local/share/everythingllm"
 STORAGE = "@ANYTHINGLLM_STORAGE@"
+CTR_ENV = (
+    "%h/.config/everythingllm/ctr"  # hostctl.ctr_env's shares of AnythingLLM's .env
+)
 RESEARCH = {
     # mount target: whether it's read-only
     "@REPO@": True,
@@ -156,7 +159,7 @@ RESEARCH = {
     f"{DATA}/pages/public": False,  # one mount: a build's rename stays inside it
     f"{STORAGE}/everythingllm/research": False,  # its socket
     f"{STORAGE}/everythingllm/sandbox-build": True,  # the sandbox's build_system_site
-    f"{STORAGE}/.env": True,
+    f"{CTR_ENV}/research-runner.env": True,  # its share of AnythingLLM's .env
     f"{STORAGE}/anythingllm-fs/research": False,
     f"{STORAGE}/documents/deep-research": False,
 }
@@ -184,7 +187,7 @@ def test_research_mounts_only_what_it_uses():
         re.MULTILINE,
     )
     made = {path for line in made for path in line.split()}
-    assert set(RESEARCH) - {"@REPO@", f"{STORAGE}/.env"} <= made
+    assert set(RESEARCH) - {"@REPO@", f"{CTR_ENV}/research-runner.env"} <= made
 
 
 def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
@@ -196,8 +199,12 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     home, storage = tmp_path / "home", tmp_path / "storage"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(storage))
+    template = container_keys(QUADLET / "research-runner.container.in")
+    env = dict(e.partition("=")[::2] for e in template["Environment"])
+    monkeypatch.setenv(
+        "ANYTHINGLLM_ENV", env["ANYTHINGLLM_ENV"].replace("%h", str(home))
+    )
     for var in (
-        "ANYTHINGLLM_ENV",
         "SITES_CONTENT",
         "SITES_OUTPUT",
         "RESEARCH_SOCKET",
@@ -292,15 +299,43 @@ def test_a_service_container_gets_nothing_beyond_its_mounts_and_limits(template)
         # The sandbox runner's own socket takes any workspace's scope; a container gets
         # its build socket's folder (sandbox-build) at most.
         assert source != "@ANYTHINGLLM_STORAGE@/everythingllm/sandbox", (name, volume)
+        # Nor AnythingLLM's .env, with every key and secret it has: its own share at most.
+        assert not source.endswith("/.env"), (name, volume)
         # Its own folder of venvs/, not another container's or a host service's.
         if "/venvs/" in source:
             assert source.endswith(f"/venvs/{name}-ctr"), (name, volume)
 
 
+@pytest.mark.parametrize("template", services(), ids=lambda t: t.name)
+def test_a_share_of_anythingllms_env_is_written_before_each_start(template):
+    """A container that reads AnythingLLM's .env (ANYTHINGLLM_ENV) gets its own share,
+    which hostctl.ctr_env writes on the host before every start, mounted read-only."""
+    name = template.name.removesuffix(".container.in")
+    keys = container_keys(template)
+    env = dict(e.partition("=")[::2] for e in keys["Environment"])
+    if "ANYTHINGLLM_ENV" not in env:
+        return
+    share = f"{CTR_ENV}/{name}.env"
+    assert env["ANYTHINGLLM_ENV"] == share
+    assert f"{share}:{share}:ro" in keys["Volume"]
+    pre = re.findall(
+        r"^ExecStartPre=(.*hostctl\.ctr_env.*)$", template.read_text(), re.MULTILINE
+    )
+    assert len(pre) == 1, name
+    args = pre[0].split()
+    at = args.index("hostctl.ctr_env")
+    assert args[at + 1 : at + 3] == ["@ANYTHINGLLM_STORAGE@/.env", share]
+    given = args[at + 3 :]
+    assert given and "OPENROUTER_API_KEY" not in given
+    # A signing secret goes in only as being set, never its value.
+    assert "JWT_SECRET" not in given
+
+
 def test_sites_runner_mounts_only_what_it_uses():
     """sites-runner (sites.tools, sites.build, sites.articles_web) reads the repo, writes
     the entries and builds into the pages site, serves its socket, asks the sandbox runner
-    to build, and reads AnythingLLM's .env for the article writer's key. Nothing else."""
+    to build, and reads its share of AnythingLLM's .env for the article writer's key.
+    Nothing else."""
     keys = container_keys(QUADLET / "sites-runner.container.in")
     data, storage = "%h/.local/share/everythingllm", "@ANYTHINGLLM_STORAGE@"
     assert sorted(keys["Volume"]) == sorted(
@@ -310,7 +345,8 @@ def test_sites_runner_mounts_only_what_it_uses():
             f"{data}/pages/public:{data}/pages/public",
             f"{storage}/everythingllm/sites:{storage}/everythingllm/sites",
             f"{storage}/everythingllm/sandbox-build:{storage}/everythingllm/sandbox-build:ro",
-            f"{storage}/.env:{storage}/.env:ro",
+            "%h/.config/everythingllm/ctr/sites-runner.env:"
+            "%h/.config/everythingllm/ctr/sites-runner.env:ro",
             f"{data}/venvs/sites-runner-ctr:{data}/venvs/sites-runner-ctr",
         ]
     )

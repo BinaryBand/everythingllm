@@ -28,14 +28,14 @@ MOUNTS = {
         f"{DATA}/venvs/podcasts-sync-worker-ctr": False,
         STATE: False,
         SITE: False,
-        f"{STORAGE}/.env": True,  # DeepSeek, for feeds' rules
+        "%h/.config/everythingllm/ctr/podcasts-sync-worker.env": True,  # DeepSeek
     },
     "podcasts-transcribe-worker": {
         "@REPO@": True,  # host.env, for PODCASTS_TRANSCRIBE_THREADS at every pass
         f"{DATA}/venvs/podcasts-transcribe-worker-ctr": False,
         STATE: False,
         SITE: False,
-        f"{STORAGE}/.env": True,  # DeepSeek, for ad reads
+        "%h/.config/everythingllm/ctr/podcasts-transcribe-worker.env": True,  # DeepSeek
     },
 }
 
@@ -135,6 +135,11 @@ def test_the_mounts_are_where_the_code_goes(monkeypatch, tmp_path):
         "podcasts-runner", hostrpc.socket_path("podcasts", "PODCASTS_SOCKET")
     )
     for name in ("podcasts-sync-worker", "podcasts-transcribe-worker"):
-        assert mount(name, storage / ".env")
+        # AnythingLLM's .env as the code finds it: ANYTHINGLLM_ENV, from the template.
+        env = dict(
+            e.partition("=")[::2]
+            for e in container_keys(QUADLET / f"{name}.container.in")["Environment"]
+        )
+        assert mount(name, Path(env["ANYTHINGLLM_ENV"].replace("%h", str(home))))
     assert not mount("podcasts-transcribe-worker", library.models_dir("whisper"))
     assert mount("podcasts-transcribe-worker", transcripts.HOST_ENV)

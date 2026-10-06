@@ -46,12 +46,18 @@ Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/podcasts-sync-worke
 Volume=%h/.local/share/everythingllm/podcasts:%h/.local/share/everythingllm/podcasts
 # The served folder (PODCASTS_DIR): feed.xml, transcripts and the index.
 Volume=%h/.local/share/everythingllm/pages/public/podcasts:%h/.local/share/everythingllm/pages/public/podcasts
-# AnythingLLM's .env, read-only: the DeepSeek key and model that read feeds' rules.
-Volume=@ANYTHINGLLM_STORAGE@/.env:@ANYTHINGLLM_STORAGE@/.env:ro
+# Its share of AnythingLLM's .env, read-only (ExecStartPre writes it): the DeepSeek key
+# and model that read feeds' rules.
+Volume=%h/.config/everythingllm/ctr/podcasts-sync-worker.env:%h/.config/everythingllm/ctr/podcasts-sync-worker.env:ro
+Environment=ANYTHINGLLM_ENV=%h/.config/everythingllm/ctr/podcasts-sync-worker.env
 # ANYTHINGLLM_STORAGE, PUBLIC_HOST (the private feeds' URLs) and PODCASTS_*.
 EnvironmentFile=@REPO@/host.env
 
 [Service]
+# Its share of AnythingLLM's .env (the DeepSeek key and model that read feeds' rules),
+# never the file, which holds every key and secret AnythingLLM has: written on the host
+# before each start (hostctl.ctr_env), so a restart takes up a changed key.
+ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src:@REPO@/packages/apps/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/podcasts-sync-worker.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF
 # podman won't bind-mount what isn't there.
 ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/podcasts-sync-worker-ctr %h/.local/share/everythingllm/podcasts %h/.local/share/everythingllm/pages/public/podcasts
 Restart=on-failure

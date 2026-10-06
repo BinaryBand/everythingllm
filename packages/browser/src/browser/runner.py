@@ -85,7 +85,7 @@ from hostrpc import RunnerError
 
 from browser import page as pagetext
 from browser.origin import host_of, site_matches
-from browser.vault import MAX_FIELD, Vault, VaultError, totp
+from browser.vault import Vault, VaultError, totp
 
 log = logging.getLogger("browser-runner")
 
@@ -434,6 +434,8 @@ class Runner(hostrpc.Service):
                 raise
         if self.sessions.get(s.workspace) is s:
             del self.sessions[s.workspace]
+            if s.approval is not None:  # its waiter hears it's stale
+                s.approval.answered.set()
             self.forget(s.workspace)
             await self.podman(["rm", "-f", s.name], 30)
         raise Gone("the browser closed (its window was shut, or it crashed)")
@@ -694,9 +696,19 @@ class Runner(hostrpc.Service):
                 )
 
     async def used(self, workspace: str, entry: dict[str, Any]) -> None:
-        await asyncio.to_thread(
-            self.vault.update, workspace, entry["id"], used=time.strftime("%Y-%m-%d")
-        )
+        """Note the day a login was used. The fill is done by then: a login deleted
+        meanwhile, or a vault that can't be saved, doesn't make it a failure."""
+        try:
+            await asyncio.to_thread(
+                self.vault.update,
+                workspace,
+                entry["id"],
+                used=time.strftime("%Y-%m-%d"),
+            )
+        except VaultError as e:
+            log.warning(
+                "couldn't note a use of %s's login %s: %s", workspace, entry["id"], e
+            )
 
     async def capture(self, s: Session, on: bool) -> None:
         """Whether logins the user sends in the browser are offered for saving: while they
@@ -715,15 +727,18 @@ class Runner(hostrpc.Service):
     async def save_offer(
         self, s: Session, offer: str, username: str | None, ask: bool
     ) -> dict[str, Any]:
-        # Taking an offer forgets it in the browser, so what the vault would refuse is
-        # refused first, while the user can still fix it.
-        if username is not None and len(username) > MAX_FIELD:
-            raise VaultError("that's too long for a login")
-        taken = await self.call(s, "take_offer", {"id": offer})
+        """Save an offer, and only then drop it in the browser: one the vault refuses stays,
+        for the user to fix and save again."""
+        taken = await self.call(s, "peek_offer", {"id": offer})
         name = taken["username"] if username is None else str(username)
-        return await asyncio.to_thread(
+        saved = await asyncio.to_thread(
             self.vault.add, s.workspace, taken["site"], name, taken["password"], "", ask
         )
+        try:
+            await self.call(s, "drop_offer", {"id": offer})
+        except RunnerError:
+            pass  # saved; a browser that's gone has no offers left to show
+        return saved
 
     async def op_ping(self) -> dict[str, Any]:
         image, network = await asyncio.gather(

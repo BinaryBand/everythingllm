@@ -213,6 +213,39 @@ def test_a_password_goes_only_into_a_password_field(password):
         fill_login(login_page(), pass_ref="e9")
 
 
+def test_a_filled_secret_isnt_read_back_when_the_page_shows_it():
+    # A "show password" button makes the password field a text one; a code goes into one.
+    page = login_page()
+
+    async def evaluate(script, limit):
+        fields = {ref: e.filled or "" for ref, e in page.elements.items()}
+        return {"elements": [
+            f'[e1] input[email] "Email" value="{fields["e1"]}"',
+            f'[e2] input[text] "Password" value="{fields["e2"]}" (disabled)',
+            f'[e3] input[text] "Code" value="{fields["e3"]}"',
+        ], "text": "Welcome", "more": False}  # fmt: skip
+
+    async def title():
+        return "Sign in"
+
+    page.evaluate, page.title = evaluate, title
+    page.elements["e3"] = FakeElement("input", "text", page.url)
+    d = driver.Driver(None, None)
+    d.stacks["t1"] = [page]
+    view = asyncio.run(
+        d.op_fill_login("t1", "linkedin.com", "me@x.org", "hunter2", "e1", "e2")
+    )
+    assert "hunter2" not in str(view) and 'value="me@x.org"' in view["elements"][0]
+    assert view["elements"][1] == '[e2] input[text] "Password" (filled) (disabled)'
+    view = asyncio.run(d.op_fill_code("t1", "linkedin.com", "123456", "e3"))
+    assert "123456" not in str(view) and "hunter2" not in str(view)
+    # Clipped, and its spaces squeezed, as snapshot.js shows it.
+    long = "a  b" + "c" * 100
+    assert driver.masked([f'x value="{driver.clip(long, 80)}"'], [long]) == [
+        "x (filled)"
+    ]
+
+
 def test_chromium_goes_through_the_proxy_alone():
     args = driver.chromium_args("http://10.89.79.2:3129", (1280, 800))
     assert "--proxy-server=http://10.89.79.2:3129" in args

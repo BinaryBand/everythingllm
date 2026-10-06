@@ -900,7 +900,8 @@ name bound in so one workspace's file can't stand in for another's.
   password goes only into a password field. So a page that talks the agent into it can't
   have your LinkedIn password typed into another site. A site is never a public suffix
   (`github.io`, `co.uk`, from the Public Suffix List kept in `browser/public_suffix_list.dat`),
-  whose subdomains belong to anyone.
+  whose subdomains belong to anyone, and a login never fills across one below its site
+  (one for `windows.net` not on `anyone.blob.core.windows.net`).
 - **2FA.** A login can carry a TOTP secret (the text under the QR code, or its
   `otpauth://` address); `browser-login` with `code` fills the current code. That puts both
   factors in one vault on this machine; leave the secret out for accounts where that's too much.

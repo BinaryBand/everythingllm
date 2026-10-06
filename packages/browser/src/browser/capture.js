@@ -11,8 +11,9 @@
     const password = [...root.querySelectorAll("input[type=password]")].find((i) => i.value);
     if (!password || typeof window.__bwCapture !== "function") return;
     const inputs = [...(password.form || document).querySelectorAll("input")];
+    const at = inputs.indexOf(password); // -1 for a field outside the form it belongs to
     const user = inputs
-      .slice(0, inputs.indexOf(password))
+      .slice(0, Math.max(at, 0))
       .reverse()
       .find((i) => USERLIKE.has(i.type) && i.value);
     window.__bwCapture({ username: user ? user.value : "", password: password.value });

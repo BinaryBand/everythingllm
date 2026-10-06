@@ -25,11 +25,19 @@ HOST_RE = re.compile(
 
 def normal_site(text: str) -> str:
     """The site a login is saved for, from what was typed (`https://www.LinkedIn.com/login`
-    -> `linkedin.com`): the host alone, lower case, without `www.`. ValueError for anything
-    that isn't a dotted host name (an address, `localhost`, a bare word)."""
+    -> `linkedin.com`): the host alone, lower case, without `www.`, a name in Unicode in
+    its punycode form as a browser's addresses carry it. ValueError for anything that isn't
+    a dotted host name (an address, `localhost`, a bare word)."""
     text = (text or "").strip().lower()
     host = urlsplit(text if "://" in text else f"https://{text}").hostname or ""
     host = host.rstrip(".").removeprefix("www.")
+    if not host.isascii():
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            raise ValueError(
+                f"'{text}' isn't a site's name, like linkedin.com"
+            ) from None
     try:
         ipaddress.ip_address(host)
     except ValueError:
@@ -46,13 +54,16 @@ def normal_site(text: str) -> str:
 
 
 def site_matches(host: str, site: str) -> bool:
-    """Whether a page on `host` is on `site` (the site itself, or a subdomain of it). Never
-    for a public suffix, should a login have been saved for one before they were refused."""
+    """Whether a page on `host` is on `site`: the site itself, or a subdomain of it with no
+    public suffix between them (a login for `windows.net` doesn't fill on
+    `anyone.blob.core.windows.net`, whose `blob.core.windows.net` is a public suffix). So
+    never for a public suffix, should a login have been saved for one before they were
+    refused."""
     host = (host or "").lower().rstrip(".")
     return (
         bool(site)
         and (host == site or host.endswith("." + site))
-        and not is_public_suffix(site)
+        and site.endswith("." + public_suffix(host))
     )
 
 

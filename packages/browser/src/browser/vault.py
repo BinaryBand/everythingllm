@@ -111,15 +111,20 @@ class Vault:
             if self._key is not None:
                 return self._key
             try:
-                key = self.key_file.read_bytes()
-            except FileNotFoundError:
-                self.key_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                key = AESGCM.generate_key(bit_length=256)
-                fd = os.open(
-                    self.key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-                )
-                with os.fdopen(fd, "wb") as f:
-                    f.write(key)
+                try:
+                    key = self.key_file.read_bytes()
+                except FileNotFoundError:
+                    self.key_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    key = AESGCM.generate_key(bit_length=256)
+                    fd = os.open(
+                        self.key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    )
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(key)
+            except OSError as e:
+                raise VaultError(
+                    f"the vault's key {self.key_file} can't be read or made ({e.strerror or e})"
+                ) from None
             if len(key) != 32:
                 raise VaultError(f"{self.key_file} isn't a vault key")
             self._key = key
@@ -133,6 +138,10 @@ class Vault:
             data = self.file(workspace).read_bytes()
         except FileNotFoundError:
             return []
+        except OSError as e:
+            raise VaultError(
+                f"{self.file(workspace)} can't be read ({e.strerror or e})"
+            ) from None
         if not data.startswith(MAGIC):
             raise VaultError(f"{self.file(workspace)} isn't a vault")
         nonce, sealed = data[len(MAGIC) : len(MAGIC) + 12], data[len(MAGIC) + 12 :]
@@ -145,12 +154,19 @@ class Vault:
         return json.loads(plain)
 
     def save(self, workspace: str, logins: list[dict[str, Any]]) -> None:
-        self.folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         nonce = secrets.token_bytes(12)
         sealed = AESGCM(self.key()).encrypt(
             nonce, json.dumps(logins).encode(), self.aad(workspace)
         )
-        hostrpc.atomic_write(self.file(workspace), MAGIC + nonce + sealed, mode=0o600)
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+            hostrpc.atomic_write(
+                self.file(workspace), MAGIC + nonce + sealed, mode=0o600
+            )
+        except OSError as e:
+            raise VaultError(
+                f"{self.file(workspace)} can't be saved ({e.strerror or e})"
+            ) from None
 
     @contextlib.contextmanager
     def changing(self, workspace: str) -> Iterator[list[dict[str, Any]]]:
@@ -188,7 +204,9 @@ class Vault:
         ask: bool = False,
     ) -> dict[str, Any]:
         """Save a login, or replace the password (and 2FA secret, if given) of the one with
-        the same site and username. Returns it, public."""
+        the same site and username. `ask` turns asking first on, never off: saving a new
+        password keeps a login the user said to ask about asking (the list's toggle turns
+        it off). Returns it, public."""
         try:
             site = normal_site(site)
         except ValueError as e:
@@ -214,7 +232,7 @@ class Vault:
                 login["password"] = password
             if secret:
                 login["totp"] = secret
-            login["ask"] = bool(ask)
+            login["ask"] = bool(ask) or bool(login.get("ask"))
         return public(login)
 
     def update(self, workspace: str, login_id: str, **fields: Any) -> dict[str, Any]:

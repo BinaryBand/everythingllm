@@ -100,10 +100,10 @@ class FakeDriver(hostrpc.Service):
             for k, o in self.offers.items()
         ]
 
-    async def op_take_offer(self, id):
+    async def op_peek_offer(self, id):
         if id not in self.offers:
             raise hostrpc.RunnerError("that login isn't waiting to be saved any more")
-        return self.offers.pop(id)
+        return dict(self.offers[id])
 
     async def op_drop_offer(self, id):
         self.offers.pop(id, None)

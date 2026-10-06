@@ -456,6 +456,30 @@ def test_a_request_no_longer_asked_is_stale_not_refused(tmp_path, monkeypatch):
         await r.stop("career")
         assert await asyncio.wait_for(waiting, 1) == stale
         assert await r.op_wait_approval(scope(), second) == stale
+        # And one whose browser went away under a call (its window closed, a crash).
+        await r.op_open(scope(), "https://linkedin.com/")
+        third = (await r.op_login(scope(), alice["id"], "e1", "e2"))["approval"]
+        waiting = asyncio.create_task(r.op_wait_approval(scope(), third))
+        await asyncio.sleep(0)
+        await podman.kill("everythingllm-browser-career")
+        with pytest.raises(RunnerError, match="the browser closed"):
+            await r.op_read(scope())
+        assert await asyncio.wait_for(waiting, 1) == stale
+
+    test(tmp_path)
+
+
+def test_a_fill_done_isnt_undone_by_noting_its_use(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        saved = r.vault.add("career", "linkedin.com", "alice", "pw")
+        await r.op_open(scope(), "https://linkedin.com/")
+
+        def gone(*args, **kw):
+            raise runner_mod.VaultError("there's no saved login")
+
+        r.vault.update = gone  # deleted in the take-over view while it was filled
+        assert (await r.op_login(scope(), saved["id"], "e1", "e2"))["page"]
 
     test(tmp_path)
 

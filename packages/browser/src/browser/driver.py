@@ -16,9 +16,10 @@ read, as downloads are.
 Saved logins (browser.vault) come from the runner and go only into fields on their own
 site: the page and the frame a field is in must be on the login's site (browser.origin), as
 Playwright sees them, not the page's scripts; a password goes only into a password field;
-and nothing filled is ever said back. Chromium's own password saving is off. While the user
-has the browser, capture.js offers what they log in with for saving; the runner asks the
-user in the take-over view, and takes the offer.
+and nothing filled is ever said back (a read shows a field holding a filled password or
+code as filled, even once the page makes it a text field). Chromium's own password saving
+is off. While the user has the browser, capture.js offers what they log in with for saving;
+the runner asks the user in the take-over view, and saves the offer before dropping it.
 
 The ops that take a thread return the tab's view: {title, url, elements, text, more,
 notes}, snapshot.js's reading of the page (browser.page renders it).
@@ -35,7 +36,7 @@ notes}, snapshot.js's reading of the page (browser.page renders it).
   tabs()                            [{thread, title, url}]
   capture(on)                       whether logins the user sends are offered for saving
   offers()                          [{id, site, username}] of those, for OFFER_SECONDS
-  take_offer(id)                    {site, username, password}, and forget it
+  peek_offer(id)                    {site, username, password}, kept until dropped
   drop_offer(id)                    forget it
 
 Config (environment):
@@ -53,6 +54,7 @@ import base64
 import json
 import logging
 import os
+import re
 import secrets
 import signal
 import time
@@ -86,6 +88,8 @@ CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
 MAX_OFFERS = 5
 OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
 MAX_SECRET = 1000
+MAX_FILLED = 20  # the latest passwords and codes filled, kept to mask them in reads
+VALUE_CLIP = 80  # snapshot.js's clip of a field's value
 
 
 def check_act(action: str, ref: str, text: str) -> None:
@@ -127,9 +131,9 @@ class Driver(hostrpc.Service):
         self.stacks: dict[str, list[Any]] = {}
         self.notes: dict[str, list[str]] = {}
         self.capturing = False
-        self.offers: dict[
-            str, dict[str, Any]
-        ] = {}  # id -> {site, username, password, at}
+        # id -> {site, username, password, at}
+        self.offers: dict[str, dict[str, Any]] = {}
+        self.filled: list[str] = []  # passwords and codes from the vault, newest last
 
     # --- tabs ---
 
@@ -216,6 +220,8 @@ class Driver(hostrpc.Service):
         except Exception:  # noqa: BLE001 - mid-navigation (an error page loading): once more
             await self.settle(page)
             snap = await self.snapshot(page)
+        if self.filled:
+            snap["elements"] = masked(snap.get("elements") or [], self.filled)
         return {
             **snap,
             "title": await title_of(page),
@@ -422,6 +428,7 @@ class Driver(hostrpc.Service):
             fields.append(
                 (await self.field(page, pass_ref, site, "password"), password)
             )
+            self.keep_filled(password)
         await self.fill(page, fields, submit)
         return await self.view(thread, self.existing(thread))
 
@@ -429,10 +436,17 @@ class Driver(hostrpc.Service):
         self, thread: str, site: str, code: str, ref: str, submit: bool = False
     ) -> dict[str, Any]:
         page = self.existing(thread)
-        await self.fill(
-            page, [(await self.field(page, ref, site, "code"), code)], submit
-        )
+        target = await self.field(page, ref, site, "code")
+        self.keep_filled(code)
+        await self.fill(page, [(target, code)], submit)
         return await self.view(thread, self.existing(thread))
+
+    def keep_filled(self, secret: str) -> None:
+        """Remember a secret about to be filled, so reads never say it back."""
+        if secret in self.filled:
+            self.filled.remove(secret)
+        self.filled.append(secret)
+        del self.filled[:-MAX_FILLED]
 
     # --- offering what the user logs in with ---
 
@@ -484,8 +498,8 @@ class Driver(hostrpc.Service):
             for k, o in self.live_offers().items()
         ]
 
-    async def op_take_offer(self, id: str) -> dict[str, Any]:
-        offer = self.live_offers().pop(id, None)
+    async def op_peek_offer(self, id: str) -> dict[str, Any]:
+        offer = self.live_offers().get(id)
         if offer is None:
             raise hostrpc.RunnerError("that login isn't waiting to be saved any more")
         return {k: offer[k] for k in ("site", "username", "password")}
@@ -533,6 +547,26 @@ class Driver(hostrpc.Service):
                     {"thread": thread, "title": await title_of(page), "url": page.url}
                 )
         return tabs
+
+
+def clip(text: str, n: int) -> str:
+    """snapshot.js's clip: spaces squeezed, and cut to n characters with an ellipsis."""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[: n - 1] + "…" if len(text) > n else text
+
+
+def masked(elements: list[str], filled: list[str]) -> list[str]:
+    """A read's elements with any field whose value is a filled secret shown as filled,
+    not as its value. snapshot.js says a password field's value never, but a page can turn
+    the field into a text one (a "show password" button, which the agent can click), and a
+    2FA code often goes into a text field."""
+    values = [f' value="{clip(secret, VALUE_CLIP)}"' for secret in filled]
+    out = []
+    for line in elements:
+        for value in values:
+            line = line.replace(value, " (filled)")
+        out.append(line)
+    return out
 
 
 async def title_of(page: Any) -> str:

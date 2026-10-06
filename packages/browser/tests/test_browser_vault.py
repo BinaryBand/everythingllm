@@ -72,6 +72,27 @@ def test_a_login_is_for_a_sites_name(vault, site):
         vault.add("career", site, "a", "b")
 
 
+def test_saving_a_login_again_keeps_it_asking_first(vault):
+    first = vault.add("career", "linkedin.com", "alice", "old", ask=True)
+    again = vault.add("career", "linkedin.com", "alice", "new")
+    assert again["id"] == first["id"] and again["ask"]
+    assert not vault.update("career", first["id"], ask=False)["ask"]
+    assert vault.add("career", "linkedin.com", "alice", "newer", ask=True)["ask"]
+
+
+def test_a_key_that_cant_be_read_is_the_vaults_error(vault):
+    vault.add("career", "x.com", "a", "b")
+    fresh = Vault(vault.folder, vault.key_file)
+    vault.key_file.chmod(0o000)
+    try:
+        if os.access(vault.key_file, os.R_OK):  # root reads it anyway
+            pytest.skip("this user reads any file")
+        with pytest.raises(VaultError, match="can't be read or made"):
+            fresh.logins("career")
+    finally:
+        vault.key_file.chmod(0o600)
+
+
 def test_a_login_needs_something_secret(vault):
     with pytest.raises(VaultError, match="needs a password"):
         vault.add("career", "x.com", "a", "")
@@ -144,6 +165,15 @@ def test_a_login_is_never_for_a_shared_suffix(vault):
     assert origin.public_suffix("example.unlisted") == "unlisted"
     assert origin.is_public_suffix("公司.cn")
     assert origin.is_public_suffix("xn--55qx5d.cn")
+    # Nor does a login fill across a public suffix below its site.
+    assert not origin.site_matches("anyone.blob.core.windows.net", "windows.net")
+    assert not origin.site_matches("bucket.s3.amazonaws.com", "amazonaws.com")
+    assert origin.site_matches("portal.windows.net", "windows.net")
+    # A name typed in Unicode is saved as the browser's addresses carry it.
+    assert (
+        vault.add("career", "https://www.Bücher.de/", "a", "b")["site"]
+        == "xn--bcher-kva.de"
+    )
 
 
 def test_changes_at_once_are_all_kept(vault, monkeypatch):

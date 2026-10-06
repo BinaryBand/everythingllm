@@ -14,6 +14,10 @@ nothing and only looks at the lock, with a plain flock rather than a Library, ev
 BLOCKED_SECONDS. Its output goes to sync.log, as the unit's did, and a crash to
 last_sync.json, so list_podcasts can tell; the worker carries on with the next.
 
+In quiet hours (PODCASTS_QUIET_HOURS, worker.QuietHours) a sync downloads but leaves
+reading for ads and cutting them to the next sync; a scrub under way when they start
+finishes first.
+
 SIGTERM stops it between steps: idle, at once; in a sync, at the next feed or scrub, or
 partway through a download, after which the sync is asked for again so that the next start
 finishes it. A sync is held (worker.Queue.hold) from when it's taken until it's done, so
@@ -22,9 +26,9 @@ is asked for again when the worker next starts.
 
   podcasts-sync [slug]   asks for a sync by hand (every feed without a slug)
 
-Config (environment, from host.env and the unit): PODCASTS_STATE, PODCASTS_DIR,
-PODCASTS_BASE_URL, PODCASTS_TZ and ANYTHINGLLM_STORAGE, as podcasts-runner reads them
-(tools.py).
+Config (environment, from host.env and the unit): PODCASTS_QUIET_HOURS (above, read from
+host.env at each check), and PODCASTS_STATE, PODCASTS_DIR, PODCASTS_BASE_URL, PODCASTS_TZ
+and ANYTHINGLLM_STORAGE, as podcasts-runner reads them (tools.py).
 """
 
 import os
@@ -53,6 +57,7 @@ from podcasts.worker import (
     Every,
     Queue,
     heartbeat,
+    quiet_now,
 )
 
 EVERY_HOURS = 6
@@ -87,13 +92,16 @@ class SyncWorker:
         library: Callable[[], Library] = Library.from_env,
         client: Callable[[], httpx.Client] = make_client,
         log: Callable[[str], None] = lambda msg: print(msg, flush=True),
+        quiet: Callable[[], bool] = quiet_now,
     ):
         """`library` gives the library for each sync, so one sees the settings of the
-        moment (the model's key); `client` the HTTP client for each."""
+        moment (the model's key); `client` the HTTP client for each; `quiet` whether it's
+        quiet hours, when a sync leaves the ads for later."""
         self.state = Path(state)
         self.queue = Queue(state)
         self.every = Every(self.queue.folder / f"{SYNC_WORKER}.last", EVERY_HOURS)
         self.library, self.client, self.log = library, client, log
+        self.quiet = quiet
         self.stop = threading.Event()
         self.blocked = False  # the last sync found sync.lock held
 
@@ -139,6 +147,7 @@ class SyncWorker:
         what = "every feed" if target == ALL_FEEDS else target
         lib = self.library()
         lib.stopping = self.stop.is_set
+        lib.quiet = self.quiet
         self.log(f"syncing {what}")
         with output_to(lib.state / "sync.log"):
             print(f"{_now()} syncing {what}", flush=True)

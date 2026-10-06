@@ -296,6 +296,9 @@ class Library:
         # Asked between a sync's steps (feeds, downloads, scrubs); True stops it there: the
         # sync worker's, once it has been told to stop.
         self.stopping = lambda: False
+        # Asked before each read for ads and each scrub; True leaves them for a later sync
+        # (the sync worker's: worker.quiet_now, PODCASTS_QUIET_HOURS).
+        self.quiet = lambda: False
         self.audio = AudioStore(self.state)
         self.transcripts = TranscriptStore(self.state / "transcripts")
         self._sync_started = ""
@@ -796,6 +799,8 @@ class Library:
         for ep in todo:
             if self.stopping():
                 return  # the rest wait for the next sync, out of the feed
+            if self.quiet():
+                return self._quiet(slug, todo)
             publish("; ".join(errors), f"{ep.title} (reading for ads)")
             try:
                 scrubber.fingerprint(slug, key(ep), self.audio.path(ep.audio))
@@ -807,6 +812,8 @@ class Library:
                 continue
             if self.stopping():
                 return
+            if self.quiet():
+                return self._quiet(slug, todo)
             publish("; ".join(errors), f"{ep.title} (looking for ads)")
             try:
                 spans = scrubber.scrub(slug, key(ep), self.audio.path(ep.audio))
@@ -825,6 +832,14 @@ class Library:
             nxt = next((e.title for e in todo[i + 1 :] if not e.scrubbed), "")
             publish("; ".join(errors), f"{nxt} (looking for ads)" if nxt else "")
         scrubber.prune(slug, {key(e) for e in wanted if e.audio})
+
+    def _quiet(self, slug: str, todo: list[Episode]) -> None:
+        waiting = sum(not e.scrubbed for e in todo)
+        print(
+            f"{slug}: quiet hours; {waiting} episode{'s' if waiting != 1 else ''} wait "
+            "for the next sync to have their ads cut",
+            flush=True,
+        )
 
     def update_episode(self, slug: str, seen: Episode, change) -> bool:
         """Call `change(episode)` under the sync lock and save and publish the result.

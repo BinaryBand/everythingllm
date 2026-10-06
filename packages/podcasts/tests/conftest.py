@@ -16,6 +16,18 @@ def not_this_machines_storage(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def not_this_machines_host_env(tmp_path, monkeypatch):
+    """The workers read PODCASTS_QUIET_HOURS and PODCASTS_TRANSCRIBE_THREADS from the
+    repo's host.env each time; a test reads a scratch one, so this machine's quiet hours
+    don't change what a test run at night sees."""
+    from podcasts import transcripts, worker
+
+    monkeypatch.setattr(worker, "HOST_ENV", tmp_path / "host.env")
+    monkeypatch.setattr(transcripts, "HOST_ENV", tmp_path / "host.env")
+    monkeypatch.delenv("PODCASTS_QUIET_HOURS", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def free_disk(monkeypatch):
     """Sets the free disk space the library sees; plenty, as pytest's tmp_path is often a
     small tmpfs, under the download floor."""

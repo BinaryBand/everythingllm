@@ -1039,6 +1039,12 @@ few lines of each other.
   transcribed. A second pass
   gives way at once while one is going (`~/.local/share/everythingllm/podcasts/transcribe.lock`); its output is in
   the journal (`uv run hostctl podcasts-logs`).
+- **Quiet hours.** `PODCASTS_QUIET_HOURS` in `host.env` (e.g. `22:00-06:00`, in
+  `PODCASTS_TZ`; unset, none) are the hours neither worker does its loud work, so the fans
+  stay quiet at night. A sync still downloads then, but neither reads episodes for their
+  ads nor cuts them: those episodes wait, unpublished, for the first sync after (06:00's),
+  and a scrub already going finishes first. The transcription worker starts no episode,
+  as with 0 threads. Both read it from `host.env` each time, so a change needs no restart.
 - Its container caps it at 6 GB (`--memory=6g`; its unit slows it down past 5 GB,
   `MemoryHigh`). Past that the kernel kills the worker, not the rest of the host; it
   starts again, and its first

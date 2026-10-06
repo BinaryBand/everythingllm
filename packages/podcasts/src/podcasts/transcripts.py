@@ -29,7 +29,11 @@ names the episode Whisper is hearing, and is removed when it stops, even on SIGT
 worker exits 143 then); a pass that finds it left over marks that episode failed, since the
 last one died on it (killed, e.g. out of memory), rather than trying it again.
 
+In quiet hours (PODCASTS_QUIET_HOURS, worker.QuietHours) it starts no episode, as with 0
+threads; one under way when they start finishes.
+
 Config (environment, from host.env and the unit): PODCASTS_TRANSCRIBE_THREADS (above),
+PODCASTS_QUIET_HOURS (worker.py, also read from host.env at every pass),
 PODCASTS_MODELS (the models, default ~/.local/share/everythingllm/podcasts/models), and
 PODCASTS_STATE, PODCASTS_DIR, PODCASTS_BASE_URL, PODCASTS_TZ and ANYTHINGLLM_STORAGE, as
 podcasts-runner reads them (tools.py).
@@ -69,12 +73,15 @@ from podcasts.worker import (
     Every,
     Queue,
     heartbeat,
+    quiet_now,
 )
 
 MODEL = ModelSize.BASE
 EVERY_HOURS, AT_MINUTE = 6, 30
 THREADS = "PODCASTS_TRANSCRIBE_THREADS"
-HOST_ENV = Path(__file__).resolve().parents[4] / "host.env"  # the repo's
+HOST_ENV = (
+    Path(__file__).resolve().parents[4] / "host.env"
+)  # the repo's (worker.HOST_ENV)
 
 
 class Schedule:
@@ -231,7 +238,8 @@ class Worker:
         ]:
             if self.paused():
                 self.log(
-                    f"transcribing is paused for now (PODCASTS_TRANSCRIBE_THREADS); {len(todo)} episodes wait"
+                    f"transcribing is paused for now (PODCASTS_TRANSCRIBE_THREADS or "
+                    f"PODCASTS_QUIET_HOURS); {len(todo)} episodes wait"
                 )
                 break
             slug, ep, mode = todo[0]
@@ -334,7 +342,7 @@ def transcribe_pass(log: Callable[[str], None]) -> None:
             transcriber,
             log=log,
             chat=lib.chat,
-            paused=lambda: not transcriber.threads(),
+            paused=lambda: not transcriber.threads() or quiet_now(log),
         )
         log(f"transcribed {worker.run()} episodes")
 

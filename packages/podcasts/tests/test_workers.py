@@ -9,11 +9,13 @@ import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from datetime import time as clock_time
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
-from podcasts import sync, transcripts
+from podcasts import sync, transcripts, worker
 from podcasts.library import Library
 from podcasts.sync import SyncWorker
 from podcasts.transcripts import keep_transcribing
@@ -24,6 +26,7 @@ from podcasts.worker import (
     TRANSCRIBE_WORKER,
     Every,
     Queue,
+    QuietHours,
     heartbeat,
 )
 from test_library import FEED_URL, Remote, feed
@@ -371,6 +374,78 @@ def test_the_threads_come_from_host_env_at_every_pass(tmp_path, monkeypatch):
     assert transcripts.threads_setting() == "2"  # no host.env: as it started
     host_env.write_text("PODCASTS_TRANSCRIBE_THREADS='08:00=4,22:00=1'\n")
     assert transcripts.threads_setting() == "08:00=4,22:00=1"
+
+
+def test_quiet_hours_run_past_midnight():
+    hours = QuietHours("22:00-06:00")
+    assert all(
+        clock_time.fromisoformat(t) in hours
+        for t in ("22:00", "23:59", "00:00", "05:59")
+    )
+    assert not any(
+        clock_time.fromisoformat(t) in hours for t in ("06:00", "12:00", "21:59")
+    )
+    day = QuietHours("13:00-14:30")
+    assert clock_time(13, 0) in day and clock_time(14, 30) not in day
+    assert clock_time(3, 0) not in QuietHours("")
+    with pytest.raises(ValueError, match="like 22:00-06:00"):
+        QuietHours("night")
+
+
+def test_quiet_hours_come_from_host_env_each_time(monkeypatch):
+    stockholm = ZoneInfo("Europe/Stockholm")  # PODCASTS_TZ's default
+    now = {"t": datetime(2026, 10, 7, 23, 0, tzinfo=stockholm)}
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now["t"].astimezone(tz)
+
+    monkeypatch.setattr(worker, "datetime", Clock)
+    assert not worker.quiet_now()  # none set
+    worker.HOST_ENV.write_text("PODCASTS_QUIET_HOURS=22:00-06:00\n")
+    assert worker.quiet_now()
+    now["t"] = datetime(2026, 10, 7, 6, 0, tzinfo=stockholm)
+    assert not worker.quiet_now()
+    worker.HOST_ENV.write_text("PODCASTS_QUIET_HOURS=late\n")
+    said = []
+    assert not worker.quiet_now(said.append)
+    assert "no quiet hours until it's fixed" in said[0]
+
+
+def test_the_sync_worker_hands_its_quiet_hours_to_each_sync(lib):
+    seen = []
+
+    class Lib:
+        state = lib.state
+
+        def sync(self, client, only):
+            seen.append(self.quiet())
+            return True
+
+    w = SyncWorker(
+        lib.state,
+        library=Lib,
+        client=httpx.Client,
+        log=lambda m: None,
+        quiet=lambda: True,
+    )
+    w.queue.ask_sync(ALL_FEEDS)
+    assert w.step() and seen == [True]
+
+
+def test_quiet_hours_pause_transcribing(lib, monkeypatch):
+    monkeypatch.setenv("PODCASTS_STATE", str(lib.state))
+    monkeypatch.setenv("PODCASTS_DIR", str(lib.site))
+    made = []
+    monkeypatch.setattr(transcripts, "quiet_now", lambda log: True)
+    monkeypatch.setattr(
+        transcripts,
+        "Worker",
+        lambda *a, **kw: made.append(kw) or SimpleNamespace(run=lambda: 0),
+    )
+    transcripts.transcribe_pass(lambda m: None)
+    assert made[0]["paused"]()
 
 
 def test_a_bad_threads_setting_skips_the_pass(lib, tmp_path, monkeypatch):

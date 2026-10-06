@@ -15,20 +15,31 @@ them through, their schedules and their heartbeats.
                                 it wasn't running comes due as it starts (a timer's
                                 Persistent=true)
 
+Quiet hours (PODCASTS_QUIET_HOURS, e.g. 22:00-06:00, in PODCASTS_TZ; unset, none): the
+hours neither worker does its loud work, so the machine's fans stay quiet. A sync still
+downloads then, but doesn't read episodes for their ads or cut them; those episodes wait,
+unpublished, for the first sync after (06:00's). The transcription worker starts no
+episode. Like PODCASTS_TRANSCRIBE_THREADS, it's read from host.env (the repo's, which the
+containers mount) each time it's asked, so a change there needs no restart.
+
 A request is written whole (atomic_write) and taken by deleting it, so asking again for
 what is waiting changes nothing. Nothing here runs a sync or a pass: sync.py and
 transcripts.py do, and library.py asks.
 """
 
 import json
+import os
 import re
 import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, tzinfo
+from datetime import time as clock_time
 from pathlib import Path
 
-from hostrpc import atomic_write
+from hostrpc import atomic_write, env_values
+
+from podcasts.rules import user_tz
 
 ALL_FEEDS = "_all"  # every feed's sync; no slug has an underscore
 SYNC_WORKER = "sync-worker"
@@ -40,6 +51,51 @@ BEAT_SECONDS = 5  # how often a worker touches its heartbeat
 STALE_SECONDS = 60  # a heartbeat older than this: the worker isn't running
 POLL_SECONDS = 2  # how often an idle worker looks at the queue
 TARGET_RE = re.compile(rf"[a-z0-9-]+|{ALL_FEEDS}")
+HOST_ENV = Path(__file__).resolve().parents[4] / "host.env"  # the repo's
+QUIET = "PODCASTS_QUIET_HOURS"
+
+
+def host_setting(name: str) -> str:
+    """`name` as host.env has it now, else as the worker started with."""
+    found = env_values(HOST_ENV, [name], environ=False)
+    return found[name] if name in found else os.environ.get(name, "")
+
+
+class QuietHours:
+    """PODCASTS_QUIET_HOURS: `HH:MM-HH:MM`, from the first time until the second, past
+    midnight when the second is earlier (22:00-06:00); empty for none."""
+
+    def __init__(self, text: str):
+        self.span = None
+        if not (text := text.strip()):
+            return
+        try:
+            start, _, end = text.partition("-")
+            self.span = (
+                clock_time.fromisoformat(start.strip().zfill(5)),
+                clock_time.fromisoformat(end.strip().zfill(5)),
+            )
+        except ValueError:
+            raise ValueError(
+                f"{QUIET} should be like 22:00-06:00, not {text!r}"
+            ) from None
+
+    def __contains__(self, now: clock_time) -> bool:
+        if self.span is None:
+            return False
+        start, end = self.span
+        return start <= now < end if start <= end else now >= start or now < end
+
+
+def quiet_now(log=lambda msg: print(msg, flush=True)) -> bool:
+    """Whether it's quiet hours now, as host.env has them; a setting that can't be read
+    is said, and counts as none."""
+    try:
+        hours = QuietHours(host_setting(QUIET))
+    except ValueError as e:
+        log(f"{e}; no quiet hours until it's fixed")
+        return False
+    return datetime.now(user_tz()).time().replace(tzinfo=None) in hours
 
 
 class Queue:

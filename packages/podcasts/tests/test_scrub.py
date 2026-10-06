@@ -211,6 +211,31 @@ def test_scrubbed_episodes_are_not_cut_again(lib, fake):
     assert [(e.guid, e.ads_cut) for e in eps] == [("b", 10.0), ("a", 10.0)]
 
 
+def test_quiet_hours_download_but_leave_the_ads_for_the_next_sync(lib, fake, capsys):
+    """At night the fans stay quiet: a sync still downloads, but reads nothing for ads and
+    cuts nothing, and the episodes wait unpublished for the morning's sync."""
+    lib.quiet = lambda: True
+    remote = Mp3Remote(feed(("a", "1"), ("b", "2")))
+    subscribe(lib, remote, keep=2)
+    assert (fake.printed, fake.scrubbed) == ([], [])
+    eps = lib.record("the-show")["show"].episodes
+    assert all(e.audio and not e.scrubbed for e in eps)
+    assert feed_guids(lib.site.parent) == []
+    assert "the-show: quiet hours; 2 episodes wait" in capsys.readouterr().out
+    lib.quiet = lambda: False
+    with remote.client() as client:
+        lib.sync(client)
+    assert fake.scrubbed == ["b", "a"]
+    assert sorted(feed_guids(lib.site.parent)) == ["a", "b"]
+
+
+def test_quiet_hours_starting_mid_sync_stop_before_the_next_scrub(lib, fake):
+    calls = iter([False, False, False])  # read both, cut one, then quiet
+    lib.quiet = lambda: next(calls, True)
+    subscribe(lib, Mp3Remote(feed(("a", "1"), ("b", "2"))), keep=2)
+    assert (fake.printed, fake.scrubbed) == (["b", "a"], ["b"])
+
+
 def test_changed_cuts_are_served_at_the_next_sync(lib, fake, tmp_path):
     remote = Mp3Remote(feed(("a", "1")))
     subscribe(lib, remote)

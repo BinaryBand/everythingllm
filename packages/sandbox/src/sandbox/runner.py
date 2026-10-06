@@ -6,25 +6,27 @@ allowlisting proxy on sandbox-net, a read-only root, CPU/memory/process limits a
 time limit. What it can see depends on where the call came from, which the skills in
 AnythingLLM pass as a scope of {workspace, thread} (never chosen by the model):
 
-  /work     the thread's scratch folder, deleted a week after the thread last used it
-  /project  the workspace's folder, shared by its threads and kept (pip installs go here)
-  /shared   one folder every workspace reads and writes, for data they share (the lab
-            site); mounted noexec and never on PATH
-  /pages    the workspace's published pages and the shared ones, read-only
+  /work            the thread's scratch folder, deleted a week after the thread last used it
+  /project         the workspace's folder, shared by its threads and kept (pip installs go here)
+  /shared/<ws>     the workspace's shared folder: it writes it, every other workspace reads it
+  /shared/<other>  each other workspace's shared folder, read-only
+  /system/themes   the repo's Zola themes, read-only
+  /pages           the workspace's published pages, read-only
 
-A workspace's folders together are held to WORKSPACE_MAX_BYTES, and /shared to
-SHARED_MAX_BYTES. The script itself is mounted read-only from a host-only folder at /sandbox.
+The shared and system folders are mounted noexec and never on PATH: they're data, and code
+in another workspace's folder isn't to be run. A workspace's folders together (its shared
+folder too) are held to WORKSPACE_MAX_BYTES. The script itself is mounted read-only from a
+host-only folder at /sandbox.
 
-Every run can write to /shared, so runs take turns across workspaces (the shared lock),
-and a write or publish under /shared waits for no run at all: otherwise a run in one
-workspace could swap a symlink in under a path another workspace's call just resolved.
+Nothing is written by more than one workspace, so the workspace's lock is all the runner
+needs: a run, a write and a publish in one workspace take turns, runs in different
+workspaces overlap, and the runner's file operations only ever take paths in the caller's
+own folders, which no other workspace can change under them.
 
-Publishing copies a file or folder to `<site>/<slug>/`. The slug's `.page` marker holds its
-owner: the workspace that published it, or SHARED_OWNER for a page published from /shared.
-Only its owner can replace or remove a workspace's page; any workspace can replace a shared
-page from /shared, or remove it. The pages site lets a marked folder use inline CSS
-(host/caddy/pages.Caddyfile). The site's root `index.html` lists every page and is
-rewritten after each change.
+Publishing copies a file or folder to `<site>/<slug>/`. The slug's `.page` marker holds the
+workspace that owns it: only that workspace can replace or remove it, and the pages site
+lets a marked folder use inline CSS (host/caddy/pages.Caddyfile). The site's root
+`index.html` lists every page and is rewritten after each change.
 
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
@@ -34,8 +36,7 @@ Config (environment):
   SANDBOX_ROOT      workspace folders, host-only (default
                     ~/.local/share/everythingllm/sandbox/workspaces);
                     run scripts go in its `.runs` folder
-  SANDBOX_SHARED    the folder behind /shared, host-only (default
-                    ~/.local/share/everythingllm/sandbox/shared)
+  SANDBOX_SYSTEM_THEMES  the themes mounted at /system/themes (default the repo's zola/themes)
   SANDBOX_SITE_DIR  the pages site's root, where pages are published (default
                     ~/.local/share/everythingllm/pages/public)
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
@@ -44,7 +45,6 @@ Config (environment):
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import html as htmllib
 import json
 import logging
@@ -86,8 +86,10 @@ KEY_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")  # workspace slugs and threa
 SLUG_RE = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )  # as sites.store.NAME_RE
-MOUNTS = ("/work", "/project", "/shared")
-SHARED_OPTIONS = "rw,noexec,nosuid,nodev"  # data only: nothing in it runs as ./file
+# Shared and system folders are data: nothing in them runs as ./file.
+DATA_RW = "rw,noexec,nosuid,nodev"
+DATA_RO = "ro,noexec,nosuid,nodev"
+REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/sandbox/src/sandbox/
 MEMORY = "1g"
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
@@ -96,8 +98,6 @@ OUTPUT_BYTES = 20_000  # per stream of a run
 WRITE_BYTES = 1_000_000  # op_write
 WORKSPACE_WARN_BYTES = 4 << 30
 WORKSPACE_MAX_BYTES = 5 << 30  # no new runs or writes past this; deletes still work
-SHARED_WARN_BYTES = 1536 << 20
-SHARED_MAX_BYTES = 2 << 30  # /shared's: no new runs or writes to it past this
 PUBLISH_MAX_BYTES = 500 << 20
 THREAD_MAX_AGE = 7 * 24 * 3600
 LIST_MAX = 200  # files named in a run's changed list
@@ -106,7 +106,6 @@ LIST_MAX = 200  # files named in a run's changed list
 WAIT = 45
 RESULT_KEEP = 3600  # how long a finished run's result can still be fetched
 PAGE_MARKER = ".page"  # JSON: the owning workspace, title and entry file; the pages site allows its inline CSS
-SHARED_OWNER = "/shared"  # a page's owner when published from /shared; no workspace slug looks like it
 
 # What podman produced: exit code, stdout, stderr, and whether it was killed for time.
 PodmanResult = tuple[int, str, str, bool]
@@ -180,7 +179,7 @@ async def podman(
 class Config:
     socket: Path
     root: Path
-    shared: Path
+    system_themes: Path
     site_dir: Path
     site_url: str
 
@@ -197,9 +196,7 @@ class Config:
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
-            shared=Path(
-                get("SANDBOX_SHARED", hostrpc.data_dir() / "sandbox" / "shared")
-            ),
+            system_themes=Path(get("SANDBOX_SYSTEM_THEMES", REPO / "zola" / "themes")),
             site_dir=Path(get("SANDBOX_SITE_DIR", hostrpc.site_dir())),
             site_url=get(
                 "SANDBOX_SITE_URL",
@@ -210,29 +207,26 @@ class Config:
 
 @dataclass(frozen=True)
 class Scope:
-    """Where a call came from, and the host folders behind its mounts: the workspace's
-    folder (`home`) holds project/ (/project) and threads/<thread>/ (/work); /shared is
-    the one folder every workspace mounts."""
+    """Where a call came from, and the host folders behind its writable mounts, all in the
+    workspace's folder (`home`): threads/<thread>/ (/work), project/ (/project) and
+    shared/ (/shared/<workspace>)."""
 
     workspace: str
     thread: str
     home: Path
-    shared: Path
 
     @property
     def roots(self) -> dict[str, Path]:
         return {
             "/work": self.home / "threads" / self.thread,
             "/project": self.home / "project",
-            "/shared": self.shared,
+            f"/shared/{self.workspace}": self.home / "shared",
         }
 
     def mount_of(self, parts: tuple[str, ...]) -> tuple[str, tuple[str, ...]] | None:
         """A path under `home`, as parts, as its mount and its parts inside that; None
-        outside both (another thread's /work)."""
+        outside them all (another thread's /work)."""
         for mount, root in self.roots.items():
-            if mount == "/shared":
-                continue
             prefix = root.relative_to(self.home).parts
             if parts[: len(prefix)] == prefix:
                 return mount, parts[len(prefix) :]
@@ -257,30 +251,8 @@ class Usage:
         return ", ".join(f"{k} {v >> 20} MB" for k, v in ranked)
 
 
-def shared_snapshot(shared: Path) -> Usage:
-    """Every visible file under /shared by its path in the sandbox, and its size."""
-    usage = Usage()
-    for dirpath, _, filenames in os.walk(shared):
-        parts = Path(dirpath).relative_to(shared).parts
-        for name in filenames:
-            try:
-                st = os.lstat(os.path.join(dirpath, name))
-            except FileNotFoundError:
-                continue
-            usage.total += st.st_size
-            inside = (*parts, name)
-            key = f"/shared/{inside[0]}" + ("/" if len(inside) > 1 else "")
-            if not inside[0].startswith("."):
-                usage.files[f"/shared/{'/'.join(inside)}"] = (
-                    st.st_mtime_ns,
-                    st.st_size,
-                )
-            usage.tops[key] = usage.tops.get(key, 0) + st.st_size
-    return usage
-
-
 def snapshot(scope: Scope) -> Usage:
-    """Every visible file under /work and /project by its path in the sandbox, and the size
+    """Every visible file in the workspace's mounts by its path in the sandbox, and the size
     of the whole workspace (its other threads too). Hidden top-level entries (.local with
     pip installs, .cache…) count toward the size only."""
     usage = Usage()
@@ -343,6 +315,17 @@ def force_remove(func: Callable[..., Any], path: str, exc: BaseException) -> Non
         pass
     except OSError as e:
         log.warning("couldn't remove %s: %s", path, e)
+
+
+def copy_regular(source: Path, dest: Path) -> None:
+    """Copy a plain file without following a symlink or opening a FIFO: the checks before
+    the copy can't be raced, because they're made on the file that's open."""
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as src:
+        if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):
+            raise SandboxError(f"'{source.name}' isn't a regular file")
+        with open(dest, "wb") as out:
+            shutil.copyfileobj(src, out)
 
 
 def remove_path(path: Path) -> None:
@@ -432,19 +415,15 @@ def page_description(html: str) -> str:
     return ""
 
 
-def owner_name(owner: str) -> str:
-    """How the index and the cards name a page's owner."""
-    return "shared" if owner == SHARED_OWNER else owner
-
-
 def page_path(slug: str, entry: str) -> str:
     """A page's path on the site: its folder when the entry is index.html, else the file."""
     return f"{slug}/" + ("" if entry == "index.html" else quote(entry))
 
 
 def regular_files(source: Path) -> tuple[list[tuple[Path, str]], int]:
-    """Every plain file under `source` with its path inside it, and their size; symlinks
-    and anything else that isn't a file or folder are left out."""
+    """Every plain file under `source` with its path inside it, and their size; symlinks,
+    anything else that isn't a file or folder, and hidden entries (.git, .cache…) are left
+    out."""
     if source.is_file():
         name = (
             "index.html" if source.suffix.lower() in (".html", ".htm") else source.name
@@ -453,9 +432,13 @@ def regular_files(source: Path) -> tuple[list[tuple[Path, str]], int]:
     found, size = [], 0
     for dirpath, dirnames, filenames in os.walk(source):
         dirnames[:] = [
-            d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))
+            d
+            for d in dirnames
+            if not d.startswith(".") and not os.path.islink(os.path.join(dirpath, d))
         ]
         for name in filenames:
+            if name.startswith("."):
+                continue
             p = Path(dirpath, name)
             st = os.lstat(p)
             if stat.S_ISREG(st.st_mode):
@@ -487,9 +470,6 @@ class Runner(hostrpc.Service):
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     _jobs: dict[str, Job] = field(default_factory=dict)
     _site: asyncio.Lock = field(default_factory=asyncio.Lock)  # who owns which slug
-    _shared: asyncio.Lock = field(
-        default_factory=asyncio.Lock
-    )  # /shared: held by every run, and by writes and publishes there
 
     # --- scopes and paths ---
 
@@ -504,20 +484,30 @@ class Runner(hostrpc.Service):
         for what, key in (("workspace", workspace), ("thread", thread)):
             if not KEY_RE.match(key):
                 raise SandboxError(f"bad {what} '{key}'")
-        s = Scope(workspace, thread, self.config.root / workspace, self.config.shared)
+        s = Scope(workspace, thread, self.config.root / workspace)
         for d in s.roots.values():
             d.mkdir(parents=True, exist_ok=True)
         os.utime(s.roots["/work"])
         return s
 
     def split(self, scope: Scope, path: str) -> tuple[str, Path, Path]:
-        """`path` in the sandbox (`/work/…`, `/project/…`, or relative to /work) as its mount,
-        that mount's host folder and the path inside it, unresolved. `..` is refused."""
+        """`path` in the sandbox (under one of the caller's own mounts, or relative to /work)
+        as its mount, that mount's host folder and the path inside it, unresolved. `..` is
+        refused, and so is anything outside the caller's own folders: another workspace's
+        /shared is read-only, and the runner never touches a folder another workspace writes."""
         path = path.strip()
-        mount = next((m for m in MOUNTS if path == m or path.startswith(m + "/")), None)
+        mount = next(
+            (m for m in scope.roots if path == m or path.startswith(m + "/")), None
+        )
         if mount is None and path.startswith("/"):
+            owner = path.split("/")[2] if path.startswith("/shared/") else ""
+            if owner and owner != scope.workspace:
+                raise SandboxError(
+                    f"'{path}' is in {owner}'s shared folder, which is read-only here; "
+                    "copy what you need into your own folders with run-code"
+                )
             raise SandboxError(
-                f"bad path '{path}': use a path under /work, /project or /shared"
+                f"bad path '{path}': use a path under {', '.join(scope.roots)}"
             )
         rel = Path(path.removeprefix(mount or "").lstrip("/"))
         if ".." in rel.parts:
@@ -525,17 +515,9 @@ class Runner(hostrpc.Service):
         root = scope.roots[mount or "/work"]
         return mount or "/work", root, root / rel
 
-    def shared_path(self, scope: Scope, path: str) -> bool:
-        """Whether `path` is under /shared (a bad path is left for split to refuse)."""
-        try:
-            return self.split(scope, path)[0] == "/shared"
-        except SandboxError:
-            return False
-
     def resolve(self, scope: Scope, path: str) -> Path:
         """`path` after following symlinks, which must stay inside its mount's folder (not be
-        all of it). Callers hold the workspace's lock (and the shared one for /shared), so no
-        run can swap a link in after."""
+        all of it). Callers hold the workspace's lock, so no run can swap a link in after."""
         mount, root, target = self.split(scope, path)
         target, root = target.resolve(), root.resolve()
         if not target.is_relative_to(root):
@@ -558,27 +540,6 @@ class Runner(hostrpc.Service):
                 raise SandboxError(
                     f"code is still running in this workspace (at most {left:.0f} s more); try again after"
                 )
-
-    def idle_any(self) -> None:
-        """idle() for /shared: every run can write there, so any run anywhere counts."""
-        for job in self._jobs.values():
-            if not job.task.done():
-                left = max(0, MAX_TIMEOUT - (self.now() - job.started))
-                raise SandboxError(
-                    f"code is still running in a workspace and can change /shared (at most {left:.0f} s "
-                    "more); try again after"
-                )
-
-    @contextlib.asynccontextmanager
-    async def holding(self, workspace: str, shared: bool):
-        """The workspace's lock, and the shared one too when /shared is involved; always in
-        that order, as execute takes them."""
-        async with self.lock(workspace):
-            if shared:
-                async with self._shared:
-                    yield
-            else:
-                yield
 
     def gc(self) -> list[str]:
         """Delete threads' /work folders untouched for a week. /project stays."""
@@ -683,13 +644,6 @@ class Runner(hostrpc.Service):
             f"the biggest: {usage.biggest()}."
         )
 
-    def shared_over_quota(self, usage: Usage, doing: str) -> SandboxError:
-        return SandboxError(
-            f"/shared uses {usage.total >> 20} MB, over its {SHARED_MAX_BYTES >> 20} MB limit, so "
-            f"no workspace can {doing}. Delete something there with write-file (delete=true) "
-            f"first; the biggest: {usage.biggest()}."
-        )
-
     async def execute(
         self, scope: Scope, language: str, code: str, timeout: int
     ) -> dict[str, Any]:
@@ -698,13 +652,10 @@ class Runner(hostrpc.Service):
         script, interpreter = LANGUAGES[language]
         name = f"sandbox-{secrets.token_hex(6)}"
         run_dir = self.config.scripts / name
-        async with self.holding(scope.workspace, shared=True):
+        async with self.lock(scope.workspace):
             before = await asyncio.to_thread(snapshot, scope)
             if before.total > WORKSPACE_MAX_BYTES:
                 raise self.over_quota(before, "run code")
-            shared_before = await asyncio.to_thread(shared_snapshot, scope.shared)
-            if shared_before.total > SHARED_MAX_BYTES:
-                raise self.shared_over_quota(shared_before, "run code")
             try:
                 args = await asyncio.to_thread(
                     self.prepare, name, scope, run_dir, script, code
@@ -724,27 +675,12 @@ class Runner(hostrpc.Service):
                         )
                         oom = state.strip() == "true"
                 after = await asyncio.to_thread(snapshot, scope)
-                shared_after = await asyncio.to_thread(shared_snapshot, scope.shared)
             finally:
                 await self.podman(["rm", "-f", "--ignore", name], 60, None)
                 await asyncio.to_thread(shutil.rmtree, run_dir, True)
-        was = before.files | shared_before.files
         changed = sorted(
-            p
-            for p, sig in (after.files | shared_after.files).items()
-            if was.get(p) != sig
+            p for p, sig in after.files.items() if before.files.get(p) != sig
         )
-        warnings = []
-        if after.total > WORKSPACE_WARN_BYTES:
-            warnings.append(
-                f"this workspace's sandbox uses {after.total >> 20} MB of its {WORKSPACE_MAX_BYTES >> 20} MB; "
-                "delete what isn't needed"
-            )
-        if shared_after.total > SHARED_WARN_BYTES:
-            warnings.append(
-                f"/shared uses {shared_after.total >> 20} MB of its {SHARED_MAX_BYTES >> 20} MB; "
-                "delete what isn't needed"
-            )
         log.info(
             "run workspace=%s thread=%s lang=%s exit=%s timed_out=%s oom=%s %.1fs",
             scope.workspace,
@@ -765,15 +701,21 @@ class Runner(hostrpc.Service):
             "stderr": err,
             "changed": changed[:LIST_MAX],
             "changed_more": max(0, len(changed) - LIST_MAX),
-            "warning": "; ".join(warnings) or None,
+            "warning": (
+                f"this workspace's sandbox uses {after.total >> 20} MB of its {WORKSPACE_MAX_BYTES >> 20} MB; "
+                "delete what isn't needed"
+            )
+            if after.total > WORKSPACE_WARN_BYTES
+            else None,
         }
 
     def prepare(
         self, name: str, scope: Scope, run_dir: Path, script: str, code: str
     ) -> list[str]:
         """Write the run's script and return its podman arguments. Each of the workspace's
-        pages, and each shared page, is bound read-only onto an empty folder of its name
-        under the run's own read-only /pages, so a run sees those and nothing else there."""
+        pages is bound read-only onto an empty folder of its name under the run's own
+        read-only /pages, so a run sees its pages and nothing else there. Every other
+        workspace's shared folder, and the repo's themes, are bound read-only."""
         (run_dir / "code").mkdir(parents=True)
         (run_dir / "code" / script).write_text(code)
         pages = run_dir / "pages"
@@ -816,9 +758,16 @@ class Runner(hostrpc.Service):
                 for a in (
                     "-v",
                     f"{root}:{mount}"
-                    + (f":{SHARED_OPTIONS}" if mount == "/shared" else ""),
+                    + (f":{DATA_RW}" if mount.startswith("/shared/") else ""),
                 )
             ),
+            *(
+                a
+                for name, folder in self.others_shared(scope.workspace)
+                for a in ("-v", f"{folder}:/shared/{name}:{DATA_RO}")
+            ),
+            "-v",
+            f"{self.config.system_themes}:/system/themes:{DATA_RO}",
             "-v",
             f"{run_dir / 'code'}:/sandbox:ro",
             "-v",
@@ -827,19 +776,30 @@ class Runner(hostrpc.Service):
             IMAGE,
         ]
 
+    def others_shared(self, workspace: str) -> list[tuple[str, Path]]:
+        """Every other workspace's shared folder, as (workspace, folder): workspaces that
+        have used the sandbox, so their folders exist."""
+        return sorted(
+            (d.name, d / "shared")
+            for d in self.config.root.iterdir()
+            if d.name != workspace
+            and KEY_RE.fullmatch(d.name)
+            and not d.is_symlink()
+            and (d / "shared").is_dir()
+            and not (d / "shared").is_symlink()
+        )
+
     # --- files ---
 
     async def op_write(
         self, scope: dict[str, Any], path: str, content: str = "", delete: bool = False
     ) -> dict[str, Any]:
         """Write a text file, or delete a file or folder (always allowed, so a workspace over
-        its limit can get back under). Deleting exactly /work, /project or /shared empties it."""
+        its limit can get back under). Deleting exactly one of the workspace's mounts empties
+        it."""
         s = self.scope(scope)
-        shared = self.shared_path(s, path)
         self.idle(s.workspace)
-        if shared:
-            self.idle_any()
-        async with self.holding(s.workspace, shared):
+        async with self.lock(s.workspace):
             if delete:
                 return await asyncio.to_thread(self.delete, s, path)
             data = (content or "").encode()
@@ -847,11 +807,7 @@ class Runner(hostrpc.Service):
                 raise SandboxError(
                     f"content is {len(data)} bytes; the limit is {WRITE_BYTES}"
                 )
-            if shared:
-                usage = await asyncio.to_thread(shared_snapshot, s.shared)
-                if usage.total + len(data) > SHARED_MAX_BYTES:
-                    raise self.shared_over_quota(usage, "write there")
-            elif (usage := await asyncio.to_thread(snapshot, s)).total + len(
+            if (usage := await asyncio.to_thread(snapshot, s)).total + len(
                 data
             ) > WORKSPACE_MAX_BYTES:
                 raise self.over_quota(usage, "write files")
@@ -865,7 +821,8 @@ class Runner(hostrpc.Service):
         if target == root:
             if path.strip() != mount:
                 raise SandboxError(
-                    "give the path of the file or folder to delete, or /work, /project or /shared to empty it"
+                    "give the path of the file or folder to delete, or one of "
+                    f"{', '.join(scope.roots)} to empty it"
                 )
             for child in list(root.iterdir()):
                 remove_path(child)
@@ -884,7 +841,7 @@ class Runner(hostrpc.Service):
     # --- pages ---
 
     def pages(self, workspace: str) -> list[tuple[str, Path]]:
-        """The workspace's published pages and the shared ones, as (slug, folder)."""
+        """The workspace's published pages, as (slug, folder)."""
         site = self.config.site_dir
         if not site.is_dir():
             return []
@@ -892,15 +849,14 @@ class Runner(hostrpc.Service):
             (d.name, d)
             for d in site.iterdir()
             if SLUG_RE.fullmatch(d.name)
-            and (marker(d) or {}).get("workspace") in (workspace, SHARED_OWNER)
+            and (marker(d) or {}).get("workspace") == workspace
         )
 
     async def op_publish(
         self, scope: dict[str, Any], slug: str, path: str = "", remove: bool = False
     ) -> dict[str, Any]:
         """Publish a file or folder as `/<slug>/` (an HTML file becomes its index.html, a
-        folder is copied whole), replacing what its owner had there; or remove the slug. A
-        page published from /shared belongs to every workspace (SHARED_OWNER)."""
+        folder is copied whole), replacing what the workspace had there; or remove the slug."""
         s = self.scope(scope)
         if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
             raise SandboxError(
@@ -908,23 +864,15 @@ class Runner(hostrpc.Service):
                 "or ending with a hyphen, e.g. 'trip-plan'"
             )
         dest = self.config.site_dir / slug
-        shared = not remove and self.shared_path(s, path or "")
-        owner = SHARED_OWNER if shared else s.workspace
         self.idle(s.workspace)
-        if shared:
-            self.idle_any()
-        async with self.holding(s.workspace, shared), self._site:
-            if os.path.lexists(dest):
-                held = (marker(dest) or {}).get("workspace")
-                if held not in ((s.workspace, SHARED_OWNER) if remove else (owner,)):
-                    raise SandboxError(
-                        f"'{slug}' is taken on the pages site; choose another slug"
-                        + (
-                            " (a shared page is replaced only from /shared)"
-                            if held == SHARED_OWNER
-                            else ""
-                        )
-                    )
+        async with self.lock(s.workspace), self._site:
+            if (
+                os.path.lexists(dest)
+                and (marker(dest) or {}).get("workspace") != s.workspace
+            ):
+                raise SandboxError(
+                    f"'{slug}' is taken on the pages site; choose another slug"
+                )
             if remove:
                 if not os.path.lexists(dest):
                     raise SandboxError(f"there's no page '{slug}'")
@@ -949,7 +897,7 @@ class Runner(hostrpc.Service):
                         f"'{path}' is {size >> 20} MB; the most publish copies is {PUBLISH_MAX_BYTES >> 20} MB"
                     )
                 entry, blocked = await asyncio.to_thread(
-                    self.replace, dest, files, owner
+                    self.replace, dest, files, s.workspace
                 )
                 url = self.page_url(slug, entry)
                 result = {
@@ -957,7 +905,7 @@ class Runner(hostrpc.Service):
                     "url": url,
                     "files": len(files),
                     "blocked": blocked,
-                    "card": await asyncio.to_thread(self.card, dest, url, owner),
+                    "card": await asyncio.to_thread(self.card, dest, url, s.workspace),
                 }
             await asyncio.to_thread(self.rebuild_index)
         return result
@@ -978,7 +926,7 @@ class Runner(hostrpc.Service):
             self.config.site_dir,
             url,
             title,
-            f"Pages · {owner_name(workspace)}",
+            f"Pages · {workspace}",
             description,
         )
 
@@ -994,7 +942,7 @@ class Runner(hostrpc.Service):
         try:
             for source, name in files:
                 (new / name).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, new / name)
+                copy_regular(source, new / name)
                 (new / name).chmod(0o644)
             html = {
                 n: (new / n).read_text(errors="replace")
@@ -1039,7 +987,7 @@ class Runner(hostrpc.Service):
                     (
                         f'<li><a href="{page_path(d.name, m.get("entry", "index.html"))}">'
                         f"{htmllib.escape(m.get('title') or d.name)}</a> "
-                        f'<span>{htmllib.escape(owner_name(m["workspace"]))} · <time datetime="{updated.isoformat()}">'
+                        f'<span>{htmllib.escape(m["workspace"])} · <time datetime="{updated.isoformat()}">'
                         f"{updated:%Y-%m-%d}</time></span></li>"
                     ),
                 )
@@ -1090,7 +1038,6 @@ async def serve(config: Config) -> None:
     runner = Runner(config)
     await runner.cleanup()
     config.root.mkdir(parents=True, exist_ok=True)
-    config.shared.mkdir(parents=True, exist_ok=True)
     gc = asyncio.create_task(runner.gc_loop())
     try:
         await hostrpc.serve(runner, config.socket, limit=LIMIT)

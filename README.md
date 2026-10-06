@@ -178,8 +178,8 @@ through its UI.
                            sandbox, sites, splice)
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
-      sandbox/workspaces/  the sandbox's folders, one per workspace
-      sandbox/shared/      /shared, every workspace's
+      sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
+                           shared/)
       podcasts/            the podcasts' state, audio, transcripts and manifests
       podcasts/models/     Whisper and Kokoro
       research/runs/       the deep-research run log and live runs' markers
@@ -413,33 +413,30 @@ Each run mounts:
   the thread last used the sandbox.
 - `/project`: the workspace's folder, shared by its threads and kept until deleted. `pip
   install`s go to `/project/.local`, so they last too. To keep a file, move it here.
-- `/shared`: one folder every workspace (and `_jobs`) reads and writes, kept until deleted.
-  It holds the lab site (below). It's mounted `noexec,nosuid,nodev` and never on `PATH`, and
-  the skills and system prompt tell the agent to treat it as data, since another
-  workspace's chat may have written it: it's the one place where a prompt injection in one
-  workspace can reach another.
-- `/pages`: the workspace's published pages and the shared ones, read-only, so `ls /pages`
-  lists them.
+- `/shared/<workspace>`: what the workspace shares with the others, kept until deleted. It
+  writes it; every other workspace's runs mount it read-only at `/shared/<that workspace>`.
+  Nothing is written by more than one workspace, so a prompt injection in one chat can't
+  change what other workspaces use; reading another workspace's folder is still trusting
+  its content, which the skills and system prompt tell the agent to treat as data. Shared
+  folders are mounted `noexec,nosuid,nodev` and are never on `PATH`.
+- `/system/themes`: the repo's Zola themes (`zola/themes`), read-only, for sites the agent
+  builds.
+- `/pages`: the workspace's published pages, read-only, so `ls /pages` lists them.
 
-They live in `~/.local/share/everythingllm/sandbox/workspaces/<workspace>/` (`project/` and
-`threads/<thread>/`) and `~/.local/share/everythingllm/sandbox/shared/`, out of the container's
-reach. `/shared` is held to 2 GB on its own. A workspace's folders together are held
-to 5 GB: over that, runs and writes are refused until the agent deletes something with
-`write-file`, and the refusal names the biggest files and folders, since no run can look
-for them. A run warns past 4 GB. Runs take turns, across workspaces too, since every run
-can write to `/shared`; while one is going, a write or publish from any of its workspace's
-chats fails at once rather than waiting, and so does one under `/shared` from any
-workspace (otherwise a run could swap a symlink in under a path the call just resolved).
-
-**Shared pages.** A page published from `/shared` belongs to every workspace: its `.page`
-marker names `/shared` as the owner, any workspace can republish it from `/shared` or take
-it down, and none can take its slug over from its own folders (nor can `/shared` take a
-workspace's).
+They live in `~/.local/share/everythingllm/sandbox/workspaces/<workspace>/` (`threads/<thread>/`,
+`project/` and `shared/`), out of the container's reach. The runner's own file operations
+(`write-file`, `publish`) only take paths in the caller's own folders, never another
+workspace's. A workspace's folders together are held to 5 GB: over that, runs and writes are
+refused until the agent deletes something with `write-file`, and the refusal names the
+biggest files and folders, since no run can look for them. A run warns past 4 GB. Runs in
+one workspace take turns, since they share `/project`; while one is going, a write or
+publish from any of the workspace's chats fails at once rather than waiting. Runs in
+different workspaces overlap. `docs/shared-sites.md` has the design.
 
 **The lab site** is the one site the agent controls entirely: templates, stylesheets,
-`zola.toml` and content, in `/shared/sites/lab/`. It started as a copy of the
-`agent-site` theme and a welcome entry, with a `README.md` for the agent and a git
-repository so it can roll back. The sandbox image has the host's zola version; a run
+`zola.toml` and content, in education's `/shared/education/sites/lab/`, where other
+workspaces can read it and copy it. It started as a copy of the `agent-site` theme and a
+welcome entry, with a `README.md` for the agent and a git repository so it can roll back. The sandbox image has the host's zola version; a run
 builds it (`zola build`, no network as always) and `publish` puts it at
 `https://<PUBLIC_HOST>:8445/lab/`. Nothing in the repo or on the host reads it, so it can
 break without breaking anything else, and the CSP still holds for whatever it serves.

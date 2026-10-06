@@ -9,7 +9,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && pip install --no-cache-dir numpy pandas matplotlib requests
 
-# zola, for the lab site in /shared/sites/lab: the same version as the host's
+# zola, for sites the agent builds (the lab, in education's /shared): the same version as the host's
 # /usr/local/bin/zola, so the theme's Tera 2 components behave as they do in sites-runner.
 ARG ZOLA_VERSION=0.23.6
 ARG ZOLA_SHA256=8f5132b3522412d04e395e0b25f6d68613ad272a873e54a2b3ebf664873024a4

@@ -4,7 +4,7 @@
 // The scope is where the call came from, never what the model says: the workspace (a
 // scheduled job has none, and gets "_jobs") and the chat thread ("default" for a
 // workspace's main chat, and for API, Telegram and job runs, which carry no thread).
-// sandbox-runner (packages/sandbox) mounts /work and /project by it; /shared is the same for all.
+// sandbox-runner (packages/sandbox) mounts /work, /project and /shared/<workspace> by it.
 
 const { call, socketPath, Down, Refused } = require("./hostrpc");
 

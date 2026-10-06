@@ -115,7 +115,8 @@ is 3.13. Keep code 3.12-compatible, and check with
 - zola always builds without a network (`unshare --net`), with a 40 s limit (`sites.build`).
 - Templates, stylesheets, `zola.toml` and sections change only in the repo; the agent has
   no tool for them, and `make deploy` rebuilds the sites. The exception is the lab site, an
-  experiment the agent owns whole in the sandbox's `/shared/sites/lab/` and publishes itself.
+  experiment the agent owns whole in education's sandbox folder (`/shared/education/sites/lab/`)
+  and publishes itself.
 
 ## Conventions
 

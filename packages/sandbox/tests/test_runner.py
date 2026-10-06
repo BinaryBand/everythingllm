@@ -194,6 +194,21 @@ def test_another_workspaces_shared_folder_is_read_only_to_the_runner_too(cfg):
         go(r.op_write(B, "/shared/home/peek/x", "x"))
 
 
+def test_client_workspaces_are_only_the_gateways(cfg):
+    """An AnythingLLM workspace named "Client Acme" (slug client-acme) can't share the
+    gateway client acme's sandbox: the skills never say gateway, and the gateway always
+    does, with a client- workspace."""
+    r = make(cfg)
+    with pytest.raises(runner.SandboxError, match="rename the workspace"):
+        go(r.op_write({"workspace": "client-acme", "thread": "default"}, "a", "x"))
+    with pytest.raises(runner.SandboxError, match="a gateway client's scope"):
+        go(r.op_write({**A, "gateway": True}, "a", "x"))
+    client = {"workspace": "client-acme", "thread": "gateway", "gateway": True}
+    go(r.op_write(client, "a", "x"))
+    assert (work(cfg, client) / "a").read_text() == "x"
+    assert not (cfg.root / "career").exists()
+
+
 def test_runs_in_different_workspaces_overlap(cfg, monkeypatch):
     monkeypatch.setattr(runner, "WAIT", 5)
     events = []

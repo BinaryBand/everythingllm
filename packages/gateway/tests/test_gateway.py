@@ -421,7 +421,7 @@ def call_tool(c, name, arguments, headers=MCP_HEADERS):
     return json.loads(text_of(reply))
 
 
-ME = {"workspace": "client-claude-code", "thread": "gateway"}
+ME = {"workspace": "client-claude-code", "thread": "gateway", "gateway": True}
 
 
 def test_each_sandbox_tool_sends_the_clients_own_scope(client, monkeypatch):

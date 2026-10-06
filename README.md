@@ -724,7 +724,10 @@ over a Unix socket, `storage/everythingllm/sandbox/runner.sock` (see "Services o
 model never chooses: the workspace (`_jobs` for a scheduled job, which has none) and the
 chat thread (`default` for a workspace's main chat, and for API, Telegram and job runs).
 A call through the MCP gateway carries the workspace `client-<name>`, from the client's
-token, and the thread `gateway` (see "MCP gateway"). Each run mounts:
+token, the thread `gateway` and `gateway: true` (see "MCP gateway"). Workspaces whose names
+start `client-` are kept for those: the runner refuses one in a scope that doesn't say
+`gateway`, so an AnythingLLM workspace slugged `client-…` gets a message to rename it
+rather than a gateway client's folders. Each run mounts:
 
 - `/work`: the thread's scratch folder, and where a run starts. It's deleted 7 days after
   the thread last used the sandbox.
@@ -1354,7 +1357,7 @@ it from starting.
   `sandbox_wait(run_id)`, `sandbox_write(path, content, delete)`,
   `sandbox_publish(slug, path, remove)` and `sandbox_build_site(path, slug)` over
   sandbox-runner, the ops behind `run-code`, `write-file`, `publish` and `build-site`. Each
-  call carries the scope `{workspace: "client-<name>", thread: "gateway"}`, made from the
+  call carries the scope `{workspace: "client-<name>", thread: "gateway", gateway: true}`, made from the
   calling client's name (`gateway.grants.client`), never from the model's arguments: a
   `scope` argument is dropped, and the gateway's scope is the one sent. So a client has a
   sandbox workspace of its own, `client-<name>`, with one thread: its `/work` is
@@ -1375,8 +1378,9 @@ What the scopes don't do, by design (one user, so documented rather than enforce
 - A `client-<name>` sandbox workspace is a workspace like any other: its runs read every
   AnythingLLM workspace's `/shared/<workspace>` (read-only), and every workspace's runs
   read its `/shared/client-<name>`. Its `/project`, `/work` and `/public` are its own, and
-  count toward its own size limit. An AnythingLLM workspace whose slug is `client-<name>`
-  would share that client's folders, so don't give one that name.
+  count toward its own size limit. The runner keeps `client-` workspaces for the gateway's
+  scopes, so an AnythingLLM workspace slugged `client-<name>` is refused the sandbox (and
+  told to rename) instead of sharing that client's folders.
 
 **Clients and tokens.** Every path but `/health` needs `Authorization: Bearer <token>`. Each
 client has its own token, a `GATEWAY_TOKEN_<NAME>` line in

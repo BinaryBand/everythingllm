@@ -3,8 +3,9 @@
 In AnythingLLM, run-code, write-file, publish and build-site are skills that pass the
 runner a scope of {workspace, thread} from where the call came from. A gateway client has
 no workspace, so each tool here adds the scope {workspace: "client-<name>", thread:
-"gateway"} itself, from the calling client's name (gateway.grants.client, which the
-gateway's middleware sets from the token). The model never gives a scope, and a client
+"gateway", gateway: true} itself, from the calling client's name (gateway.grants.client,
+which the gateway's middleware sets from the token). The runner keeps client- workspaces
+for scopes that say gateway, so an AnythingLLM workspace can't share one by its name. The model never gives a scope, and a client
 only ever reaches its own folders: /work is workspaces/client-<name>/threads/gateway, and
 its pages are https://<host>:8447/client-<name>/. Like any workspace, it reads every other
 workspace's /shared and they read its own.
@@ -69,7 +70,7 @@ runner = hostrpc.caller(
 )
 
 
-def scope() -> dict[str, str]:
+def scope() -> dict[str, Any]:
     """The calling client's scope: its own workspace, and the one thread a client has."""
     name = grants.client.get()
     workspace = f"{WORKSPACE}{name}"
@@ -78,7 +79,7 @@ def scope() -> dict[str, str]:
             f"The sandbox needs a gateway client whose name is lowercase letters, digits "
             f"and hyphens, not {name!r}."
         )
-    return {"workspace": workspace, "thread": THREAD}
+    return {"workspace": workspace, "thread": THREAD, "gateway": True}
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:

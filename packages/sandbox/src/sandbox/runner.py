@@ -115,6 +115,10 @@ LABEL = "everythingllm-sandbox=1"
 
 LANGUAGES = {"python": ("main.py", "python"), "bash": ("main.sh", "bash")}
 KEY_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")  # workspace slugs and thread ids
+# The MCP gateway's clients' workspaces (gateway.sandbox): kept for scopes that say
+# "gateway": true, which AnythingLLM's skills never do, so a workspace someone happens to
+# name "Client X" can't share a gateway client's folders.
+CLIENT_PREFIX = "client-"
 SLUG_RE = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )  # as sites.store.NAME_RE
@@ -566,6 +570,14 @@ class Runner(hostrpc.Service):
         for what, key in (("workspace", workspace), ("thread", thread)):
             if not KEY_RE.match(key):
                 raise SandboxError(f"bad {what} '{key}'")
+        gateway = scope.get("gateway") is True
+        if workspace.startswith(CLIENT_PREFIX) != gateway:
+            raise SandboxError(
+                f"a gateway client's scope is a '{CLIENT_PREFIX}' workspace"
+                if gateway
+                else f"workspace '{workspace}': names starting '{CLIENT_PREFIX}' are the "
+                "MCP gateway's clients' sandboxes; rename the workspace to use the sandbox"
+            )
         s = Scope(
             workspace,
             thread,

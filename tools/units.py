@@ -249,7 +249,7 @@ def main() -> None:
         subprocess.run(["systemctl", "--user", "restart", service], check=True)
         print(f"restarted {service}")
     if backup.exists():
-        print(f"previous versions saved to {backup.relative_to(ROOT)}")
+        print(f"previous versions saved to {backup}")
 
 
 if __name__ == "__main__":

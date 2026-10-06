@@ -306,7 +306,7 @@ def deploy() -> None:
         os.replace(tmp, dest)
         print(f"deployed {dest}")
     if backup.exists():
-        print(f"previous versions saved to {backup.relative_to(ROOT)}")
+        print(f"previous versions saved to {backup}")
 
 
 def import_skill(name: str) -> None:

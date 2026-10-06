@@ -204,6 +204,8 @@ def research_run(question: str = "", index: int = 0, since_hours: int = 24 * 7) 
 
 # The checks block (HTTP, journalctl, zola), so hostrpc runs each in a thread.
 OPS = (run_checks, publish_report, journal_lines, job_run, run_job, research_run)
+# The ops that write or act are agent skills, not tools of the MCP front (as sites.tools.SKILLS).
+SKILLS = (publish_report, run_job)
 runner = hostrpc.Service(OPS, log=logging.getLogger("audit-runner"))
 
 

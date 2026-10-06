@@ -1,0 +1,49 @@
+{
+  "active": true,
+  "hubId": "write-entry",
+  "name": "Write Entry",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Save an entry on one of the Zola sites (news, research, status) and rebuild the site, so the entry is live when this returns. If the site doesn't build with it, nothing is saved and the error says why. Get the site's sections and fields from the sites tools' list_sites first; to edit an entry, read it with get_entry and write it again with overwrite.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "site": {
+        "type": "string",
+        "description": "Site name from list_sites, e.g. 'news'."
+      },
+      "section": {
+        "type": "string",
+        "description": "Section name from list_sites, e.g. 'editions'."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Entry name, used in its URL: lowercase letters, digits and hyphens, e.g. '2026-10-03'."
+      },
+      "title": {
+        "type": "string",
+        "description": "Entry title."
+      },
+      "date": {
+        "type": "string",
+        "description": "Entry date, YYYY-MM-DD."
+      },
+      "extra": {
+        "type": "object",
+        "description": "The site's fields for this entry, as described by list_sites."
+      },
+      "body": {
+        "type": "string",
+        "description": "Optional Markdown text. HTML is not allowed."
+      },
+      "overwrite": {
+        "type": "boolean",
+        "description": "Set true to replace an existing entry."
+      }
+    }
+  }
+}

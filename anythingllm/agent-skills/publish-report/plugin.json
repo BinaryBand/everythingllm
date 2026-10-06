@@ -1,0 +1,34 @@
+{
+  "active": true,
+  "hubId": "publish-report",
+  "name": "Publish Report",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Publish today's audit report (Stockholm date) to the status site, replacing any earlier one for the day: the audit tools' run_checks findings with your summary and suggestions. Runs the checks itself if run_checks hasn't been called in the last hour.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "summary": {
+        "type": "string",
+        "description": "One or two plain-text sentences: what's broken and what matters most."
+      },
+      "suggestions": {
+        "type": "object",
+        "description": "Likely cause and a concrete fix per finding, keyed by its number from run_checks, e.g. {\"1\": \"...\", \"3\": \"...\"}. Plain text. Leave out findings with nothing to suggest."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "warn",
+          "fail"
+        ],
+        "description": "Leave out: it follows from the findings (fail if any fails, else warn if any warns, else ok)."
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "active": true,
+  "hubId": "delete-entry",
+  "name": "Delete Entry",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Permanently delete an entry from one of the Zola sites and rebuild the site without it. Ask the user first.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "site": {
+        "type": "string",
+        "description": "Site name from list_sites, e.g. 'news'."
+      },
+      "section": {
+        "type": "string",
+        "description": "Section name from list_sites, e.g. 'editions'."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Entry name, used in its URL: lowercase letters, digits and hyphens, e.g. '2026-10-03'."
+      }
+    }
+  }
+}

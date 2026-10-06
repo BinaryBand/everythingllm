@@ -3,12 +3,14 @@
 A front for audit-runner on the host (audit/tools.py), which runs the checks: each tool
 call goes to it over a Unix socket in storage, and the text it sends back is the tool's
 result. On the host the checks can read the journal, every service's socket and the sites.
+Publishing the report and running a job are skills (publish-report, run-job;
+audit.tools.SKILLS), not tools here.
 
 Config (environment):
   AUDIT_SOCKET  the runner's socket (default storage/everythingllm/audit/runner.sock, as the container sees it)
 """
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 import hostrpc
 from mcp.server.mcpserver import MCPServer
@@ -41,33 +43,6 @@ async def run_checks(since_hours: SinceHours = 24) -> str:
 
 
 @tool
-async def publish_report(
-    summary: Annotated[
-        str,
-        Field(
-            description="One or two plain-text sentences: what's broken and what matters most."
-        ),
-    ],
-    suggestions: Annotated[
-        dict[int, str] | None,
-        Field(
-            description="Likely cause and a concrete fix per finding, keyed by its number from run_checks, "
-            'e.g. {"1": "...", "3": "..."}. Plain text. Leave out findings with nothing to suggest.',
-        ),
-    ] = None,
-    status: Annotated[
-        Literal["ok", "warn", "fail"] | None,
-        Field(
-            description="Leave out: it follows from the findings (fail if any fails, else warn if any warns, else ok).",
-        ),
-    ] = None,
-) -> str:
-    """Publish today's report (Stockholm date) to the status site, replacing any earlier one
-    for the day: run_checks' findings with your summary and suggestions. Runs the checks
-    itself if run_checks hasn't been called in the last hour."""
-
-
-@tool
 async def journal_lines(
     service: Annotated[str, Field(description=f"One of: {', '.join(WATCHED)}.")],
     since_hours: SinceHours = 24,
@@ -87,13 +62,6 @@ async def job_run(
 ) -> str:
     """One scheduled-job run in detail: status, error, tool calls with their results,
     progress lines and the final reply."""
-
-
-@tool
-async def run_job(name: JobName) -> str:
-    """Run an existing scheduled job now, outside its schedule, e.g. to redo today's news.
-    Use this rather than creating a new job to run once. The run goes on in the background;
-    job_run(name) shows how it went."""
 
 
 @tool

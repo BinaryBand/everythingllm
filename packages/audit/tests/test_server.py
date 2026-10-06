@@ -31,7 +31,17 @@ def via_runner(monkeypatch, name, args):
 
 def test_every_tool_is_an_op_of_the_runner():
     tools = asyncio.run(server.mcp.list_tools())
-    assert {t.name for t in tools} == {f.__name__ for f in audit_tools.OPS}
+    assert {t.name for t in tools} == {f.__name__ for f in audit_tools.OPS} - {
+        f.__name__ for f in audit_tools.SKILLS
+    }
+
+
+def test_the_ops_that_write_are_skills():
+    """Each op in SKILLS has its skill, which sends that op (anythingllm/agent-skills/<op>)."""
+    skills = Path(__file__).resolve().parents[3] / "anythingllm" / "agent-skills"
+    for op in audit_tools.SKILLS:
+        handler = skills / op.__name__.replace("_", "-") / "handler.js"
+        assert f'op: "{op.__name__}"' in handler.read_text(), op.__name__
 
 
 def test_the_server_explains_a_missing_runner(monkeypatch, tmp_path):
@@ -70,17 +80,27 @@ def test_publish_report_reuses_run_checks_findings(env, tools, monkeypatch):
     # Checks that changed since don't change what's published: the numbers stay valid.
     monkeypatch.setattr(checks, "CHECKS", {"x": lambda env, since: []})
     env.now = lambda: NOW + timedelta(minutes=5)
-    # Called as the model does, with JSON's string keys, through the server and the runner.
-    result = via_runner(
-        monkeypatch,
-        "publish_report",
-        {
-            "summary": "The news is late.",
-            "suggestions": {"1": "Run the Daily News Page job.", "7": "?"},
-        },
-    )
-    assert not result.is_error
-    assert result.content[0].text.splitlines() == [
+    # Called as the publish-report skill does, with JSON's string keys, over the runner's socket.
+    sock = Path("/tmp") / f"audit-test-{os.getpid()}.sock"  # AF_UNIX paths are short
+
+    async def go():
+        async with hostrpc.serving(audit_tools.runner, sock):
+            return await hostrpc.request(
+                sock,
+                "publish_report",
+                {
+                    "summary": "The news is late.",
+                    "suggestions": {"1": "Run the Daily News Page job.", "7": "?"},
+                },
+                30,
+                name="audit runner",
+            )
+
+    try:
+        text = asyncio.run(go())
+    finally:
+        sock.unlink(missing_ok=True)
+    assert text.splitlines() == [
         "Published System audit — October 4, 2026 — 1 warning: https://pages/status/reports/2026-10-04/",
         "Ignored suggestions for findings that don't exist: 7.",
     ]

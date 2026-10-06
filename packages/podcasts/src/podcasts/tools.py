@@ -248,6 +248,9 @@ OPS = (
     refresh_podcasts,
     remove_podcast,
 )
+# The ops that change the podcast list are agent skills, not tools of the MCP front (as
+# sites.tools.SKILLS). refresh_podcasts stays a tool: it only starts a sync.
+SKILLS = (add_podcast, remove_podcast)
 
 runner = hostrpc.Service(
     OPS, errors=(LibraryError, FeedError), log=logging.getLogger("podcasts-runner")

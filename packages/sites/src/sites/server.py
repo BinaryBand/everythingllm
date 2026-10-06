@@ -1,5 +1,6 @@
 """MCP server for the Zola sites' entries, and the news feeds' headlines the Daily News is
-written from. Free-form pages come from the sandbox's publish skill instead.
+written from. Free-form pages come from the sandbox's publish skill instead. Writing and
+deleting entries are skills (write-entry, delete-entry; sites.tools.SKILLS), not tools here.
 
 A front for sites-runner on the host (sites/tools.py), which does the work: each tool
 call goes to it over a Unix socket in storage, and the text it sends back is the tool's
@@ -9,7 +10,7 @@ Config (environment):
   SITES_SOCKET  the runner's socket (default storage/everythingllm/sites/runner.sock, as the container sees it)
 """
 
-from typing import Annotated, Any
+from typing import Annotated
 
 import hostrpc
 from mcp.server.mcpserver import MCPServer
@@ -61,35 +62,6 @@ async def list_entries(
 @tool
 async def get_entry(site: Site, section: Section, slug: Slug) -> str:
     """Return an entry's title, date, fields and body, e.g. to edit and write it again."""
-
-
-@tool
-async def write_entry(
-    site: Site,
-    section: Section,
-    slug: Slug,
-    title: Annotated[str, Field(description="Entry title.")],
-    date: Annotated[str, Field(description="Entry date, YYYY-MM-DD.")],
-    extra: Annotated[
-        dict[str, Any],
-        Field(
-            description="The site's fields for this entry, as described by list_sites."
-        ),
-    ] = {},  # noqa: B006 - the schema's default; only passed on, never mutated
-    body: Annotated[
-        str, Field(description="Optional Markdown text. HTML is not allowed.")
-    ] = "",
-    overwrite: Annotated[
-        bool, Field(description="Set true to replace an existing entry.")
-    ] = False,
-) -> str:
-    """Save an entry and rebuild the site, so the entry is live when this returns.
-    If the site doesn't build with it, nothing is saved and the error says why."""
-
-
-@tool
-async def delete_entry(site: Site, section: Section, slug: Slug) -> str:
-    """Permanently delete an entry and rebuild the site without it."""
 
 
 @tool

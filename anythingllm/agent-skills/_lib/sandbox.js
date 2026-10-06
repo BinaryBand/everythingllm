@@ -9,6 +9,7 @@
 // by it.
 
 const { call, socketPath, Down, Refused } = require("./hostrpc");
+const { delegatedRefusal } = require("./delegated");
 
 /**
  * Run `work(request)` for a skill, where request(op, args) calls the runner with the
@@ -16,6 +17,8 @@ const { call, socketPath, Down, Refused } = require("./hostrpc");
  * becomes the reply, and a closed chat resolves request() with null.
  */
 async function withSandbox(self, work) {
+  const refused = delegatedRefusal(self);
+  if (refused) return refused;
   const signal = self.super?.abortController?.signal ?? null;
   const invocation = self.super?.handlerProps?.invocation || {};
   const scope = {

@@ -1,6 +1,6 @@
-"""The settings a podcast's subscription takes, shared by the MCP server in the container
-(for its tools' parameters) and the library on the host. Nothing heavy is imported here,
-so the server needs none of the audio stack."""
+"""The settings a podcast's subscription takes, shared by the runner's add_podcast op (which
+the add-podcast skill fronts; its description repeats these numbers) and the library.
+Nothing heavy is imported here."""
 
 from typing import Literal
 

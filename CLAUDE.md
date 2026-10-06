@@ -73,20 +73,26 @@ is 3.13. Keep code 3.12-compatible, and check with
     `packages/podcasts` (`server.py`, `tools.py`) is the reference example; research and the
     sandbox keep state, so theirs are `Service` subclasses with `op_<name>` methods.
   - Skills speak the same protocol from node, through `anythingllm/agent-skills/_lib/hostrpc.js`:
-    `deep-research`, and the sandbox's `run-code`, `write-file`, `publish` and `build-site`.
+    `deep-research`, the sandbox's `run-code`, `write-file`, `publish` and `build-site`, and
+    the runners' ops that write or act (`write-entry`, `add-podcast`, `publish-report`, …).
   - AnythingLLM drops an MCP tool call after 60 s (skills have no limit), so an op answers within 45 s. Longer work keeps
     going in the service (the caller waits on a run id) or in its own systemd unit.
   - A front's package keeps its base dependencies to what the front imports, and puts the
     rest (Whisper, Kokoro, PyAV, …) in a `host` extra that the units run with.
   - Adding a service: the README's "Services on the host" lists every piece (console
     script, unit, the audit's `WATCHED` in `audit/services.py`).
+- MCP tools only read (or, like `refresh_podcasts`, only start background work). An op that
+  writes or acts is a skill (`anythingllm/agent-skills/<op>`, listed in its package's
+  `tools.SKILLS`), because a skill knows its workspace and refuses a delegated task
+  (`_lib/delegated.js`); an MCP call doesn't say where it came from. A test holds every skill
+  of ours to that refusal.
 - Every MCP server is a thin front; nothing it serves runs in the container. Not every
   member is an MCP server: `publicweb`, `llm`, `chatimage` and `hostrpc` are libraries, and
   `splice`, `research` and `sandbox` are host-only services. `relay` is a host HTTP service
   for the Nilson app, not the agent; its secrets are in `~/.config/everythingllm/relay.env`,
   never in the repo.
 - The agent does short judgment work through thin tools. For example, the
-  `daily-news-page` scheduled job calls `headlines` and then `write_entry`. Code asks a
+  `daily-news-page` scheduled job calls `headlines` and then the `write-entry` skill. Code asks a
   model itself (`packages/llm`) only where there's no agent (background syncs, reader clicks,
   long research runs).
 - Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`),

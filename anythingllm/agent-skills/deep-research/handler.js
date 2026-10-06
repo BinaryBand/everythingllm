@@ -8,6 +8,7 @@
 // finishes, publishes and adds the report to the workspace.
 
 const hostrpc = require("../_lib/hostrpc");
+const { delegatedRefusal } = require("../_lib/delegated");
 
 const { Down } = hostrpc;
 const OFF = /^(no|off|false|0)$/i;
@@ -19,6 +20,8 @@ function call(op, args) {
 
 module.exports.runtime = {
   handler: async function ({ question, depth }) {
+    const refused = delegatedRefusal(this);
+    if (refused) return refused;
     const args = this.runtimeArgs || {};
     const workspace = this.super?.handlerProps?.invocation?.workspace;
     const embed = !OFF.test(String(args.EMBED_IN_WORKSPACE ?? "").trim());

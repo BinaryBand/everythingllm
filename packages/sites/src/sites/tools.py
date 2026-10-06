@@ -162,6 +162,10 @@ def render_headlines(
 
 # The tools block (files are written, zola runs), so hostrpc runs each in a thread.
 OPS = (list_sites, list_entries, get_entry, write_entry, delete_entry, headlines)
+# The ops that write are agent skills (anythingllm/agent-skills/<op>, with - for _), not
+# tools of the MCP front: an MCP call doesn't say which workspace made it, and a skill
+# refuses a delegated task (docs/.proposals/agents.md).
+SKILLS = (write_entry, delete_entry)
 log = logging.getLogger("sites-runner")
 # Bad arguments, missing entries, a site that didn't build, feeds that didn't load.
 runner = hostrpc.Service(OPS, errors=(SiteError, FeedError), log=log)

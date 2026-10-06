@@ -137,8 +137,16 @@ through its UI.
     `research` site; hands the work to `research-runner` on the host (see "Deep research")
   - `run-code/`, `write-file/`, `publish/`, `build-site/` — the code sandbox, run by
     `sandbox-runner` on the host (see "Code sandbox")
+  - `write-entry/`, `delete-entry/`, `add-podcast/`, `remove-podcast/`, `publish-report/`,
+    `run-job/` — the ops of the sites, podcasts and audit runners that write or act. They're
+    skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
+    to its runner (`_lib/runner.js`).
   - `_lib/` — what the skills share (no `plugin.json`, so AnythingLLM doesn't load it as
-    a skill): `hostrpc.js`, the node side of `packages/hostrpc`, and `sandbox.js`
+    a skill): `hostrpc.js`, the node side of `packages/hostrpc`; `sandbox.js`; `runner.js`;
+    and `delegated.js`, the check that makes every skill of ours that writes, acts or
+    delegates refuse a call from an `agents-*` workspace, where delegated tasks will run
+    (`docs/.proposals/agents.md`). A test holds every skill to it; elsewhere, chats, the
+    Nilson relay's API chats and scheduled jobs, nothing changes.
 - `anythingllm/mcp_servers.json` — deployed to `storage/plugins/anythingllm_mcp_servers.json`
 - `anythingllm/env.example` — keys used in the live `.env` (values stay out of git)
 - `anythingllm/system-prompt.md` — the system prompt for chat and the agent: which tool
@@ -289,9 +297,10 @@ archive, Atom feed; no scripts or inline styles, so it passes the CSP). Each
 `_index.md` files, and any templates or `static/` CSS it overrides or adds. Templates are
 Tera 2: reusable pieces are `{% component %}`s (global, no import), not macros.
 
-The `sites` MCP server writes entries to `~/.local/share/everythingllm/pages/entries/<name>/<section>/<slug>.md`
+The `write-entry` skill (through `sites-runner`, as the `sites` MCP server's reading tools
+are) writes entries to `~/.local/share/everythingllm/pages/entries/<name>/<section>/<slug>.md`
 (JSON front matter, fields under `extra`) and then rebuilds that site itself, so an entry
-is live when `write_entry` returns; if the site doesn't build, the write or delete is
+is live when `write-entry` returns; if the site doesn't build, the write or delete is
 undone ("not saved: the site didn't build: …"). Bodies can't use Zola shortcodes or Tera:
 `{{`, `{%` and `{#` get a zero-width space between the characters, and zola runs with only
 `PATH` in its environment, so nothing an entry says can read secrets or files. It also
@@ -452,7 +461,7 @@ and off by default, and the HTML it lets through is sanitized (DOMPurify: no scr
 handlers or iframes), so anything richer than text that has to show wherever the chat does
 is a picture the host draws: `packages/chatimage`, whose link cards are one kind and deep
 research's live progress cards another. Whatever publishes a page
-(`publish`, the sites tools' `write_entry`, deep research) has `chatimage.card` draw a card of
+(`publish`, `write-entry`, deep research) has `chatimage.card` draw a card of
 it (its title, its site or workspace, a line about it, its address) into `_cards/` on the
 pages site, and adds a `Card: [![title](card.png?v=…)](page)` line to its reply, which the
 system prompt has the agent paste as is. Pages that are already there have cards too:
@@ -553,21 +562,21 @@ The `logs` and `services` audit checks cover both units and ping the runner.
 
 ## Podcasts
 
-The `podcasts` MCP server keeps private copies of podcasts: `add_podcast(url, keep)`
-subscribes to a show's RSS feed, and its newest `keep` episodes (default 5, up to 100, or
+The `podcasts` MCP server and the `add-podcast` and `remove-podcast` skills keep private
+copies of podcasts: `add-podcast(url, keep)` subscribes to a show's RSS feed, and its newest `keep` episodes (default 5, up to 100, or
 `"all"` for the whole catalog) are downloaded to `~/.local/share/everythingllm/podcasts/audio/` and listed in a
 feed of our own, `https://<PUBLIC_HOST>:8445/podcasts/<slug>/feed.xml`, which podcasts-web
 serves (range requests included, so players can seek). `/podcasts/` lists every feed. Ask the
 agent, e.g. `@agent download the last 10 episodes of Hard Fork`, then paste the feed URL
-into a podcast app. Other tools: `find_podcast`, `list_podcasts` (downloads, progress,
-errors), `refresh_podcasts`, `remove_podcast` (deletes the downloads).
+into a podcast app. The MCP tools: `find_podcast`, `list_podcasts` (downloads, progress,
+errors), `search_podcasts`, `refresh_podcasts`; `remove-podcast` deletes the downloads.
 
 `find_podcast(query)` turns a show's name, an Apple Podcasts link, the show's website or a
-feed URL into feed URLs for `add_podcast`. Names go to Apple's podcast directory (the iTunes
+feed URL into feed URLs for `add-podcast`. Names go to Apple's podcast directory (the iTunes
 Search API, no key), Apple links are looked up by their id, and web pages are read for their
 `<link rel="alternate" type="application/rss+xml">`. Every candidate is fetched and parsed
 first, and the reply lists each working feed with its title, author, episode count and
-latest episode; the whole call, checks included, has 45 s (as does `add_podcast`'s fetch),
+latest episode; the whole call, checks included, has 45 s (as does `add-podcast`'s fetch),
 inside AnythingLLM's 60 s tool limit. A page with no feed link (Spotify,
 Amazon Music, Audible and iHeart pages never have one) gets a note to search by name, since
 a show found only in such an app has no public feed.
@@ -602,7 +611,7 @@ a show found only in such an app has no public feed.
   regular episodes never come near that; a catalog (`keep="all"`) comes down over days
   instead of filling one sync for hours, and the other shows' new episodes still get
   through. Its record says how many more wait.
-- `add_podcast(rules="...")` says in plain words which episodes to download: "skip the
+- `add-podcast(rules="...")` says in plain words which episodes to download: "skip the
   spin-off It Could Happen Here", "skip weekend episodes", "only the nightly episodes Jon
   Stewart hosts; skip compilations, recaps and archive episodes". AnythingLLM's default
   model (DeepSeek) reads each episode's title, description, length, and weekday and date
@@ -665,7 +674,7 @@ changed or undone, and nothing is stored twice.
   that fetched the feed before the change.
 - At the end of each sync, originals, sidecars and manifests that no feed's record refers
   to are deleted. Originals wait a day, in case a download isn't in a record yet.
-  `remove_podcast` deletes the show's at once.
+  `remove-podcast` deletes the show's at once.
 - `splice-web` (`packages/splice`, standard library only, `host/systemd/podcasts-web.service`,
   its own venv in `~/.local/share/everythingllm/venvs/splice`) is mapped to `:8445/podcasts` by
   `tailscale serve`, ahead of the pages site's Caddy. It serves manifests with range
@@ -686,7 +695,7 @@ the same show (`podcasts.fingerprint`, a spectral-peak fingerprint matcher, find
 episode's `repeat` cuts (see above). `list_podcasts` shows how much was cut from each
 episode and by what, and the sync logs each episode's cuts to `sync.log`.
 
-- It's on for every podcast unless turned off: `add_podcast(url, scrub_ads=false)`, or ask
+- It's on for every podcast unless turned off: `add-podcast(url, scrub_ads=false)`, or ask
   the agent to stop cutting ads from a show. Episodes already cut stay cut.
 - What goes: repeated ads (dynamic ads differ between episodes, so an ad is only caught once
   it has run in two of them), ad-break bumpers, and the show's theme where it plays alone.
@@ -735,12 +744,12 @@ few lines of each other.
   the show's own Patreon and merch plugs, but not content warnings or credits. A read must
   last 5 s to 6 min; anything else it names is ignored. Without a key, or when its answer
   can't be used, a phrase list does it instead ("brought to you by", "use code",
-  "x.com/show" and the like, two within a minute). Per show, `add_podcast(ad_words=...)`
+  "x.com/show" and the like, two within a minute). Per show, `add-podcast(ad_words=...)`
   picks what happens to them. `cut` (the default) makes them active `ad-read` cuts, left out
   of what's served and of the transcript. `report` keeps them as inactive cuts, which
   `list_podcasts` lists as possible sponsor reads. `off` ignores them. Every read
   found is logged with its opening words (`make podcasts-logs`), to check what was cut.
-- `add_podcast(transcribe=false)` turns transcripts off for a show. An episode that can't be
+- `add-podcast(transcribe=false)` turns transcripts off for a show. An episode that can't be
   transcribed gets the error in its record and isn't tried again.
 
 To look at what would be cut without cutting it:
@@ -760,7 +769,7 @@ downloaded on first use to `~/.local/share/everythingllm/podcasts/models/kokoro`
 
 `daily-news` is a feed made on this server, kept in `~/.local/share/everythingllm/podcasts/local.json` rather
 than `feeds.json`, so the sync never sees it; `list_podcasts` and the index show it, and
-`remove_podcast` refuses it.
+`remove-podcast` refuses it.
 Run it by hand:
 
     systemctl --user start news-audio.service
@@ -1030,15 +1039,16 @@ suggests a fix per finding. Its tools:
   - sites: every site's home page and each section's newest entry answer 200, no entry file
     is newer than the site's last build (its `.zola-site` marker; a write that saved but
     didn't rebuild), plus each section's `[extra.audit]`, with ages in Stockholm days.
-- `publish_report(summary, suggestions, status?)` — writes the day's report to
+- the `publish-report` skill (`publish_report(summary, suggestions, status?)` on the
+  runner) — writes the day's report to
   `status/reports/YYYY-MM-DD` (the Stockholm date) through the sites store and build: the
   findings from this run's `run_checks` (or a fresh run when there's none from the last
   hour), the model's summary, and its
   suggestions keyed by finding number. The `reports` section is `agent_readonly`, so only
-  this tool writes it.
+  this op writes it.
 - `journal_lines`, `job_run`, `research_run` — the raw material behind a finding
   (`research_run` gives the run's last 30 progress lines).
-- `run_job(name)` — runs an existing scheduled job now (AnythingLLM's
+- the `run-job` skill (`run_job(name)`) — runs an existing scheduled job now (AnythingLLM's
   `POST /scheduled-jobs/:id/trigger`) and returns the run id. It's for chat ("redo today's
   news"), so the agent doesn't make one-off cron jobs; the audit job never calls it.
 

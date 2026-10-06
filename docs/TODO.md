@@ -43,10 +43,6 @@ containers"). The checks a script couldn't make, and the cleanup once they've he
   - Watch the first sync and transcription pass finish in the workers' containers
     (`podcasts/sync.log`, `uv run hostctl podcasts-logs`, `list_podcasts`). The first sync
     started at 00:28 on 2026-10-07.
-- **Restart agents-runner** with no delegation going (`uv run hostctl agents-setup`). It has
-  run since before the merge, so its live cards still use the old `runs.live`, without the
-  check that refuses peers other than loopback and its own address. As a host unit on
-  127.0.0.1 it isn't exposed meanwhile.
 - **Once the containers have run for a week:** delete the old host venvs
   `~/.local/share/everythingllm/venvs/{relay,research,sites,podcasts}`, and the leftover
   `browser-net` network (`podman network rm browser-net`).

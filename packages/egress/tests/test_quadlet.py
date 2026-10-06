@@ -5,6 +5,7 @@ address, and it has no other way out."""
 import re
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from egress import config as egress_config
@@ -136,3 +137,105 @@ def test_relay_mounts_only_its_database_and_venv(egress):
     relay = egress.profiles["relay"]
     assert env["ANYTHINGLLM_URL"] == "https://@PUBLIC_HOST@:3001"
     assert ("host.example.ts.net", 3001) in relay.allow and not relay.public
+
+
+# research-runner (README, "Deep research"): what it mounts is what its code writes or
+# reads outside the repo, and nothing more.
+DATA = "%h/.local/share/everythingllm"
+STORAGE = "@ANYTHINGLLM_STORAGE@"
+RESEARCH = {
+    # mount target: whether it's read-only
+    "@REPO@": True,
+    f"{DATA}/venvs/research-runner-ctr": False,
+    f"{DATA}/research": False,  # runs/: the run log and live runs' markers
+    f"{DATA}/pages/entries/research": False,
+    f"{DATA}/pages/entries/.build.lock": False,
+    f"{DATA}/pages/public": False,  # one mount: a build's rename stays inside it
+    f"{STORAGE}/everythingllm/research": False,  # its socket
+    f"{STORAGE}/everythingllm/sandbox": True,  # the sandbox's, for build_system_site
+    f"{STORAGE}/.env": True,
+    f"{STORAGE}/anythingllm-fs/research": False,
+    f"{STORAGE}/documents/deep-research": False,
+}
+
+
+def mounts(keys: dict[str, list[str]]) -> dict[str, bool]:
+    """Each Volume='s target, and whether it's read-only."""
+    out = {}
+    for volume in keys["Volume"]:
+        _, target, *options = volume.split(":")
+        out[target] = "ro" in options
+    return out
+
+
+def test_research_mounts_only_what_it_uses():
+    template = QUADLET / "research-runner.container.in"
+    keys = container_keys(template)
+    assert mounts(keys) == RESEARCH
+    assert keys["GroupAdd"] == ["keep-groups"]  # it writes in storage
+    assert keys["PublishPort"] == ["127.0.0.1:8450:8450"]
+    # What it mounts from the host is made first: podman won't mount what isn't there.
+    made = re.findall(
+        r"^ExecStartPre=/usr/bin/(?:mkdir -p|touch) (.+)$",
+        template.read_text(),
+        re.MULTILINE,
+    )
+    made = {path for line in made for path in line.split()}
+    assert set(RESEARCH) - {"@REPO@", f"{STORAGE}/.env"} <= made
+
+
+def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
+    """Every path research-runner's code uses outside the repo, under the mount it needs."""
+    import hostrpc
+    from research import job
+    from sites.build import LOCK, Builder
+
+    home, storage = tmp_path / "home", tmp_path / "storage"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(storage))
+    for var in (
+        "ANYTHINGLLM_ENV",
+        "SITES_CONTENT",
+        "SITES_OUTPUT",
+        "RESEARCH_SOCKET",
+        "SANDBOX_SOCKET",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    settings, builder = job.Settings.from_env(), Builder.from_env()
+    site = job.Request("q").site
+
+    def read_only(path: Path) -> bool:
+        """Whether the mount `path` is under is read-only; fails if it isn't mounted."""
+        path = str(path).replace(str(home), "%h").replace(str(storage), STORAGE)
+        found = [t for t in RESEARCH if path == t or path.startswith(t + "/")]
+        assert found, f"{path} isn't mounted"
+        return RESEARCH[found[0]]
+
+    for path in (
+        settings.runlogs,
+        settings.reports_dir,
+        settings.documents_dir / "deep-research",
+        builder.content / site / "reports",
+        builder.content / LOCK,
+        builder.output / f".{site}.new",
+        builder.output / site,
+        builder.output / "_cards",
+        hostrpc.socket_path("research", "RESEARCH_SOCKET"),
+    ):
+        assert not read_only(path), path
+    for path in (settings.env_file, hostrpc.socket_path("sandbox", "SANDBOX_SOCKET")):
+        read_only(path)  # mounted; read-only will do
+    # The research site is built in the sandbox, so the container needs no zola.
+    assert builder.theme_from(site) == "system" and builder.remote is not None
+
+
+def test_research_reaches_anythingllm_and_searxng_through_the_proxy(egress):
+    keys = container_keys(QUADLET / "research-runner.container.in")
+    env = dict(e.partition("=")[::2] for e in keys["Environment"])
+    assert env["LIVE_HOST"] == "0.0.0.0"
+    profile = egress.profile_for(egress.ips()["research-runner"])
+    assert profile is not None and profile.name == "research"
+    for key in ("ANYTHINGLLM_API", "SEARXNG_URL"):
+        url = urlsplit(env[key].replace("@PUBLIC_HOST@", "host.example.ts.net"))
+        assert url.scheme == "https" and url.hostname and url.port, key
+        assert profile.judge(url.hostname, url.port) == "allow", key

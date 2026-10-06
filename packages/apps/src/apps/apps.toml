@@ -68,9 +68,10 @@ health = { "podcasts-web" = "http://127.0.0.1:8449/health" }
 install = true
 
 [research]
-summary = "research-runner, which runs deep research for the skill (live cards at :8445/_live/research)"
+summary = "research-runner, in its service container, which runs deep research for the skill (live cards at :8445/_live/research)"
 runner = "research-runner.service"
-units = { "research-runner.service" = "deep-research runner" }
+container = { "systemd-research-runner" = "deep-research runner" }
+before = ["python3 -m hostctl service-images"]
 guard = { runs = "research/runs", noun = "Deep-research runs" }
 serve = [{ https = 8445, path = "/_live/research", port = 8450 }]
 health = { "research live cards" = "http://127.0.0.1:8450/_live/research/dr-00000000.png" }

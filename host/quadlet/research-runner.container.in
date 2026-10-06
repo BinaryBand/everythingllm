@@ -1,0 +1,78 @@
+[Unit]
+Description=Deep research for the AnythingLLM skill, in its service container (socket in storage/everythingllm/research/)
+# Its only way out, which its venv's first sync needs too.
+Wants=egress-proxy.service
+After=egress-proxy.service
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Container]
+Image=localhost/everythingllm-service
+Exec=uv run --frozen --no-dev --project @REPO@ --package research research-runner
+# The service containers' hardening (README, "Service containers"). It writes in storage,
+# so it keeps the host user's groups (the anythingllm group).
+ReadOnly=true
+Tmpfs=/tmp
+DropCapability=ALL
+NoNewPrivileges=true
+UserNS=keep-id
+GroupAdd=keep-groups
+# Two runs at once, each a few dozen threads that mostly wait on the models.
+PidsLimit=256
+PodmanArgs=--memory=2g --cpus=2 --umask=0002
+RunInit=true
+Timezone=local
+# egress-net only, at its address in egress.toml (profile research: public hosts, and
+# AnythingLLM and SearXNG by the tailnet name).
+Network=egress-net:ip=10.89.79.11
+Environment=HTTPS_PROXY=http://10.89.79.2:3128
+Environment=HTTP_PROXY=http://10.89.79.2:3128
+Environment=EGRESS_PROXY=http://10.89.79.2:3128
+# The live cards, on the host's 127.0.0.1:8450 as before; inside, they listen on every
+# address, since what's published arrives from the container's own.
+PublishPort=127.0.0.1:8450:8450
+Environment=LIVE_HOST=0.0.0.0
+# The host's loopback isn't reachable from here: AnythingLLM (embedding the report) and
+# SearXNG by the tailnet name, through the proxy.
+Environment=ANYTHINGLLM_API=https://@PUBLIC_HOST@:3001/api
+Environment=SEARXNG_URL=https://@PUBLIC_HOST@:8888/search
+# Everything at its host path. The repo, read-only (the code, the sites' sources, host.env).
+Volume=@REPO@:@REPO@:ro
+# Its venv and uv's cache, in one folder (one mount, so uv can hardlink from the cache).
+Volume=%h/.local/share/everythingllm/venvs/research-runner-ctr:%h/.local/share/everythingllm/venvs/research-runner-ctr
+Environment=HOME=%h
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/research-runner-ctr/venv
+Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/research-runner-ctr/uv-cache
+# The run log and live runs' markers (the run guard and the audit read them on the host).
+Volume=%h/.local/share/everythingllm/research:%h/.local/share/everythingllm/research
+# The research site's entries, and the lock every site build holds (sites.build).
+Volume=%h/.local/share/everythingllm/pages/entries/research:%h/.local/share/everythingllm/pages/entries/research
+Volume=%h/.local/share/everythingllm/pages/entries/.build.lock:%h/.local/share/everythingllm/pages/entries/.build.lock
+# The pages site, whole: the sandbox builds the research site into .research.new there,
+# which is renamed into place (one mount, or the rename fails), and the link cards go in
+# _cards/.
+Volume=%h/.local/share/everythingllm/pages/public:%h/.local/share/everythingllm/pages/public
+# Its socket's folder, and the sandbox's, which builds the research site
+# (build_system_site); connecting needs no write access to the folder.
+Volume=@ANYTHINGLLM_STORAGE@/everythingllm/research:@ANYTHINGLLM_STORAGE@/everythingllm/research
+Volume=@ANYTHINGLLM_STORAGE@/everythingllm/sandbox:@ANYTHINGLLM_STORAGE@/everythingllm/sandbox:ro
+# AnythingLLM's .env, read-only: the model keys and its password.
+Volume=@ANYTHINGLLM_STORAGE@/.env:@ANYTHINGLLM_STORAGE@/.env:ro
+# Where the report is saved for the agent's files, and its copy for the workspace.
+Volume=@ANYTHINGLLM_STORAGE@/anythingllm-fs/research:@ANYTHINGLLM_STORAGE@/anythingllm-fs/research
+Volume=@ANYTHINGLLM_STORAGE@/documents/deep-research:@ANYTHINGLLM_STORAGE@/documents/deep-research
+# ANYTHINGLLM_STORAGE and PUBLIC_HOST.
+EnvironmentFile=@REPO@/host.env
+
+[Service]
+# podman won't bind-mount what isn't there.
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research %h/.local/share/everythingllm/pages/entries/research %h/.local/share/everythingllm/pages/public @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/sandbox @ANYTHINGLLM_STORAGE@/anythingllm-fs/research @ANYTHINGLLM_STORAGE@/documents/deep-research
+ExecStartPre=/usr/bin/touch %h/.local/share/everythingllm/pages/entries/.build.lock
+# A run is mostly waiting on the models; what CPU it takes (page parsing) can give way.
+# The container's processes inherit it from podman.
+Nice=10
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

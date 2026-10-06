@@ -93,8 +93,9 @@ versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
 restarts nothing. A guarded runner with a run going is left running, and a container whose
 image of ours or network isn't there yet isn't started: its app's setup makes them (see
-"Service containers"). A host unit whose service has moved into a container is disabled and
-moved to the backups, so the container's unit takes its name (see "Moving a service over"). Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
+"Service containers"). A host unit it installed whose template is gone (deleted, or moved to
+`host/quadlet/` as a container) is retired: stopped, disabled and moved to the backups, and a
+container that took its name over is started. Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
 
 Run it from the main checkout. It refuses to run in a worktree, since the units run the
 repo they were rendered from. Edit the templates, never the installed copies; `uv run hostctl diff`
@@ -255,9 +256,9 @@ through its UI.
   laid out by kind:
 
       venvs/<name>/        the host services' venvs (agents, audit, gateway, podcasts,
-                           sandbox, sites, splice)
+                           sandbox, splice)
       venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/):
-                           egress-proxy, relay, research-runner
+                           egress-proxy, relay, research-runner, sites-runner
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
@@ -365,7 +366,10 @@ undone ("not saved: the site didn't build: …"). Bodies can't use Zola shortcod
 runs without a network, in a user and network namespace of its own (`unshare`), so a
 template's `load_data` can't fetch anything, not even from the host's loopback, and a build
 is stopped after 40 s. A machine without unprivileged user namespaces builds without the
-namespace and logs a warning. The
+namespace and logs a warning. Every repo site is built in the sandbox, though (below), and
+`sites-runner` has neither zola nor `unshare` in its container: there `SITES_SANDBOX_ONLY=1`
+refuses a site whose `zola.toml` names no `theme_from`, with an error that says so, and a
+test holds every repo site to naming one. The
 front matter names the slug, so a file like `2026-10-01-notes.md` keeps its date in the URL. The build (`sites.build`, also the `sites-build`
 command) assembles the site from the repo plus its entries in a temp dir, builds it next
 to `~/.local/share/everythingllm/pages/public/<name>/` and swaps it in, holding a lock on `.build.lock` in the entries folder. Entries live outside storage because
@@ -388,8 +392,9 @@ writes a sandbox folder. The operation takes only a site's name and reads the re
 the repo, since its socket is reachable from the AnythingLLM container. With
 `sandbox-runner` down, those sites can't build, so their writes fail and are undone.
 
-The sites MCP server's builds are started on the host, in `sites-runner`, and the audit's
-report in `audit-runner`, as every other writer's are; nothing in the container builds. Other writers use the
+The sites MCP server's builds are started on the host, in `sites-runner` (in a service
+container of its own; see "Service containers"), and the audit's report in `audit-runner`,
+as every other writer's are; nothing in AnythingLLM's container builds. Other writers use the
 `sites-write` command (entry as JSON on stdin; it saves, builds and prints the URL, or
 exits 1 with `{"error"}` and keeps nothing when the site doesn't build), so the
 entry format has one implementation. The Python writers (the article writer, research-runner)
@@ -427,8 +432,9 @@ A section can set two things under `[extra]` in its `content/<section>/_index.md
   entry is older), and `required`, paths every entry's fields must have, e.g.
   `"sections[].stories[].url"` for the news `editions`.
 
-A new site: add `packages/sites/zola/sites/<name>/` with `theme = "agent-site"`, its sections and an
-`agent_help`, run `uv run hostctl deploy`, and point a job or chat at the `sites` server.
+A new site: add `packages/sites/zola/sites/<name>/` with `theme = "agent-site"`,
+`[extra.build] theme_from = "system"`, its sections and an `agent_help`, run `uv run hostctl
+deploy`, and point a job or chat at the `sites` server.
 
 ## MCP servers in AnythingLLM
 
@@ -444,8 +450,8 @@ clients get the same tools over HTTP from the gateway (see "MCP gateway").
 Work that is heavy, long or needs the host goes to a service on the host instead, with the
 MCP server or skill in the container as a thin front: `sandbox-runner` (the code sandbox),
 `research-runner` (deep research), `agents-runner` (delegation), `podcasts-runner` (the podcasts tools),
-`sites-runner` (the sites tools and their builds) and `audit-runner` (the audit's
-checks). Each listens
+`sites-runner` (the sites tools and their builds; in a container, see "Service
+containers") and `audit-runner` (the audit's checks). Each listens
 on a Unix socket in storage, `storage/everythingllm/<name>/runner.sock` (mode 0660), which the container
 sees without a Quadlet change, and they all speak `hostrpc`'s protocol: one request per
 connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "result"}` or
@@ -496,8 +502,8 @@ on its own: its template goes from `host/systemd/<x>.service` to
 stops and disables it and moves its installed copy to the backups (systemd prefers
 `~/.config/systemd/user/<x>.service` to the unit Quadlet generates under the same name),
 then starts the container; a guarded runner with a run going is left for a later run.
-`uv run hostctl diff` lists what it would retire. So far the relay and research-runner
-have moved; the old venvs in `venvs/<name>/` can go once their containers work.
+`uv run hostctl diff` lists what it would retire. So far the relay, research-runner and
+sites-runner have moved; the old venvs in `venvs/<name>/` can go once their containers work.
 
 **The image.** Every service container runs `localhost/everythingllm-service`
 (`host/containers/service/Containerfile`): `python:3.12-slim`, the host's uv copied from its
@@ -604,6 +610,31 @@ In a container, `EGRESS_PROXY` puts `publicweb.public_client` in proxy mode: eve
 goes to the proxy, which makes the address check, and the client checks only the scheme.
 Other clients (httpx, uv) follow `HTTPS_PROXY` and `HTTP_PROXY`. On the host none of these
 is set, and nothing changes.
+
+**sites-runner** is one (`host/quadlet/sites-runner.container.in`, the `sites` app, journal
+`systemd-sites-runner`), with the article writer in the same process. Besides the repo and
+its own venv folder (`venvs/sites-runner-ctr/`), it mounts, each at its host path:
+
+- `pages/entries/` and `pages/public/` in the data dir: it writes entries, takes the lock
+  in `pages/entries/.build.lock` that a host `sites-build` takes too, draws link cards and
+  swaps built sites in
+- `storage/everythingllm/sites/`, its socket's folder (so `GroupAdd=keep-groups`)
+- `storage/everythingllm/sandbox/`, read-only: the sandbox runner's socket, for
+  `build_system_site`. The sandbox writes `pages/public/.<site>.new`, which the runner sees
+  at the same path and swaps in. Connecting to a socket needs no write access to its
+  folder, and a folder rather than the socket itself keeps working when the sandbox runner
+  makes a new one
+- `storage/.env`, read-only, for the article writer's DeepSeek key and model
+
+Nothing else of storage or the data dir; no podman socket. There's no zola in the image and
+no `unshare` in a cap-dropped container, so `SITES_SANDBOX_ONLY=1` has the sandbox build
+every site and refuses one without `theme_from` (see "Zola sites"). The article writer
+listens on `0.0.0.0:8448` (`ARTICLES_HOST`), published on the host's `127.0.0.1:8448`, and
+searches `SEARXNG_URL=https://<PUBLIC_HOST>:8888/search`; the feeds, the story pages and
+DeepSeek are public hosts, which its profile (`sites`) lets through. A feed or page the
+proxy refuses fails as one that didn't load (`httpx.ProxyError`, or a 403), as on the host.
+Its limits: 1 GB of memory, one CPU, 256 PIDs. The host unit's venv, `venvs/sites/`, is
+unused once it has moved, and can go.
 
 ## Code sandbox
 
@@ -950,7 +981,7 @@ A Daily News headline doesn't link to the outside source. It opens an article th
 writes the first time someone clicks it. The edition links each story to
 `/news/write/<day>/<desk>/<n>` (the n-th story of the edition's desk-th section), which
 `tailscale serve` maps to the article writer (`sites.articles_web`, served by `sites-runner`
-on 127.0.0.1:8448), so the writer shares the news site's origin while Caddy stays static
+on 127.0.0.1:8448, its container's published port), so the writer shares the news site's origin while Caddy stays static
 and read-only. Without a DeepSeek key, `sites-runner` logs that and serves the tools without it.
 
 - If the article is already written, the writer redirects to it at
@@ -959,12 +990,14 @@ and read-only. Without a DeepSeek key, `sites-runner` logs that and serves the t
   takes about 5–30 s.
 - A link only names a story the daily job saved, by edition day and positions. The
   writer never fetches a URL taken from the request.
-- To write a story, it searches SearXNG (127.0.0.1:8888) for the headline, since the job
+- To write a story, it searches SearXNG (`https://<PUBLIC_HOST>:8888`, through the egress
+  proxy; 127.0.0.1:8888 on the host) for the headline, since the job
   often saves a site's front page as the link, and reads the story's link plus the top
   results with trafilatura (up to 4 readable pages). Only public hosts are fetched,
   redirects included. DeepSeek (AnythingLLM's model, thinking off) then writes 250–600 words from the pages that actually report the story,
   or refuses if none do. Its key and model are read from AnythingLLM's `.env`, and only
-  those.
+  those, once when `sites-runner` starts (the container mounts that one file read-only), so
+  a new key or model takes `uv run hostctl sites-setup`.
 - The article is an ordinary `sites` entry in the `articles` section, saved and built from
   the host like `uv run hostctl sites-build`. It ends with "Based on reporting by …", linking the
   pages it used. It's rewritten only if the edition's story changes.

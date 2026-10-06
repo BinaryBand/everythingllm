@@ -1,0 +1,63 @@
+[Unit]
+Description=Sites runner: does what the sites MCP server's tools ask (socket in storage/everythingllm/sites/), has the sandbox build the sites, and writes Daily News articles (tailnet via tailscale serve :8445/news/write), in a service container
+# Its first start syncs its venv from PyPI, and every feed and page goes out through the proxy.
+Wants=egress-proxy.service
+After=egress-proxy.service
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Container]
+Image=localhost/everythingllm-service
+Exec=uv run --frozen --no-dev --project @REPO@ --package sites --extra host sites-runner
+# The service containers' hardening (README, "Service containers"). It keeps the host
+# user's groups for its socket in storage.
+ReadOnly=true
+Tmpfs=/tmp
+DropCapability=ALL
+NoNewPrivileges=true
+UserNS=keep-id
+GroupAdd=keep-groups
+PidsLimit=256
+PodmanArgs=--memory=1g --cpus=1 --umask=0002
+RunInit=true
+Timezone=local
+# Its address in egress.toml (profile sites: public hosts, and SearXNG on the tailnet).
+Network=egress-net:ip=10.89.79.12
+Environment=HTTPS_PROXY=http://10.89.79.2:3128
+Environment=HTTP_PROXY=http://10.89.79.2:3128
+Environment=EGRESS_PROXY=http://10.89.79.2:3128
+# The article writer, on the host's 127.0.0.1:8448 as before (apps.toml's serve and
+# health); in here it listens on every address, since what's published arrives from the
+# container's own.
+PublishPort=127.0.0.1:8448:8448
+Environment=ARTICLES_HOST=0.0.0.0
+Environment=SEARXNG_URL=https://@PUBLIC_HOST@:8888/search
+# No zola here and no unshare: the sandbox runner builds every site (sites.build).
+Environment=SITES_SANDBOX_ONLY=1
+# Each at its host path (README, "Service containers"): the repo read-only (code, the
+# sites' sources, host.env); the entries and the pages site, which it writes and builds
+# into (the sandbox hands back pages/public/.<site>.new to swap in); its socket's folder;
+# the sandbox runner's socket folder, read-only, which a connection needs no more than;
+# AnythingLLM's .env, read-only, for the article writer's DeepSeek key and model; and its
+# venv and uv's cache in one folder of the data dir (one mount, so uv can hardlink).
+Volume=@REPO@:@REPO@:ro
+Volume=%h/.local/share/everythingllm/pages/entries:%h/.local/share/everythingllm/pages/entries
+Volume=%h/.local/share/everythingllm/pages/public:%h/.local/share/everythingllm/pages/public
+Volume=@ANYTHINGLLM_STORAGE@/everythingllm/sites:@ANYTHINGLLM_STORAGE@/everythingllm/sites
+Volume=@ANYTHINGLLM_STORAGE@/everythingllm/sandbox:@ANYTHINGLLM_STORAGE@/everythingllm/sandbox:ro
+Volume=@ANYTHINGLLM_STORAGE@/.env:@ANYTHINGLLM_STORAGE@/.env:ro
+Volume=%h/.local/share/everythingllm/venvs/sites-runner-ctr:%h/.local/share/everythingllm/venvs/sites-runner-ctr
+Environment=HOME=%h
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/sites-runner-ctr/venv
+Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/sites-runner-ctr/uv-cache
+# PUBLIC_HOST (the sites' URLs) and ANYTHINGLLM_STORAGE (its socket, the .env).
+EnvironmentFile=@REPO@/host.env
+
+[Service]
+# podman won't bind-mount a folder that isn't there.
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/sites-runner-ctr %h/.local/share/everythingllm/pages/entries %h/.local/share/everythingllm/pages/public @ANYTHINGLLM_STORAGE@/everythingllm/sites @ANYTHINGLLM_STORAGE@/everythingllm/sandbox
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

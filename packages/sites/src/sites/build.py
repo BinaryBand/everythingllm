@@ -27,6 +27,22 @@ other.
 
 sites-runner builds a site after every write or delete; `uv run hostctl deploy` builds
 them all through the `sites-build` command, with host paths in the environment.
+
+sites-runner runs in a container (README, "Service containers") that has neither zola nor
+`unshare`, so there the sandbox builds every site. With SITES_SANDBOX_ONLY=1, a site whose
+zola.toml names no theme_from is refused with a BuildError that says so, rather than built
+without a zola or without its namespace. Every repo site names one; a test holds them to it.
+
+Config (environment):
+  SITES_SOURCE        repo directory holding one Zola site per subdirectory (default this
+                      repo's packages/sites/zola/sites)
+  SITES_CONTENT       the entries (default <data dir>/pages/entries)
+  SITES_OUTPUT        the pages site's root (default <data dir>/pages/public)
+  ZOLA                the zola binary (default /usr/local/bin/zola)
+  SITES_SANDBOX_ONLY  1: build nothing here, only through the sandbox (sites-runner's
+                      container sets it)
+  SANDBOX_SOCKET      the sandbox runner's socket (default
+                      <storage>/everythingllm/sandbox/runner.sock)
 """
 
 import argparse
@@ -111,6 +127,7 @@ class Builder:
     remote: Callable[[str], Path] | None = (
         None  # builds theme_from sites; see the docstring
     )
+    sandbox_only: bool = False  # no zola here: refuse what `remote` can't build
 
     @classmethod
     def from_env(cls) -> "Builder":
@@ -127,6 +144,7 @@ class Builder:
             output=Path(get("SITES_OUTPUT", hostrpc.site_dir())),
             zola=get("ZOLA", "/usr/local/bin/zola"),
             remote=sandbox_build,
+            sandbox_only=get("SITES_SANDBOX_ONLY") == "1",
         )
 
     def theme_from(self, name: str) -> str | None:
@@ -242,6 +260,12 @@ class Builder:
             raise BuildError(
                 f"{name} takes its theme from {origin}'s shared folder, so only the "
                 "sandbox may build it"
+            )
+        elif self.sandbox_only:
+            raise BuildError(
+                f"{name} can't be built here: its zola.toml names no [extra.build] "
+                "theme_from, and this builder has no zola of its own, only the sandbox "
+                '(SITES_SANDBOX_ONLY, as in sites-runner\'s container); add theme_from = "system"'
             )
         else:
             with tempfile.TemporaryDirectory(prefix=f"zola-{name}-") as tmp:

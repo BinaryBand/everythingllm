@@ -13,6 +13,10 @@ repo's path and @KEY@ with KEY from host.env:
            A change to comments alone restarts nothing. Either waits while it's a guarded
            runner with a run going (run_guard), and a container also while its local
            image or its network isn't there yet (its app's setup makes them).
+           A host unit this installed that a container template now replaces
+           (~/.config/systemd/user/<x>.service beside host/quadlet/<x>.container.in) is
+           disabled, saved with the rest and removed, since systemd would prefer it to
+           Quadlet's <x>.service; the restart then starts the container in its place.
 
 Standard library only, like the rest of hostctl.
 """
@@ -38,6 +42,7 @@ ROOT = Path(__file__).resolve().parents[4]
 
 BACKUPS = run_guard.DATA / "backups"  # outside the repo, which the container mounts
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
+RENDERED = "# Rendered by `uv run hostctl units`"  # how every unit we install starts
 
 
 @dataclass
@@ -126,7 +131,7 @@ def rendered(template: Path, values: dict[str, str], root: Path = ROOT) -> str:
     """The unit from `template`, under a header that says where it came from."""
     where = template.relative_to(root / "host")
     return (
-        f"# Rendered by `uv run hostctl units` from {where} in the EverythingLLM repo, with this\n"
+        f"{RENDERED} from {where} in the EverythingLLM repo, with this\n"
         "# machine's host.env filled in. Edit the template and run it again, not this copy.\n"
         + render(template.read_text(), values)
     )
@@ -174,6 +179,39 @@ def planned(
             )
         )
     return units
+
+
+def superseded(user: Path, root: Path = ROOT) -> tuple[list[Path], list[Path]]:
+    """Host units in `user` that a container template now replaces: <x>.service for each
+    host/quadlet/<x>.container.in. systemd prefers a unit in ~/.config/systemd/user to the
+    one Quadlet generates under the same name, so while it's there the container never
+    runs. Returns (ours, others): ours were rendered here (or linked into the repo, the old
+    way) and are retired; another's is only pointed out."""
+    ours, others = [], []
+    for t in sorted((root / "host" / "quadlet").glob("*.container.in")):
+        old = user / (t.name.removesuffix(".container.in") + ".service")
+        if old.is_symlink() or (old.is_file() and old.read_text().startswith(RENDERED)):
+            ours.append(old)
+        elif old.exists():
+            others.append(old)
+    return ours, others
+
+
+def retire(old: list[Path], backup: Path) -> list[str]:
+    """Disable and remove host units a container replaces (superseded), saving each to
+    `backup`; returns their services, for the caller to restart after a daemon-reload: that
+    stops the host unit's process and starts the container under the same name."""
+    services = []
+    for unit in old:
+        subprocess.run(["systemctl", "--user", "disable", unit.name], check=False)
+        if not unit.is_symlink():
+            saved = backup / unit.parent.name / unit.name
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            saved.write_text(unit.read_text())
+        unit.unlink()
+        print(f"retired {unit}: its container replaces it")
+        services.append(unit.name)
+    return services
 
 
 def meaning(text: str) -> list[str]:
@@ -303,6 +341,11 @@ def main(argv: list[str] | None = None) -> None:
     user = Path(os.environ.get("UNITS_USER_DIR", "~/.config/systemd/user")).expanduser()
     values = {"REPO": str(ROOT), **host_settings(ROOT / "host.env")}
     todo = changed(planned(values, containers, user))
+    old, others = superseded(user)
+    for unit in others:
+        print(
+            f"units: {unit} isn't one of ours, but hides its container's unit; remove it"
+        )
 
     if args.action == "diff":
         for unit in todo:
@@ -314,11 +357,13 @@ def main(argv: list[str] | None = None) -> None:
                     f"repo/{unit.source.relative_to(ROOT)}",
                 )
             )
-        if not todo:
+        for unit in old:
+            print(f"units: would retire {unit}: a container replaces it")
+        if not (todo or old):
             print("units: installed units match the repo")
         return
 
-    if not todo:
+    if not (todo or old):
         print("units: nothing to install")
         return
     if (
@@ -329,6 +374,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S") / "units"
     restart = install(todo, backup)
+    # A host unit that became a container: the restart below swaps one for the other.
+    restart = [s for s in retire(old, backup) if s not in restart] + restart
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
     for service in hold_back(restart, todo):
         subprocess.run(["systemctl", "--user", "restart", service], check=True)

@@ -131,6 +131,49 @@ def test_a_changed_host_unit_restarts_only_if_running_and_containers_go_first(
     assert restart == ["c.service", "on.service"]
 
 
+def test_a_host_unit_a_container_replaces_is_retired(tmp_path, monkeypatch, capsys):
+    """sites-runner.service was a host unit; now Quadlet makes one of that name from
+    sites-runner.container, and systemd would prefer the old one in the user folder."""
+    user, repo = tmp_path / "user", tmp_path / "repo.service"
+    user.mkdir()
+    root = tmp_path / "root"
+    (root / "host" / "quadlet").mkdir(parents=True)
+    for name in ("anythingllm", "egress-proxy", "sites-runner"):
+        (root / "host" / "quadlet" / f"{name}.container.in").write_text("[Container]\n")
+    rendered = units.rendered(
+        ROOT / "host" / "systemd" / "gateway.service",
+        {"REPO": "/repo", **units.host_settings(ROOT / "host.env.example")},
+    )
+    (user / "sites-runner.service").write_text(rendered)  # ours: retired
+    (user / "gateway.service").write_text(rendered)  # still a host unit: kept
+    repo.write_text("[Service]\n")
+    (user / "egress-proxy.service").symlink_to(repo)  # linked, the old way: ours
+    (user / "anythingllm.service").write_text("[Service]\n")  # someone else's
+    ours, others = units.superseded(user, root)
+    assert ours == [user / "egress-proxy.service", user / "sites-runner.service"]
+    assert others == [user / "anythingllm.service"]
+
+    ran = []
+    monkeypatch.setattr(units.subprocess, "run", lambda cmd, **kw: ran.append(cmd))
+    assert units.retire(ours, tmp_path / "backup") == [
+        "egress-proxy.service",
+        "sites-runner.service",
+    ]
+    assert ran == [
+        ["systemctl", "--user", "disable", "egress-proxy.service"],
+        ["systemctl", "--user", "disable", "sites-runner.service"],
+    ]
+    assert sorted(p.name for p in user.iterdir()) == [
+        "anythingllm.service",
+        "gateway.service",
+    ]
+    assert repo.read_text() == "[Service]\n"  # a link goes, not what it points to
+    assert (tmp_path / "backup" / "user" / "sites-runner.service").read_text() == (
+        rendered
+    )
+    assert "retired" in capsys.readouterr().out
+
+
 def test_machine_check_wants_host_env(tmp_path, monkeypatch):
     monkeypatch.setattr(machine, "ROOT", tmp_path)
     assert machine.check() == [

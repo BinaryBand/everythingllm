@@ -1,8 +1,8 @@
 # Plan: per-workspace sharing and publishing, shared themes, and sites the agent designs
 
 Status: all stages done 2026-10-06. News, research and status are built in the sandbox
-with `theme_from = "system"`; none uses a workspace's theme yet, so Decision 2 (pinning) is
-still open and matters only once one does. As built, the switch is `[extra.build]
+with `theme_from = "system"`; none uses a workspace's theme yet. Decision 2 is settled
+(system sites pin a workspace theme; not built until one does). As built, the switch is `[extra.build]
 theme_from` in each site's repo `zola.toml`, the same setting `build-site` reads, rather
 than a separate setting. Replaces an earlier draft
 built on one global `/shared` with a manifest of write zones (see "Rejected").
@@ -126,7 +126,8 @@ workspace's `/shared`.
      hosts)
 5. **A system site's look depending on a workspace.** Once a system site uses a
    workspace's theme, that workspace's later edits change the system site at its next
-   build. The choice is made in the repo (see stage 3), and Decision 2 covers pinning.
+   build. The choice is made in the repo (see stage 3), and Decision 2 settles it: a
+   system site builds from a pinned snapshot, never the workspace's live folder.
 
 ## The build
 
@@ -224,9 +225,28 @@ Each stage lands on its own and leaves everything working.
 
 1. **Who owns the lab** once it leaves the global `/shared`. `education` is the default
    here.
-2. **Pinning a system site's theme.** Either it follows the workspace's theme as it
-   changes, or the setting names a snapshot (copied into the repo, or a git commit of the
-   theme) so a workspace's later edits don't restyle the news site by surprise.
+2. **Pinning a system site's theme.** Settled 2026-10-06: a system site pins; a workspace's
+   own sites (the lab, anything `build-site` builds) follow its theme as it changes.
+   Not built yet, since no system site uses a workspace theme; it lands with the first one.
+   - **Why pin.** A theme is Zola templates, so it decides what a page says, not only how
+     it looks; the CSP stops scripts, not a template that drops items from the status page
+     or adds its own words to the edition. Following would put whatever lands in a
+     workspace's `/shared/<ws>/themes` (prompt injections included) on a system site
+     unreviewed, at the next entry write rather than when anyone is watching, and a broken
+     edit would make the edition's and the audit's writes fail and be undone. A pin keeps
+     the repo the record of what's live.
+   - **How.** `zola.toml` names the version beside the source:
+
+         [extra.build]
+         theme_from = "education"
+         theme_pin = "sha256:…"
+
+     `make pin-theme site=<name>` copies the workspace's theme into a snapshot store only
+     the host writes (`sandbox/theme-snapshots/<hash>/`) and writes the hash into
+     `zola.toml` to review and commit. Builds mount that snapshot read-only in place of
+     `/shared`; a missing snapshot, or `theme_from` naming a workspace with no `theme_pin`,
+     is refused. Rolling back is reverting the commit, so snapshots stay while any commit
+     names them.
 3. **Gateway clients** (see `proposals/gateway-and-containers.md`). They'd get a workspace
    folder set of their own (`client-<name>`), so they could share through `/shared` too.
 

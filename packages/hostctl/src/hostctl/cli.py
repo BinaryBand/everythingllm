@@ -22,7 +22,7 @@ from collections.abc import Callable
 import apps  # the registry's reader, standard library only
 import tomllib
 
-from hostctl import appctl, machine, units
+from hostctl import appctl, gateway_env, machine, units
 
 ROOT = units.ROOT
 SERVICE = "anythingllm.service"
@@ -249,6 +249,14 @@ def app_logs(app: str) -> None:
 )
 def serve_setup() -> None:
     appctl.main(["serve"])
+
+
+@command(
+    "gateway-client",
+    "give an MCP gateway client a token (kept if it has one) and print its `claude mcp add` command: gateway-client <name>",
+)
+def gateway_client(name: str) -> None:
+    gateway_env.add_client(name)
 
 
 @command(

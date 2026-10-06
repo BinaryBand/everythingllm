@@ -5,8 +5,10 @@ through `tailscale serve` (https). See the README's "MCP gateway".
 Its tools are the fronts' own, in groups a client is granted (gateway.grants, grants.toml):
 each front's read tools (its `tool.registered`, so the same schemas and docstrings
 AnythingLLM sees) as `<front>`, its skills (the ops that write or act, signatures as its
-tools are) as `<front>:write`, and the fronts declared in the gateway (gateway.agents), whose
-tools are named with their PREFIX. Each call goes to its runner's socket as the host sees it.
+tools are) as `<front>:write`, and the fronts declared in the gateway (gateway.agents,
+gateway.research, gateway.sandbox), whose tools are named with their PREFIX. Each call goes
+to its runner's socket as the host sees it. The sandbox's tools take the client's scope
+from its name (grants.client), never from the model.
 
 Every path but /health needs `Authorization: Bearer <token>`, one token per client. A client
 sees and calls only the tools it's granted, and each call is logged with the client's name
@@ -15,7 +17,8 @@ and the tool's, never its arguments.
 Config (environment; the unit reads host.env, then ~/.config/everythingllm/gateway.env,
 which holds the tokens, outside the repo and the AnythingLLM container's reach):
   GATEWAY_TOKEN_<NAME>    a client's token; the client is <name>, lowercase, _ as -
-                          (at least one; its tools are in grants.toml)
+                          (at least one; its tools are in grants.toml); <NAME> is at
+                          most 63 letters, digits and _ (`uv run hostctl gateway-client`)
   PUBLIC_HOST             the tailnet name, whose Host header is allowed (from host.env)
   GATEWAY_HOST, GATEWAY_PORT  where to listen (default 127.0.0.1:8452; tailnet https is
                           the same port)
@@ -26,6 +29,7 @@ which holds the tokens, outside the repo and the AnythingLLM container's reach):
 import hmac
 import logging
 import os
+import re
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -42,18 +46,19 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from gateway import agents, grants
+from gateway import agents, grants, research, sandbox
 from gateway.grants import CLIENT_KEY
 
 log = logging.getLogger("gateway")
 
 # Each front's read tools are the group named after it (its skills' folder), its skills
 # `<that>:write`. A front declared in the gateway names its tools with its PREFIX.
-FRONTS = (sites.server, podcasts.server, audit.server, agents)
-# Groups a grant may name already, whose tools come with a later stage of the gateway.
-LATER = ("research", "sandbox")
+FRONTS = (sites.server, podcasts.server, audit.server, agents, research, sandbox)
 
 TOKEN_PREFIX = "GATEWAY_TOKEN_"
+# A client's name: it names the client's sandbox workspace too (gateway.sandbox), so it
+# fits a sandbox key, and it reads the same as a GATEWAY_TOKEN_<NAME> suffix.
+CLIENT_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 @dataclass
@@ -74,6 +79,12 @@ class Config:
         if not clients:
             raise SystemExit(
                 f"gateway: set a {TOKEN_PREFIX}<NAME> in ~/.config/everythingllm/gateway.env"
+            )
+        bad = sorted(name for name in clients if not CLIENT_RE.fullmatch(name))
+        if bad:
+            raise SystemExit(
+                f"gateway: bad client name(s) {bad} in gateway.env: a {TOKEN_PREFIX}<NAME>'s "
+                "name is at most 63 letters, digits and _, not starting or ending with _"
             )
         return cls(
             clients=clients,
@@ -134,7 +145,7 @@ def write_tools(front) -> list:
 def tool_groups() -> dict[str, dict[str, Callable]]:
     """Every group a client may be granted: group -> {tool name -> function}. Two fronts
     with a tool of the same name stop the gateway from starting."""
-    groups: dict[str, dict[str, Callable]] = {name: {} for name in LATER}
+    groups: dict[str, dict[str, Callable]] = {}
     owner: dict[str, str] = {}
     for front in FRONTS:
         group = front.skills.folder
@@ -172,8 +183,9 @@ def build_mcp(
         "everythingllm",
         instructions=(
             "EverythingLLM's runners: the sites' entries and the news feeds, the "
-            "podcasts, the system audit's checks, and delegations to AnythingLLM's own "
-            "agents. A client has the tools it was granted."
+            "podcasts, the system audit's checks, delegations to AnythingLLM's own "
+            "agents, deep research runs and a code sandbox of the client's own. A client "
+            "has the tools it was granted."
         ),
         middleware=[grants.Grants(allowed)],
     )

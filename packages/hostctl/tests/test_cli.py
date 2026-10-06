@@ -9,7 +9,8 @@ from hostctl import cli
 
 # The commands that aren't per app.
 TARGETS = """install units diff deploy skills skills-check restart logs status health test
-test-skills mcp-sync apps serve-setup sandbox-images service-images sites-build""".split()
+test-skills mcp-sync apps serve-setup gateway-client sandbox-images service-images
+sites-build""".split()
 
 
 @pytest.fixture
@@ -102,6 +103,15 @@ def test_import_takes_a_name_and_needs_one(ran):
     assert ran == ["sync import-job Daily News Page"]
     with pytest.raises(SystemExit, match="import-job"):
         cli.main(["import-job"])
+
+
+def test_gateway_client_takes_the_clients_name(ran, monkeypatch):
+    added = []
+    monkeypatch.setattr(cli.gateway_env, "add_client", added.append)
+    cli.main(["gateway-client", "laptop"])
+    assert added == ["laptop"] and ran == []
+    with pytest.raises(SystemExit, match="gateway-client <name>"):
+        cli.main(["gateway-client"])
 
 
 def test_test_runs_without_host_env(ran, monkeypatch):

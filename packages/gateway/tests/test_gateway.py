@@ -10,9 +10,15 @@ import audit.server
 import hostrpc
 import podcasts.server
 import pytest
+import research.job
+import sandbox.runner
 import sites.server
 from gateway import app, grants
+from gateway import research as gateway_research
+from gateway import sandbox as gateway_sandbox
 from gateway.app import Config, create_app
+from hostctl import gateway_env
+from mcp.server.mcpserver.exceptions import ToolError
 from starlette.testclient import TestClient
 
 TOKEN = "s3cret-token"
@@ -89,14 +95,23 @@ FRONTS = (sites.server, podcasts.server, audit.server)
 READS = {fn.__name__ for front in FRONTS for fn in front.tool.registered}
 WRITES = {fn.__name__ for front in FRONTS for fn in front.skills}
 AGENTS = {"agents_delegate", "agents_wait", "agents_runs", "agents_cancel"}
+RESEARCH = {"research_start", "research_wait", "research_runs"}
+SANDBOX = {
+    "sandbox_run",
+    "sandbox_wait",
+    "sandbox_write",
+    "sandbox_publish",
+    "sandbox_build_site",
+}
 
 
-def test_claude_code_has_the_fronts_tools_their_skills_and_the_agents_ops(client):
+def test_claude_code_has_the_fronts_tools_their_skills_and_the_gateways_own(client):
     assert {"list_sites", "list_podcasts", "run_checks"} <= READS
     assert {"write_entry", "delete_entry", "add_podcast", "publish_report"} <= WRITES
     names = tool_names(client)
-    assert names == READS | WRITES | AGENTS
-    assert not {"delegate", "wait", "runs", "cancel"} & names  # prefixed instead
+    assert names == READS | WRITES | AGENTS | RESEARCH | SANDBOX
+    # prefixed instead
+    assert not {"delegate", "wait", "runs", "cancel", "start", "run"} & names
 
 
 def test_the_groups_are_the_fronts_reads_and_skills_and_the_gateways_own():
@@ -115,7 +130,8 @@ def test_the_groups_are_the_fronts_reads_and_skills_and_the_gateways_own():
     assert set(groups["sites"]) == {f.__name__ for f in sites.server.tool.registered}
     assert set(groups["sites:write"]) == {"write_entry", "delete_entry"}
     assert set(groups["agents"]) == AGENTS
-    assert groups["research"] == groups["sandbox"] == {}  # their tools come later
+    assert set(groups["research"]) == RESEARCH
+    assert set(groups["sandbox"]) == SANDBOX
 
 
 def test_the_repos_grants_give_claude_code_every_group():
@@ -337,3 +353,243 @@ def test_no_token_no_gateway(monkeypatch):
             monkeypatch.delenv(k)
     with pytest.raises(SystemExit, match="GATEWAY_TOKEN_"):
         Config.from_env()
+
+
+def test_config_refuses_a_client_name_the_sandbox_cant_take(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("GATEWAY_TOKEN_"):
+            monkeypatch.delenv(k)
+    monkeypatch.setenv("GATEWAY_TOKEN_CLAUDE_CODE", "a")
+    monkeypatch.setenv("GATEWAY_TOKEN_BAD.NAME", "b")
+    monkeypatch.setenv("GATEWAY_TOKEN__EDGE", "c")
+    with pytest.raises(SystemExit, match=r"\['-edge', 'bad\.name'\]"):
+        Config.from_env()
+
+
+def test_gateway_client_makes_the_names_and_keys_the_gateway_reads(monkeypatch):
+    assert gateway_env.NAME_RE.pattern == app.CLIENT_RE.pattern
+    for k in list(os.environ):
+        if k.startswith("GATEWAY_TOKEN_"):
+            monkeypatch.delenv(k)
+    monkeypatch.setenv(gateway_env.key("pi-2"), "t")
+    assert Config.from_env().clients == {"pi-2": "t"}
+
+
+# --- the sandbox, in the client's own workspace ---
+
+
+class FakeSandbox(hostrpc.Service):
+    """Records each op with its args; a run is still going for `waits` waits."""
+
+    def __init__(self, waits=0):
+        super().__init__()
+        self.calls = []
+        self.waits = waits
+
+    async def reply(self, msg):
+        self.calls.append((msg["op"], msg["args"]))
+        return await super().reply(msg)
+
+    async def op_run(self, scope, language, code, timeout):
+        return {"run_id": "r-1", "running": True, "seconds": 45.0}
+
+    async def op_build_site(self, scope, path, slug):
+        return {"run_id": "r-2", "running": True, "seconds": 45.0}
+
+    async def op_wait(self, scope, run_id):
+        if self.waits:
+            self.waits -= 1
+            return {"run_id": run_id, "running": True, "seconds": 90.0}
+        return {"run_id": run_id, "exit_code": 0, "stdout": "hi\n"}
+
+    async def op_write(self, scope, path, content, delete):
+        return {"path": path, "bytes": len(content)}
+
+    async def op_publish(self, scope, slug, path, remove):
+        return {"site": f"https://ws.example/{scope['workspace']}/", "pages": []}
+
+
+@contextmanager
+def sandbox_runner(monkeypatch, service):
+    with fake_runner(monkeypatch, "SANDBOX_SOCKET", service):
+        yield service
+
+
+def call_tool(c, name, arguments, headers=MCP_HEADERS):
+    reply = rpc(c, "tools/call", {"name": name, "arguments": arguments}, headers)
+    assert not reply["result"].get("isError"), reply
+    return json.loads(text_of(reply))
+
+
+ME = {"workspace": "client-claude-code", "thread": "gateway"}
+
+
+def test_each_sandbox_tool_sends_the_clients_own_scope(client, monkeypatch):
+    with sandbox_runner(monkeypatch, FakeSandbox()) as fake:
+        call_tool(client, "sandbox_write", {"path": "/work/a.txt", "content": "hi"})
+        call_tool(client, "sandbox_publish", {})
+        call_tool(client, "sandbox_wait", {"run_id": "r-9"})
+        call_tool(client, "sandbox_run", {"language": "python", "code": "print(1)"})
+        call_tool(client, "sandbox_build_site", {"path": "/project/site"})
+    assert fake.calls == [
+        (
+            "write",
+            {"path": "/work/a.txt", "content": "hi", "delete": False, "scope": ME},
+        ),
+        ("publish", {"slug": "", "path": "", "remove": False, "scope": ME}),
+        ("wait", {"run_id": "r-9", "scope": ME}),
+        (
+            "run",
+            {"language": "python", "code": "print(1)", "timeout": 60, "scope": ME},
+        ),
+        ("wait", {"run_id": "r-1", "scope": ME}),
+        ("build_site", {"path": "/project/site", "slug": "", "scope": ME}),
+        ("wait", {"run_id": "r-2", "scope": ME}),
+    ]
+
+
+def test_the_model_cant_give_a_scope(client, monkeypatch):
+    evil = {"workspace": "someone-else", "thread": "default"}
+    arguments = {"path": "x", "content": "", "scope": evil}
+    with sandbox_runner(monkeypatch, FakeSandbox()) as fake:
+        post(client, "tools/call", {"name": "sandbox_write", "arguments": arguments})
+    assert fake.calls and all(args["scope"] == ME for _, args in fake.calls)
+
+
+def test_each_client_has_a_sandbox_workspace_of_its_own(monkeypatch):
+    config = Config(clients={"claude-code": TOKEN, "other": "another-token"})
+    granted = {"claude-code": ["sandbox"], "other": ["sandbox"]}
+    with (
+        sandbox_runner(monkeypatch, FakeSandbox()) as fake,
+        TestClient(create_app(config, granted), base_url=BASE) as c,
+    ):
+        mine = call_tool(c, "sandbox_publish", {})
+        theirs = call_tool(c, "sandbox_publish", {}, headers=OTHER)
+    assert mine["site"] == "https://ws.example/client-claude-code/"
+    assert theirs["site"] == "https://ws.example/client-other/"
+    assert [args["scope"]["workspace"] for _, args in fake.calls] == [
+        "client-claude-code",
+        "client-other",
+    ]
+
+
+def test_a_run_still_going_is_waited_on_while_the_budget_lasts(client, monkeypatch):
+    with sandbox_runner(monkeypatch, FakeSandbox(waits=2)) as fake:
+        result = call_tool(client, "sandbox_run", {"language": "bash", "code": "ls"})
+    assert result == {"run_id": "r-1", "exit_code": 0, "stdout": "hi\n"}
+    assert [op for op, _ in fake.calls] == ["run", "wait", "wait", "wait"]
+
+
+def test_a_run_past_the_budget_answers_running(client, monkeypatch):
+    # The real runner answers a run after its full WAIT, so another wouldn't fit.
+    monkeypatch.setattr(gateway_sandbox, "BUDGET", gateway_sandbox.RUNNER_WAIT - 1)
+    with sandbox_runner(monkeypatch, FakeSandbox()) as fake:
+        result = call_tool(client, "sandbox_run", {"language": "bash", "code": "ls"})
+    assert result == {"run_id": "r-1", "running": True, "seconds": 45.0}
+    assert [op for op, _ in fake.calls] == ["run"]
+
+
+def test_the_waits_fit_the_callers_timeout():
+    assert gateway_sandbox.RUNNER_WAIT < gateway_sandbox.BUDGET <= hostrpc.CALL_TIMEOUT
+
+
+@pytest.mark.parametrize("name", [None, "", "Bad Name", "x" * 94])
+def test_a_client_name_that_isnt_a_sandbox_key_gets_no_scope(name):
+    token = grants.client.set(name)
+    try:
+        with pytest.raises(ToolError, match="lowercase letters, digits"):
+            gateway_sandbox.scope()
+    finally:
+        grants.client.reset(token)
+
+
+def test_the_gateways_copies_of_the_sandboxs_limits_match_it():
+    assert gateway_sandbox.KEY_RE.pattern == sandbox.runner.KEY_RE.pattern
+    assert gateway_sandbox.RUNNER_WAIT == sandbox.runner.WAIT
+    assert gateway_sandbox.LIMIT == sandbox.runner.LIMIT
+    # The longest client name the gateway takes still makes a sandbox key.
+    longest = "a" * 63
+    assert app.CLIENT_RE.fullmatch(longest) and not app.CLIENT_RE.fullmatch(
+        longest + "a"
+    )
+    assert sandbox.runner.KEY_RE.fullmatch(gateway_sandbox.WORKSPACE + longest)
+
+
+def test_a_write_lands_in_the_clients_folder_on_the_real_runner(
+    client, monkeypatch, tmp_path
+):
+    config = sandbox.runner.Config(
+        socket=tmp_path / "unused.sock",
+        root=tmp_path / "workspaces",
+        system_themes=tmp_path / "themes",
+        site_dir=tmp_path / "site",
+        site_url="https://pages.example/",
+        public_root=tmp_path / "public",
+        public_url="https://ws.example/",
+    )
+    with fake_runner(monkeypatch, "SANDBOX_SOCKET", sandbox.runner.Runner(config)):
+        result = call_tool(
+            client, "sandbox_write", {"path": "/project/notes.md", "content": "hello"}
+        )
+        reply = rpc(
+            client,
+            "tools/call",
+            {"name": "sandbox_write", "arguments": {"path": "/shared/other/x"}},
+        )
+    assert result == {"path": "/project/notes.md", "bytes": 5}
+    home = tmp_path / "workspaces" / "client-claude-code"
+    assert (home / "project" / "notes.md").read_text() == "hello"
+    assert (home / "threads" / "gateway").is_dir()
+    assert reply["result"]["isError"]
+    assert "other's shared folder, which is read-only" in text_of(reply)
+
+
+# --- research, without a workspace ---
+
+
+class FakeResearch(hostrpc.Service):
+    def __init__(self):
+        super().__init__()
+        self.started = []
+
+    async def op_start(self, question, **args):
+        self.started.append(research.job.Request.of(question, **args))
+        return {"run_id": "dr-1", "queued": 0, "card": ""}
+
+    async def op_wait(self, run_id, since=0):
+        return {"events": [f"{run_id} from {since}"], "done": False, "result": None}
+
+    async def op_runs(self):
+        return {"runs": [{"run_id": "dr-1", "question": "q", "done": False}]}
+
+
+def test_research_starts_a_run_with_no_workspace_to_embed_in(client, monkeypatch):
+    fake = FakeResearch()
+    with fake_runner(monkeypatch, "RESEARCH_SOCKET", fake):
+        started = call_tool(
+            client,
+            "research_start",
+            {
+                "question": "How do heat pumps fare in Nordic winters?",
+                "depth": "quick",
+                "sub_questions": ["Field data", {"goal": "Costs", "queries": ["x"]}],
+                "title": "Heat pumps up north",
+                "workspace": "someone-elses",  # not a parameter: never sent
+            },
+        )
+        waited = call_tool(client, "research_wait", {"run_id": "dr-1", "since": 3})
+        runs = call_tool(client, "research_runs", {})
+    assert started == {"run_id": "dr-1", "queued": 0, "card": ""}
+    [req] = fake.started
+    assert req.question == "How do heat pumps fare in Nordic winters?"
+    assert (req.depth, req.title) == ("quick", "Heat pumps up north")
+    assert req.sub_questions == ["Field data", {"goal": "Costs", "queries": ["x"]}]
+    assert req.workspace is None and req.workspace_name is None and not req.embed
+    assert req.planner == research.job.Request.planner  # the runner's own defaults
+    assert waited["events"] == ["dr-1 from 3"]
+    assert runs["runs"][0]["run_id"] == "dr-1"
+
+
+def test_the_research_tools_say_where_the_report_is_read():
+    doc = gateway_research.start.__doc__
+    assert 'get_entry(site="research", section="reports", slug)' in doc

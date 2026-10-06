@@ -841,3 +841,96 @@ def test_publish_copies_into_public_and_remove_deletes_from_it(cfg):
     }
     assert not (public(cfg, A) / "trip-plan").exists()
     assert not (cfg.site_dir / "trip-plan").exists()
+
+
+# --- site builds ---
+
+
+def built(m):
+    """What a successful build leaves in /out: a page, an asset and a planted symlink."""
+    out = m["/out"] / "site"
+    (out / "notes").mkdir(parents=True)
+    (out / "index.html").write_text("<title>Site</title><p>home</p>")
+    (out / "notes" / "index.html").write_text("<p>n</p>")
+    (out / "leak").symlink_to("/etc/passwd")
+
+
+def test_a_site_builds_without_network_into_public_and_goes_live(cfg):
+    r = make(cfg, effect=built)
+    go(r.op_write(A, "/project/sites/portfolio/zola.toml", 'theme = "agent-site"'))
+    res = go(r.op_build_site(A, "/project/sites/portfolio"))
+    assert res["slug"] == "portfolio" and res["files"] == 2
+    assert res["url"] == "https://pages.example/portfolio/"
+    assert [p["slug"] for p in res["published"]["live"]] == ["portfolio"]
+    assert sorted(os.listdir(public(cfg, A) / "portfolio")) == ["index.html", "notes"]
+    assert (cfg.site_dir / "portfolio" / "notes" / "index.html").exists()
+    args = r.podman.runs()[0][0]
+    assert args[args.index("--network") + 1] == "none" and "--dns" not in args
+    assert args[-4:] == [
+        "python",
+        "/sandbox/sitebuild.py",
+        "/project/sites/portfolio",
+        "https://pages.example/portfolio",
+    ]
+    m = mounts(args)
+    assert set(m) == {
+        "/work",
+        "/project",
+        "/shared/career",
+        "/system/themes",
+        "/out",
+        "/sandbox",
+    }
+    for a in args:
+        if a.endswith(
+            (":/work:ro,noexec,nosuid,nodev", ":/project:ro,noexec,nosuid,nodev")
+        ):
+            break
+    else:
+        raise AssertionError("the workspace's folders aren't mounted read-only")
+    assert not any(":/public" in a for a in args)
+    assert not any(cfg.scripts.iterdir())  # the run folder is gone
+
+
+def test_a_build_from_shared_takes_a_slug_and_another_workspaces_themes(cfg):
+    r = make(cfg, effect=built)
+    go(r.op_write(B, "/shared/home/themes/t/theme.toml", ""))
+    go(r.op_write(A, "/shared/career/sites/lab/zola.toml", 'theme = "t"'))
+    res = go(r.op_build_site(A, "/shared/career/sites/lab/", slug="my-lab"))
+    assert res["url"] == "https://pages.example/my-lab/"
+    assert (
+        f"{shared(cfg, B)}:/shared/home:ro,noexec,nosuid,nodev" in r.podman.runs()[0][0]
+    )
+
+
+def test_a_failed_build_publishes_nothing_and_says_why(cfg):
+    r = make(cfg, result=(1, "", "Error: Failed to render 'index.html'\n", False))
+    go(r.op_write(A, "/project/s/zola.toml", ""))
+    with pytest.raises(
+        runner.SandboxError, match="didn't build: Error: Failed to render"
+    ):
+        go(r.op_build_site(A, "/project/s"))
+    assert not (public(cfg, A) / "s").exists() and not (cfg.site_dir / "s").exists()
+    r = make(cfg, result=(137, "", "", True))
+    with pytest.raises(runner.SandboxError, match="took over"):
+        go(r.op_build_site(A, "/project/s"))
+    r = make(cfg)  # exits 0 but writes nothing
+    with pytest.raises(runner.SandboxError, match="produced no files"):
+        go(r.op_build_site(A, "/project/s"))
+
+
+def test_what_a_build_refuses(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/project/notasite/readme.md", "x"))
+    go(r.op_write(B, "/shared/home/s/zola.toml", ""))
+    go(r.op_write(A, "/public/p/zola.toml", ""))
+    for path, slug, why in [
+        ("/project/notasite", "", "no zola.toml"),
+        ("/shared/home/s", "", "home's shared folder, which is read-only"),
+        ("/public/p", "", "not from /public"),
+        ("/project/Bad_Name", "", "isn't a page name"),
+        ("/project/notasite", "x/y", "isn't a page name"),
+    ]:
+        with pytest.raises(runner.SandboxError, match=why):
+            go(r.op_build_site(A, path, slug))
+    assert r.podman.runs() == []

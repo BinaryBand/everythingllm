@@ -8,6 +8,7 @@ const path = require("path");
 const runCode = require("../../run-code/handler").runtime;
 const writeFile = require("../../write-file/handler").runtime;
 const publish = require("../../publish/handler").runtime;
+const buildSite = require("../../build-site/handler").runtime;
 
 // A fake sandbox-runner: answers each request with respond(op, args); an array of Buffers
 // is sent as separate chunks, a moment apart, and undefined means never.
@@ -168,6 +169,26 @@ test("what a sync published comes back with run-code, write-file and publish", a
       "deleted folder /public/old\ntaken down: the page 'old'"
     );
     assert.equal(await publish.handler.call(self, {}), "/public and the pages site already match; nothing to publish");
+  } finally {
+    await runner.close();
+  }
+});
+
+test("build-site sends the path and slug, waits out a long build and says what went live", async () => {
+  const runner = await fakeRunner((op) =>
+    op === "build_site"
+      ? { ok: true, result: { running: true, run_id: "r-9", seconds: 45 } }
+      : { ok: true, result: { slug: "lab", url: "https://h/lab/", files: 8, zola: "Done", published: { live: [{ slug: "lab", url: "https://h/lab/", files: 8, blocked: [] }] } } }
+  );
+  try {
+    const { self, lines } = agent();
+    assert.equal(
+      await buildSite.handler.call(self, { path: "/shared/career/sites/lab", slug: "lab" }),
+      "built 8 files into /public/lab\nlive: https://h/lab/ (8 files)"
+    );
+    assert.deepEqual(runner.requests[0].args, { scope: { workspace: "career", thread: "12" }, path: "/shared/career/sites/lab", slug: "lab" });
+    assert.deepEqual(runner.requests[1], { op: "wait", args: { scope: { workspace: "career", thread: "12" }, run_id: "r-9" } });
+    assert.match(lines[0], /Still building \(45 s\)/);
   } finally {
     await runner.close();
   }

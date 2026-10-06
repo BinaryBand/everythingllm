@@ -33,6 +33,12 @@ host/caddy/pages.Caddyfile) and a signature of the source, so an unchanged page 
 copied again. The site's root `index.html` lists every page and is rewritten after each
 change. A workspace's /public starts out holding the pages it had already published.
 
+A site build (op_build_site) runs the repo's sitebuild.py in a container with no network
+and every folder read-only but an empty /out: it copies a Zola site from the workspace's
+own folders, puts the theme it names in place (the repo's from /system/themes, or a
+workspace's from /shared/<it>/themes), and builds it. The runner copies the output into
+/public/<slug> (plain files only) and syncs, so a site goes live like any page.
+
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
                     this machine's storage directory and tailnet name, from host.env
@@ -99,6 +105,8 @@ REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/sandbox/src/sandbo
 MEMORY = "1g"
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
+BUILD_TIMEOUT = 60  # a site build, assembling included
+SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
 MAX_PARALLEL = 2
 OUTPUT_BYTES = 20_000  # per stream of a run
 WRITE_BYTES = 1_000_000  # op_write
@@ -755,25 +763,14 @@ class Runner(hostrpc.Service):
             else None,
         }
 
-    def prepare(
-        self, name: str, scope: Scope, run_dir: Path, script: str, code: str
-    ) -> list[str]:
-        """Write the run's script and return its podman arguments: the workspace's own
-        folders read-write, every other workspace's shared folder and the repo's themes
-        read-only."""
-        (run_dir / "code").mkdir(parents=True)
-        (run_dir / "code" / script).write_text(code)
-        # No --rm: the container is kept until execute has asked podman whether it ran out of memory.
+    def hardening(self, name: str) -> list[str]:
+        """Every sandbox container's podman arguments up to its network and mounts."""
         return [
             "run",
             "--name",
             name,
             "--label",
             LABEL,
-            "--network",
-            NETWORK,
-            "--dns",
-            "none",
             "--read-only",
             "--tmpfs",
             "/tmp:rw,size=256m,mode=1777",
@@ -791,6 +788,35 @@ class Runner(hostrpc.Service):
             "no-new-privileges",
             "--userns",
             "keep-id",
+        ]
+
+    def read_only_mounts(self, workspace: str) -> list[str]:
+        """Every other workspace's shared folder and the repo's themes, read-only."""
+        return [
+            *(
+                a
+                for other, folder in self.others_shared(workspace)
+                for a in ("-v", f"{folder}:/shared/{other}:{DATA_RO}")
+            ),
+            "-v",
+            f"{self.config.system_themes}:/system/themes:{DATA_RO}",
+        ]
+
+    def prepare(
+        self, name: str, scope: Scope, run_dir: Path, script: str, code: str
+    ) -> list[str]:
+        """Write the run's script and return its podman arguments: the workspace's own
+        folders read-write, every other workspace's shared folder and the repo's themes
+        read-only."""
+        (run_dir / "code").mkdir(parents=True)
+        (run_dir / "code" / script).write_text(code)
+        # No --rm: the container is kept until execute has asked podman whether it ran out of memory.
+        return [
+            *self.hardening(name),
+            "--network",
+            NETWORK,
+            "--dns",
+            "none",
             *(
                 a
                 for mount, root in scope.roots.items()
@@ -804,13 +830,112 @@ class Runner(hostrpc.Service):
                     ),
                 )
             ),
+            *self.read_only_mounts(scope.workspace),
+            "-v",
+            f"{run_dir / 'code'}:/sandbox:ro",
+            IMAGE,
+        ]
+
+    # --- site builds ---
+
+    async def op_build_site(
+        self, scope: dict[str, Any], path: str, slug: str = ""
+    ) -> dict[str, Any]:
+        """Build the Zola site in `path` (a folder in the workspace's own /project,
+        /shared/<workspace> or /work) into /public/<slug>, and publish it. The slug is the
+        folder's name unless given. A build that outlasts the call goes on, like a run."""
+        s = self.scope(scope)
+        mount, _, _ = self.split(s, path)
+        if mount == "/public":
+            raise SandboxError(
+                "build a site from its source in /project or /shared, not from /public"
+            )
+        slug = slug or Path(path.strip().rstrip("/")).name
+        if not SLUG_RE.fullmatch(slug):
+            raise SandboxError(
+                f"'{slug}' isn't a page name; give slug: 1-63 lowercase letters, digits "
+                "or hyphens"
+            )
+        self.idle(s.workspace)
+        self.prune()
+        run_id = f"r-{secrets.token_hex(4)}"
+        job = Job(
+            s.workspace,
+            asyncio.create_task(self.build(s, path.strip().rstrip("/"), slug)),
+            self.now(),
+        )
+        job.task.add_done_callback(lambda _: setattr(job, "finished", self.now()))
+        self._jobs[run_id] = job
+        return await self.wait(run_id, job)
+
+    async def build(self, scope: Scope, path: str, slug: str) -> dict[str, Any]:
+        """One site build, under the workspace's lock: the helper in a container with no
+        network, then the output copied into /public/<slug> and synced."""
+        name = f"sandbox-{secrets.token_hex(6)}"
+        run_dir = self.config.scripts / name
+        async with self.lock(scope.workspace):
+            usage = await asyncio.to_thread(snapshot, scope)
+            if usage.total > WORKSPACE_MAX_BYTES:
+                raise self.over_quota(usage, "build a site")
+            source = self.resolve(scope, path)
+            if not (source / "zola.toml").is_file():
+                raise SandboxError(
+                    f"'{path}' has no zola.toml, so it isn't a Zola site"
+                )
+            url = f"{self.config.site_url.rstrip('/')}/{slug}"
+            try:
+                args = await asyncio.to_thread(self.prepare_build, name, scope, run_dir)
+                async with self._runs:
+                    exit_code, out, err, timed_out = await self.podman(
+                        [*args, "python", "/sandbox/sitebuild.py", path, url],
+                        BUILD_TIMEOUT,
+                        name,
+                    )
+                if timed_out:
+                    raise SandboxError(
+                        f"the build took over {BUILD_TIMEOUT} s and was stopped"
+                    )
+                if exit_code != 0:
+                    raise SandboxError(
+                        f"the site didn't build: {(err or out).strip()[-2000:]}"
+                    )
+                files = await asyncio.to_thread(
+                    self.stage_files, scope, run_dir / "out" / "site", slug
+                )
+            finally:
+                await self.podman(["rm", "-f", "--ignore", name], 60, None)
+                await asyncio.to_thread(shutil.rmtree, run_dir, True)
+            published = await self.sync(scope)
+        log.info(
+            "built %s from %s for %s: %d files", slug, path, scope.workspace, files
+        )
+        return {
+            "slug": slug,
+            "url": f"{url}/",
+            "files": files,
+            "zola": out.strip()[-500:],
+            "published": published,
+        }
+
+    def prepare_build(self, name: str, scope: Scope, run_dir: Path) -> list[str]:
+        """A build container's podman arguments: no network, the workspace's own folders
+        (but /public) and everything else read-only, an empty /out, and the helper."""
+        (run_dir / "code").mkdir(parents=True)
+        (run_dir / "out").mkdir()
+        shutil.copyfile(SITEBUILD, run_dir / "code" / "sitebuild.py")
+        return [
+            *self.hardening(name),
+            "--network",
+            "none",
             *(
                 a
-                for name, folder in self.others_shared(scope.workspace)
-                for a in ("-v", f"{folder}:/shared/{name}:{DATA_RO}")
+                for mount, root in scope.roots.items()
+                if mount != "/public"
+                for a in ("-v", f"{root}:{mount}:{DATA_RO}")
             ),
+            *self.read_only_mounts(scope.workspace),
             "-v",
-            f"{self.config.system_themes}:/system/themes:{DATA_RO}",
+            f"{run_dir / 'out'}:/out:rw,noexec,nosuid,nodev",
             "-v",
             f"{run_dir / 'code'}:/sandbox:ro",
             IMAGE,
@@ -982,6 +1107,25 @@ class Runner(hostrpc.Service):
             raise SandboxError(
                 f"'{path}' is {size >> 20} MB; the most publish copies is {PUBLISH_MAX_BYTES >> 20} MB"
             )
+        self.put_public(scope, files, slug)
+
+    def stage_files(self, scope: Scope, source: Path, slug: str) -> int:
+        """A build's output into /public/<slug>: its plain files, within the page cap."""
+        files, size = regular_files(source) if source.is_dir() else ([], 0)
+        if not files:
+            raise SandboxError("the build produced no files")
+        if size > PUBLISH_MAX_BYTES:
+            raise SandboxError(
+                f"the built site is {size >> 20} MB; a page can be at most "
+                f"{PUBLISH_MAX_BYTES >> 20} MB"
+            )
+        self.put_public(scope, files, slug)
+        return len(files)
+
+    def put_public(
+        self, scope: Scope, files: list[tuple[Path, str]], slug: str
+    ) -> None:
+        """Copy plain files into /public/<slug>, in place of whatever was there for it."""
         public = scope.home / "public"
         new = Path(tempfile.mkdtemp(dir=public, prefix=f".{slug}."))
         try:

@@ -107,8 +107,8 @@ through its UI.
 - `anythingllm/agent-skills/<hubId>/` — custom agent skills (`plugin.json` + `handler.js`)
   - `deep-research/` — multi-source web research with GLM and DeepSeek, published to the
     `research` site; hands the work to `research-runner` on the host (see "Deep research")
-  - `run-code/`, `write-file/`, `publish/` — the code sandbox, run by `sandbox-runner` on
-    the host (see "Code sandbox")
+  - `run-code/`, `write-file/`, `publish/`, `build-site/` — the code sandbox, run by
+    `sandbox-runner` on the host (see "Code sandbox")
   - `_lib/` — what the skills share (no `plugin.json`, so AnythingLLM doesn't load it as
     a skill): `hostrpc.js`, the node side of `packages/hostrpc`, and `sandbox.js`
 - `anythingllm/mcp_servers.json` — deployed to `storage/plugins/anythingllm_mcp_servers.json`
@@ -141,7 +141,7 @@ through its UI.
     MCP server forwards to `audit-runner` on the host, which runs them
   - `packages/sandbox/` — not an MCP server: `sandbox-runner` runs the agent's Python and bash
     in throwaway podman containers on the host, with only PyPI on the network, and
-    publishes pages from them, for the `run-code`, `write-file` and `publish` skills (see
+    publishes pages from them, for the `run-code`, `write-file`, `publish` and `build-site` skills (see
     "Code sandbox" below)
   - `packages/podcasts/` — downloads podcast episodes, finds their ads, and serves them without
     those as private feeds on the pages site (see "Podcasts" below); the MCP server forwards
@@ -372,7 +372,7 @@ AnythingLLM's storage, so the container sees them without another mount.
 
 ## Code sandbox
 
-Three agent skills give the agent a small Linux machine to run code in, like the Claude
+Four agent skills give the agent a small Linux machine to run code in, like the Claude
 app's, and a way to publish what it makes:
 
 - `run-code` runs a Python or bash script and replies with its output. It waits for the
@@ -382,6 +382,8 @@ app's, and a way to publish what it makes:
   workspace's folders empties it).
 - `publish` forces a sync of `/public` (below), copying a file or folder there first when
   it's given one from elsewhere, or takes a page down.
+- `build-site` builds a Zola site from the workspace's folders into `/public/<slug>` and
+  puts it live (see "Building sites").
 
 **Pages are `/public`.** A workspace's `/public` is its pages on the web: each top-level
 folder `public/<slug>/` is served as `https://<PUBLIC_HOST>:8445/<slug>/` (its
@@ -449,10 +451,28 @@ different workspaces overlap. `docs/shared-sites.md` has the design.
 `zola.toml` and content, in education's `/shared/education/sites/lab/`, where other
 workspaces can read it and copy it. It started as a copy of the `agent-site` theme and a
 welcome entry, with a `README.md` for the agent and a git repository so it can roll back.
-The sandbox image has the host's zola version; a run in education builds it into
-`/public/lab` (`zola build --output-dir /public/lab --force`, no network as always), and the
-sync puts it at `https://<PUBLIC_HOST>:8445/lab/`. Nothing in the repo or on the host reads it, so it can
-break without breaking anything else, and the CSP still holds for whatever it serves.
+It's built with `build-site` (`path` `/shared/education/sites/lab`, slug `lab`), which
+puts it at `https://<PUBLIC_HOST>:8445/lab/`. Nothing in the repo or on the host reads it,
+so it can break without breaking anything else, and the CSP still holds for whatever it
+serves.
+
+**Building sites.** `build-site` (`op_build_site`) builds a Zola site from a folder in the
+workspace's own `/project`, `/shared/<workspace>` or `/work` (the folder's name is the
+slug unless one is given). The build runs `packages/sandbox/src/sandbox/sitebuild.py`,
+copied from the repo into the run's read-only `/sandbox`, so nothing in a workspace's
+folders can change what a build runs, in a container with no network at all and every
+folder read-only but an empty `/out`:
+- it copies the site to `/tmp`, leaving out `.git` and an old `public/`;
+- it puts the theme named in `zola.toml` in place: with `[extra.build] theme_from =
+  "system"` the repo's from `/system/themes`, with `theme_from = "<workspace>"` that
+  workspace's `/shared/<workspace>/themes/<theme>`, and without it the site's own
+  `themes/`;
+- it runs `zola build` with the base URL the runner passes in (`…:8445/<slug>`), so a site
+  can't point its links at another host, within 60 s.
+
+The runner copies the output into `/public/<slug>` (plain files only) and syncs, so a site
+goes live, comes down and is skipped exactly like any page; zola's error comes back if it
+doesn't build, and nothing changes then. A build waits like a run (`op_wait`).
 
 **Each run** gets a fresh `localhost/everythingllm-sandbox` container, with the script mounted
 read-only from a host-only folder at `/sandbox`:

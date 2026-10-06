@@ -73,7 +73,7 @@ is 3.13. Keep code 3.12-compatible, and check with
     `packages/podcasts` (`server.py`, `tools.py`) is the reference example; research and the
     sandbox keep state, so theirs are `Service` subclasses with `op_<name>` methods.
   - Skills speak the same protocol from node, through `anythingllm/agent-skills/_lib/hostrpc.js`:
-    `deep-research`, and the sandbox's `run-code`, `write-file` and `publish`.
+    `deep-research`, and the sandbox's `run-code`, `write-file`, `publish` and `build-site`.
   - AnythingLLM drops an MCP tool call after 60 s (skills have no limit), so an op answers within 45 s. Longer work keeps
     going in the service (the caller waits on a run id) or in its own systemd unit.
   - A front's package keeps its base dependencies to what the front imports, and puts the
@@ -117,7 +117,8 @@ is 3.13. Keep code 3.12-compatible, and check with
 - Templates, stylesheets, `zola.toml` and sections change only in the repo; the agent has
   no tool for them, and `make deploy` rebuilds the sites. The exception is the lab site, an
   experiment the agent owns whole in education's sandbox folder (`/shared/education/sites/lab/`)
-  and publishes itself.
+  and builds with `build-site`. Agent-written sites and themes are only ever built in a
+  sandbox container (`sandbox/sitebuild.py`), never by the host's zola.
 
 ## Conventions
 

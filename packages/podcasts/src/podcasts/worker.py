@@ -7,7 +7,9 @@ them through, their schedules and their heartbeats.
   state/queue/transcribe.json   a transcription pass now (podcasts-transcribe, by hand)
   state/queue/running-sync.json the sync the worker has taken and not finished: asked for
                                 again when the worker starts, so one cut short by a kill,
-                                an OOM or a crash runs again rather than being lost
+                                an OOM or a crash runs again rather than being lost (up to
+                                RESUMES times in a row, so one that kills the worker every
+                                time waits for the schedule instead)
   state/queue/<worker>.alive    touched every few seconds while the worker runs
   state/queue/<worker>.last     when its schedule last came due, so a slot missed while
                                 it wasn't running comes due as it starts (a timer's
@@ -33,6 +35,7 @@ SYNC_WORKER = "sync-worker"
 TRANSCRIBE_WORKER = "transcribe-worker"
 TRANSCRIBE = "transcribe"
 RUNNING = "running-sync"  # not sync-*, so never taken for a feed's request
+RESUMES = 2  # times in a row a sync that died with the worker is asked for again
 BEAT_SECONDS = 5  # how often a worker touches its heartbeat
 STALE_SECONDS = 60  # a heartbeat older than this: the worker isn't running
 POLL_SECONDS = 2  # how often an idle worker looks at the queue
@@ -48,11 +51,21 @@ class Queue:
     def _file(self, name: str) -> Path:
         return self.folder / f"{name}.json"
 
-    def ask(self, name: str) -> None:
-        """Leave the request `name` (sync-<slug>, transcribe) for a worker to take."""
+    def ask(self, name: str, tries: int = 0) -> None:
+        """Leave the request `name` (sync-<slug>, transcribe) for a worker to take;
+        `tries`, how many times in a row it died with the worker before."""
         self.folder.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().astimezone().isoformat(timespec="seconds")
-        atomic_write(self._file(name), json.dumps({"asked": stamp}) + "\n")
+        asked = {"asked": stamp, **({"tries": tries} if tries else {})}
+        atomic_write(self._file(name), json.dumps(asked) + "\n")
+
+    def tries(self, name: str) -> int:
+        """The request `name`'s `tries`, 0 for none (or a request that's gone)."""
+        try:
+            tries = json.loads(self._file(name).read_text()).get("tries", 0)
+        except (OSError, ValueError, AttributeError):
+            return 0
+        return tries if isinstance(tries, int) else 0
 
     def take(self, name: str) -> bool:
         """Take the request `name` if it's waiting."""
@@ -62,11 +75,11 @@ class Queue:
             return False
         return True
 
-    def ask_sync(self, target: str) -> None:
+    def ask_sync(self, target: str, tries: int = 0) -> None:
         """A sync of the feed `target`, or of every feed (ALL_FEEDS)."""
         if not TARGET_RE.fullmatch(target):
             raise ValueError(f"not a feed's slug: {target!r}")
-        self.ask(f"sync-{target}")
+        self.ask(f"sync-{target}", tries)
 
     def syncs(self) -> list[str]:
         """The syncs waiting, the longest-waiting first."""
@@ -85,30 +98,33 @@ class Queue:
         It's held (running-sync.json) before its request goes, until `done`."""
         waiting = self.syncs()
         if ALL_FEEDS in waiting:
-            self.hold(ALL_FEEDS)
+            self.hold(ALL_FEEDS, self.tries(f"sync-{ALL_FEEDS}"))
             for target in waiting:
                 self.take(f"sync-{target}")
             return ALL_FEEDS
         for target in waiting:
-            self.hold(target)
+            self.hold(target, self.tries(f"sync-{target}"))
             if self.take(f"sync-{target}"):
                 return target
         self.done()
         return None
 
-    def hold(self, target: str) -> None:
+    def hold(self, target: str, tries: int = 0) -> None:
         self.folder.mkdir(parents=True, exist_ok=True)
-        atomic_write(self._file(RUNNING), json.dumps({"target": target}) + "\n")
+        held = {"target": target, "tries": tries}
+        atomic_write(self._file(RUNNING), json.dumps(held) + "\n")
 
-    def held(self) -> str | None:
-        """The sync taken and not done, if one is: a worker that stopped mid-sync."""
+    def held(self) -> tuple[str, int] | None:
+        """The sync taken and not done, and how many times in a row it had died before,
+        if one is: a worker that stopped mid-sync."""
         try:
-            target = json.loads(self._file(RUNNING).read_text()).get("target", "")
+            held = json.loads(self._file(RUNNING).read_text())
+            target, tries = held.get("target", ""), held.get("tries", 0)
         except (OSError, ValueError, AttributeError):
             return None
-        return (
-            target if isinstance(target, str) and TARGET_RE.fullmatch(target) else None
-        )
+        if not (isinstance(target, str) and TARGET_RE.fullmatch(target)):
+            return None
+        return target, tries if isinstance(tries, int) else 0
 
     def done(self) -> None:
         """The held sync finished, or was asked for again."""

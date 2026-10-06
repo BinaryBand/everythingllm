@@ -910,7 +910,8 @@ a show found only in such an app has no public feed.
   `list_podcasts` says so meanwhile. A sync it has taken is held in
   `queue/running-sync.json` until it's done, so one the worker didn't live through (killed
   after the 60 s stop timeout, out of memory, a crash) is asked for again when it next
-  starts. Episodes downloaded but not yet looked at for ads stay out of the feed and are
+  starts, twice in a row at most: one that kills the worker every time waits for the next
+  scheduled sync instead of looping. Episodes downloaded but not yet looked at for ads stay out of the feed and are
   downloaded again then, as is one whose download was cut off, and a day later that cleans
   up what was left.
 - Our feed is built from scratch from the show's title, art and episode details, not

@@ -40,6 +40,7 @@ from podcasts.library import Library, LibraryError, _now, make_client
 from podcasts.worker import (
     ALL_FEEDS,
     POLL_SECONDS,
+    RESUMES,
     SYNC_WORKER,
     Every,
     Queue,
@@ -100,10 +101,19 @@ class SyncWorker:
         return ran
 
     def resume(self) -> None:
-        """Ask again for the sync a worker before this one took and didn't finish."""
-        if (target := self.queue.held()) is not None:
-            self.queue.ask_sync(target)
-            self.log(f"asked again for the sync of {target}, which didn't finish")
+        """Ask again for the sync a worker before this one took and didn't finish, unless
+        it has died with the worker RESUMES times in a row (one that runs it out of
+        memory every time): that one waits for the schedule."""
+        if (held := self.queue.held()) is not None:
+            target, tries = held
+            if tries < RESUMES:
+                self.queue.ask_sync(target, tries + 1)
+                self.log(f"asked again for the sync of {target}, which didn't finish")
+            else:
+                self.log(
+                    f"the sync of {target} didn't finish {tries + 1} times in a row; "
+                    "it waits for the next scheduled sync"
+                )
         self.queue.done()
 
     def sync(self, target: str) -> bool:

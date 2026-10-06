@@ -18,6 +18,7 @@ from podcasts.sync import SyncWorker
 from podcasts.transcripts import keep_transcribing
 from podcasts.worker import (
     ALL_FEEDS,
+    RESUMES,
     SYNC_WORKER,
     TRANSCRIBE_WORKER,
     Every,
@@ -223,13 +224,37 @@ def test_a_sync_the_worker_didnt_live_through_is_asked_for_again(lib):
     w.library = dies
     with pytest.raises(MemoryError):
         w.step()
-    assert lib.queue.syncs() == [] and lib.queue.held() == slug
+    assert lib.queue.syncs() == [] and lib.queue.held() == (slug, 0)
     again = Worker(lib, remote)
     again.resume()
     assert lib.queue.syncs() == [slug] and lib.queue.held() is None
     assert "didn't finish" in again.lines[-1]
     again.drain()
     assert lib.record(slug)["show"].episodes and lib.queue.held() is None
+
+
+def test_a_sync_that_kills_the_worker_every_time_waits_for_the_schedule(lib):
+    w = Worker(lib, Remote(feed(("a", "1"))))
+    w.every.ran(datetime.now().astimezone())
+
+    def dies() -> Library:
+        raise MemoryError
+
+    w.library = dies
+    lib.queue.ask_sync(ALL_FEEDS)
+    for _ in range(RESUMES):
+        with pytest.raises(MemoryError):
+            w.step()
+        w.resume()
+        assert lib.queue.syncs() == [ALL_FEEDS]
+    with pytest.raises(MemoryError):
+        w.step()
+    w.resume()
+    assert lib.queue.syncs() == [] and lib.queue.held() is None
+    assert "waits for the next scheduled sync" in w.lines[-1]
+    # A sync asked for anew starts counting again.
+    lib.queue.ask_sync(ALL_FEEDS)
+    assert lib.queue.take_sync() == ALL_FEEDS and lib.queue.held() == (ALL_FEEDS, 0)
 
 
 def test_the_worker_loop_stops_when_told(lib):

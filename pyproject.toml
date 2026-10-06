@@ -10,7 +10,9 @@ exclude = ["packages/.*", "packages/__pycache__"]
 [tool.uv.sources]
 apps = { workspace = true }
 audit = { workspace = true }
+browser = { workspace = true }
 chatimage = { workspace = true }
+egress = { workspace = true }
 hostctl = { workspace = true }
 hostrpc = { workspace = true }
 llm = { workspace = true }

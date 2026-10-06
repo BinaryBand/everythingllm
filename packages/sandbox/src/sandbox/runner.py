@@ -14,6 +14,10 @@ AnythingLLM pass as a scope of {workspace, thread} (never chosen by the model):
                    https://<host>:8447/<workspace>/ the moment they're written
   /system/themes   the repo's Zola themes, read-only
 
+Beside these, the workspace's folder holds its browser profile (browser/, packages/browser),
+which no run mounts and the size limit leaves out; the browser saves downloads in
+/project/downloads.
+
 The shared and system folders are mounted noexec and never on PATH: they're data, and code
 in another workspace's folder isn't to be run. A workspace's folders together (its shared
 folder too) are held to WORKSPACE_MAX_BYTES. The script itself is mounted read-only from a
@@ -142,6 +146,8 @@ WORKSPACE_WARN_BYTES = 4 << 30
 WORKSPACE_MAX_BYTES = 5 << 30  # no new runs or writes past this; deletes still work
 PUBLISH_MAX_BYTES = 500 << 20  # what publish or a build copies into /public at once
 THREAD_MAX_AGE = 7 * 24 * 3600
+# The workspace's browser profile, in its folder beside the sandbox's (packages/browser).
+BROWSER = "browser"
 LIST_MAX = 200  # files named in a run's changed list
 # A request answers within WAIT; a run that's still going carries on, and the skill waits
 # on it again with op_wait.
@@ -311,12 +317,23 @@ class Usage:
         return ", ".join(f"{k} {v >> 20} MB" for k, v in ranked)
 
 
+def walk(scope: Scope):
+    """os.walk of the workspace's folder and its /public, leaving out its browser profile
+    (browser-runner's, beside the sandbox's folders): no run sees it, and it isn't the
+    sandbox's to hold to the workspace's limit."""
+    for dirpath, dirnames, filenames in os.walk(scope.home):
+        if dirpath == str(scope.home) and BROWSER in dirnames:
+            dirnames.remove(BROWSER)
+        yield dirpath, dirnames, filenames
+    yield from os.walk(scope.public)
+
+
 def snapshot(scope: Scope) -> Usage:
     """Every visible file in the workspace's mounts by its path in the sandbox, and the size
     of the whole workspace (its other threads and its /public too). Hidden top-level entries
     (.local with pip installs, .cache…) count toward the size only."""
     usage = Usage()
-    for dirpath, _, filenames in (*os.walk(scope.home), *os.walk(scope.public)):
+    for dirpath, _, filenames in walk(scope):
         where = scope.mount_of(Path(dirpath))
         for name in filenames:
             try:

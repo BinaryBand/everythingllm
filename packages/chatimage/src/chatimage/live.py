@@ -80,10 +80,14 @@ async def send(
         await close(writer)
 
 
-async def push(writer: asyncio.StreamWriter, frames: AsyncIterator[bytes]) -> bool:
-    """Push each PNG from `frames` as the image's newest frame, until they run out or the
-    client goes; then close. True when every frame went out, False when the client left
-    first (the frames are closed either way)."""
+async def push(
+    writer: asyncio.StreamWriter,
+    frames: AsyncIterator[bytes],
+    content_type: str = "image/png",
+) -> bool:
+    """Push each image from `frames` (PNGs, or whatever `content_type` says) as the image's
+    newest frame, until they run out or the client goes; then close. True when every frame
+    went out, False when the client left first (the frames are closed either way)."""
     try:
         writer.write(
             head(
@@ -95,10 +99,10 @@ async def push(writer: asyncio.StreamWriter, frames: AsyncIterator[bytes]) -> bo
                 },
             )
         )
-        async for png in frames:
+        async for image in frames:
             writer.write(
-                b"--%s\r\nContent-Type: image/png\r\nContent-Length: %d\r\n\r\n%s\r\n"
-                % (BOUNDARY, len(png), png)
+                b"--%s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n%s\r\n"
+                % (BOUNDARY, content_type.encode(), len(image), image)
             )
             await writer.drain()
         writer.write(b"--%s--\r\n" % BOUNDARY)

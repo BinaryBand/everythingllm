@@ -2,14 +2,12 @@
 // socket, the scope of a call, turning the runner's errors into replies for the agent, and
 // telling it which of its pages in /public a call changed.
 //
-// The scope is where the call came from, never what the model says: the workspace (a
-// scheduled job has none, and gets "_jobs") and the chat thread ("default" for a
-// workspace's main chat, and for API, Telegram and job runs, which carry no thread).
-// sandbox-runner (packages/sandbox) mounts /work, /project, /shared/<workspace> and /public
-// by it.
+// The scope is where the call came from (_lib/scope.js): sandbox-runner (packages/sandbox)
+// mounts /work, /project, /shared/<workspace> and /public by it.
 
 const { call, socketPath, Down, Refused } = require("./hostrpc");
 const { delegatedRefusal } = require("./delegated");
+const { scopeOf } = require("./scope");
 
 /**
  * Run `work(request)` for a skill, where request(op, args) calls the runner with the
@@ -20,11 +18,7 @@ async function withSandbox(self, work) {
   const refused = delegatedRefusal(self);
   if (refused) return refused;
   const signal = self.super?.abortController?.signal ?? null;
-  const invocation = self.super?.handlerProps?.invocation || {};
-  const scope = {
-    workspace: invocation.workspace?.slug || "_jobs",
-    thread: invocation.thread_id == null ? "default" : String(invocation.thread_id),
-  };
+  const scope = scopeOf(self);
   const request = (op, args) =>
     call(socketPath("sandbox", "SANDBOX_SOCKET"), op, { scope, ...args }, { name: "the sandbox runner", signal });
   try {

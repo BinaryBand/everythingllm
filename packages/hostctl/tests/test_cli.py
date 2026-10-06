@@ -3,15 +3,14 @@ modules faked, so each test reads as the steps a command takes, in order."""
 
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from hostctl import cli
 
 # The commands that aren't per app.
-TARGETS = """install units diff deploy skills skills-check restart logs status health test
-test-skills mcp-sync apps serve-setup gateway-client sandbox-images service-images
-sites-build""".split()
+TARGETS = ["install", "units", "diff", "deploy", "skills", "skills-check", "restart", "logs", "status", "health", "test", "test-skills", "mcp-sync", "apps", "serve-setup", "gateway-client", "sandbox-images", "service-images", "browser-images", "browser-reset", "sites-build"]
 
 
 @pytest.fixture
@@ -160,3 +159,42 @@ def test_test_runs_without_host_env(ran, monkeypatch):
     monkeypatch.setattr(cli, "ROOT", cli.ROOT / "no-such-dir")
     cli.main(["test"])
     assert ran[0] == "uv run --all-packages --all-extras pytest -q"
+
+
+def test_browser_images_builds_the_image_and_puts_its_novnc_in_place(ran, monkeypatch, tmp_path):
+    monkeypatch.setattr(cli.run_guard, "DATA", tmp_path)
+    old = tmp_path / "browser" / "novnc"
+    old.mkdir(parents=True)
+    (old / "stale.js").write_text("")
+    fake = cli.subprocess.run
+
+    def run(cmd, **kw):
+        if list(cmd[:2]) == ["podman", "cp"]:  # as podman would: the image's /opt/novnc
+            (Path(cmd[3]) / "core").mkdir(parents=True)
+        return fake(cmd, **kw)
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    cli.main(["browser-images"])
+    assert ran[0].startswith("podman build -t localhost/everythingllm-browser -f ")
+    assert any(c.startswith("podman network create --internal --disable-dns --subnet 10.89.79.0/24") for c in ran)
+    copy = "everythingllm-browser-novnc-copy"
+    assert ran[-3:] == [
+        f"podman create --name {copy} localhost/everythingllm-browser",
+        f"podman cp {copy}:/opt/novnc {tmp_path}/browser/.novnc.new",
+        f"podman rm -f {copy}",
+    ]
+    assert sorted(p.name for p in (tmp_path / "browser").iterdir()) == ["novnc"]
+    assert (old / "core").is_dir() and not (old / "stale.js").exists()
+
+
+def test_browser_reset_stops_the_browser_and_wipes_only_its_profile(ran, monkeypatch, tmp_path):
+    monkeypatch.setattr(cli.run_guard, "DATA", tmp_path)
+    home = tmp_path / "sandbox" / "workspaces" / "career"
+    (home / "browser" / "profile").mkdir(parents=True)
+    (home / "project").mkdir()
+    cli.main(["browser-reset", "career"])
+    assert ran == ["podman rm -f --time 5 everythingllm-browser-career"]
+    assert not (home / "browser").exists() and (home / "project").is_dir()
+    for bad in ("../career", "Career", "career\n"):
+        with pytest.raises(SystemExit):
+            cli.main(["browser-reset", bad])

@@ -1,0 +1,12 @@
+/* The take-over view (browser.takeover). */
+:root { color-scheme: dark; --bg: #1d2027; --fg: #f0f2f6; --muted: #aab0bc; --agent: #6ea8fe; --user: #f2b56b; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; padding: 0.6rem 1rem; border-left: 6px solid var(--agent); }
+body.mine header { border-left-color: var(--user); }
+header span { color: var(--muted); flex: 1; min-width: 12rem; }
+button { font: inherit; padding: 0.35rem 0.9rem; border-radius: 6px; border: 0; cursor: pointer; background: var(--agent); color: #10131a; }
+#give { background: var(--user); }
+#reason { margin: 0; padding: 0.4rem 1rem; background: #3a2f1f; color: var(--user); }
+main { flex: 1; min-height: 0; }

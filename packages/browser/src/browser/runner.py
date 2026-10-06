@@ -1,0 +1,634 @@
+"""browser-runner: one Chromium per AnythingLLM workspace, for the browse skills
+(anythingllm/agent-skills/browse, browser-act, browser-read, browser-handoff), with a live
+card in the chat and a take-over view on the tailnet.
+
+A workspace's browser is a podman container (host/containers/browser) started on its first
+call and stopped when nobody has used or watched it for IDLE seconds. Its profile (cookies,
+logins, history) is the workspace's alone and outlives the container: it's in the
+sandbox's folder for the workspace, beside the folders the sandbox mounts, never in one:
+
+  <root>/<workspace>/browser/profile/   the profile, which no sandbox run can see
+  <root>/<workspace>/project/downloads/ downloads, which run-code sees as /project/downloads
+
+Each chat thread has its own tab there; a scope of {workspace, thread} says which, and comes
+from the skill's invocation, never the model. Gateway clients' `client-` workspaces have no
+browser. The container is hardened like a service container (read-only root, every
+capability dropped, keep-id, limits) and sits on egress-net at one of the browser profile's
+addresses (egress.toml), so its only way out is the egress proxy's public port: public
+hosts on 80 and 443, never the tailnet, the LAN or this machine. Chromium's own sandbox is
+off (it needs namespaces the container doesn't give), so the container is the boundary.
+
+The runner reaches the container through two Unix sockets in <data>/sockets/<slot>/: the
+driver's (browser.driver, hostrpc) and x11vnc's, which the take-over view (browser.takeover)
+carries over a WebSocket. Nothing in the container listens on the network.
+
+Who has the browser: the agent, until the user takes over in the take-over view or the
+agent hands it over (`handoff`, for a login, 2FA or a CAPTCHA, after which the agent ends
+its reply so the card shows). While the user has it, the agent's actions are refused. It
+comes back when the user hands it back in the view, or says in the chat that they're done
+(`handoff` with `done`), or when the browser is stopped.
+
+Ops (each takes `scope`):
+  open(url)                      go to url in the thread's tab -> {page, card, new}
+  act(action, ref?, text?)       one browser.driver action -> {page}
+  read(find?)                    the page as it is, or its lines with `find` -> {page}
+  handoff(reason)                give the user the browser -> {card, takeover}
+  handoff(done=true)             take it back -> {page}
+  close()                        close the thread's tab
+
+`page` is browser.page's text; `card` the tab's live card line (browser.live), "" without
+PUBLIC_HOST; `new` whether the card is new to this chat (the tab was just made).
+
+Config (environment):
+  ANYTHINGLLM_STORAGE, PUBLIC_HOST  from host.env (the egress profile needs PUBLIC_HOST)
+  BROWSER_SOCKET         the socket to listen on (default <storage>/everythingllm/browser/runner.sock)
+  BROWSER_ROOT           the workspaces' folders (default ~/.local/share/everythingllm/sandbox/workspaces,
+                         the sandbox's SANDBOX_ROOT)
+  BROWSER_DATA           the runner's own folder (default ~/.local/share/everythingllm/browser):
+                         sockets/<slot>/ and novnc/ (copied from the image by hostctl browser-images)
+  BROWSER_LIVE_PORT      the live cards' port (default 8453), on LIVE_HOST (default 127.0.0.1)
+  BROWSER_TAKEOVER_PORT  the take-over view's port (default 8454), on 127.0.0.1
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import logging
+import os
+import re
+import secrets
+import signal
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import hostrpc
+from chatimage import alt, link
+from egress import config as egress_config
+from hostrpc import RunnerError
+
+from browser import page as pagetext
+
+log = logging.getLogger("browser-runner")
+
+IMAGE = "localhost/everythingllm-browser"  # hostctl browser-images builds it
+LABEL = "everythingllm-browser=1"
+PREFIX = "everythingllm-browser-"  # + the workspace: its container's name
+PROFILE = "browser"  # egress.toml's profile, whose addresses the containers take
+REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/browser/src/browser/
+CLIENT_PREFIX = "client-"  # the MCP gateway's clients' sandboxes, which have no browser
+# As the sandbox's: workspace slugs and thread ids.
+KEY_RE = re.compile(r"[a-z0-9_][a-z0-9_-]{0,99}")
+SCREEN = "1280x800"
+MEMORY = "2g"
+IDLE = 20 * 60  # seconds unused and unwatched before a browser is stopped
+START_SECONDS = 40  # for a container's driver to answer
+# An op in the driver: its own limits are shorter (30 s for a page load).
+DRIVER_SECONDS = 42
+LIMIT = 8 << 20  # a driver's reply: a screenshot is a few hundred KB
+LIVE_PORT = 8453
+TAKEOVER_PORT = 8454
+
+PodmanResult = tuple[int, str, str]
+Podman = Callable[[list[str], float], Awaitable[PodmanResult]]
+
+
+async def podman(args: list[str], timeout: float) -> PodmanResult:
+    """Run podman, giving up after `timeout`: (exit code, stdout, stderr), each cut short."""
+    proc = await asyncio.create_subprocess_exec(
+        "podman",
+        *args,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return 124, "", f"podman {args[0]} took over {timeout:.0f} s"
+    return proc.returncode or 0, out.decode()[-4000:], err.decode()[-4000:]
+
+
+@dataclass
+class Config:
+    root: Path
+    data: Path
+    ips: dict[str, str]  # slot -> address on the network
+    network: str
+    proxy: str  # the egress proxy's public port, as Chromium's --proxy-server
+    pages_url: str = ""  # where the live cards are (tailnet :8445), "" for no cards
+    takeover_url: str = f"http://127.0.0.1:{TAKEOVER_PORT}/"
+    live_port: int = LIVE_PORT
+    takeover_port: int = TAKEOVER_PORT
+    repo: Path = REPO
+
+    @classmethod
+    def from_env(cls) -> Config:
+        get = os.environ.get
+        host = get("PUBLIC_HOST")
+        egress = egress_config.load()
+        return cls(
+            root=Path(
+                get("BROWSER_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
+            ),
+            data=Path(get("BROWSER_DATA", hostrpc.data_dir() / "browser")),
+            ips=dict(egress.profiles[PROFILE].ips),
+            network=egress.network,
+            proxy=egress.public_url,
+            pages_url=f"https://{host}:8445/" if host else "",
+            takeover_url=f"https://{host}:{TAKEOVER_PORT}/"
+            if host
+            else f"http://127.0.0.1:{TAKEOVER_PORT}/",
+            live_port=int(get("BROWSER_LIVE_PORT", LIVE_PORT)),
+            takeover_port=int(get("BROWSER_TAKEOVER_PORT", TAKEOVER_PORT)),
+        )
+
+    def sockets(self, slot: str) -> Path:
+        return self.data / "sockets" / slot
+
+
+@dataclass(eq=False)
+class Tab:
+    """A thread's tab, as the runner knows it: for its card, which outlives the container."""
+
+    id: str
+    workspace: str
+    thread: str
+    title: str = ""
+    url: str = ""
+    last: str = "Opened the browser"  # what was done last, for the card
+    open: bool = True
+    shot: bytes = b""  # its latest screenshot (JPEG)
+    shot_at: float = 0.0
+    viewers: int = 0  # live cards streaming it
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def moved(self, last: str, view: dict[str, Any] | None = None) -> None:
+        self.last = last
+        if view:
+            self.title, self.url = view.get("title") or "", view.get("url") or ""
+        self.shot_at = 0.0  # the next frame takes a new one
+        self.changed.set()
+
+
+@dataclass(eq=False)
+class Session:
+    """A workspace's running browser container."""
+
+    workspace: str
+    slot: str
+    ip: str
+    token: str  # the take-over view's path; new with each container
+    folder: Path  # its sockets
+    used: float
+    control: str = "agent"  # or "user"
+    reason: str = ""  # why the user has it
+    asked: bool = False  # whether the agent asked for it (a handoff)
+    viewers: int = 0  # take-over views open
+
+    @property
+    def name(self) -> str:
+        return PREFIX + self.workspace
+
+    @property
+    def driver(self) -> Path:
+        return self.folder / "driver.sock"
+
+    @property
+    def vnc(self) -> Path:
+        return self.folder / "vnc.sock"
+
+
+class Gone(RunnerError):
+    """The workspace's browser stopped under a call (its window was closed, or it crashed)."""
+
+
+def check_scope(scope: Any) -> tuple[str, str]:
+    """(workspace, thread) from a skill's scope, as the sandbox checks it."""
+    if not isinstance(scope, dict):
+        raise RunnerError("scope must be {workspace, thread}")
+    workspace, thread = (
+        str(scope.get("workspace") or ""),
+        str(scope.get("thread") or ""),
+    )
+    for what, key in (("workspace", workspace), ("thread", thread)):
+        if not KEY_RE.fullmatch(key):
+            raise RunnerError(f"bad {what} '{key}'")
+    if workspace.startswith(CLIENT_PREFIX) or scope.get("gateway"):
+        raise RunnerError("the MCP gateway's clients have no browser")
+    return workspace, thread
+
+
+class Runner(hostrpc.Service):
+    log = log
+
+    def __init__(
+        self,
+        config: Config,
+        podman: Podman = podman,
+        now: Callable[[], float] = time.monotonic,
+    ):
+        super().__init__()
+        self.config = config
+        self.podman = podman
+        self.now = now
+        self.sessions: dict[str, Session] = {}  # workspace -> its running browser
+        self.tabs: dict[str, Tab] = {}  # tab id -> tab
+        # (workspace, thread) -> its tab, open or not: a thread keeps its tab, and its card,
+        # from one container to the next
+        self.threads: dict[tuple[str, str], Tab] = {}
+        self.locks: dict[str, asyncio.Lock] = {}
+
+    # --- containers ---
+
+    def container_args(self, session: Session) -> list[str]:
+        """The podman run for a workspace's browser: hardened like a service container, on
+        egress-net at its slot's address with no DNS, its profile, downloads and sockets
+        mounted (data only: noexec) and the repo read-only for the driver's code."""
+        c, ws = self.config, session.workspace
+        data = "rw,noexec,nosuid,nodev"
+        home = c.root / ws
+        src = c.repo / "packages"
+        return [
+            "run", "-d", "--rm", "--init",
+            "--name", session.name, "--label", LABEL,
+            "--read-only",
+            "--tmpfs", "/tmp:rw,size=512m,mode=1777",
+            "--tmpfs", "/var/lib/xkb:rw,size=8m,mode=1777",
+            "--shm-size", "1g",
+            "--memory", MEMORY, "--memory-swap", MEMORY, "--cpus", "1",
+            "--pids-limit", "1024",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--userns", "keep-id",
+            "--network", f"{c.network}:ip={session.ip}", "--dns", "none",
+            "-e", f"BROWSER_PROXY={c.proxy}",
+            "-e", f"BROWSER_SCREEN={SCREEN}",
+            "-e", f"PYTHONPATH={src / 'browser' / 'src'}:{src / 'hostrpc' / 'src'}",
+            "-v", f"{c.repo}:{c.repo}:ro",
+            "-v", f"{home / 'browser' / 'profile'}:/profile:{data}",
+            "-v", f"{home / 'project' / 'downloads'}:/downloads:{data}",
+            "-v", f"{session.folder}:/run/browser:{data}",
+            IMAGE,
+        ]  # fmt: skip
+
+    def free_slot(self) -> tuple[str, str] | None:
+        taken = {s.slot for s in self.sessions.values()}
+        return next(
+            ((s, ip) for s, ip in self.config.ips.items() if s not in taken), None
+        )
+
+    async def session(self, workspace: str) -> Session:
+        """The workspace's running browser, started if need be."""
+        async with self.locks.setdefault(workspace, asyncio.Lock()):
+            if (s := self.sessions.get(workspace)) is not None:
+                s.used = self.now()
+                return s
+            return await self.start(workspace)
+
+    async def start(self, workspace: str) -> Session:
+        slot = self.free_slot()
+        if slot is None:
+            await self.evict()
+            slot = self.free_slot()
+        if slot is None:
+            raise RunnerError(
+                f"all {len(self.config.ips)} browsers are in use by other workspaces; try again in a while"
+            )
+        home = self.config.root / workspace
+        for d in (home / "browser" / "profile", home / "project" / "downloads"):
+            d.mkdir(parents=True, exist_ok=True)
+        folder = self.config.sockets(slot[0])
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in folder.iterdir():  # a socket an earlier container left
+            old.unlink(missing_ok=True)
+        s = Session(workspace, *slot, secrets.token_urlsafe(24), folder, self.now())
+        await self.podman(["rm", "-f", s.name], 30)
+        code, _, err = await self.podman(self.container_args(s), 60)
+        if code:
+            raise RunnerError(f"the browser didn't start: {err.strip()[-500:]}")
+        deadline = self.now() + START_SECONDS
+        while True:
+            try:
+                await hostrpc.request(s.driver, "ping", {}, 5, name="browser")
+                break
+            except RunnerError:
+                if self.now() > deadline:
+                    _, out, err = await self.podman(
+                        ["logs", "--tail", "20", s.name], 10
+                    )
+                    await self.podman(["rm", "-f", s.name], 30)
+                    raise RunnerError(
+                        f"the browser didn't come up in {START_SECONDS} s: {(err or out).strip()[-500:]}"
+                    ) from None
+                await asyncio.sleep(0.25)
+        self.sessions[workspace] = s
+        log.info("started %s's browser (%s, %s)", workspace, s.slot, s.ip)
+        return s
+
+    def watched(self, s: Session) -> bool:
+        return s.viewers > 0 or any(
+            t.viewers
+            for t in self.tabs.values()
+            if t.workspace == s.workspace and t.open
+        )
+
+    async def evict(self) -> None:
+        """Stop the browser that's gone unused longest, if one isn't watched or the user's."""
+        idle = [
+            s
+            for s in self.sessions.values()
+            if not self.watched(s) and s.control == "agent"
+        ]
+        if idle:
+            await self.stop(min(idle, key=lambda s: s.used).workspace)
+
+    async def stop(self, workspace: str) -> None:
+        s = self.sessions.pop(workspace, None)
+        if s is None:
+            return
+        await self.podman(["stop", "-t", "5", s.name], 30)
+        self.forget(workspace)
+        log.info("stopped %s's browser", workspace)
+
+    def forget(self, workspace: str) -> None:
+        """Mark the workspace's tabs closed: their cards show how they were left."""
+        for tab in self.threads.values():
+            if tab.workspace == workspace and tab.open:
+                tab.open = False
+                tab.moved(
+                    "The browser closed; it opens again when the agent next browses here"
+                )
+
+    async def idle_loop(self) -> None:
+        while True:
+            await asyncio.sleep(60)
+            await self.stop_idle()
+
+    async def stop_idle(self) -> None:
+        now = self.now()
+        for s in list(self.sessions.values()):
+            if self.watched(s):
+                s.used = now
+            elif now - s.used > IDLE:
+                await self.stop(s.workspace)
+
+    async def cleanup(self) -> None:
+        """Remove what an earlier runner left: its containers (profiles stay)."""
+        await self.podman(["rm", "-f", "--filter", f"label={LABEL}"], 120)
+
+    # --- the driver ---
+
+    async def call(self, s: Session, op: str, args: dict[str, Any]) -> Any:
+        """An op in the workspace's driver. A browser that's gone (its window closed, a
+        crash) is forgotten and raises Gone."""
+        try:
+            return await hostrpc.request(
+                s.driver, op, args, DRIVER_SECONDS, name="browser", limit=LIMIT
+            )
+        except RunnerError as e:
+            if "isn't running" not in str(e) and "closed the connection" not in str(e):
+                raise
+        if self.sessions.get(s.workspace) is s:
+            del self.sessions[s.workspace]
+            self.forget(s.workspace)
+            await self.podman(["rm", "-f", s.name], 30)
+        raise Gone("the browser closed (its window was shut, or it crashed)")
+
+    def agent_may_act(self, s: Session) -> None:
+        if s.control == "user":
+            why = f" ({s.reason})" if s.reason else ""
+            raise RunnerError(
+                f"the user has this workspace's browser{why}. When they say they're done, "
+                "take it back with browser-handoff (done: true); until then, ask them in "
+                "your reply."
+            )
+
+    def tab(self, workspace: str, thread: str) -> tuple[Tab, bool]:
+        """The thread's tab, opened, and whether it's new to the chat (made or reopened)."""
+        if (tab := self.threads.get((workspace, thread))) is not None:
+            new, tab.open = not tab.open, True
+            return tab, new
+        tab = Tab(f"bw-{secrets.token_hex(8)}", workspace, thread)
+        self.tabs[tab.id] = tab
+        self.threads[(workspace, thread)] = tab
+        return tab, True
+
+    def card(self, tab: Tab) -> str:
+        """The tab's live card, as runs.live.Live.card_line makes one; "" without a public URL."""
+        if not self.config.pages_url:
+            return ""
+        page = f"{self.config.pages_url.rstrip('/')}/_live/browser/{tab.id}"
+        subject = tab.title or tab.url or "a page"
+        return f"[![{alt(f'Browser: {subject}')}]({link(page + '.jpg')})]({link(page)})"
+
+    def takeover(self, s: Session, tab: Tab | None = None) -> str:
+        url = f"{self.config.takeover_url.rstrip('/')}/{s.token}/"
+        return url + (f"?tab={tab.id}" if tab else "")
+
+    # --- ops ---
+
+    async def op_open(self, scope: dict[str, Any], url: str) -> dict[str, Any]:
+        workspace, thread = check_scope(scope)
+        for attempt in (1, 2):
+            s = await self.session(workspace)
+            self.agent_may_act(s)
+            try:
+                view = await self.call(s, "open", {"thread": thread, "url": url})
+                break
+            except Gone:
+                if attempt == 2:
+                    raise
+        tab, new = self.tab(workspace, thread)
+        tab.moved(f"Opened {view.get('url') or url}", view)
+        return {"page": pagetext.render(view), "card": self.card(tab), "new": new}
+
+    async def running(self, workspace: str, thread: str) -> tuple[Session, Tab]:
+        s = self.sessions.get(workspace)
+        tab = self.threads.get((workspace, thread))
+        if s is None or tab is None or not tab.open:
+            raise RunnerError(
+                "this chat has no page open in the browser; open one first"
+            )
+        s.used = self.now()
+        return s, tab
+
+    async def op_act(
+        self, scope: dict[str, Any], action: str, ref: str = "", text: str = ""
+    ) -> dict[str, Any]:
+        workspace, thread = check_scope(scope)
+        s, tab = await self.running(workspace, thread)
+        self.agent_may_act(s)
+        view = await self.call(
+            s,
+            "act",
+            {"thread": thread, "action": action, "ref": ref or "", "text": text or ""},
+        )
+        tab.moved(describe(action, ref, text), view)
+        return {"page": pagetext.render(view)}
+
+    async def op_read(self, scope: dict[str, Any], find: str = "") -> dict[str, Any]:
+        workspace, thread = check_scope(scope)
+        s, tab = await self.running(workspace, thread)
+        view = await self.call(s, "read", {"thread": thread})
+        tab.title, tab.url = view.get("title") or "", view.get("url") or ""
+        return {"page": pagetext.render(view, (find or "").strip())}
+
+    async def op_handoff(
+        self, scope: dict[str, Any], reason: str = "", done: bool = False
+    ) -> dict[str, Any]:
+        """Give the user the browser, to do what `reason` says in the take-over view; or,
+        `done`, take it back once they've said in the chat that they're finished."""
+        workspace, thread = check_scope(scope)
+        if done:
+            if (s := self.sessions.get(workspace)) is None:
+                raise RunnerError(
+                    "this workspace's browser isn't open; open a page first"
+                )
+            self.give_back(s)
+            tab = self.threads.get((workspace, thread))
+            if tab is None or not tab.open:
+                return {"page": ""}
+            view = await self.call(s, "read", {"thread": thread})
+            tab.moved("The agent has the browser again", view)
+            return {"page": pagetext.render(view)}
+        s = await self.session(workspace)
+        tab, _ = self.tab(workspace, thread)
+        s.control, s.reason, s.asked = "user", (reason or "").strip()[:200], True
+        tab.moved(f"Waiting for you: {s.reason}" if s.reason else "Waiting for you")
+        if tab.url:
+            await self.call(s, "front", {"thread": thread})
+        return {"card": self.card(tab), "takeover": self.takeover(s, tab)}
+
+    async def op_close(self, scope: dict[str, Any]) -> dict[str, Any]:
+        workspace, thread = check_scope(scope)
+        tab = self.threads.get((workspace, thread))
+        if tab is None or not tab.open:
+            return {}
+        tab.open = False
+        tab.moved("Closed this chat's tab")
+        if (s := self.sessions.get(workspace)) is not None:
+            await self.call(s, "close", {"thread": thread})
+        return {}
+
+    async def op_ping(self) -> dict[str, Any]:
+        image, network = await asyncio.gather(
+            self.podman(["image", "exists", IMAGE], 30),
+            self.podman(["network", "exists", self.config.network], 30),
+        )
+        problems = []
+        if image[0] != 0:
+            problems.append(f"image {IMAGE} is missing (uv run hostctl browser-setup)")
+        if network[0] != 0:
+            problems.append(
+                f"network {self.config.network} is missing (uv run hostctl egress-setup)"
+            )
+        if not (self.config.data / "novnc" / "core" / "rfb.js").is_file():
+            problems.append(
+                "noVNC isn't in place for the take-over view (uv run hostctl browser-setup)"
+            )
+        return {"problems": problems, "browsers": sorted(self.sessions)}
+
+    # --- for the live card and the take-over view ---
+
+    def give_back(self, s: Session) -> None:
+        """The agent has the browser again."""
+        s.control, s.reason, s.asked = "agent", "", False
+        for tab in self.tabs.values():
+            if tab.workspace == s.workspace and tab.open:
+                tab.moved("The agent has the browser again")
+
+    def take(self, s: Session) -> None:
+        """The user takes the browser from the take-over view."""
+        if s.control != "user":
+            s.control, s.reason, s.asked = "user", "you took over", False
+            for tab in self.tabs.values():
+                if tab.workspace == s.workspace and tab.open:
+                    tab.moved("You took over the browser")
+
+    def by_token(self, token: str) -> Session | None:
+        return next(
+            (
+                s
+                for s in self.sessions.values()
+                if secrets.compare_digest(s.token, token)
+            ),
+            None,
+        )
+
+    async def screenshot(self, tab: Tab, every: float) -> bytes:
+        """The tab's screenshot, taken again when it's older than `every` seconds and its
+        browser is up; the last one it had otherwise."""
+        s = self.sessions.get(tab.workspace)
+        if tab.open and s is not None and self.now() - tab.shot_at >= every:
+            tab.shot_at = self.now()
+            try:
+                shot = await self.call(s, "screenshot", {"thread": tab.thread})
+            except RunnerError:
+                return tab.shot
+            if shot.get("jpeg"):
+                tab.shot = base64.b64decode(shot["jpeg"])
+                tab.title, tab.url = (
+                    shot.get("title") or tab.title,
+                    shot.get("url") or tab.url,
+                )
+        return tab.shot
+
+    def state(self, tab: Tab) -> str:
+        s = self.sessions.get(tab.workspace)
+        if not tab.open or s is None:
+            return "closed"
+        return "user" if s.control == "user" else "agent"
+
+
+def describe(action: str, ref: str, text: str) -> str:
+    """An action as the card says it; what's typed isn't shown (it may be a password)."""
+    what = {
+        "click": "Clicked", "fill": "Filled in", "type": "Typed into", "press": "Pressed",
+        "select": "Chose", "check": "Ticked", "uncheck": "Unticked", "hover": "Pointed at",
+        "scroll_down": "Scrolled down", "scroll_up": "Scrolled up", "back": "Went back",
+        "forward": "Went forward", "reload": "Reloaded", "wait": "Waited",
+    }.get(action, action)  # fmt: skip
+    if action == "press":
+        return f"Pressed {text}"
+    if action == "select":
+        return f"Chose {text[:40]}"
+    return f"{what} {ref}".strip()
+
+
+async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
+    """Serve the runner on its socket, its live cards and the take-over view, until `stop`
+    is set, or without one until SIGTERM; then stop every browser."""
+    from browser import live, takeover
+
+    runner = Runner(config)
+    await runner.cleanup()
+    loop = asyncio.get_running_loop()
+    on_sigterm = stop is None
+    if stop is None:
+        stop = asyncio.Event()
+        loop.add_signal_handler(signal.SIGTERM, stop.set)
+    cards = await live.Live(runner).serve(config.live_port)
+    view = await takeover.Takeover(runner).serve(config.takeover_port)
+    idle = asyncio.create_task(runner.idle_loop())
+    try:
+        await hostrpc.serve(
+            runner, hostrpc.socket_path("browser", "BROWSER_SOCKET"), stop=stop
+        )
+    finally:
+        idle.cancel()
+        cards.close()
+        view.close()
+        for workspace in list(runner.sessions):
+            await runner.stop(workspace)
+        if on_sigterm:
+            loop.remove_signal_handler(signal.SIGTERM)
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    asyncio.run(serve(Config.from_env()))

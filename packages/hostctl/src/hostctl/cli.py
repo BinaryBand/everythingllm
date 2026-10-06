@@ -16,7 +16,9 @@ import inspect
 import ipaddress
 import json
 import os
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -24,7 +26,7 @@ from collections.abc import Callable
 import apps  # the registry's reader, standard library only
 import tomllib
 
-from hostctl import appctl, gateway_env, machine, units
+from hostctl import appctl, gateway_env, machine, run_guard, units
 
 ROOT = units.ROOT
 SERVICE = "anythingllm.service"
@@ -44,6 +46,12 @@ SERVICE_IMAGE = (
     ROOT / "host" / "containers" / "service",
 )
 EGRESS_TOML = ROOT / "packages" / "egress" / "src" / "egress" / "egress.toml"
+# The workspaces' browsers (packages/browser): their image and its folder, and what
+# browser-runner names a workspace's container (browser.runner.IMAGE, PREFIX).
+BROWSER = ROOT / "host" / "containers" / "browser"
+BROWSER_IMAGE = "localhost/everythingllm-browser"
+BROWSER_PREFIX = "everythingllm-browser-"
+WORKSPACE_RE = re.compile(r"[a-z0-9_][a-z0-9_-]{0,99}")  # as the sandbox's KEY_RE
 # The MCP servers' venv and uv cache inside the AnythingLLM container.
 MCP = "/app/server/storage/everythingllm/mcp"
 EXPORTED = ("PUBLIC_HOST", "ANYTHINGLLM_STORAGE")
@@ -324,9 +332,59 @@ def service_images() -> None:
     run(
         "podman", "build", "-t", image, "-f", str(folder / "Containerfile"), str(folder)
     )
+    egress_net()
+
+
+def egress_net() -> None:
+    """egress-net, as egress.toml has it."""
     with EGRESS_TOML.open("rb") as f:
         network = tomllib.load(f)["network"]
     internal_network(network["name"], network["subnet"], network["ip_range"])
+
+
+@command(
+    "browser-images",
+    "build the workspaces' browser image, copy noVNC out of it for the take-over view, and make egress-net (browser-setup runs this first)",
+)
+def browser_images() -> None:
+    run(
+        "podman", "build", "-t", BROWSER_IMAGE, "-f", str(BROWSER / "Containerfile"), str(BROWSER)
+    )  # fmt: skip
+    egress_net()
+    # browser-runner serves noVNC's files to the take-over page from the data dir, the
+    # image's copy, so the page and the image's x11vnc come from one build.
+    folder = run_guard.DATA / "browser"
+    folder.mkdir(parents=True, exist_ok=True)
+    new, old = folder / ".novnc.new", folder / ".novnc.old"
+    shutil.rmtree(new, ignore_errors=True)
+    shutil.rmtree(old, ignore_errors=True)
+    name = "everythingllm-browser-novnc-copy"
+    run("podman", "rm", "-f", name, check=False)
+    run("podman", "create", "--name", name, BROWSER_IMAGE)
+    try:
+        run("podman", "cp", f"{name}:/opt/novnc", str(new))
+    finally:
+        run("podman", "rm", "-f", name, check=False)
+    if (folder / "novnc").exists():
+        (folder / "novnc").rename(old)
+    new.rename(folder / "novnc")
+    shutil.rmtree(old, ignore_errors=True)
+
+
+@command(
+    "browser-reset",
+    "wipe a workspace's browser profile (its logins, cookies and history), stopping its browser first: browser-reset <workspace>",
+)
+def browser_reset(workspace: str) -> None:
+    if not WORKSPACE_RE.fullmatch(workspace):
+        raise SystemExit(f"browser-reset: '{workspace}' isn't a workspace's slug")
+    run("podman", "rm", "-f", "--time", "5", BROWSER_PREFIX + workspace, check=False)
+    profile = run_guard.DATA / "sandbox" / "workspaces" / workspace / "browser"
+    if profile.exists():
+        shutil.rmtree(profile)
+        print(f"removed {profile}")
+    else:
+        print(f"{workspace} has no browser profile")
 
 
 @command(

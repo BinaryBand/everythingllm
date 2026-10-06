@@ -37,7 +37,7 @@ function agent(workspace) {
 
 test("every skill that writes, acts or delegates refuses a delegated task, before reaching any service", async () => {
   const service = await fakeService(() => ({ ok: true, result: "done" }));
-  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "SITES_SOCKET", "PODCASTS_SOCKET", "AUDIT_SOCKET", "AGENTS_SOCKET"];
+  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "SITES_SOCKET", "PODCASTS_SOCKET", "AUDIT_SOCKET", "AGENTS_SOCKET", "BROWSER_SOCKET"];
   for (const env of envs) process.env[env] = service.socket;
   try {
     const skills = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, "plugin.json")));

@@ -1,0 +1,16 @@
+[Unit]
+Description=The workspaces' browsers for AnythingLLM's browse skills: their containers, live cards (:8453) and take-over view (:8454) (socket in storage/everythingllm/browser/)
+After=egress-proxy.service
+Wants=egress-proxy.service
+
+[Service]
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/browser
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package browser browser-runner
+# Stopping it stops every browser (podman stop gives each 5 s to save its profile).
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

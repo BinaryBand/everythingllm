@@ -1,0 +1,139 @@
+"""A browser-runner with podman faked: `podman run` serves a fake driver on the socket
+folder it mounts at /run/browser, as a container's browser.driver would, and `podman
+stop` or `rm -f` takes it away."""
+
+import asyncio
+import base64
+import io
+from pathlib import Path
+
+import hostrpc
+from browser import runner as runner_mod
+from PIL import Image
+
+IPS = {"browser-1": "10.89.79.32", "browser-2": "10.89.79.33"}
+
+
+def jpeg(colour=(200, 30, 30), size=(1280, 800)) -> bytes:
+    out = io.BytesIO()
+    Image.new("RGB", size, colour).save(out, "JPEG")
+    return out.getvalue()
+
+
+class FakeDriver(hostrpc.Service):
+    def __init__(self):
+        super().__init__()
+        self.pages: dict[str, str] = {}  # thread -> url
+        self.calls: list[tuple[str, dict]] = []
+
+    def view(self, thread):
+        url = self.pages[thread]
+        return {
+            "title": f"Title of {url}",
+            "url": url,
+            "elements": ['[e1] button "Sign in"', '[e2] link "Home" -> /'],
+            "text": "Welcome\nSign in to go on",
+            "more": False,
+            "notes": [],
+        }
+
+    async def op_open(self, thread, url):
+        self.calls.append(("open", {"thread": thread, "url": url}))
+        self.pages[thread] = url
+        return self.view(thread)
+
+    async def op_act(self, thread, action, ref="", text=""):
+        self.calls.append(
+            ("act", {"thread": thread, "action": action, "ref": ref, "text": text})
+        )
+        if thread not in self.pages:
+            raise hostrpc.RunnerError("this chat has no page open; open one first")
+        return self.view(thread)
+
+    async def op_read(self, thread):
+        self.calls.append(("read", {"thread": thread}))
+        return self.view(thread)
+
+    async def op_screenshot(self, thread=""):
+        if thread not in self.pages:
+            return {"jpeg": "", "title": "", "url": ""}
+        return {
+            "jpeg": base64.b64encode(jpeg()).decode(),
+            "title": "Shot",
+            "url": self.pages[thread],
+        }
+
+    async def op_front(self, thread):
+        self.calls.append(("front", {"thread": thread}))
+        return {}
+
+    async def op_close(self, thread):
+        self.calls.append(("close", {"thread": thread}))
+        self.pages.pop(thread, None)
+        return {}
+
+
+class FakePodman:
+    """Records every podman call; `run -d` starts a FakeDriver for the container."""
+
+    def __init__(self):
+        self.calls: list[list[str]] = []
+        self.drivers: dict[str, FakeDriver] = {}  # container name -> its driver
+        self.stops: dict[str, asyncio.Event] = {}
+        self.tasks: dict[str, asyncio.Task] = {}
+
+    async def __call__(self, args, timeout):
+        self.calls.append(args)
+        if args[:2] == ["run", "-d"]:
+            name = args[args.index("--name") + 1]
+            folder = next(
+                Path(v.split(":")[0])
+                for v in (args[i + 1] for i, a in enumerate(args) if a == "-v")
+                if ":/run/browser:" in v
+            )
+            self.drivers[name] = driver = FakeDriver()
+            self.stops[name] = stop = asyncio.Event()
+            self.tasks[name] = asyncio.create_task(
+                hostrpc.serve(driver, folder / "driver.sock", stop=stop)
+            )
+        elif args[0] in ("stop", "rm") and args[-1] in self.stops:
+            await self.kill(args[-1])
+        return 0, "", ""
+
+    async def kill(self, name):
+        if name in self.stops:
+            self.stops.pop(name).set()
+            await self.tasks.pop(name)
+
+    async def close(self):
+        for name in list(self.stops):
+            await self.kill(name)
+
+    def runs(self):
+        return [c for c in self.calls if c[:2] == ["run", "-d"]]
+
+
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def config(tmp_path, **kw) -> runner_mod.Config:
+    return runner_mod.Config(
+        root=tmp_path / "workspaces",
+        data=tmp_path / "data",
+        ips=dict(IPS),
+        network="egress-net",
+        proxy="http://10.89.79.2:3129",
+        pages_url=kw.pop("pages_url", "https://host.example.ts.net:8445/"),
+        takeover_url="https://host.example.ts.net:8454/",
+        repo=Path("/repo"),
+        **kw,
+    )
+
+
+def scope(workspace="career", thread="7"):
+    return {"workspace": workspace, "thread": thread}

@@ -1,0 +1,34 @@
+{
+  "active": true,
+  "hubId": "browser-handoff",
+  "name": "Browser Handoff",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Hand this workspace's browser to the user, for what they must do themselves: log in, a 2FA code, a CAPTCHA, a payment, or anything they'd rather do. It replies at once with a Card line for them to open the browser from; put it in your reply, say what they should do, and end your reply. Until they hand it back, your browser actions are refused. When they say in the chat that they're done, call this again with done: true to take the browser back and read the page.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "(the site asks to log in)",
+      "call": "{\"reason\": \"log in to LinkedIn\"}"
+    },
+    {
+      "prompt": "Done, I'm logged in",
+      "call": "{\"done\": true}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "reason": {
+        "type": "string",
+        "description": "What the user should do in the browser, in a few words (shown to them there): \"log in to LinkedIn\"."
+      },
+      "done": {
+        "type": "boolean",
+        "description": "true once the user has said they're finished: takes the browser back."
+      }
+    }
+  }
+}

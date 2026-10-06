@@ -1,0 +1,38 @@
+# A workspace's browser (packages/browser, README "Browser"): Chromium on an X screen of
+# its own (Xvfb), x11vnc showing that screen on a Unix socket for the take-over view, and
+# Playwright for browser.driver, whose code comes from the repo mounted read-only.
+# browser-runner starts one per workspace, read-only, with every capability dropped, as the
+# host user (keep-id), on egress-net; it reaches the web only through the egress proxy.
+# Built as localhost/everythingllm-browser by `uv run hostctl browser-images`, which also
+# copies noVNC (/opt/novnc) out for the take-over page.
+FROM docker.io/library/python:3.12-slim
+
+ARG PLAYWRIGHT_VERSION=1.63.0
+ARG NOVNC_VERSION=1.7.0
+ARG NOVNC_SHA256=b1003a11b6e6e8d8f7f5e5586daae7f8ca651d8aee0aa155ff9ac841c48f52c6
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+
+# Chromium (Playwright's build, not the headless shell) and the libraries it needs; the X
+# screen and its VNC server; fonts for the pages it shows.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends xvfb x11vnc xauth curl ca-certificates \
+      fonts-dejavu-core fonts-liberation fonts-noto-color-emoji \
+ && pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" \
+ && playwright install --with-deps --no-shell chromium \
+ && curl -fsSL -o /tmp/novnc.tar.gz "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+ && echo "${NOVNC_SHA256}  /tmp/novnc.tar.gz" | sha256sum -c - \
+ && mkdir /opt/novnc \
+ && tar -xzf /tmp/novnc.tar.gz -C /opt/novnc --strip-components=1 \
+      "noVNC-${NOVNC_VERSION}/core" "noVNC-${NOVNC_VERSION}/vendor" "noVNC-${NOVNC_VERSION}/LICENSE.txt" \
+ && rm /tmp/novnc.tar.gz \
+ && apt-get purge -y curl && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY entrypoint.sh /entrypoint.sh
+
+# The root is read-only: home and every scratch file are in /tmp (a tmpfs).
+ENV HOME=/tmp/home \
+    DISPLAY=:99 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+ENTRYPOINT ["/entrypoint.sh"]

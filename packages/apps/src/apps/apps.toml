@@ -59,6 +59,15 @@ before = ["python3 -m hostctl service-images"]
 guard = { runs = "research/runs", noun = "Deep-research runs (their requests go through the proxy)" }
 install = true
 
+[browser]
+summary = "browser-runner: a Chromium per workspace in a hardened container on egress-net, its live cards (:8445/_live/browser) and take-over view (tailnet https :8454)"
+runner = "browser-runner.service"
+units = { "browser-runner.service" = "browser runner" }
+before = ["python3 -m hostctl browser-images"]
+serve = [{ https = 8445, path = "/_live/browser", port = 8453 }, { https = 8454, port = 8454 }]
+health = { "browser live cards" = "http://127.0.0.1:8453/_live/browser/bw-0000000000000000.jpg", "browser take-over view" = "http://127.0.0.1:8454/health" }
+install = true
+
 [podcasts]
 summary = "podcasts-runner and the sync and transcription workers, in service containers, and podcasts-web (:8445/podcasts)"
 runner = "podcasts-runner.service"

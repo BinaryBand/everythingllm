@@ -35,7 +35,13 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
         "podcasts-runner": "10.89.79.13",
         "podcasts-sync-worker": "10.89.79.14",
         "podcasts-transcribe-worker": "10.89.79.15",
+        "browser-1": "10.89.79.32",
+        "browser-2": "10.89.79.33",
+        "browser-3": "10.89.79.34",
+        "browser-4": "10.89.79.35",
     }
+    browser = config.profiles["browser"]  # public hosts, and only on the public port
+    assert browser.public and browser.judge(TAILNET, 3001) is None
     relay, research = config.profiles["relay"], config.profiles["research"]
     assert not relay.public and research.public
     assert {(TAILNET, 3001), ("ntfy.sh", 443)} <= relay.allow

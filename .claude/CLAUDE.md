@@ -25,8 +25,9 @@ research, Code sandbox, System audit, …) before changing it.
   `audit-runner`, `research-runner`). Don't restart `research-runner` or `agents-runner`
   while a run is going (`hostctl.run_guard` asks; `guard` in the apps registry says which).
   The gateway restarts only by hand.
-- Dropped ideas (browser, quiz, whatsapp-mcp) and the history before this repo went public
-  are kept in a private archive, not here. Don't recreate them from memory.
+- Dropped ideas (quiz, whatsapp-mcp, and the old shared browser that `packages/browser`
+  replaced) and the history before this repo went public are kept in a private archive, not
+  here. Don't recreate them from memory.
 - Machine settings come from `host.env` (git-ignored; see `host.env.example`). Unit
   templates use `@KEY@` placeholders, which `hostctl.units` fills in; systemd doesn't
   expand `${VAR}` in `Environment=`.
@@ -67,7 +68,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   `uv run --frozen --project /mcp --package <name>`. The container can't reach the
   host's loopback.
 - Heavy, long-running or host-dependent work runs in a service outside AnythingLLM:
-  `sandbox-runner`, `agents-runner` and `audit-runner` as host units, and `research-runner`,
+  `sandbox-runner`, `browser-runner`, `agents-runner` and `audit-runner` as host units, and `research-runner`,
   `sites-runner` and `podcasts-runner` (with the podcasts' sync and transcription workers)
   in service containers (below). The MCP server or skill in the container is a thin front that forwards each
   call over `storage/everythingllm/<name>/runner.sock` using `packages/hostrpc`: one request per connection,
@@ -148,7 +149,7 @@ is 3.13. Keep code 3.12-compatible, and check with
 - Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`),
   not in AnythingLLM's storage, laid out by kind: `venvs/<name>` (a container's
   `venvs/<x>-ctr`), `pages/{public,entries}`,
-  `sandbox/{workspaces,public}`, `podcasts/` (with `models/`), `research/runs`, `agents/runs`, `relay/`.
+  `sandbox/{workspaces,public}` (a workspace's browser profile in `sandbox/workspaces/<ws>/browser/`), `browser/`, `podcasts/` (with `models/`), `research/runs`, `agents/runs`, `relay/`.
   Put new data in the folder of its kind, not at the root. Storage keeps AnythingLLM's own data, the runners' sockets (under `everythingllm/`) and what AnythingLLM
   itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.

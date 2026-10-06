@@ -175,6 +175,8 @@ through its UI.
     `research` site; hands the work to `research-runner` on the host (see "Deep research")
   - `run-code/`, `write-file/`, `publish/`, `build-site/` — the code sandbox, run by
     `sandbox-runner` on the host (see "Code sandbox")
+  - `browse/`, `browser-act/`, `browser-read/`, `browser-handoff/` — the workspace's
+    browser, run by `browser-runner` on the host (see "Browser")
   - `write-entry/`, `delete-entry/`, `add-podcast/`, `remove-podcast/`, `publish-report/`,
     `run-job/` — the ops of the sites, podcasts and audit runners that write or act. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
@@ -186,8 +188,8 @@ through its UI.
     left out of the op's args, so the op's own default applies; a test holds a declaration's
     parameters and defaults to its op's.
   - `_lib/` — what the skills share (no `plugin.json`, so AnythingLLM doesn't load it as
-    a skill): `hostrpc.js`, the node side of `packages/hostrpc`; `sandbox.js`; `runner.js`;
-    and `delegated.js`, the check that makes every skill of ours that writes, acts or
+    a skill): `hostrpc.js`, the node side of `packages/hostrpc`; `sandbox.js`; `browser.js`;
+    `scope.js`, a call's {workspace, thread} for the two; `runner.js`; and `delegated.js`, the check that makes every skill of ours that writes, acts or
     delegates refuse a call from an `agents-*` workspace, where delegated tasks will run
     (`docs/.proposals/agents.md`). A test holds every skill to it; elsewhere, chats, the
     Nilson relay's API chats and scheduled jobs, nothing changes.
@@ -223,6 +225,9 @@ through its UI.
     in throwaway podman containers on the host, with only PyPI on the network, and
     publishes pages from them, for the `run-code`, `write-file`, `publish` and `build-site` skills (see
     "Code sandbox" below)
+  - `packages/browser/` — not an MCP server: `browser-runner` runs a Chromium per workspace
+    in a hardened container, with a live card per chat and a take-over view, for the
+    browse skills (see "Browser"); `browser.driver` runs in that container
   - `packages/podcasts/` — downloads podcast episodes, finds their ads, and serves them without
     those as private feeds on the pages site (see "Podcasts" below); the MCP server forwards
     to `podcasts-runner` on the host, which does the work. Its audio code is here too:
@@ -265,7 +270,8 @@ through its UI.
   (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's
   laid out by kind:
 
-      venvs/<name>/        the host services' venvs (agents, audit, gateway, sandbox, splice)
+      venvs/<name>/        the host services' venvs (agents, audit, browser, gateway, sandbox,
+                           splice)
       venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/):
                            egress-proxy, relay, research-runner, sites-runner,
                            podcasts-runner, podcasts-sync-worker,
@@ -273,7 +279,10 @@ through its UI.
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
-                           shared/)
+                           shared/), and beside them the workspace's browser profile
+                           (browser/, browser-runner's)
+      browser/             browser-runner's: each running browser's sockets (sockets/<slot>/)
+                           and noVNC for the take-over view (novnc/)
       podcasts/            the podcasts' state, audio, transcripts and manifests
       podcasts/models/     Whisper's
       research/runs/       the deep-research run log and live runs' markers
@@ -287,8 +296,9 @@ through its UI.
   127.0.0.1:8445
 - `host/quadlet/` — the Quadlet units, as templates (`uv run hostctl units`): AnythingLLM,
   the pages site and the service containers
-- `host/containers/` — the images we build: the sandbox's (`uv run hostctl sandbox-images`) and
-  the service containers' (`uv run hostctl service-images`)
+- `host/containers/` — the images we build: the sandbox's (`uv run hostctl sandbox-images`),
+  the service containers' (`uv run hostctl service-images`) and the workspaces' browser
+  (`uv run hostctl browser-images`)
 - `host/caddy/pages.Caddyfile` — the pages site's Caddy config, including its CSP
 - `packages/hostctl` — `uv run hostctl <command>`, everything that sets up, syncs and checks
   the host (`cli`, the commands; `uv run` installs it into the dev venv first, so a fresh clone
@@ -469,8 +479,8 @@ clients get the same tools over HTTP from the gateway (see "MCP gateway").
 
 Work that is heavy, long or needs the host goes to a service outside AnythingLLM instead,
 with the MCP server or skill in the container as a thin front: `sandbox-runner` (the code
-sandbox), `agents-runner` (delegation) and `audit-runner` (the audit's checks) as host
-units, and `research-runner` (deep research), `podcasts-runner` (the podcasts tools) and
+sandbox), `browser-runner` (the workspaces' browsers), `agents-runner` (delegation) and
+`audit-runner` (the audit's checks) as host units, and `research-runner` (deep research), `podcasts-runner` (the podcasts tools) and
 `sites-runner` (the sites tools and their builds) in service containers of their own (see
 "Service containers"). Each listens
 on a Unix socket in storage, `storage/everythingllm/<name>/runner.sock` (mode 0660), which the container
@@ -820,6 +830,101 @@ data out through a package upload either. To allow another host, add an anchored
 `allowlist` and run `uv run hostctl sandbox-setup`, which rebuilds the proxy image.
 
 The `logs` and `services` audit checks cover both units and ping the runner.
+
+## Browser
+
+Each workspace has a browser of its own, a real Chromium that the agent drives and you can
+watch and take over, like the browser in Meta's Muse but split by workspace: a login made in
+`career` is there for every chat in `career` and never for `education`. Four skills drive it:
+
+- `browse` opens an address in this chat's tab and replies with the page as text: its
+  interactive elements, each with a ref (`[e12] button "Sign in"`), then its visible text,
+  under a line saying it's the page's own, untrusted content. The first time, it also gives
+  the tab's live card.
+- `browser-act` does one thing to an element by its ref (click, fill, type, press, select,
+  check, hover, scroll, back, forward, reload, wait) and replies with the page after.
+- `browser-read` reads the page again, or only its lines that contain `find`.
+- `browser-handoff` gives you the browser (to log in, enter a 2FA code, solve a CAPTCHA, pay)
+  and replies at once with the card. The agent puts the card in its reply and ends the reply,
+  since a skill that waited would keep the card out of the chat. Until you hand the browser
+  back, its actions are refused. Hand it back in the take-over view, or tell the agent you're
+  done, and it calls `browser-handoff` with `done: true`.
+
+They're skills, not MCP tools, because they act and must know their workspace: each call's
+scope is `{workspace, thread}` from AnythingLLM's invocation (`_lib/scope.js`, as the
+sandbox's), never from the model, and each refuses a delegated task. Gateway clients get no
+browser.
+
+**The card.** A tab's card is a live picture of it in the chat:
+`https://<PUBLIC_HOST>:8445/_live/browser/<id>.jpg`, served by browser-runner on :8453
+(`browser.live`, tailscale-mapped like the research cards). It's the tab's screenshot under
+a strip saying who has the browser (the agent, you, or closed), the page's title and
+address, and what was done last ("Clicked e12"; what's typed is never shown). It's pushed
+again (`multipart/x-mixed-replace`, as JPEG) whenever the tab looks different, checked once a
+second while someone watches. A watched card keeps the browser from being stopped as idle.
+A closed tab shows its last look, dimmed, and the card wakes up when the tab is used again;
+the same chat keeps the same tab and card from one container to the next. The tab's id is
+`bw-` and 16 hex digits, so the card is the way to it.
+
+**The take-over view.** The card links to `https://<PUBLIC_HOST>:8454/<token>/` (through a
+redirect from :8445, since the token changes with each container), a page of its own on its
+own tailnet port (`browser.takeover`, :8454), so its scripts run on an origin of their own
+and not the pages site's. It shows the browser's whole screen through noVNC (`static/app.js`),
+view-only while the agent has it. "Take over" makes it yours: the agent's actions are refused
+until you press "Hand back to the agent". The VNC stream reaches the page over a WebSocket
+the runner carries to x11vnc's Unix socket (`browser.websocket`); nothing in the container
+listens on a port. A POST or a WebSocket must come from the page's own origin. noVNC's files
+come from the browser image (`uv run hostctl browser-images` copies `/opt/novnc` to
+`~/.local/share/everythingllm/browser/novnc/`), so the page and the image's x11vnc are from one
+build.
+
+**Where things are.** A workspace's browser is a container,
+`everythingllm-browser-<workspace>` (image `localhost/everythingllm-browser`,
+`host/containers/browser/`). It's started on the workspace's first call and stopped after 20
+minutes unused and unwatched; the profile outlives it:
+
+    sandbox/workspaces/<workspace>/browser/profile/   cookies, logins, history (mounted at /profile)
+    sandbox/workspaces/<workspace>/project/downloads/ downloads (run-code's /project/downloads)
+    browser/sockets/<slot>/                           driver.sock and vnc.sock (/run/browser)
+
+The profile sits in the workspace's sandbox folder, beside the folders the sandbox mounts,
+never in one: no run can read the cookies, and the sandbox's size limit leaves the profile
+out. Downloads go to `/project`, not `/shared`, which every other workspace can read.
+`uv run hostctl browser-reset <workspace>` stops the workspace's browser and wipes its
+profile.
+
+**The container.** It's hardened like a service container: read-only root (`/tmp` and
+Xvfb's key maps on tmpfs), every capability dropped, `no-new-privileges`, `keep-id`, 2 GB of
+memory, 1 CPU, 1024 processes, `--init`, and the repo mounted read-only for the driver's
+code. Its entrypoint starts Xvfb, x11vnc on `/run/browser/vnc.sock`, and `browser.driver`,
+which launches Chromium through Playwright with the persistent profile and answers
+browser-runner on `/run/browser/driver.sock` (hostrpc). One tab per chat thread; a popup
+(a login window) becomes the thread's tab until it closes; downloads are saved and alerts
+answered on their own (confirms are dismissed), and both are reported in the next read.
+Closing the window ends the container, and browser-runner starts it again on the next call.
+Chromium's own sandbox is off (it needs user namespaces the container doesn't give), so the
+container is the boundary.
+
+**Network.** The container is on egress-net with `--dns none`, at one of the four addresses
+of the `browser` profile in `egress.toml` (`10.89.79.32`–`.35`: the slot it holds while it
+runs, so at most four browsers run at once; when a fifth is needed, the one unused longest is
+stopped, unless it's watched or yours). Chromium sends everything, loopback included,
+through the egress proxy's public port (`:3129`): public hosts on 80 and 443, never the
+tailnet, the LAN or this machine, and not even PyPI. A renderer taken over by a page could
+reach other containers on egress-net directly, as any service container could; their
+servers answer only loopback and their own address (`hostrpc.local_peer`). The proxy loads
+`egress.toml` when it starts, so a new profile or address needs `uv run hostctl
+egress-setup` (it asks while a deep-research run is going).
+
+**Mind what it's logged into.** Pages the agent opens can try to instruct it (prompt
+injection), and the agent has your other tools too. Log the browser only into accounts
+you'd let it use unsupervised; never email, banking or a password manager. The agent is
+told to hand over for logins rather than type passwords, and to ask before anything it
+can't take back.
+
+`uv run hostctl browser-setup` builds the image (`browser-images`), maps :8445/_live/browser
+and :8454, and starts `browser-runner` (`host/systemd/browser-runner.service`). Restarting
+the runner stops every browser (the profiles stay).
 
 ## Podcasts
 

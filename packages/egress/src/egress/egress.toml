@@ -55,3 +55,10 @@ ips = { sites-runner = "10.89.79.12" }
 public = true
 allow = []
 ips = { podcasts-runner = "10.89.79.13", podcasts-sync-worker = "10.89.79.14", podcasts-transcribe-worker = "10.89.79.15" }
+
+# The workspaces' browsers (packages/browser): browser-runner starts each on one of these
+# addresses, the slot it holds while it runs. Chromium uses the public port only.
+[profiles.browser]
+public = true
+allow = []
+ips = { browser-1 = "10.89.79.32", browser-2 = "10.89.79.33", browser-3 = "10.89.79.34", browser-4 = "10.89.79.35" }

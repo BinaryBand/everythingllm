@@ -78,7 +78,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   - AnythingLLM drops an MCP tool call after 60 s (skills have no limit), so an op answers within 45 s. Longer work keeps
     going in the service (the caller waits on a run id) or in its own systemd unit.
   - A front's package keeps its base dependencies to what the front imports, and puts the
-    rest (Whisper, Kokoro, PyAV, …) in a `host` extra that the units run with.
+    rest (Whisper, PyAV, …) in a `host` extra that the units run with.
   - Adding a service: the README's "Services on the host" lists every piece (console
     script, unit, the audit's `WATCHED` in `audit/services.py`).
 - MCP tools only read (or, like `refresh_podcasts`, only start background work). An op that

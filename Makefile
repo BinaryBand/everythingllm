@@ -8,7 +8,7 @@ STORAGE = $(or $(ANYTHINGLLM_STORAGE),$(error no ANYTHINGLLM_STORAGE: copy host.
 # The sites package follows ANYTHINGLLM_STORAGE; naming it here stops a target without host.env.
 HOST_SITES_ENV = ANYTHINGLLM_STORAGE=$(STORAGE)
 
-.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build serve-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs news-audio-setup news-audio-logs research-setup sites-setup audit-setup relay-setup agents-setup
+.PHONY: help install units diff deploy import-skill import-job import-command restart logs status health test test-skills mcp-sync sites-build serve-setup sandbox-setup sandbox-logs podcasts-setup podcasts-logs podcasts-web-logs research-setup sites-setup audit-setup relay-setup agents-setup
 
 help:            ## list the targets
 	@awk -F':.*## ' '/^[a-z%-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -20,7 +20,7 @@ install:         ## set this machine up from the repo, or bring it up to date; e
 	$(MAKE) --no-print-directory deploy
 	python3 tools/machine.py wait-api
 	python3 tools/machine.py search
-	$(MAKE) --no-print-directory serve-setup sandbox-setup podcasts-setup news-audio-setup research-setup sites-setup audit-setup
+	$(MAKE) --no-print-directory serve-setup sandbox-setup podcasts-setup research-setup sites-setup audit-setup
 	python3 tools/machine.py wait-api
 	-$(MAKE) --no-print-directory health
 	@python3 tools/machine.py checklist
@@ -122,12 +122,6 @@ podcasts-logs:   ## follow podcasts-runner and the transcription runs (the syncs
 
 podcasts-web-logs: ## follow podcasts-web, which serves the podcasts
 	journalctl --user -fu podcasts-web.service
-
-news-audio-setup: units ## enable and start the timer that reads each Daily News edition aloud
-	systemctl --user enable --now news-audio.timer
-
-news-audio-logs: ## follow the Daily News read-aloud runs
-	journalctl --user -fu news-audio.service
 
 research-setup: units ## enable and (re)start research-runner, which runs deep research for the skill; asks first while a run is going (FORCE=1 doesn't)
 	$(call guarded-restart,research-runner.service)

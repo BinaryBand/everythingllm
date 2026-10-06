@@ -22,7 +22,7 @@ Then it does the following:
 3. deploys (`make deploy`)
 4. points web search at SearXNG
 5. runs every setup target: tailnet ports, sandbox, podcast
-   and read-aloud timers, research, sites and audit runners
+   timers, research, sites and audit runners
 6. runs `make health`
 7. ends with a checklist of what only AnythingLLM's UI can do. Each item is ticked when
    it's already done: the chat model and embedder, a DeepSeek key, the agent limits in the
@@ -184,9 +184,8 @@ through its UI.
     to `podcasts-runner` on the host, which does the work. Its audio code is here too:
     `podcasts.avio` (PyAV decoding, and cutting without re-encoding), `podcasts.fingerprint`
     (finds the stretches recordings share), `podcasts.whisper` (speech to text, with the
-    transcripts' types in `podcasts.segments`) and `podcasts.speech` (text to speech with
-    Kokoro, for the Daily News read aloud). `podcasts.cli` runs them by hand as `spot
-    repeats`, `transcribe` and `speak`, with the models in `~/.local/share/everythingllm/podcasts/models` as the
+    transcripts' types in `podcasts.segments`). `podcasts.cli` runs them by hand as `spot
+    repeats` and `transcribe`, with the models in `~/.local/share/everythingllm/podcasts/models` as the
     services use them
   - `packages/hostrpc/` — a library, not a server: how the MCP servers and skills talk to the
     services on the host (see "Services on the host" below)
@@ -223,7 +222,7 @@ through its UI.
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
                            shared/)
       podcasts/            the podcasts' state, audio, transcripts and manifests
-      podcasts/models/     Whisper and Kokoro
+      podcasts/models/     Whisper's
       research/runs/       the deep-research run log and live runs' markers
       agents/runs/         the delegations' run log and live runs' markers
       relay/               the Nilson relay's database
@@ -287,7 +286,7 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
 - A member whose MCP server is a front for a host service keeps its base dependencies to
   what the front imports, and puts the rest in a `host` extra (`podcasts`, `sites`); its
   units run with `--extra host`. AnythingLLM starts each front with `uv run --package`,
-  which installs that member's base dependencies, so Whisper, Kokoro and PyAV stay out of
+  which installs that member's base dependencies, so Whisper and PyAV stay out of
   the container.
 - After `uv.lock` changes, run `make mcp-sync` (or `make deploy`, which runs it) so the
   container's venv catches up. It installs exactly the members `mcp_servers.json` runs
@@ -593,8 +592,8 @@ a show found only in such an app has no public feed.
   host (`packages/podcasts/src/podcasts/tools.py`, `host/systemd/podcasts-runner.service`, its
   own venv in `~/.local/share/everythingllm/venvs/podcasts`, socket `storage/everythingllm/podcasts/runner.sock` (the rest of its data is in `~/.local/share/everythingllm/podcasts/`);
   see "Services on the host"), which runs the tool and sends back its text.
-  The feeds, the model's key and the audio stack never touch the container: the sync,
-  transcription and the read-aloud run on the host too, from the same venv.
+  The feeds, the model's key and the audio stack never touch the container: the sync
+  and transcription run on the host too, from the same venv.
 - MCP tool calls time out after 60 s, so the runner only starts the sync and returns. A
   sync is a unit of its own, `podcasts-sync@<slug>.service`, or `podcasts-sync@_all.service`
   for every feed (what the timer starts), so restarting the runner, AnythingLLM or the
@@ -760,24 +759,6 @@ few lines of each other.
 To look at what would be cut without cutting it:
 
     uv run --package podcasts --extra host spot repeats ep1.mp3 ep2.mp3 ep3.mp3
-
-### The Daily News, read aloud
-
-`news-audio.timer` (18:45 and 20:00 UTC, after the 18:00 edition job) reads the newest
-Daily News edition aloud with Kokoro (`podcasts.speech`, voice `af_heart`): the date, then each
-section's headlines and summaries with pauses between them, about 3 minutes in all. It's
-encoded to a 64 kbit/s MP3 and added to the `daily-news` feed,
-`https://<PUBLIC_HOST>:8445/podcasts/daily-news/feed.xml`, which keeps the newest
-14 editions. An edition already read is skipped, so the second run only catches a late
-edition. Speaking takes a minute or two of CPU at nice 19. The model (about 350 MB) is
-downloaded on first use to `~/.local/share/everythingllm/podcasts/models/kokoro`.
-
-`daily-news` is a feed made on this server, kept in `~/.local/share/everythingllm/podcasts/local.json` rather
-than `feeds.json`, so the sync never sees it; `list_podcasts` and the index show it, and
-`remove-podcast` refuses it.
-Run it by hand:
-
-    systemctl --user start news-audio.service
 
 Run a sync by hand (every feed, or one, logging to `~/.local/share/everythingllm/podcasts/sync.log`):
 

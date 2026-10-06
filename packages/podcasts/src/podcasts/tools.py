@@ -11,7 +11,7 @@ Config (environment, from host.env and the unit):
   PODCASTS_DIR         served directory, inside the pages site (default ~/.local/share/everythingllm/pages/public/podcasts)
   PODCASTS_STATE       subscriptions and sync state (default ~/.local/share/everythingllm/podcasts)
   PODCASTS_BASE_URL    public URL of PODCASTS_DIR (default https://<PUBLIC_HOST>:8445/podcasts)
-  PODCASTS_MODELS      speech and transcription models (default ~/.local/share/everythingllm/podcasts/models)
+  PODCASTS_MODELS      transcription models (default ~/.local/share/everythingllm/podcasts/models)
   PODCASTS_TZ          the user's time zone, for the dates feeds' rules see (default Europe/Stockholm)
 """
 
@@ -101,8 +101,8 @@ def add_podcast(
 
 
 def list_podcasts() -> str:
-    feeds, local = lib().feeds(), lib().local_feeds()
-    if not feeds and not local:
+    feeds = lib().feeds()
+    if not feeds:
         return "No podcasts yet. Use add_podcast with a show's RSS feed URL."
     running = lib().sync_running()
     out = [f"Index: {lib().base_url}/  (sync {'running' if running else 'idle'})"]
@@ -116,18 +116,11 @@ def list_podcasts() -> str:
         out.append(
             f"The last sync (started {last['started']}) stopped before finishing; it was killed or crashed."
         )
-    for slug, sub in sorted({**local, **feeds}.items()):
+    for slug, sub in sorted(feeds.items()):
         rec = lib().record(slug)
         out.append(f"\n- {slug}: {rec['show'].title if rec else '(not synced yet)'}")
         out.append(f"  private feed: {lib().feed_url(slug)}")
-        if slug in local:
-            out.append(
-                f"  made on this server from {sub['url']}, {_keeping(sub['keep'])}"
-            )
-        else:
-            out.append(
-                f"  source: {sub['url']}, {_keeping(sub['keep'])}; {_settings(sub)}"
-            )
+        out.append(f"  source: {sub['url']}, {_keeping(sub['keep'])}; {_settings(sub)}")
         if not rec:
             continue
         out.append(f"  last checked {rec['checked']}")
@@ -218,7 +211,7 @@ def _settings(sub: dict) -> str:
 
 def _skipped(slug: str, sub: dict, kept: list) -> list[str]:
     """The episodes the rules skipped, newer than the oldest kept, with the model's reasons."""
-    if not sub.get("rules"):  # local feeds have none
+    if not sub.get("rules"):
         return []
     verdicts = lib().verdicts(slug)
     if verdicts["rules"] != sub["rules"]:

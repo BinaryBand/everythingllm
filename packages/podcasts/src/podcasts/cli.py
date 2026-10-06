@@ -2,20 +2,17 @@
 import:
   spot repeats AUDIO...   the stretches recordings share, such as ads (podcasts.fingerprint)
   transcribe AUDIO        speech to text with Whisper (podcasts.whisper)
-  speak say / speak fetch text to speech with Kokoro (podcasts.speech)
 
 The models are kept where the services keep theirs (podcasts.library.models_dir), so a
-`speak fetch` or a first `transcribe` downloads them for the services too.
+first `transcribe` downloads them for the services too.
 
 Config (environment):
   PODCASTS_MODELS     where the models are kept (default ~/.local/share/everythingllm/podcasts/models)
   ANYTHINGLLM_STORAGE AnythingLLM's storage directory (via hostrpc)
 """
 
-import io
 import json
 import sys
-import wave
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -32,18 +29,6 @@ from podcasts.fingerprint import (
 )
 from podcasts.rss import clock
 from podcasts.segments import TranscriptFormat, render_transcript
-from podcasts.speech import (
-    DEFAULT_SPEED,
-    DEFAULT_VOICE,
-    Audio,
-    InvalidSpeechError,
-    KokoroSynthesizer,
-    SpeakError,
-    SpeechRequest,
-    download,
-    missing,
-    synthesize,
-)
 from podcasts.whisper import (
     DEFAULT_MODEL,
     InvalidTranscriptionError,
@@ -231,93 +216,3 @@ def _progress(done: float, total: float) -> None:
 
 def transcribe_main(argv: list[str] | None = None) -> int:
     return _main(transcribe_app, "transcribe", (TranscribeError,), argv)
-
-
-# `speak say` and `speak fetch`: text to speech, written to a WAV file.
-
-speak_app = _app("Turn text into speech.")
-
-ModelDir = Annotated[
-    Path,
-    typer.Option(
-        default_factory=lambda: _models("kokoro"),
-        show_default="~/.local/share/everythingllm/podcasts/models/kokoro",
-    ),
-]
-
-_MONO = 1
-_SAMPLE_WIDTH = 2  # bytes: 16-bit PCM
-
-
-@speak_app.command()
-def say(
-    text: Annotated[
-        str | None, typer.Argument(help="text; default --file, else stdin")
-    ] = None,
-    *,
-    output: Annotated[Path, typer.Option("--output", "-o", metavar="OUT.wav")],
-    file: Annotated[
-        Path | None, typer.Option(help="read the text from this file")
-    ] = None,
-    voice: Annotated[
-        str, typer.Option(help="voice or blend, e.g. a:0.6,b:0.4")
-    ] = DEFAULT_VOICE,
-    speed: Annotated[float, typer.Option(help="pace, 1.0 is normal")] = DEFAULT_SPEED,
-    lang: Annotated[
-        str | None, typer.Option(help="phonemizer language; default from the voice")
-    ] = None,
-    model_dir: ModelDir,
-) -> None:
-    """Write text to a WAV file and print its path.
-
-    The text may use the tags <break>, <phoneme>, <voice> and <prosody> for fine control;
-    see the README.
-    """
-    if output.suffix.lower() != ".wav":
-        raise InvalidSpeechError(f"output must be a .wav file, got {output.name!r}")
-    req = SpeechRequest(_text(text, file), voice=voice, speed=speed, lang=lang)
-    audio = synthesize(req, KokoroSynthesizer(model_dir))
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(encode_wav(audio))
-    print(output)
-
-
-@speak_app.command()
-def fetch(model_dir: ModelDir) -> None:
-    """Download the speech model (about 350 MB); does nothing when it is already there."""
-    todo = missing(model_dir)
-    for file in todo:
-        _note("speak", f"downloading {file.name}")
-        download(file, model_dir)
-    if not todo:
-        _note("speak", f"model already in {model_dir}")
-
-
-def encode_wav(audio: Audio) -> bytes:
-    """The audio as the bytes of a WAV file."""
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as out:
-        out.setnchannels(_MONO)
-        out.setsampwidth(_SAMPLE_WIDTH)
-        out.setframerate(audio.sample_rate)
-        out.writeframes(audio.pcm)
-    return buffer.getvalue()
-
-
-def _text(text: str | None, file: Path | None) -> str:
-    if text is not None and file is not None:
-        raise InvalidSpeechError("give the text or --file, not both")
-    if file is not None:
-        try:
-            return file.read_text()
-        except (OSError, UnicodeDecodeError) as exc:
-            raise InvalidSpeechError(f"cannot read {file}: {exc}") from exc
-    if text is not None:
-        return text
-    if sys.stdin.isatty():
-        _note("speak", "reading the text from stdin; end it with Ctrl-D")
-    return sys.stdin.read()
-
-
-def speak_main(argv: list[str] | None = None) -> int:
-    return _main(speak_app, "speak", (SpeakError,), argv)

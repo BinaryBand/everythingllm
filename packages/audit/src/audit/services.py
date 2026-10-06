@@ -10,7 +10,6 @@ WATCHED = {
     "podcasts-web.service": ("_SYSTEMD_USER_UNIT", "podcasts-web"),
     "podcasts-sync@_all.service": ("_SYSTEMD_USER_UNIT", "podcast sync"),
     "podcasts-transcribe.service": ("_SYSTEMD_USER_UNIT", "podcast transcripts"),
-    "news-audio.service": ("_SYSTEMD_USER_UNIT", "Daily News read aloud"),
     "sandbox-runner.service": ("_SYSTEMD_USER_UNIT", "code sandbox runner"),
     "sandbox-proxy.service": ("_SYSTEMD_USER_UNIT", "code sandbox PyPI proxy"),
     "research-runner.service": ("_SYSTEMD_USER_UNIT", "deep-research runner"),

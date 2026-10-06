@@ -5,8 +5,6 @@ Two directories:
                            feeds.json, the subscriptions:
                              {slug: {url, keep, added, scrub_ads, transcribe, ad_words,
                                       rules}};
-                           local.json, feeds made on this server, not downloaded
-                             ({slug: {url, keep, added}}, see news_audio.py);
                            shows/<slug>.json, what the last sync saw and saved;
                            verdicts/<slug>.json, which episodes the rules keep (see rules.py);
                            downloads.json, how many episodes each feed downloaded today
@@ -244,7 +242,7 @@ def default_model() -> Chat | None:
 
 
 def models_dir(name: str) -> Path:
-    """Where the speech and transcription models for `name` are kept."""
+    """Where the transcription models for `name` are kept."""
     return (
         Path(os.environ.get("PODCASTS_MODELS", data_dir() / "podcasts" / "models"))
         / name
@@ -360,14 +358,6 @@ class Library:
         feeds = _read_json(self.state / "feeds.json") or {}
         return {slug: {**FEED_DEFAULTS, **sub} for slug, sub in feeds.items()}
 
-    def local_feeds(self) -> dict[str, dict]:
-        """Feeds made on this server, which the sync never touches."""
-        return _read_json(self.state / "local.json") or {}
-
-    def all_feeds(self) -> dict[str, dict]:
-        """The subscriptions and the feeds made here; no slug is in both."""
-        return {**self.local_feeds(), **self.feeds()}
-
     def cuts_ads(self, sub: dict) -> bool:
         return bool(self.scrubber and sub["scrub_ads"])
 
@@ -427,10 +417,9 @@ class Library:
                 self._save_feeds(feeds)
                 return existing, show, False
             slug = slug or slugify(show.title) or "podcast"
-            taken = self.all_feeds()
-            if slug in taken:
+            if slug in feeds:
                 raise LibraryError(
-                    f"'{slug}' is already used by {taken[slug]['url']}; pass another slug."
+                    f"'{slug}' is already used by {feeds[slug]['url']}; pass another slug."
                 )
             feeds[slug] = {
                 "url": url,
@@ -459,10 +448,6 @@ class Library:
                 raise LibraryError("a sync is running; try again once it has finished.")
             with self._lock("feeds.lock"):
                 feeds = self.feeds()
-                if slug in self.local_feeds():
-                    raise LibraryError(
-                        f"'{slug}' is made on this server, not downloaded, so it can't be removed."
-                    )
                 if slug not in feeds:
                     raise LibraryError(f"no podcast named '{slug}'.")
                 del feeds[slug]
@@ -507,7 +492,7 @@ class Library:
 
     def write_index(self) -> None:
         items = []
-        for slug in sorted(self.all_feeds()):
+        for slug in sorted(self.feeds()):
             rec = self.record(slug)
             title = rec["show"].title if rec else slug
             n = len(rec["show"].episodes) if rec else 0
@@ -830,50 +815,6 @@ class Library:
             publish("; ".join(errors), f"{nxt} (looking for ads)" if nxt else "")
         scrubber.prune(slug, {key(e) for e in wanted if e.audio})
 
-    def publish_local(
-        self, slug: str, show: Show, ep: Episode, source: str, keep: int
-    ) -> None:
-        """Add `ep` (its file already in site/<slug>/) to a feed made on this server.
-
-        The feed is created if need be, with `show`'s details, and keeps its newest `keep`
-        episodes; older ones go (their files with the next sync's gc). The sync never
-        touches it otherwise. The file is moved into the audio store like a download.
-        """
-        with self._lock("sync.lock"):
-            with self._lock("feeds.lock"):
-                if slug in self.feeds():
-                    raise LibraryError(f"'{slug}' is already a downloaded podcast.")
-                local = self.local_feeds()
-                local[slug] = {
-                    **local.get(slug, {"added": _now()}),
-                    "url": source,
-                    "keep": keep,
-                }
-                _write_json(self.state / "local.json", local)
-            rec = self.record(slug)
-            old = [
-                e for e in (rec["show"].episodes if rec else []) if e.guid != ep.guid
-            ]
-            show.episodes = sorted([ep, *old], key=lambda e: e.published, reverse=True)[
-                :keep
-            ]
-            folder = self.site / slug
-            for e in show.episodes:
-                if e.file and not e.audio and (folder / e.file).is_file():
-                    # Just made, as if just downloaded: uncut, so served under its name.
-                    file = folder / e.file
-                    e.audio = self.audio.add(file, file.suffix.lstrip("."))
-                    e.stem = file.stem
-                if e.audio:
-                    self.render(slug, e)
-            _prune_folder(
-                folder,
-                {e.transcript for e in show.episodes if e.transcript} | {"feed.xml"},
-            )
-            self._save_record(slug, show)
-            self._publish(slug, show, source)
-            self.write_index()
-
     def update_episode(self, slug: str, seen: Episode, change) -> bool:
         """Call `change(episode)` under the sync lock and save and publish the result.
 
@@ -883,7 +824,7 @@ class Library:
         finish. False if it was gone.
         """
         with self._lock("sync.lock"):
-            sub = self.all_feeds().get(slug)
+            sub = self.feeds().get(slug)
             rec = self.record(slug)
             if not rec or not sub:
                 return False

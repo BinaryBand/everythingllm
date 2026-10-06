@@ -84,8 +84,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import chatimage.card
 import hostrpc
-import linkcard
 import tomllib
 
 log = logging.getLogger("sandbox-runner")
@@ -1346,7 +1346,7 @@ class Runner(hostrpc.Service):
             if slug not in pages and not any(k["slug"] == slug for k in skipped):
                 m = marker(page) or {}
                 remove_path(page)
-                linkcard.remove(site, self.page_url(slug, m.get("entry", "index.html")))
+                chatimage.card.remove(site, self.page_url(slug, m.get("entry", "index.html")))
                 removed.append(slug)
         if live or removed:
             self.rebuild_index()
@@ -1363,7 +1363,7 @@ class Runner(hostrpc.Service):
         return f"{self.config.site_url.rstrip('/')}/{page_path(slug, entry)}"
 
     def card(self, page: Path, url: str, workspace: str) -> str:
-        """The chat's link card for a page just published (see linkcard); "" when it
+        """The chat's link card for a page just published (see chatimage.card); "" when it
         couldn't be made."""
         m = marker(page) or {}
         entry = m.get("entry", "index.html")
@@ -1371,7 +1371,7 @@ class Runner(hostrpc.Service):
         if entry.endswith((".html", ".htm")):
             title = m.get("title") or page.name
             description = page_description((page / entry).read_text(errors="replace"))
-        return linkcard.make(
+        return chatimage.card.make(
             self.config.site_dir,
             url,
             title,

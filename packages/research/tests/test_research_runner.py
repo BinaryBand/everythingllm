@@ -25,12 +25,15 @@ class Gate:
         self.peak = 0
         self.lock = threading.Lock()
         self.closed = []
+        self.reqs = []
 
-    def __call__(self, req, settings, progress, chat_closed):
+    def __call__(self, req, settings, progress, chat_closed, meter):
         with self.lock:
             self.running += 1
             self.peak = max(self.peak, self.running)
+        self.reqs.append(req)
         progress(f"researching {req.question}")
+        meter(0.5)
         self.go.wait(5)
         self.closed.append(chat_closed())
         with self.lock:
@@ -39,6 +42,8 @@ class Gate:
             "status": "ok",
             "reply": f"done: {req.question}",
             "sources": [{"url": "https://a/", "title": "A"}],
+            "url": f"https://h:8445/research/reports/{req.question}/",
+            "title": f"Report on {req.question}",
         }
 
 
@@ -51,6 +56,8 @@ def served(tmp_path, monkeypatch):
         api="",
         env_file="",
         runlogs=tmp_path / "logs" / "deep-research",
+        pages_url="https://h:8445/",
+        live_port=0,  # any free port; the runner's live server says which
     )
     gate = Gate()
     socket = tmp_path / "research" / "runner.sock"

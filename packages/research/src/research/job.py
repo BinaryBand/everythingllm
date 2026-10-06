@@ -19,7 +19,7 @@ from llm import provider_for
 from publicweb.pages import SEARXNG, make_search, searxng_client
 from sites import cards
 from sites.build import Builder
-from sites.store import SiteStore
+from sites.store import SiteStore, pages_url
 from sites.store import today as sites_today
 
 from research import publish
@@ -39,6 +39,10 @@ class Settings:
     api: str  # AnythingLLM's API, for embedding
     env_file: str  # AnythingLLM's .env, for the model keys
     runlogs: Path  # the run log and live runs' markers, host-only
+    pages_url: str = (
+        ""  # the pages site's public URL, for the live cards (research.live)
+    )
+    live_port: int = 8450  # where research.live listens
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,6 +54,8 @@ class Settings:
             api="http://127.0.0.1:3001/api",
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
             runlogs=hostrpc.data_dir() / "research" / "runs",
+            pages_url=pages_url(Builder.from_env().source),
+            live_port=int(get("RESEARCH_LIVE_PORT", "8450")),
         )
 
     @property
@@ -75,6 +81,10 @@ class Request:
     embed: bool = True
     workspace: str | None = None  # slug
     workspace_name: str | None = None
+    # Set by research-runner, not the skill: the run's id and its live progress card,
+    # kept in the run log so the audit can hand the card out again.
+    run_id: str | None = None
+    card: str = ""
 
     @classmethod
     def of(cls, question: str, **args) -> "Request":
@@ -105,15 +115,20 @@ def run(
     settings: Settings,
     progress: Callable[[str], None],
     chat_closed: Callable[[], bool] = lambda: False,
+    meter: Callable[[float], None] = lambda _: None,
     builder: Builder | None = None,
     llm: LLM | None = None,
     search=None,
     read=None,
 ) -> dict:
-    """Run it; never raises. Returns {status, reply, sources}: `reply` is what the agent
-    is told, `sources` the cited pages, for the chat's citations."""
+    """Run it; never raises. Returns {status, reply, sources, url, title, error}: `reply`
+    is what the agent is told, `sources` the cited pages, for the chat's citations, `url`
+    and `title` the published report's, when there is one, and `error` why it failed. `meter` hears how far along the
+    run is, from 0 to 1."""
     runlog = RunLog(settings.runlogs)
     record = {"question": req.question, "depth": req.depth, "models": req.models}
+    if req.run_id:
+        record.update(run_id=req.run_id, card=req.card)
     runlog.start(record)
     outcome = {**record, "status": "failed"}
 
@@ -128,6 +143,7 @@ def run(
                 req,
                 settings,
                 note,
+                meter,
                 outcome,
                 sources,
                 clients,
@@ -145,13 +161,21 @@ def run(
         runlog.write(outcome)
     except OSError as e:
         print(f"couldn't write the run log: {e}", file=sys.stderr)
-    return {"status": outcome["status"], "reply": reply, "sources": sources}
+    return {
+        "status": outcome["status"],
+        "reply": reply,
+        "sources": sources,
+        "url": outcome.get("url"),
+        "title": outcome.get("title"),
+        "error": outcome.get("error"),
+    }
 
 
 def _run(
     req,
     settings,
     progress,
+    meter,
     outcome,
     sources,
     clients: ExitStack,
@@ -189,6 +213,7 @@ def _run(
         progress=progress,
         models=req.models,
         today=today,
+        meter=meter,
     )
     report = research(req.question, req.depth, ctx)
     sources.extend({"url": s["url"], "title": s["title"]} for s in report["sources"])
@@ -214,6 +239,7 @@ def _run(
             report["title"], today, report["question"], url, report["markdown"]
         )
 
+    meter(0.95)
     store = SiteStore(builder.source, builder.content, build=builder.build, agent=True)
     copies = publish.save_then_publish(
         settings.reports_dir,
@@ -276,6 +302,7 @@ def _run(
 
     # A copy in the workspace. The report is already saved, so this only warns.
     if req.embed and req.workspace:
+        meter(0.98)
         progress(
             f'adding the report to workspace "{req.workspace_name or req.workspace}"'
         )

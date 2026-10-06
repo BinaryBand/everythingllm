@@ -1,0 +1,10 @@
+[project]
+name = "chatimage"
+version = "0.1.0"
+description = "Chat images: link cards, live progress cards and the server push that keeps a live one current, drawn on the host for the agent to show as Markdown"
+requires-python = ">=3.12"
+dependencies = ["pillow>=11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

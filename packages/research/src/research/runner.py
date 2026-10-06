@@ -3,10 +3,13 @@
 The skill (anythingllm/agent-skills/deep-research) asks over its socket (hostrpc):
 
   start(question, depth?, planner?, worker?, planner_fallback?, site?, embed?, workspace?,
-        workspace_name?) -> {run_id, queued}
+        workspace_name?) -> {run_id, queued, card}
   wait(run_id, since=0)   up to WAIT seconds for news: {events (from `since` on), done,
                           result ({status, reply, sources}) once done}
   runs()                  the runs this runner holds: {run_id, question, started, done}
+
+`card` is the run's live progress card for the agent to paste (research.live, which
+this runner serves on its own port); "" without PUBLIC_HOST.
 
 A run belongs to the runner, not to the chat: if the chat closes or AnythingLLM restarts,
 it carries on, publishes and embeds as usual. At most MAX_RUNS go at once; the rest wait
@@ -16,6 +19,7 @@ record after that.
 Config (environment, from host.env and the unit):
   ANYTHINGLLM_STORAGE   storage directory (default /srv/anythingllm/storage)
   RESEARCH_SOCKET       socket to listen on (default <storage>/research/runner.sock)
+  RESEARCH_LIVE_PORT    port on 127.0.0.1 for the live cards (default 8450; research.live)
   and what research.job.Settings reads.
 """
 
@@ -23,14 +27,14 @@ import asyncio
 import logging
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import hostrpc
 from hostrpc import RunnerError
 
-from research import job
+from research import job, live
 from research.runlog import MAX_EVENTS, sweep_interrupted
 
 log = logging.getLogger("research-runner")
@@ -38,7 +42,8 @@ log = logging.getLogger("research-runner")
 MAX_RUNS = 2
 WAIT = 45  # the skill's wait calls are long polls of this length
 RESULT_KEEP = 3600
-# The chat is counted as open while the skill is waiting, or waited this recently.
+# The chat is counted as open while the skill is waiting or the live card is being watched,
+# or was this recently.
 FOLLOW_GRACE = 15
 
 
@@ -48,6 +53,10 @@ class Run:
     question: str
     started: str
     events: list[str] = field(default_factory=list)
+    fraction: float | None = None  # how far along, 0 to 1; None until it says
+    title: str = ""  # the question, then the report's title
+    url: str | None = None  # the published report's
+    began: float = field(default_factory=time.monotonic)
     done: bool = False
     result: dict | None = None
     finished: float = 0.0
@@ -57,6 +66,11 @@ class Run:
 
     def followed(self) -> bool:
         return self.waiters > 0 or time.monotonic() - self.last_seen < FOLLOW_GRACE
+
+    def minutes(self) -> int:
+        """Whole minutes it has run (or ran), at least 1."""
+        end = self.finished if self.done else time.monotonic()
+        return max(1, round((end - self.began) / 60))
 
 
 class Runner(hostrpc.Service):
@@ -68,6 +82,9 @@ class Runner(hostrpc.Service):
         self.runs: dict[str, Run] = {}
         self.slots = asyncio.Semaphore(MAX_RUNS)
         self.tasks: set[asyncio.Task] = set()
+        self.live: asyncio.Server | None = (
+            None  # the live cards' server, once it listens
+        )
 
     async def op_start(self, question: str, **args) -> dict:
         """args: depth, planner, worker, planner_fallback, site, embed, workspace,
@@ -81,14 +98,21 @@ class Runner(hostrpc.Service):
             f"dr-{secrets.token_hex(4)}",
             req.question,
             datetime.now(UTC).isoformat(timespec="seconds"),
+            title=req.question,
         )
+        card = live.card(self.settings.pages_url, run.id, req.question)
+        req = replace(req, run_id=run.id, card=card)
         self.runs[run.id] = run
         task = asyncio.create_task(self.go(run, req))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
         log.info("%s started: %s", run.id, req.question[:120])
         # How many runs this one waits for before it can start.
-        return {"run_id": run.id, "queued": max(0, going - (MAX_RUNS - 1))}
+        return {
+            "run_id": run.id,
+            "queued": max(0, going - (MAX_RUNS - 1)),
+            "card": card,
+        }
 
     async def go(self, run: Run, req: job.Request) -> None:
         loop = asyncio.get_running_loop()
@@ -96,6 +120,12 @@ class Runner(hostrpc.Service):
         def progress(message: str) -> None:
             if len(run.events) < MAX_EVENTS:  # as many as the run log keeps
                 run.events.append(message)
+                loop.call_soon_threadsafe(run.changed.set)
+
+        def meter(fraction: float) -> None:
+            # Workers' searches can report out of order; the bar only moves forward.
+            if fraction > (run.fraction or 0):
+                run.fraction = fraction
                 loop.call_soon_threadsafe(run.changed.set)
 
         if self.slots.locked():
@@ -110,6 +140,7 @@ class Runner(hostrpc.Service):
                     self.settings,
                     progress,
                     lambda: not run.followed(),
+                    meter,
                 )
             except (
                 Exception
@@ -120,6 +151,8 @@ class Runner(hostrpc.Service):
                     "reply": f"The deep research run failed: {e}.",
                     "sources": [],
                 }
+        run.title = result.get("title") or run.title
+        run.url = result.get("url")
         run.result, run.done, run.finished = result, True, time.monotonic()
         run.changed.set()
         loop.call_later(RESULT_KEEP + 1, self.prune)
@@ -187,7 +220,16 @@ async def serve(
         log.info(
             "logged a run an earlier runner left as interrupted: %s", question[:120]
         )
-    await hostrpc.serve(runner, socket)
+    # The live cards are a nicety: without their port, the runs still go.
+    try:
+        runner.live = await live.Live(runner).serve(settings.live_port)
+    except OSError as e:
+        log.error("no live cards: can't listen on port %s: %s", settings.live_port, e)
+    try:
+        await hostrpc.serve(runner, socket)
+    finally:
+        if runner.live:
+            runner.live.close()
 
 
 def main() -> None:

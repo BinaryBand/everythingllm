@@ -93,7 +93,8 @@ An Ansible playbook used to install the two containers' units and `/srv/static-a
 It must leave them alone now, or its next run undoes `make units`.
 
 `make serve-setup` maps this setup's tailnet ports with `tailscale serve`: the pages site on
-:8445 (with `/news/write` to the article writer), SearXNG on :8888, AnythingLLM's UI on
+:8445 (with `/news/write` to the article writer, `/podcasts` to podcasts-web and
+`/_live/research` to research-runner's live cards), SearXNG on :8888, AnythingLLM's UI on
 :3001 and the Nilson relay on :8446. Other mappings on the machine are left alone.
 
 Not in this repo, so a new machine needs them first: rootless podman with Quadlet, systemd
@@ -162,8 +163,10 @@ through its UI.
   - `packages/publicweb/` — a library, not a server: the HTTP client podcasts, sites and research use,
     which refuses LAN, tailnet and loopback hosts, and `publicweb.pages`, the page reader on
     it that the article writer and research share
-  - `packages/linkcard/` — a library, not a server: draws the link cards the chat shows for a
-    published page (see "Code sandbox")
+  - `packages/chatimage/` — a library, not a server: the pictures the host draws for the chat,
+    which the agent shows as Markdown images: link cards for published pages (see "Code
+    sandbox"), deep research's live progress cards, and the server push that keeps a live one
+    current (see "Deep research")
 - `packages/relay/` — the Nilson relay, a host service for the Nilson chat app rather than for
   AnythingLLM's agent; also a workspace member (see "Nilson relay")
 - `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`make units`);
@@ -415,8 +418,12 @@ isn't copied again. The root's `index.html` lists every page. A workspace's `/pu
 starts out holding the pages it had already published.
 
 **Link cards.** AnythingLLM's chat shows a Markdown image up to 800 px wide, and keeps it a
-link when it's inside one, even with "Render HTML in chat" off. So whatever publishes a page
-(`publish`, the sites tools' `write_entry`, deep research) also has `linkcard` draw a card of
+link when it's inside one, even with "Render HTML in chat" off. That setting is per browser
+and off by default, and the HTML it lets through is sanitized (DOMPurify: no scripts,
+handlers or iframes), so anything richer than text that has to show wherever the chat does
+is a picture the host draws: `packages/chatimage`, whose link cards are one kind and deep
+research's live progress cards another. Whatever publishes a page
+(`publish`, the sites tools' `write_entry`, deep research) has `chatimage.card` draw a card of
 it (its title, its site or workspace, a line about it, its address) into `_cards/` on the
 pages site, and adds a `Card: [![title](card.png?v=…)](page)` line to its reply, which the
 system prompt has the agent paste as is. Pages that are already there have cards too:
@@ -770,11 +777,30 @@ agent itself is capped at 40 tool calls per reply, `AGENT_MAX_TOOL_CALLS` in `.e
 work happens outside the agent). The skill (`anythingllm/agent-skills/deep-research/`) is a
 thin front: it hands the question, its setup args and the workspace to `research-runner`
 on the host (`packages/research`, `host/systemd/research-runner.service`, its own venv in
-`~/.local/share/everythingllm/venvs/research`), shows the runner's progress in the chat, and
-replies with what the runner says to tell the user. They talk over a Unix socket the
+`~/.local/share/everythingllm/venvs/research`), and answers at once with the run's live
+progress card, so the chat is free while the run goes. They talk over a Unix socket the
 container sees, `storage/research/runner.sock` (see "Services on the host"):
-`start` returns a run id, `wait(run_id, since)` long-polls up to 45 s for new
+`start` returns a run id and its card, `wait(run_id, since)` long-polls up to 45 s for new
 progress lines and the result, `runs` lists what the runner holds.
+
+**The live card.** `start`'s `card` is a Markdown image in a link,
+`[![Deep research: <question>](…/_live/research/<id>.png)](…/_live/research/<id>)`, which the
+agent pastes as it does a link card. research-runner serves both on 127.0.0.1:8450
+(`RESEARCH_LIVE_PORT`, `research.live`), which `make serve-setup` maps to
+`https://<PUBLIC_HOST>:8445/_live/research/` with `tailscale serve`. The image is
+`multipart/x-mixed-replace` (server push, `chatimage.live`): the browser keeps showing the
+newest frame of the connection, so the card's bar, its minutes and its latest progress line
+move with the run, with no script and with "Render HTML in chat" off. A frame goes out at
+most once a second, when the run moves on; the response ends with the run (green when it
+published, red when it failed) or after 30 minutes, and a reload asks again. The bar is how
+far along the run is (`meter` in `job.run` and the pipeline): planning, then the searches
+against the depth's budget for most of it, then writing, fact-checking and publishing.
+Someone watching the card counts as following the run, as the skill's wait used to. The
+link opens the report once it's published, and until then a page of the run's latest
+progress lines that reloads itself. Each run's line in the run log keeps its `run_id` and
+`card`, so a run the runner no longer holds (an hour after it ended, or after a restart)
+gets one frame of how it ended from the log, the audit's `research_run` hands the card out
+again, and an old chat's card still opens the report.
 
 A run, step by step:
 
@@ -794,9 +820,9 @@ A run, step by step:
 6. **Publish** — the report is first saved as `storage/anythingllm-fs/research/<slug>.md`
    (slug from the title, as sites-write makes it), where the agent's filesystem tools can
    read it, then saved and built in `~/.local/share/everythingllm/pages/entries/research/reports/` through `SiteStore`,
-   as the `sites` server does; the chat
-   gets a summary, the link and the sources as citations. If publishing fails (the site
-   doesn't keep an entry it couldn't build), the reply gives the saved file and the error.
+   as the `sites` server does; the live card turns green and links to it. If publishing
+   fails (the site doesn't keep an entry it couldn't build), the card says so and the run
+   log has the saved file and the error.
 7. **Keep a copy** — unless the `EMBED_IN_WORKSPACE` setup
    arg is `no`, it's also stored in `storage/documents/deep-research/` and embedded into
    the workspace that ran it, through AnythingLLM's API as the UI's document picker does
@@ -848,11 +874,9 @@ DuckDuckGo, and SearXNG returned nothing until they recovered. Since then:
   in a row so they don't prolong the block.
 More engines in SearXNG's settings (Ansible) keep search working when one blocks us.
 
-A run doesn't stop when its chat closes, or when AnythingLLM restarts. AnythingLLM aborts
-the agent session whenever the chat's websocket closes (the Stop button, a closed tab, a
-thread switch and a sleeping phone all look the same to the server); the skill then stops
-waiting, and the run carries on in the runner, publishes and embeds the report as usual.
-A run nobody was waiting on when it finished gets `chat_closed: true` in the run log. To
+A run doesn't stop when its chat closes, or when AnythingLLM restarts: it belongs to the
+runner, which publishes and embeds the report as usual. A run nobody was watching (its
+card, or a `wait`) when it finished gets `chat_closed: true` in the run log. To
 find the report, ask in that workspace or open the research site. A run can't be
 cancelled from the chat: `make research-setup FORCE=1` restarts the runner, which kills
 every run in it. Runs are bounded by their search budget either way. At most 2 run at once;

@@ -1,7 +1,7 @@
 import io
 import re
 
-import linkcard
+from chatimage import card as linkcard
 from PIL import Image
 
 

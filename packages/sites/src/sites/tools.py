@@ -21,8 +21,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import chatimage.card
 import hostrpc
-import linkcard
 
 from sites import articles_web, cards, feeds
 from sites.build import Builder
@@ -128,7 +128,7 @@ def write_entry(
 def delete_entry(site: str, section: str, slug: str) -> str:
     entry, _, _ = store().get(site, section, slug)
     store().delete(site, section, slug)
-    linkcard.remove(site_dir(), entry.url)
+    chatimage.card.remove(site_dir(), entry.url)
     return f"Deleted {site}/{section}/{slug}."
 
 

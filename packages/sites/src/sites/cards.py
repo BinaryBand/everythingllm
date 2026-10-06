@@ -1,5 +1,5 @@
-"""Link cards for the sites (see linkcard): the Markdown line the agent pastes to show a
-site's home page or an entry in the chat as a big link. Host-only, like linkcard: the
+"""Link cards for the sites (see chatimage.card): the Markdown line the agent pastes to show a
+site's home page or an entry in the chat as a big link. Host-only, like chatimage: the
 sites tools in sites-runner and deep research use it, the MCP server in the container
 doesn't.
 """
@@ -7,7 +7,7 @@ doesn't.
 import re
 from pathlib import Path
 
-import linkcard
+from chatimage import card
 
 from sites.store import Entry, Site, SiteStore
 
@@ -24,7 +24,7 @@ def entry_card(
         title = store.site(site).title
     except Exception:  # noqa: BLE001 - the site's own name will do on the card
         title = site
-    return linkcard.make(
+    return card.make(
         site_dir,
         entry.url,
         entry.title,
@@ -35,7 +35,7 @@ def entry_card(
 
 def site_card(site_dir: Path, site: Site) -> str:
     """The card line for a site's home page; "" when it couldn't be made."""
-    return linkcard.make(
+    return card.make(
         site_dir, site.url, site.title, f"{site.title} · home", site.description
     )
 

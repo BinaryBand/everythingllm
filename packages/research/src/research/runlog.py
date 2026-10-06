@@ -85,6 +85,26 @@ def sweep_interrupted(
     return swept
 
 
+def find(dir: Path, run_id: str, months: int = 2) -> dict | None:
+    """The line of the run research-runner called `run_id`, from the newest `months` of
+    the log; None when it isn't there (an older run, or one still going)."""
+    for file in sorted(dir.glob("*.jsonl"), reverse=True)[:months]:
+        try:
+            lines = file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            if f'"{run_id}"' not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if record.get("run_id") == run_id:
+                return record
+    return None
+
+
 class RunLog:
     def __init__(self, dir: Path, now=time.time):
         self.dir = Path(dir)

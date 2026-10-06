@@ -42,6 +42,7 @@ pages site|http://127.0.0.1:8445/
 article writer|http://127.0.0.1:8448/
 podcasts-web|http://127.0.0.1:8449/health
 Nilson relay|http://127.0.0.1:8446/health
+research live cards|http://127.0.0.1:8450/_live/research/dr-00000000.png
 EOF
 
 echo "Sockets"

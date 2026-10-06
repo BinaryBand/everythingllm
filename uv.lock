@@ -9,8 +9,8 @@ resolution-markers = [
 [manifest]
 members = [
     "audit",
+    "chatimage",
     "hostrpc",
-    "linkcard",
     "llm",
     "podcasts",
     "publicweb",
@@ -346,6 +346,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/03/cf/4c66866fa9e2b1c78e3c911516d1de497a677b7ac60f1eceda74ce777ca3/charset_normalizer-3.5.2-cp37-abi3-win_arm64.whl", hash = "sha256:40ab6bffa02ae10a0581e6c198be7d2d8ca5c2a0c64e4ed3465d766df457573e", size = 294363, upload-time = "2026-09-30T04:38:51.312Z" },
     { url = "https://files.pythonhosted.org/packages/fc/ad/d07d7862a62ffa6d79d68074d14823243dd235a77c45262acbf6adeb28bf/charset_normalizer-3.5.2-py3-none-any.whl", hash = "sha256:b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685", size = 68872, upload-time = "2026-09-30T04:39:21.828Z" },
 ]
+
+[[package]]
+name = "chatimage"
+version = "0.1.0"
+source = { editable = "packages/chatimage" }
+dependencies = [
+    { name = "pillow" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pillow", specifier = ">=11" }]
 
 [[package]]
 name = "click"
@@ -785,17 +796,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/6b/ef/b58dedba0a1417f16
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/e1/a27e5a70a525a5ee1fd5357596f07b724d02ff317f134e86cb6e3d9db968/kokoro_onnx-0.6.1-py3-none-any.whl", hash = "sha256:50c8de4950d601df41428ee5462a48c8a78bef441bf671f2492e070ef44d8a32", size = 26084, upload-time = "2026-08-19T00:40:35.746Z" },
 ]
-
-[[package]]
-name = "linkcard"
-version = "0.1.0"
-source = { editable = "packages/linkcard" }
-dependencies = [
-    { name = "pillow" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pillow", specifier = ">=11" }]
 
 [[package]]
 name = "llm"
@@ -1668,9 +1668,9 @@ name = "research"
 version = "0.1.0"
 source = { editable = "packages/research" }
 dependencies = [
+    { name = "chatimage" },
     { name = "hostrpc" },
     { name = "httpx" },
-    { name = "linkcard" },
     { name = "llm" },
     { name = "publicweb" },
     { name = "sites" },
@@ -1678,9 +1678,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "chatimage", editable = "packages/chatimage" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "linkcard", editable = "packages/linkcard" },
     { name = "llm", editable = "packages/llm" },
     { name = "publicweb", editable = "packages/publicweb" },
     { name = "sites", editable = "packages/sites" },
@@ -1825,14 +1825,14 @@ name = "sandbox"
 version = "0.1.0"
 source = { editable = "packages/sandbox" }
 dependencies = [
+    { name = "chatimage" },
     { name = "hostrpc" },
-    { name = "linkcard" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "chatimage", editable = "packages/chatimage" },
     { name = "hostrpc", editable = "packages/hostrpc" },
-    { name = "linkcard", editable = "packages/linkcard" },
 ]
 
 [[package]]
@@ -1856,17 +1856,17 @@ dependencies = [
 
 [package.optional-dependencies]
 host = [
+    { name = "chatimage" },
     { name = "httpx" },
-    { name = "linkcard" },
     { name = "llm" },
     { name = "publicweb" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "chatimage", marker = "extra == 'host'", editable = "packages/chatimage" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", marker = "extra == 'host'", specifier = ">=0.27" },
-    { name = "linkcard", marker = "extra == 'host'", editable = "packages/linkcard" },
     { name = "llm", marker = "extra == 'host'", editable = "packages/llm" },
     { name = "mcp", specifier = ">=2.2,<3" },
     { name = "publicweb", marker = "extra == 'host'", editable = "packages/publicweb" },

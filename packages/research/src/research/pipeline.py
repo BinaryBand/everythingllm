@@ -51,6 +51,8 @@ class Context:
     progress: Callable[[str], None]
     models: dict  # {"planner": ..., "worker": ...}
     today: str  # YYYY-MM-DD
+    # How far along the run is, from 0 to 1, for research-runner's live progress image.
+    meter: Callable[[float], None] = lambda _: None
 
 
 @dataclass
@@ -88,6 +90,7 @@ def research(question: str, depth: str | None, ctx: Context) -> dict:
     sources = SourceList()
     counts = Counts(search_budget=preset["searches"])
 
+    ctx.meter(0.03)
     progress(
         f"Planning {preset['name']} research: {preset['workers']} parallel workers, up to {preset['steps']} steps each."
     )
@@ -166,6 +169,7 @@ def research(question: str, depth: str | None, ctx: Context) -> dict:
         )
 
     findings = notes_by_source(notes, sources)
+    ctx.meter(0.82)
     progress(
         f"Writing the report from {len(notes)} findings across {len({n['source_id'] for n in notes})} sources."
     )
@@ -186,6 +190,7 @@ def research(question: str, depth: str | None, ctx: Context) -> dict:
     edits = 0
     fact_check = "skipped"  # the findings are already quote-checked
     if draft is not None:
+        ctx.meter(0.92)
         progress("Fact-checking the report against the notes.")
         fact_check = "ok"
         try:
@@ -255,6 +260,8 @@ def worker(
         if not counts.take_search():
             return False
         queries.append(query)
+        # The searches are most of a run's time, so they fill most of the bar.
+        ctx.meter(0.05 + 0.75 * counts.searches / max(1, counts.search_budget))
         progress(f'[{tag}] searching "{query}"')
         try:
             results = ctx.search(query)

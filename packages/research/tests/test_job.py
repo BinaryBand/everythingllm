@@ -106,23 +106,31 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
         "embed_report",
         lambda *a: embedded.append(a) or "deep-research/alpha-x.json",
     )
-    progress = []
+    progress, meter = [], []
     req = job.Request(
         "Tell me about Alpha and Beta",
         "quick",
         workspace="career",
         workspace_name="Career",
+        run_id="dr-0123abcd",
+        card="[![live](https://h/x.png)](https://h/x)",
     )
     result = job.run(
         req,
         s,
         progress.append,
+        meter=meter.append,
         builder=builder(tmp_path),
         llm=LLM(Scripted()),
         search=search,
         read=PAGES.get,
     )
     assert result["status"] == "ok"
+    assert (result["url"], result["title"]) == (
+        "https://h/research/reports/alpha-and-beta/",
+        "Alpha and Beta",
+    )
+    assert 0 < meter[0] < meter[-1] < 1 and max(meter) == meter[-1]
     reply = result["reply"]
     assert reply.startswith(
         'Research report published: "Alpha and Beta"\n\nLink: https://h/research/reports/alpha-and-beta/'
@@ -162,6 +170,7 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
         "deep-research/alpha-x.json",
     )
     assert line["stats"]["findings"] == 2 and "chat_closed" not in line
+    assert (line["run_id"], line["card"]) == ("dr-0123abcd", req.card)
     assert any(e[1].startswith("Planning quick research") for e in line["events"])
 
 

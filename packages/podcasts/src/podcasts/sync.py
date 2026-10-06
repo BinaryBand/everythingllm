@@ -8,10 +8,11 @@ worker asks for every feed's itself (worker.Every, which also runs a slot missed
 was down as soon as it starts, as the timer it replaced did). A sync of every feed takes
 the single feeds' requests waiting with it; what is asked for during a sync waits for the
 next. Each sync is Library.sync under sync.lock, as before: one that finds the lock held (a
-transcript being saved, an old sync still finishing) is asked for again, said once, and
-taken again only once the lock is free. Its output goes
-to sync.log, as the unit's did, and a crash to last_sync.json, so list_podcasts can tell;
-the worker carries on with the next.
+transcript being saved, an old sync still finishing) is asked for again, keeping its tries
+(below), and said once. Until the lock is free, which can take hours, the worker takes
+nothing and only looks at the lock, with a plain flock rather than a Library, every
+BLOCKED_SECONDS. Its output goes to sync.log, as the unit's did, and a crash to
+last_sync.json, so list_podcasts can tell; the worker carries on with the next.
 
 SIGTERM stops it between steps: idle, at once; in a sync, at the next feed or scrub, or
 partway through a download, after which the sync is asked for again so that the next start
@@ -37,7 +38,13 @@ from pathlib import Path
 
 import httpx
 
-from podcasts.library import Library, LibraryError, _now, make_client
+from podcasts.library import (
+    Library,
+    LibraryError,
+    _now,
+    make_client,
+    sync_lock_held,
+)
 from podcasts.worker import (
     ALL_FEEDS,
     POLL_SECONDS,
@@ -49,6 +56,7 @@ from podcasts.worker import (
 )
 
 EVERY_HOURS = 6
+BLOCKED_SECONDS = 30  # how often a worker waiting for sync.lock looks at it again
 
 
 @contextmanager
@@ -82,6 +90,7 @@ class SyncWorker:
     ):
         """`library` gives the library for each sync, so one sees the settings of the
         moment (the model's key); `client` the HTTP client for each."""
+        self.state = Path(state)
         self.queue = Queue(state)
         self.every = Every(self.queue.folder / f"{SYNC_WORKER}.last", EVERY_HOURS)
         self.library, self.client, self.log = library, client, log
@@ -93,14 +102,19 @@ class SyncWorker:
         when there was none to run (or it has to wait), so the worker waits a moment."""
         if self.every.due():
             self.queue.ask_sync(ALL_FEEDS)
-        if self.blocked and self.library().sync_running():
-            return False  # still held: said already, and nothing taken meanwhile
+        if self.blocked:
+            if sync_lock_held(self.state):
+                return False  # still held: said already, and nothing taken meanwhile
+            self.blocked = False
         target = self.queue.take_sync()
         if target is None:
             return False
+        _, tries = self.queue.held() or (target, 0)
         ran = self.sync(target)
-        if not ran or self.stop.is_set():
-            self.queue.ask_sync(target)  # for the next look, or the next start
+        if not ran:  # it didn't run, so the times it died with a worker still count
+            self.queue.ask_sync(target, tries)
+        elif self.stop.is_set():  # for the next start
+            self.queue.ask_sync(target)
         self.queue.done()
         return ran
 
@@ -150,7 +164,7 @@ class SyncWorker:
         with heartbeat(self.queue, SYNC_WORKER):
             while not self.stop.is_set():
                 if not self.step():
-                    self.stop.wait(POLL_SECONDS)
+                    self.stop.wait(BLOCKED_SECONDS if self.blocked else POLL_SECONDS)
 
 
 def main() -> None:

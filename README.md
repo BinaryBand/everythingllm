@@ -873,7 +873,8 @@ a show found only in such an app has no public feed.
   (and `add-podcast` that nothing downloads until it is), and the request waits for it.
   `podcasts-sync [slug]` asks by hand (`uv run --package podcasts --extra host
   podcasts-sync hard-fork`). Each sync takes `~/.local/share/everythingllm/podcasts/sync.lock`;
-  one that finds it held (a transcript being saved) is asked for again. It takes
+  one that finds it held (a transcript being saved, an old sync) is asked for again, said
+  once, and the worker looks at the lock every 30 seconds until it's free. It takes
   one feed and one episode at a time, rewrites `feed.xml` after every download, deletes
   episodes that fall out of the newest `keep`, and picks up feeds added while it runs. Its
   output goes to `~/.local/share/everythingllm/podcasts/sync.log` (the worker's own lines,

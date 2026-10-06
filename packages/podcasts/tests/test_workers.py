@@ -174,20 +174,56 @@ def test_the_worker_asks_for_every_feed_when_its_slot_comes(lib):
 def test_a_sync_that_finds_the_lock_held_is_asked_for_again(lib):
     w = Worker(lib, Remote(feed(("a", "1"))))
     w.every.ran(datetime.now().astimezone())
-    lib.queue.ask_sync(ALL_FEEDS)
+    built = []
+    w.library = lambda: built.append(lib) or lib
+    lib.queue.ask_sync(ALL_FEEDS, tries=1)  # it died with a worker once before
     with lib._lock("sync.lock"):  # a transcript being saved
         assert not w.step()
         said = (lib.state / "sync.log").read_text()
-        # While it's held, the worker looks again without taking the request or saying
-        # so again (an old sync can hold it for hours).
+        # While it's held, the worker looks again without taking the request, saying so
+        # again or building a Library (an old sync can hold it for hours).
         for _ in range(3):
             assert not w.step()
         assert (lib.state / "sync.log").read_text() == said
-        assert w.lines.count("sync.lock is held; waiting") == 1
+        assert w.lines == ["syncing every feed", "sync.lock is held; waiting"]
+        assert len(built) == 1
+        # The request keeps its tries, so the guard against crash loops still holds.
+        assert lib.queue.tries(f"sync-{ALL_FEEDS}") == 1
+        assert lib.queue.held() is None
     assert lib.queue.syncs() == [ALL_FEEDS]
     assert "another sync is running" in said
-    w.drain()
+    assert w.step()  # free: it runs, once
+    assert not w.step()
+    assert len(built) == 2 and w.lines[-1] == "synced every feed"
     assert lib.queue.syncs() == [] and lib.last_sync()["finished"]
+
+
+class Waits(threading.Event):
+    """A stop event that notes how long the worker waits, and is set after `times`."""
+
+    def __init__(self, times: int):
+        super().__init__()
+        self.times, self.waited = times, []
+
+    def wait(self, timeout: float | None = None) -> bool:
+        self.waited.append(timeout)
+        if len(self.waited) >= self.times:
+            self.set()
+        return self.is_set()
+
+
+def test_a_worker_waiting_for_the_lock_looks_at_it_less_often(lib):
+    w = Worker(lib, Remote(feed(("a", "1"))))
+    w.every.ran(datetime.now().astimezone())
+    w.stop = Waits(2)
+    w.run()
+    assert w.stop.waited == [sync.POLL_SECONDS] * 2  # idle
+    lib.queue.ask_sync(ALL_FEEDS)
+    w.stop = Waits(3)
+    with lib._lock("sync.lock"):
+        w.run()
+    assert w.stop.waited == [sync.BLOCKED_SECONDS] * 3
+    assert w.lines.count("sync.lock is held; waiting") == 1
 
 
 def test_a_crash_is_recorded_and_the_worker_goes_on(lib):

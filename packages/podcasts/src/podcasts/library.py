@@ -140,6 +140,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def sync_lock_held(state: Path | str) -> bool:
+    """Whether a sync (or a transcript being saved) holds state/sync.lock: a plain
+    non-blocking flock, cheap enough for the sync worker to look while it waits."""
+    with open(Path(state) / "sync.lock", "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(f, fcntl.LOCK_UN)
+        return False
+
+
 def make_client() -> httpx.Client:
     # Feeds come from whatever the agent was told, and downloads end up on the pages site.
     return public_client(
@@ -497,8 +509,7 @@ class Library:
     # --- sync --------------------------------------------------------------------------
 
     def sync_running(self) -> bool:
-        with self._lock("sync.lock", blocking=False) as got:
-            return not got
+        return sync_lock_held(self.state)
 
     def last_sync(self) -> dict | None:
         """{started, finished, error, stopped} of the last sync; finished is "" while one

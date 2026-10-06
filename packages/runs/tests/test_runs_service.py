@@ -106,13 +106,13 @@ def test_a_waiting_caller_counts_as_following(monkeypatch):
     async def main():
         s = Things()
         run = s.new_run("a")
-        run.grace = 0
-        assert not run.followed()
+        monkeypatch.setattr(Things, "FOLLOW_GRACE", 0)
+        assert not s.followed(run)
         seen = []
 
         async def work(r, progress, meter):
             await asyncio.sleep(0.05)
-            seen.append(r.followed())
+            seen.append(s.followed(r))
             return {"status": "ok"}
 
         s.launch(run, work)

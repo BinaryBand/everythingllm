@@ -9,7 +9,7 @@ Config (environment, from host.env and agents.env through the unit):
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
@@ -47,6 +47,7 @@ class AnythingLLM:
     base_url: str
     api_key: str
     transport: httpx.AsyncBaseTransport | None = None  # tests
+    http: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
 
     @classmethod
     def from_env(cls) -> "AnythingLLM":
@@ -65,25 +66,35 @@ class AnythingLLM:
         body: dict | None = None,
         seconds: float | None = None,
     ) -> Any:
-        timeout = TIMEOUT if seconds is None else httpx.Timeout(seconds, connect=10)
-        async with httpx.AsyncClient(
-            base_url=self.base_url.rstrip("/") + "/api/v1",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            timeout=timeout,
-            transport=self.transport,
-        ) as client:
-            try:
-                res = await client.request(method, path, json=body)
-            except httpx.TimeoutException:
-                raise AnythingLLMError("AnythingLLM didn't answer in time.") from None
-            except httpx.HTTPError as e:
-                raise AnythingLLMError(f"couldn't reach AnythingLLM: {e}") from None
+        if self.http is None:  # one client, so its connections are reused
+            self.http = httpx.AsyncClient(
+                base_url=self.base_url.rstrip("/") + "/api/v1",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=TIMEOUT,
+                transport=self.transport,
+            )
+        timeout = (
+            httpx.USE_CLIENT_DEFAULT
+            if seconds is None
+            else httpx.Timeout(seconds, connect=10)
+        )
+        try:
+            res = await self.http.request(method, path, json=body, timeout=timeout)
+        except httpx.TimeoutException:
+            raise AnythingLLMError("AnythingLLM didn't answer in time.") from None
+        except httpx.HTTPError as e:
+            raise AnythingLLMError(f"couldn't reach AnythingLLM: {e}") from None
         if res.status_code >= 300:
             raise AnythingLLMError(status_error(res.status_code))
         try:
             return res.json() if res.content.strip() else None
         except ValueError:
             return res.text
+
+    async def aclose(self) -> None:
+        if self.http is not None:
+            await self.http.aclose()
+            self.http = None
 
     async def workspaces(self) -> list[dict]:
         return (await self.call("GET", "/workspaces") or {}).get("workspaces", [])

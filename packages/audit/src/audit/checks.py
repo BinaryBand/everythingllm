@@ -620,7 +620,7 @@ def research_running(env: Env) -> list[dict]:
     """Runs with a marker in the run log's running/ (research-runner writes the log line
     only when a run ends): "interrupted" once the marker has been quiet for its stale_ms (the
     runner restarted under it; the runner moves it into the log when it starts again),
-    otherwise "running". As research/runlog.py decides it."""
+    otherwise "running". As runs/runlog.py decides it."""
     runs = []
     for file in (env.runlogs / "running").glob("*.json"):
         try:
@@ -630,7 +630,7 @@ def research_running(env: Env) -> list[dict]:
             continue
         dead = quiet >= timedelta(
             milliseconds=run.get("stale_ms", 3 * 60_000)
-        )  # research.runlog.STALE_MS
+        )  # runs.runlog.STALE_MS
         runs.append({**run, "status": "interrupted" if dead else "running"})
     return runs
 

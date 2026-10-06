@@ -32,10 +32,10 @@ from typing import Any
 
 import hostrpc
 from hostrpc import RunnerError
+from runs.runlog import sweep_interrupted
 from runs.service import Meter, Progress, Run, RunService
 
 from research import job, live
-from research.runlog import sweep_interrupted
 
 log = logging.getLogger("research-runner")
 
@@ -68,7 +68,7 @@ class Runner(RunService):
                 req,
                 self.settings,
                 progress,
-                lambda: not run.followed(),
+                lambda: not self.followed(run),
                 meter,
             )
 

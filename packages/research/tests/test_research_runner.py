@@ -4,7 +4,7 @@ import threading
 
 import pytest
 from research import job, runner
-from research.runlog import RunLog
+from runs.runlog import RunLog
 
 
 async def call(socket, op, **args):

@@ -13,7 +13,7 @@ are shown on the live card). The service then answers:
 A run belongs to the service, not to a chat: it carries on when its caller goes away. At
 most MAX_RUNS go at once; the rest wait their turn. A finished run can be fetched for
 RESULT_KEEP seconds; the service's run log is the record after that. A caller waiting, or
-a live card being watched, counts as someone following the run (Run.followed).
+a live card being watched, counts as someone following the run (RunService.followed).
 """
 
 import asyncio
@@ -49,10 +49,6 @@ class Run:
     waiters: int = 0
     last_seen: float = field(default_factory=time.monotonic)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
-    grace: float = 15  # seconds a caller counts as following after it last looked
-
-    def followed(self) -> bool:
-        return self.waiters > 0 or time.monotonic() - self.last_seen < self.grace
 
     def minutes(self) -> int:
         """Whole minutes it has run (or ran), at least 1."""
@@ -67,7 +63,7 @@ class RunService(hostrpc.Service):
     MAX_RUNS = 2
     WAIT = 45  # a caller's wait is a long poll of this length
     RESULT_KEEP = 3600
-    FOLLOW_GRACE = 15
+    FOLLOW_GRACE = 15  # seconds a caller counts as following after it last looked
 
     def __init__(self) -> None:
         self.runs: dict[str, Run] = {}
@@ -84,8 +80,11 @@ class RunService(hostrpc.Service):
             subject,
             datetime.now(UTC).isoformat(timespec="seconds"),
             title=subject,
-            grace=self.FOLLOW_GRACE,
         )
+
+    def followed(self, run: Run) -> bool:
+        """Someone is waiting on the run or watching its card, or did a moment ago."""
+        return run.waiters > 0 or time.monotonic() - run.last_seen < self.FOLLOW_GRACE
 
     def launch(
         self,

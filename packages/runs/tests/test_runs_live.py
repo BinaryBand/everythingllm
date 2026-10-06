@@ -97,3 +97,26 @@ def test_a_run_from_the_log_gets_one_frame_and_its_page(tmp_path):
         server.close()
 
     asyncio.run(main())
+
+
+def test_a_card_that_fails_to_draw_answers_500_instead_of_hanging(tmp_path):
+    class Broken(ThingLive):
+        def ended_line(self, state, result):
+            raise ValueError("bad line")
+
+    append_line(
+        tmp_path,
+        "2026-10-06T10:00:00Z",
+        {"run_id": "th-0123abcd", "subject": "old", "status": "failed"},
+    )
+
+    async def main():
+        server = await Broken(Things(), tmp_path, "").serve(0)
+        port = server.sockets[0].getsockname()[1]
+        head, body = await asyncio.wait_for(get(port, "/th-0123abcd.png"), 5)
+        assert (
+            b"500 Internal Server Error" in head and body == b"Something went wrong.\n"
+        )
+        server.close()
+
+    asyncio.run(main())

@@ -10,7 +10,7 @@ import pytest
 from agents import cli, profiles, runner
 from agents.anythingllm import AnythingLLM, AnythingLLMError, without_thinking
 from hostrpc import RunnerError
-from runs.runlog import find
+from runs.runlog import find, sweep_interrupted
 
 
 class FakeAnythingLLM:
@@ -33,9 +33,9 @@ class FakeAnythingLLM:
         path = request.url.path.removeprefix("/api/v1")
         body = json.loads(request.content) if request.content else {}
         if path == "/workspaces":
-            return httpx.Response(
-                200, json={"workspaces": [{"slug": s} for s in self.workspaces]}
-            )
+            have = [{"slug": s} for s in self.workspaces]
+            await asyncio.sleep(0.01)  # long enough for two setups to overlap
+            return httpx.Response(200, json={"workspaces": have})
         if path == "/workspace/new":
             self.created.append(body["name"])
             self.workspaces[body["name"]] = {}
@@ -46,6 +46,8 @@ class FakeAnythingLLM:
             self.workspaces[slug].update(body)
             return httpx.Response(200, json={"workspace": {"slug": slug}})
         if parts[3:] == ["thread", "new"]:
+            if "crash" in body["name"]:  # a reply without the thread in it
+                return httpx.Response(200, json={})
             self.n += 1
             thread = f"t{self.n}"
             self.threads.setdefault(slug, set()).add(thread)
@@ -247,6 +249,8 @@ def test_what_a_delegation_refuses(fake, tmp_path):
             ("g", [{**ok, "instructions": "x" * 8001}], None, "over 8000"),
             ("g", [ok], {"profile": "worker"}, "then has no instructions"),
             ("g", ["a"], None, "must be an object"),
+            ("g", [ok], "x", "then must be an object"),
+            ("g", [ok], ["x"], "then must be an object"),
         ]:
             with pytest.raises(RunnerError, match=why):
                 await r.op_delegate(goal, tasks, then)
@@ -318,3 +322,99 @@ def test_agents_run_starts_a_delegation_and_prints_its_replies(
     out = capsys.readouterr().out
     assert "https://h:8445/_live/agents/dg-" in out and "a: done in" in out
     assert "\nok ($0.0200)" in out and "== then (planner): ok" in out
+
+
+async def get(port, path):
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write(f"GET {path} HTTP/1.1\r\nHost: h\r\n\r\n".encode())
+    await writer.drain()
+    head, _, body = (await asyncio.wait_for(reader.read(), 5)).partition(b"\r\n\r\n")
+    writer.close()
+    return head, body
+
+
+def test_a_delegation_a_restart_cut_short_still_has_its_card_and_page(fake, tmp_path):
+    runs = tmp_path / "runs"
+    (runs / "running").mkdir(parents=True)
+    for n, tasks in [
+        ("dg-0000000a", [{"name": "a", "profile": "worker"}]),
+        ("dg-0000000b", ["b"]),  # an older marker's tasks were only names
+    ]:
+        (runs / "running" / f"{n}.json").write_text(
+            json.dumps(
+                {
+                    "run_id": n,
+                    "subject": f"goal {n}",
+                    "tasks": tasks,
+                    "started": "2026-10-06T10:00:00.000Z",
+                }
+            )
+        )
+    assert len(sweep_interrupted(runs, everything=True)) == 2
+
+    async def main():
+        server = await runner.AgentsLive(make(fake, tmp_path), runs, "").serve(0)
+        port = server.sockets[0].getsockname()[1]
+        for n, task in [("dg-0000000a", "a (worker)"), ("dg-0000000b", "b")]:
+            head, body = await get(port, f"/{n}.png")
+            assert b"200 OK" in head and b"image/png" in head
+            head, body = await get(port, f"/{n}")
+            assert b"200 OK" in head and f"{task}: cut short".encode() in body
+            assert b"None" not in body
+        server.close()
+
+    asyncio.run(main())
+
+
+def test_a_crash_still_logs_the_delegation_and_clears_its_marker(
+    fake, tmp_path, monkeypatch
+):
+    async def broken(client):
+        raise RuntimeError("AnythingLLM named the planner workspace 'x'")
+
+    monkeypatch.setattr(runner, "ensure", broken)
+
+    async def main():
+        r = make(fake, tmp_path)
+        started = await r.op_delegate(
+            "g", [{"name": "a", "profile": "worker", "instructions": "x"}]
+        )
+        result = await finish(r, started["run_id"])
+        assert result["status"] == "failed" and "named the planner" in result["error"]
+        record = find(tmp_path / "runs", started["run_id"])
+        assert record is not None and record["status"] == "failed"
+        assert not list((tmp_path / "runs" / "running").glob("*.json"))
+
+    asyncio.run(main())
+
+
+def test_a_task_that_crashes_fails_alone(fake, tmp_path):
+    async def main():
+        r = make(fake, tmp_path)
+        started = await r.op_delegate(
+            "g",
+            [
+                {"name": "good", "profile": "worker", "instructions": "fine"},
+                {"name": "crash", "profile": "worker", "instructions": "x"},
+            ],
+        )
+        result = await finish(r, started["run_id"])
+        assert result["status"] == "partial"
+        good, crash = result["tasks"]
+        assert good["status"] == "ok" and result["cost"] == pytest.approx(0.01)
+        assert crash["status"] == "failed" and crash["error"]
+
+    asyncio.run(main())
+
+
+def test_delegations_starting_together_set_the_profiles_up_once(fake, tmp_path):
+    async def main():
+        r = make(fake, tmp_path)
+        task = [{"name": "a", "profile": "worker", "instructions": "x"}]
+        first = await r.op_delegate("one", task)
+        second = await r.op_delegate("two", task)
+        for started in (first, second):
+            assert (await finish(r, started["run_id"]))["status"] == "ok"
+        assert fake.created == ["agents-planner", "agents-worker"]
+
+    asyncio.run(main())

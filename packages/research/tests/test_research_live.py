@@ -4,7 +4,7 @@ import io
 import pytest
 from PIL import Image
 from research import job, live, runner
-from research.runlog import append_line
+from runs.runlog import append_line
 from test_research_runner import Gate, call
 
 

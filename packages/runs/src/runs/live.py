@@ -96,6 +96,10 @@ class Live:
                 await self.page(writer, run_id, run)
         except Exception:  # one viewer's trouble mustn't reach the runs
             self.service.log.exception("live card for %s failed", run_id)
+            if not writer.is_closing():  # nothing was sent yet; don't leave it hanging
+                await live.send(
+                    writer, "500 Internal Server Error", b"Something went wrong.\n"
+                )
 
     async def frames(self, run: Run) -> AsyncIterator[bytes]:
         """A frame now, then one whenever the run moves on, until it ends or MAX_STREAM."""

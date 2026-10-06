@@ -17,6 +17,7 @@ from pathlib import Path
 import hostrpc
 from llm import provider_for
 from publicweb.pages import SEARXNG, make_search, searxng_client
+from runs.runlog import RunLog
 from sites import cards
 from sites.build import Builder
 from sites.store import SiteStore, pages_url
@@ -26,7 +27,6 @@ from research import publish
 from research.config import RESULTS_PER_SEARCH, SEARCH_GAP
 from research.llm import LLM
 from research.pipeline import Context, research
-from research.runlog import RunLog
 from research.web import make_reader, page_client
 
 OFF = re.compile(r"^(no|off|none|false|0)$", re.IGNORECASE)

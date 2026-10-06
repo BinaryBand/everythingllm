@@ -34,7 +34,7 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -144,8 +144,17 @@ class AgentsLive(live.Live):
     def destination(self, result: dict[str, Any]) -> str | None:
         return None  # the results are on the page
 
+    @staticmethod
+    def tasks_of(result: dict[str, Any]) -> list[dict[str, Any]]:
+        """A result's or log line's tasks; an interrupted run's are only names (or, from an
+        older marker, bare strings)."""
+        return [
+            t if isinstance(t, dict) else {"name": str(t)}
+            for t in result.get("tasks") or []
+        ]
+
     def ended_line(self, state: str, result: dict[str, Any]) -> str:
-        tasks = result.get("tasks") or []
+        tasks = self.tasks_of(result)
         ok = sum(1 for t in tasks if t.get("status") == "ok")
         if result.get("status") == "cancelled":
             return f"Cancelled: {ok} of {len(tasks)} tasks finished"
@@ -168,17 +177,19 @@ class AgentsLive(live.Live):
             f"<h1>{html.escape(subject or self.LABEL)}</h1>",
             f"<p>{self.LABEL}: {html.escape(status)}.</p>",
         ]
-        if not done or not result.get("tasks"):
+        tasks = self.tasks_of(result)
+        if not done or not any("status" in t for t in tasks):
             parts.append(
                 "<ol>" + "".join(f"<li>{html.escape(e)}</li>" for e in events) + "</ol>"
             )
         if result.get("error"):
             parts.append(f"<p>{html.escape(result['error'])}</p>")
         for o in [
-            *(result.get("tasks") or []),
+            *tasks,
             *([result["then"]] if result.get("then") else []),
         ]:
-            head = f"{o.get('name')} ({o.get('profile')}): {o.get('status')}"
+            profile = f" ({o['profile']})" if o.get("profile") else ""
+            head = f"{o.get('name')}{profile}: {o.get('status') or 'cut short'}"
             text = o.get("text") or o.get("error") or ""
             parts.append(
                 f"<h2>{html.escape(head)}</h2>\n<pre>{html.escape(text)}</pre>"
@@ -200,6 +211,7 @@ class Runner(RunService):
         self.task_slots = asyncio.Semaphore(settings.slots)
         self.cancelled: set[str] = set()
         self.ready = False  # the profiles' workspaces are set up
+        self.setup = asyncio.Lock()  # so only one delegation sets them up
 
     def anythingllm(self) -> AnythingLLM:
         if self.client is None:
@@ -228,7 +240,7 @@ class Runner(RunService):
                 )
         if len(set(names)) != len(names):
             raise RunnerError("task names must differ")
-        last = task_of({**then, "name": "then"}, "then") if then else None
+        last = replace(task_of(then, "then"), name="then") if then else None
         client = self.anythingllm()
         run = self.new_run(goal)
         card = AgentsLive.card_line(self.settings.pages_url, run.id, goal)
@@ -264,7 +276,7 @@ class Runner(RunService):
                 "run_id": run.id,
                 "card": card,
                 "subject": run.subject,
-                "tasks": [t.name for t in tasks],
+                "tasks": [{"name": t.name, "profile": t.profile} for t in tasks],
             }
         )
 
@@ -276,9 +288,10 @@ class Runner(RunService):
         finished = 0
         result: dict[str, Any]
         try:
-            if not self.ready:
-                await ensure(client)
-                self.ready = True
+            async with self.setup:
+                if not self.ready:
+                    await ensure(client)
+                    self.ready = True
             note(
                 f"Delegating {len(tasks)} task{'s' * (len(tasks) != 1)}: {', '.join(t.name for t in tasks)}."
             )
@@ -315,11 +328,14 @@ class Runner(RunService):
                 else:
                     note("then: skipped, since no task finished.")
             result = self.summary(run, outcomes, last)
-        except AnythingLLMError as e:
-            note(f"The delegation failed: {e}")
+        except Exception as e:  # whatever happens, the run log gets its line
+            if not isinstance(e, AnythingLLMError):
+                log.exception("%s crashed", run.id)
+            error = str(e) or type(e).__name__
+            note(f"The delegation failed: {error}")
             result = {
                 "status": "failed",
-                "error": str(e),
+                "error": error,
                 "tasks": [],
                 "then": None,
                 "cost": 0.0,
@@ -399,6 +415,9 @@ class Runner(RunService):
                     log.warning("%s: couldn't delete thread %s: %s", run.id, thread, e)
         except AnythingLLMError as e:
             outcome.status, outcome.error = "failed", str(e)
+        except Exception as e:  # one task's trouble is that task's failure
+            log.exception("%s: task %s crashed", run.id, task.name)
+            outcome.status, outcome.error = "failed", str(e) or type(e).__name__
         outcome.seconds = round(time.monotonic() - started, 1)
 
 
@@ -420,6 +439,8 @@ async def serve(settings: Settings, socket: Path, runner: Runner | None = None) 
     finally:
         if runner.live:
             runner.live.close()
+        if runner.client:
+            await runner.client.aclose()
 
 
 def main() -> None:

@@ -948,9 +948,17 @@ class Runner(hostrpc.Service):
             conf = tomllib.loads((source / "zola.toml").read_text())
         except FileNotFoundError:
             raise SandboxError(f"there's no system site '{site}'") from None
-        if not conf.get("extra", {}).get("build", {}).get("theme_from"):
+        origin = conf.get("extra", {}).get("build", {}).get("theme_from")
+        if not origin:
             raise SandboxError(
                 f"{site}'s zola.toml names no [extra.build] theme_from; it builds on the host"
+            )
+        if origin != "system":
+            # A system site pins a workspace's theme rather than following its live folder
+            # (docs/shared-sites.md, Decision 2), and pinning isn't built yet.
+            raise SandboxError(
+                f"{site} takes its theme from {origin!r}, but a system site can only use "
+                "'system' until workspace themes can be pinned"
             )
         name = f"sandbox-{secrets.token_hex(6)}"
         run_dir = self.config.scripts / name

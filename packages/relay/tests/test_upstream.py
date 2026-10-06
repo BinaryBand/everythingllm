@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 
 import httpx
@@ -12,26 +13,36 @@ def data(**chunk):
     return f"data: {json.dumps(chunk)}\n\n"
 
 
-def events(*, status=200, body="", error=None, seen=None):
-    """relay.upstream.answer's events for one stream-chat reply."""
+def events(*, status=200, body="", error=None, seen=None, chat=None):
+    """relay.upstream.answer's events for one stream-chat reply to `chat`."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if seen is not None:
             seen.append(request)
         if error:
             raise error
-        return httpx.Response(status, content=body.encode())
+        content = body.encode() if isinstance(body, str) else body
+        return httpx.Response(status, content=content)
 
     async def main():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             return [
                 e
                 async for e in upstream.answer(
-                    client, "http://allm/", KEY, "my space", "t/1", "Hi?", "query"
+                    client,
+                    "http://allm/",
+                    KEY,
+                    "my space",
+                    "t/1",
+                    chat or {"message": "Hi?"},
                 )
             ]
 
     return asyncio.run(main())
+
+
+def chunks(*cs):
+    return [("chunk", c) for c in cs]
 
 
 def test_the_call_is_the_one_nilson_made():
@@ -45,34 +56,81 @@ def test_the_call_is_the_one_nilson_made():
     )
     assert request.headers["authorization"] == f"Bearer {KEY}"
     assert request.headers["accept"] == "text/event-stream"
-    assert json.loads(request.content) == {"message": "Hi?", "mode": "query"}
+    assert json.loads(request.content) == {"message": "Hi?"}  # no mode added
 
 
-def test_pieces_then_done_with_the_last_non_empty_sources():
+def test_the_body_goes_as_it_came():
+    chat = {
+        "message": "What's this?",
+        "mode": "query",
+        "attachments": [
+            {
+                "name": "a.png",
+                "mime": "image/png",
+                "contentString": "data:image/png;base64,iVBORw0KGgo=",
+            }
+        ],
+    }
+    seen = []
+    events(body=data(close=True), seen=seen, chat=chat)
+    assert json.loads(seen[0].content) == chat
+
+
+def test_a_20_mb_attachment_is_forwarded_whole():
+    content = base64.b64encode(b"\x89" * 20 * 1024 * 1024).decode()
+    chat = {
+        "message": "Read this",
+        "attachments": [
+            {
+                "name": "big.pdf",
+                "mime": "application/anythingllm-document",
+                "contentString": f"data:application/pdf;base64,{content}",
+            }
+        ],
+    }
+    seen = []
+    events(body=data(close=True), seen=seen, chat=chat)
+    assert json.loads(seen[0].content) == chat
+
+
+def test_an_agent_answer_comes_back_chunk_by_chunk_then_done():
+    stream = [
+        {"type": "agentThought", "thought": "Using SearXNG to search for x"},
+        {"type": "textResponseChunk", "textResponse": "Hel", "close": False},
+        {"type": "textResponseChunk", "textResponse": "lo", "close": False},
+        {"type": "textResponse", "textResponse": "Hello", "close": True},
+        {
+            "type": "finalizeResponseStream",
+            "close": True,
+            "sources": [{"title": "x", "chunkSource": "link://https://x.example/"}],
+        },
+    ]
     body = (
         ": comment\n"
         "event: something\n"
-        + data(textResponse="Hel", sources=[], error=None, close=False)
+        + data(**stream[0])
         + "data: not json\n"
         + "data: [1, 2]\n"
-        + data(textResponse="", sources=[{"title": "A"}, {"title": "B"}])
-        + data(textResponse="lo", sources=[{"title": "C"}, "junk", {"no": "title"}])
-        + data(sources=[])
-        + data(textResponse="", close=True)
-        + data(textResponse="after close")
+        + "".join(data(**c) for c in stream[1:])
     )
-    assert events(body=body) == [
-        ("text", {"text": "Hel"}),
-        ("text", {"text": "lo"}),
-        ("done", {"citations": ["C"]}),
-    ]
+    assert events(body=body) == [*chunks(*stream), ("done", {})]
 
 
-def test_a_stream_that_just_ends_is_done_with_what_it_had():
-    body = data(textResponse="x", sources=[{"title": "A"}])
-    assert events(body=body) == [
-        ("text", {"text": "x"}),
-        ("done", {"citations": ["A"]}),
+def test_a_web_source_keeps_its_address():
+    close = {
+        "type": "textResponseChunk",
+        "textResponse": "",
+        "close": True,
+        "error": False,
+        "sources": [
+            {"title": "Page", "chunkSource": "link://https://example.com/a?b=c"},
+            {"title": "Doc"},
+        ],
+    }
+    final = {"type": "finalizeResponseStream", "close": True}
+    assert events(body=data(**close) + data(**final)) == [
+        *chunks(close, final),
+        ("done", {}),
     ]
 
 
@@ -90,12 +148,20 @@ def test_a_stream_that_just_ends_is_done_with_what_it_had():
     ],
 )
 def test_an_error_or_abort_chunk_fails_the_run(body, error):
-    assert events(body=body)[-1] == ("failed", {"error": error})
+    assert events(body=body) == [
+        ("chunk", {"textResponse": "pa"}),
+        ("failed", {"error": error}),
+    ]
 
 
 def test_a_blank_or_false_error_is_not_one():
     body = data(error=False) + data(error="  ") + data(textResponse="ok", close=True)
-    assert events(body=body) == [("text", {"text": "ok"}), ("done", {"citations": []})]
+    assert events(body=body) == [
+        *chunks(
+            {"error": False}, {"error": "  "}, {"textResponse": "ok", "close": True}
+        ),
+        ("done", {}),
+    ]
 
 
 @pytest.mark.parametrize("status", [401, 403, 404, 429, 500, 400])
@@ -108,3 +174,15 @@ def test_a_non_2xx_status_fails_in_plain_language(status):
 def test_an_unreachable_anythingllm_fails_the_run():
     [event] = events(error=httpx.ConnectError("refused"))
     assert event == ("failed", {"error": upstream.UNREACHABLE})
+
+
+def test_a_connection_that_breaks_mid_answer_fails_the_run():
+    class Breaks(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield data(textResponse="pa").encode()
+            raise httpx.ReadError("gone")
+
+    assert events(body=Breaks()) == [
+        ("chunk", {"textResponse": "pa"}),
+        ("failed", {"error": upstream.BROKEN}),
+    ]

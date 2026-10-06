@@ -1063,10 +1063,10 @@ Every route but `/health` needs `Authorization: Bearer <RELAY_TOKEN>`; errors ar
 
 | Route | Does |
 | --- | --- |
-| `POST /runs` | `{"workspace", "thread", "message", "mode", "clientId"}` starts a run: 201 with the run. A `clientId` already used answers 200 with that run and starts nothing; a thread with a running run answers 409. |
+| `POST /runs` | `{"workspace", "thread", "clientId", "body"}` starts a run: 201 with the run. `body` is what the client would send `stream-chat` (a non-empty `message`, or `"reset": true` to clear the thread; `mode` and `attachments` as AnythingLLM takes them), forwarded as it came: without `mode` the workspace's own mode answers, `automatic` included. The body is held only in memory for the call, so attachments never reach the database, and no size limit is set (a 20 MB attachment goes through). A `clientId` already used answers 200 with that run and starts nothing; a thread with a running run answers 409. |
 | `GET /runs?status=running` | runs with that status (`running`, `done`, `failed`, `cancelled`), oldest first; every kept run without `status` |
-| `GET /runs/{id}` | the run (`id`, `clientId`, `workspace`, `thread`, `mode`, `status`, `createdAt`, `finishedAt`); 404 when unknown or expired |
-| `GET /runs/{id}/events` | server-sent events: `text` `{"text"}` per piece, then one of `done` `{"citations"}`, `failed` `{"error"}`, `cancelled` `{}`, and the stream closes. Ids count from 1; `Last-Event-ID: n` starts after n. `: ping` every 15 s while live. Any number of followers. |
+| `GET /runs/{id}` | the run (`id`, `clientId`, `workspace`, `thread`, `mode` (the body's, or null), `status`, `createdAt`, `finishedAt`); 404 when unknown or expired |
+| `GET /runs/{id}/events` | server-sent events: `chunk` with each chunk AnythingLLM sent, as it came and in order (an agent's `agentThought`s, the closing chunk and the `finalizeResponseStream` with its sources included), then one of `done` `{}`, `failed` `{"error"}` (for a non-2xx answer, an `error` or `abort` chunk, which isn't passed on, or a broken connection), `cancelled` `{}`, and the stream closes. Ids count from 1; `Last-Event-ID: n` starts after n. `: ping` every 15 s while live. Any number of followers. |
 | `POST /runs/{id}/cancel` | closes the upstream connection and ends the run `cancelled`; a run that has ended is left as it is |
 | `/api/v1/...` (any method) | AnythingLLM's developer API, through the relay with its key |
 | `GET /health` | 200, no token |
@@ -1074,9 +1074,10 @@ Every route but `/health` needs `Authorization: Bearer <RELAY_TOKEN>`; errors ar
 Runs and their events are in SQLite (`~/.local/share/everythingllm/relay/relay.db`, mode 600),
 written as each event arrives. A restart fails the runs it cut short with "The relay
 restarted during the answer." and keeps their events; finished runs are deleted after 7
-days (`RUN_RETENTION_DAYS`). With `NTFY_URL` set, a finished or failed run posts "Answer
+days (`RUN_RETENTION_DAYS`). The schema's version is SQLite's `user_version`; opening an
+older database deletes its runs. With `NTFY_URL` set, a finished or failed run posts "Answer
 ready" or "Answer failed" to that ntfy topic, with the question's first 120 characters
-and `run=…,workspace=…,thread=…` as its tags; never the answer.
+and `run=…,workspace=…,thread=…` as its tags; never the answer. A reset isn't notified.
 
 The secrets live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
 AnythingLLM container mounts: `ANYTHINGLLM_API_KEY` (a developer API key), `RELAY_TOKEN`,
@@ -1086,7 +1087,8 @@ starts the unit; `uv run hostctl relay-logs` follows it (any app's `<app>-logs`)
 config. Neither the key nor the token appears in a response or a log line, and a test holds
 that.
 
-Where it differs from the original spec: `mode` defaults to `chat` when it's left out; a
+Where it differs from the original spec: the relay adds nothing to the body and doesn't
+interpret the answer (no `mode` default, no pieces or citations of its own); a
 connection to AnythingLLM that breaks mid-answer, or ten silent minutes, fails the run
 ("The connection to AnythingLLM broke during the answer.") rather than completing it with
 what came; and a `clientId` is remembered as long as its run is kept, so reusing it later

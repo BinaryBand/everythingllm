@@ -1,9 +1,12 @@
 """One answer from AnythingLLM, as the relay's events: the call Nilson used to make itself,
 `POST /api/v1/workspace/{slug}/thread/{thread}/stream-chat`, read to the end.
 
-`answer()` yields ("text", {"text"}) for each piece, then one terminal event: ("done",
-{"citations"}) or ("failed", {"error"}). Closing the generator closes the connection,
-which is how a run is cancelled; nothing else closes it early.
+`answer()` posts Nilson's `stream-chat` body as it came and yields ("chunk", c) for each
+chunk AnythingLLM sends, unchanged and in order, then one terminal event: ("done", {}) once
+the response ends, or ("failed", {"error"}). The relay doesn't interpret the answer: an
+agent's thoughts, the closing chunk and the sources after it are all handed back. Closing
+the generator closes the connection, which is how a run is cancelled; nothing else closes
+it early.
 """
 
 import json
@@ -53,8 +56,7 @@ async def answer(
     api_key: str,
     workspace: str,
     thread: str,
-    message: str,
-    mode: str,
+    body: dict[str, Any],
 ) -> AsyncGenerator[tuple[str, dict[str, Any]]]:
     url = (
         f"{base_url.rstrip('/')}/api/v1/workspace/{quote(workspace, safe='')}"
@@ -62,12 +64,11 @@ async def answer(
     )
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "text/event-stream"}
     started = False
-    citations: list[str] = []
     try:
         async with client.stream(
             "POST",
             url,
-            json={"message": message, "mode": mode},
+            json=body,
             headers=headers,
             timeout=TIMEOUT,
         ) as response:
@@ -85,20 +86,10 @@ async def answer(
                 if c.get("type") == "abort":
                     yield "failed", {"error": ABORTED}
                     return
-                if isinstance(text := c.get("textResponse"), str) and text:
-                    yield "text", {"text": text}
-                sources = c.get("sources")
-                if isinstance(sources, list) and (
-                    found := [s for s in sources if isinstance(s, dict)]
-                ):
-                    citations = [
-                        s["title"] for s in found if isinstance(s.get("title"), str)
-                    ]
-                if c.get("close") is True:
-                    break
+                yield "chunk", c
     except httpx.TransportError as e:
         # The exception's text can carry the URL; the class says enough for the log.
         log.warning("stream-chat failed: %s", type(e).__name__)
         yield "failed", {"error": BROKEN if started else UNREACHABLE}
         return
-    yield "done", {"citations": citations}
+    yield "done", {}

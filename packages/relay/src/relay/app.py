@@ -40,7 +40,6 @@ from relay.store import STATUSES, Store, public
 
 log = logging.getLogger("relay")
 
-MODES = ("query", "chat")
 DATABASE = Path("~/.local/share/everythingllm/relay/relay.db").expanduser()
 
 
@@ -138,21 +137,25 @@ def create_app(
         if not isinstance(body, dict):
             return error(400, "The body must be a JSON object.")
         fields = {}
-        for key in ("workspace", "thread", "message", "clientId"):
+        for key in ("workspace", "thread", "clientId"):
             value = body.get(key)
             if not isinstance(value, str) or not value.strip():
                 return error(400, f"'{key}' must be a non-empty string.")
             fields[key] = value
-        mode = body.get("mode", "chat")
-        if mode not in MODES:
-            return error(400, "'mode' must be 'query' or 'chat'.")
+        chat = body.get("body")
+        if chat is None and ("message" in body or "mode" in body):
+            return error(400, "Send the stream-chat body as 'body'.")
+        if not isinstance(chat, dict):
+            return error(400, "'body' must be a JSON object.")
+        message = chat.get("message")
+        if (
+            not (isinstance(message, str) and message.strip())
+            and chat.get("reset") is not True
+        ):
+            return error(400, "'body' needs a non-empty 'message', or 'reset': true.")
         try:
             run, created = await relay.start(
-                fields["clientId"],
-                fields["workspace"],
-                fields["thread"],
-                fields["message"],
-                mode,
+                fields["clientId"], fields["workspace"], fields["thread"], chat
             )
         except Busy:
             return error(409, "That thread already has an answer running.")

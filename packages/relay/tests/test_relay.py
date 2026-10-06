@@ -4,6 +4,7 @@ test_upstream.py covers the real one's parsing of stream-chat. Each test runs th
 own lifespan, as uvicorn would."""
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -13,19 +14,14 @@ import httpx
 import pytest
 from relay import upstream
 from relay.app import Config, create_app
-from relay.runs import RESTARTED
-from relay.store import Store
+from relay.runs import RESET, RESTARTED
+from relay.store import VERSION, Store
 
 KEY = "allm-key-0123456789"
 TOKEN = "relay-token-abcdef"
-BODY = {
-    "workspace": "planning",
-    "thread": "t1",
-    "message": "What's next?",
-    "mode": "query",
-    "clientId": "c_1",
-}
-DONE = ("done", {"citations": []})
+CHAT = {"message": "What's next?"}
+BODY = {"workspace": "planning", "thread": "t1", "clientId": "c_1", "body": CHAT}
+DONE = ("done", {})
 
 
 def go(coro):
@@ -34,16 +30,20 @@ def go(coro):
 
 class Upstream:
     """A scripted answer: yields `script` (events, or an asyncio.Event to wait on) and
-    records how often it was called and whether the relay closed it early."""
+    records the bodies it was called with and whether the relay closed it early."""
 
     def __init__(self, *script):
         self.script = list(script)
-        self.calls = 0
+        self.bodies = []
         self.closed = False
         self.finished = False
 
-    async def __call__(self, workspace, thread, question, mode):
-        self.calls += 1
+    @property
+    def calls(self):
+        return len(self.bodies)
+
+    async def __call__(self, workspace, thread, body):
+        self.bodies.append(body)
         try:
             for step in self.script:
                 if isinstance(step, asyncio.Event):
@@ -66,7 +66,8 @@ class Notified(list):
 
 
 def text(t):
-    return ("text", {"text": t})
+    """A chat answer's piece, as stream-chat sends it and the relay hands it back."""
+    return ("chunk", {"type": "textResponseChunk", "textResponse": t, "close": False})
 
 
 def parse(stream: str) -> list[tuple[int, str, dict]]:
@@ -114,8 +115,16 @@ async def post_run(client, **changes):
 
 
 # 1
-def test_a_run_streams_its_pieces_then_done_with_the_citations(tmp_path):
-    answer = Upstream(text("Hel"), text("lo"), ("done", {"citations": ["Doc A"]}))
+def test_a_run_streams_its_chunks_then_done(tmp_path):
+    close = (
+        "chunk",
+        {
+            "type": "textResponseChunk",
+            "close": True,
+            "sources": [{"title": "A", "chunkSource": "link://https://a.example/"}],
+        },
+    )
+    answer = Upstream(text("Hel"), text("lo"), close, DONE)
     notified = Notified()
 
     async def main():
@@ -124,19 +133,25 @@ def test_a_run_streams_its_pieces_then_done_with_the_citations(tmp_path):
             assert r.status_code == 201
             run = r.json()
             assert run["id"].startswith("r_") and run["clientId"] == "c_1"
-            assert (run["status"], run["finishedAt"]) == ("running", None)
+            assert (run["status"], run["finishedAt"], run["mode"]) == (
+                "running",
+                None,
+                None,
+            )
             await finished(relay, run["id"])
             r = await client.get(f"/runs/{run['id']}/events")
             assert r.headers["content-type"].startswith("text/event-stream")
             assert parse(r.text) == [
-                (1, "text", {"text": "Hel"}),
-                (2, "text", {"text": "lo"}),
-                (3, "done", {"citations": ["Doc A"]}),
+                (1, *text("Hel")),
+                (2, *text("lo")),
+                (3, *close),
+                (4, *DONE),
             ]
             got = (await client.get(f"/runs/{run['id']}")).json()
             assert got["status"] == "done" and got["finishedAt"]
 
     go(main())
+    assert answer.bodies == [CHAT]
     assert notified == [("done", "What's next?")]
 
 
@@ -148,7 +163,7 @@ def test_a_follower_leaving_doesnt_stop_the_answer(tmp_path):
         async with running(tmp_path, answer) as (relay, client):
             run = (await post_run(client)).json()
             follower = relay.follow(run["id"])
-            assert parse(await anext(follower)) == [(1, "text", {"text": "one"})]
+            assert parse(await anext(follower)) == [(1, *text("one"))]
             await follower.aclose()  # the app goes away mid-answer
             await asyncio.sleep(0.1)
             assert not answer.closed
@@ -157,7 +172,7 @@ def test_a_follower_leaving_doesnt_stop_the_answer(tmp_path):
             await finished(relay, run["id"])
             assert answer.finished and not answer.closed
             events = relay.store.events(run["id"])
-            assert [e[1] for e in events] == ["text", "text", "done"]
+            assert [e[1] for e in events] == ["chunk", "chunk", "done"]
 
     go(main())
 
@@ -173,15 +188,15 @@ def test_rejoining_with_last_event_id_gets_exactly_what_came_after(tmp_path):
                 await asyncio.sleep(0.01)
             # Live: rejoin after event 1, while the answer is still going.
             follower = relay.follow(run["id"], after=1)
-            assert parse(await anext(follower)) == [(2, "text", {"text": "b"})]
+            assert parse(await anext(follower)) == [(2, *text("b"))]
             gate.set()
             rest = [e async for e in follower if not e.startswith(":")]
-            assert [e[:2] for e in parse("".join(rest))] == [(3, "text"), (4, "done")]
+            assert parse("".join(rest)) == [(3, *text("c")), (4, *DONE)]
             # Finished: through the API.
             r = await client.get(
                 f"/runs/{run['id']}/events", headers={"Last-Event-ID": "2"}
             )
-            assert [e[:2] for e in parse(r.text)] == [(3, "text"), (4, "done")]
+            assert parse(r.text) == [(3, *text("c")), (4, *DONE)]
             r = await client.get(f"/runs/{run['id']}/events")
             assert [e[0] for e in parse(r.text)] == [1, 2, 3, 4]
 
@@ -304,7 +319,7 @@ def test_a_restart_mid_run_fails_it_and_keeps_its_events(tmp_path):
             assert run["status"] == "failed" and run["finishedAt"]
             r = await client.get(f"/runs/{run_id}/events")
             assert parse(r.text) == [
-                (1, "text", {"text": "partial"}),
+                (1, *text("partial")),
                 (2, "failed", {"error": RESTARTED}),
             ]
             assert (await client.get("/runs?status=running")).json() == []
@@ -318,10 +333,8 @@ def test_no_body_or_log_line_carries_the_key_or_the_token(tmp_path, caplog):
     transport = httpx.MockTransport(lambda request: httpx.Response(401))
     allm = httpx.AsyncClient(transport=transport)
 
-    def answer_401(workspace, thread, question, mode):
-        return upstream.answer(
-            allm, "http://allm", KEY, workspace, thread, question, mode
-        )
+    def answer_401(workspace, thread, body):
+        return upstream.answer(allm, "http://allm", KEY, workspace, thread, body)
 
     bodies = []
 
@@ -394,9 +407,20 @@ def test_listing_unknown_runs_and_bad_bodies(tmp_path):
             for path in ("/runs/r_nope", "/runs/r_nope/events"):
                 r = await client.get(path)
                 assert r.status_code == 404 and r.json() == {"error": "No such run."}
-            for body in ({**BODY, "message": " "}, {**BODY, "mode": "agent"}, ["x"]):
+            for body in (
+                {**BODY, "workspace": " "},
+                {**BODY, "body": {"message": " "}},
+                {**BODY, "body": {"mode": "chat"}},
+                {**BODY, "body": {"reset": "yes"}},
+                {**BODY, "body": "What's next?"},
+                {k: v for k, v in BODY.items() if k != "body"},
+                ["x"],
+            ):
                 r = await client.post("/runs", json=body)
-                assert r.status_code == 400 and "error" in r.json()
+                assert r.status_code == 400 and "error" in r.json(), body
+            old = {k: v for k, v in BODY.items() if k != "body"}
+            r = await client.post("/runs", json={**old, **CHAT, "mode": "chat"})
+            assert r.status_code == 400 and "'body'" in r.json()["error"]
             assert (await client.post("/runs", content=b"{")).status_code == 400
 
     go(main())
@@ -424,3 +448,70 @@ def test_old_finished_runs_are_purged(tmp_path):
     assert store.purge(7, now=later) == 1
     assert store.get("r_old") is None and store.events("r_old") == []
     assert store.get("r_live") is not None  # still running, so kept
+
+
+# --- the body ---
+
+
+def test_a_reset_runs_and_isnt_notified(tmp_path):
+    answer = Upstream(("chunk", {"type": "textResponse", "close": True}), DONE)
+    notified = Notified()
+
+    async def main():
+        async with running(tmp_path, answer, notified) as (relay, client):
+            r = await post_run(client, body={"reset": True})
+            assert r.status_code == 201
+            await finished(relay, r.json()["id"])
+            row = relay.store.get(r.json()["id"])
+            assert (row["status"], row["question"]) == ("done", RESET)
+
+    go(main())
+    assert answer.bodies == [{"reset": True}]
+    assert notified == []
+
+
+def test_the_body_reaches_upstream_whole_with_its_mode_and_a_20_mb_attachment(
+    tmp_path,
+):
+    content = base64.b64encode(b"\x89" * 20 * 1024 * 1024).decode()
+    chat = {
+        "message": "Read this",
+        "mode": "query",
+        "attachments": [
+            {
+                "name": "big.pdf",
+                "mime": "application/anythingllm-document",
+                "contentString": f"data:application/pdf;base64,{content}",
+            }
+        ],
+    }
+    answer = Upstream(DONE)
+
+    async def main():
+        async with running(tmp_path, answer) as (relay, client):
+            r = await post_run(client, body=chat)
+            assert r.status_code == 201 and r.json()["mode"] == "query"
+            await finished(relay, r.json()["id"])
+
+    go(main())
+    assert answer.bodies == [chat]
+    assert content not in (tmp_path / "relay.db").read_bytes().decode(errors="replace")
+
+
+def test_a_database_from_before_version_2_loses_its_runs(tmp_path):
+    path = tmp_path / "relay.db"
+    store = Store(path)
+    store.create("r_1", "c_1", "w", "t", "chat", "q")
+    store.append("r_1", "done", {"citations": []})
+    store.db.execute("pragma user_version = 1")
+    store.close()
+
+    store = Store(path)
+    assert store.runs() == []
+    assert store.db.execute("pragma user_version").fetchone()[0] == VERSION
+    store.create("r_2", "c_2", "w", "t", None, "q")
+    store.close()
+
+    store = Store(path)  # at the current version, runs are kept
+    assert [r["id"] for r in store.runs()] == ["r_2"]
+    store.close()

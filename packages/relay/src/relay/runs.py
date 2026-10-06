@@ -4,7 +4,9 @@ stored events and wait for new ones; any number can follow a run, and each can r
 the last event it saw.
 
 `Relay` is built around an `answer` function (relay.upstream's, in production; the tests
-script their own) and an optional `notify` coroutine for finished runs.
+script their own) and an optional `notify` coroutine for finished runs. A run's body (what
+Nilson would send `stream-chat`, attachments and all) is kept only in memory, for that call;
+the store gets its message, or `/reset` for a reset, which isn't notified.
 """
 
 import asyncio
@@ -22,10 +24,11 @@ RESTARTED = "The relay restarted during the answer."
 CRASHED = "The relay hit an error during the answer."
 PING_SECONDS = 15.0
 PURGE_SECONDS = 3600.0
+RESET = "/reset"  # a reset run's question
 
 Event = tuple[str, dict[str, Any]]
-# answer(workspace, thread, question, mode): the upstream answer's events.
-Answer = Callable[[str, str, str, str], AsyncGenerator[Event]]
+# answer(workspace, thread, body): the upstream answer's events.
+Answer = Callable[[str, str, dict[str, Any]], AsyncGenerator[Event]]
 # notify(run, question): told once a run is done or failed.
 Notify = Callable[[dict[str, Any], str], Awaitable[None]]
 
@@ -86,33 +89,44 @@ class Relay:
     # --- runs ---
 
     async def start(
-        self, client_id: str, workspace: str, thread: str, question: str, mode: str
+        self, client_id: str, workspace: str, thread: str, body: dict[str, Any]
     ) -> tuple[dict[str, Any], bool]:
-        """Start a run; returns it and whether it's new. A client id already used returns
-        that run and starts nothing; a thread with a running run raises Busy."""
+        """Start a run of `body`, which has a message or is a reset; returns the run and
+        whether it's new. A client id already used returns that run and starts nothing; a
+        thread with a running run raises Busy."""
         if existing := self.store.by_client(client_id):
             return public(existing), False
         if self.store.running_on(workspace, thread):
             raise Busy
+        message = body.get("message")
+        reset = not (isinstance(message, str) and message.strip())
+        question = RESET if reset else message
+        mode = body.get("mode") if isinstance(body.get("mode"), str) else None
         run_id = "r_" + secrets.token_hex(8)
         row = self.store.create(run_id, client_id, workspace, thread, mode, question)
         self.tasks[run_id] = asyncio.create_task(
-            self._run(run_id, workspace, thread, question, mode)
+            self._run(run_id, workspace, thread, body, question, notify=not reset)
         )
         log.info("run %s started on %s/%s", run_id, workspace, thread)
         return public(row), True
 
     async def _run(
-        self, run_id: str, workspace: str, thread: str, question: str, mode: str
+        self,
+        run_id: str,
+        workspace: str,
+        thread: str,
+        body: dict[str, Any],
+        question: str,
+        notify: bool,
     ) -> None:
-        events = self.answer(workspace, thread, question, mode)
+        events = self.answer(workspace, thread, body)
         try:
             async for name, data in events:
                 await self._append(run_id, name, data)
                 if name in TERMINAL:
                     break
             else:  # an answer that just stops is done (relay.upstream always ends itself)
-                await self._append(run_id, "done", {"citations": []})
+                await self._append(run_id, "done", {})
         except asyncio.CancelledError:
             raise  # cancel() or shutdown; they decide what the run becomes
         except Exception:
@@ -125,7 +139,7 @@ class Relay:
         if row is None:
             return
         log.info("run %s %s", run_id, row["status"])
-        if self.notify is not None and row["status"] in ("done", "failed"):
+        if notify and self.notify is not None and row["status"] in ("done", "failed"):
             await self.notify(public(row), question)
 
     async def _append(self, run_id: str, name: str, data: dict[str, Any]) -> None:

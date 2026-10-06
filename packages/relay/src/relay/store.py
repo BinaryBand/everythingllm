@@ -3,7 +3,11 @@ restart loses nothing already received; a terminal event and the run's new statu
 written in one transaction, so a run never ends twice.
 
 A run as the API shows it is `public(row)`: the question stays in the store (ntfy needs
-its start), out of every response.
+its start), out of every response. Its `mode` is the body's, or null when the workspace's
+own mode answered.
+
+The schema's version is `pragma user_version`. Opening a database below `VERSION` drops its
+runs (those before 2 held `text` events nothing reads now) and makes the tables afresh.
 """
 
 import json
@@ -18,6 +22,7 @@ TERMINAL = (
     "cancelled",
 )  # the events that end a run, named as its status
 STATUSES = ("running", *TERMINAL)
+VERSION = 2
 
 SCHEMA = """
 create table if not exists runs (
@@ -25,7 +30,7 @@ create table if not exists runs (
   client_id text not null unique,
   workspace text not null,
   thread text not null,
-  mode text not null,
+  mode text,
   question text not null,
   status text not null,
   created_at text not null,
@@ -69,7 +74,12 @@ class Store:
         # a power cut that loses the last pieces ends the run anyway.
         self.db.execute("pragma synchronous = normal")
         self.db.execute("pragma foreign_keys = on")
+        if self.db.execute("pragma user_version").fetchone()[0] < VERSION:
+            self.db.executescript(
+                "drop table if exists events; drop table if exists runs;"
+            )
         self.db.executescript(SCHEMA)
+        self.db.execute(f"pragma user_version = {VERSION}")
         path.chmod(0o600)  # questions and answers
 
     def close(self) -> None:
@@ -81,7 +91,7 @@ class Store:
         client_id: str,
         workspace: str,
         thread: str,
-        mode: str,
+        mode: str | None,
         question: str,
     ) -> sqlite3.Row:
         self.db.execute(

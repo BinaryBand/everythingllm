@@ -460,11 +460,12 @@ clients get the same tools over HTTP from the gateway (see "MCP gateway").
 
 ### Services on the host
 
-Work that is heavy, long or needs the host goes to a service on the host instead, with the
-MCP server or skill in the container as a thin front: `sandbox-runner` (the code sandbox),
-`research-runner` (deep research), `agents-runner` (delegation), `podcasts-runner` (the podcasts tools),
-`sites-runner` (the sites tools and their builds; in a container, see "Service
-containers") and `audit-runner` (the audit's checks). Each listens
+Work that is heavy, long or needs the host goes to a service outside AnythingLLM instead,
+with the MCP server or skill in the container as a thin front: `sandbox-runner` (the code
+sandbox), `agents-runner` (delegation) and `audit-runner` (the audit's checks) as host
+units, and `research-runner` (deep research), `podcasts-runner` (the podcasts tools) and
+`sites-runner` (the sites tools and their builds) in service containers of their own (see
+"Service containers"). Each listens
 on a Unix socket in storage, `storage/everythingllm/<name>/runner.sock` (mode 0660), which the container
 sees without a Quadlet change, and they all speak `hostrpc`'s protocol: one request per
 connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "result"}` or

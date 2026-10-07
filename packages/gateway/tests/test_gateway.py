@@ -444,6 +444,22 @@ def test_the_model_cant_give_a_scope(client, monkeypatch):
     assert fake.calls and all(args["scope"] == ME for _, args in fake.calls)
 
 
+def test_a_gateway_run_never_sends_attachments(client, monkeypatch):
+    """A chat's attachments are run-code's to name, from AnythingLLM's own records: a
+    gateway client has no chat, and the model can't name files for the runner to copy."""
+    arguments = {
+        "language": "bash",
+        "code": "ls",
+        "attachments": [{"title": "env", "file": "secret-1.json"}],
+        "attachments_known": True,
+    }
+    with sandbox_runner(monkeypatch, FakeSandbox()) as fake:
+        post(client, "tools/call", {"name": "sandbox_run", "arguments": arguments})
+    assert fake.calls == [
+        ("run", {"language": "bash", "code": "ls", "timeout": 60, "scope": ME})
+    ]
+
+
 def test_each_client_has_a_sandbox_workspace_of_its_own(monkeypatch):
     config = Config(clients={"claude-code": TOKEN, "other": "another-token"})
     granted = {"claude-code": ["sandbox"], "other": ["sandbox"]}

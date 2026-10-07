@@ -86,13 +86,17 @@ Config (environment):
   SANDBOX_SITE_DIR  the pages site's root, where system sites are staged and link cards
                     saved (default ~/.local/share/everythingllm/pages/public)
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
+  SANDBOX_UPLOADS   AnythingLLM's chat attachments, whose text a run gets in
+                    /work/attachments (default <storage>/direct-uploads)
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import html as htmllib
+import json
 import logging
 import os
 import re
@@ -102,6 +106,7 @@ import signal
 import stat
 import tempfile
 import time
+import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -174,6 +179,18 @@ WAIT = 45
 RESULT_KEEP = 3600  # how long a finished run's result can still be fetched
 CSP_SCAN = 200  # HTML files of a changed page checked for what the CSP blocks
 ENTRIES_BYTES = 64 << 20  # a system site's entries copied into its build, at most
+# A chat's attachments, as text in /work/attachments (sync_attachments): AnythingLLM keeps
+# each one's text as <uploads>/<name>-<uuid>.json, and the skill names the chat's.
+ATTACHMENTS = "attachments"
+# In it: each copy's source and hash, so a copy of a detached file can go.
+MANIFEST = ".manifest.json"
+ATTACHMENTS_MAX = 50  # named in one run
+ATTACHMENT_BYTES = 50 << 20  # one source file, at most
+ATTACHMENTS_BYTES = 200 << 20  # the sources read for one run, at most
+UPLOAD_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,250}\.json$")
+# Names that keep their extension; the rest become .txt.
+TEXT_TYPES = ("csv", "tsv", "txt", "md", "json")
+NAME_MAX = 100
 
 # What podman produced: exit code, stdout, stderr, and whether it was killed for time.
 PodmanResult = tuple[int, str, str, bool]
@@ -259,6 +276,7 @@ class Config:
     sites_source: Path = SYSTEM_ZOLA / "sites"
     sites_content: Path = Path("/nonexistent")
     build_socket: Path | None = None  # SystemBuilds' socket; none, none served
+    uploads: Path = Path("/nonexistent")  # AnythingLLM's direct-uploads
 
     @property
     def scripts(self) -> Path:
@@ -295,6 +313,7 @@ class Config:
                 "SANDBOX_PUBLIC_URL",
                 f"https://{host}:8447/",
             ),
+            uploads=Path(get("SANDBOX_UPLOADS", hostrpc.storage() / "direct-uploads")),
         )
 
 
@@ -582,6 +601,108 @@ def regular_files(source: Path) -> tuple[list[tuple[Path, str]], int]:
     return sorted(found, key=lambda f: f[1]), size
 
 
+def attachment_name(title: str, taken: set[str]) -> str:
+    """A file name in /work/attachments for an attachment called `title`: NFC, letters,
+    digits and ._- only, at most NAME_MAX characters, no leading dot, and not in `taken`.
+    Text types keep their extension; anything else (a PDF's or a spreadsheet's text, with
+    the sheets AnythingLLM names in its title) becomes <title>.txt."""
+    title = unicodedata.normalize("NFC", title)[:500]
+    clean = re.sub(r"[^\w.-]+", "_", title).strip("._-") or "attachment"
+    stem, dot, ext = clean.rpartition(".")
+    if not (dot and stem and ext.lower() in TEXT_TYPES):
+        stem, ext = clean, "txt"
+    stem = stem[: NAME_MAX - len(ext) - 4].rstrip("._-") or "attachment"
+    for n in range(1, len(taken) + 2):
+        name = f"{stem}.{ext}" if n == 1 else f"{stem}-{n}.{ext}"
+        if name not in taken:
+            return name
+    raise AssertionError("unreachable: one of len(taken) + 1 names is free")
+
+
+def safe_name(name: Any) -> bool:
+    """A name a manifest (which code in the sandbox can edit) may give: one plain entry."""
+    return (
+        isinstance(name, str)
+        and 0 < len(name) <= 255
+        and "/" not in name
+        and "\0" not in name
+        and not name.startswith(".")
+    )
+
+
+def read_manifest(folder: int) -> dict[str, dict[str, Any]]:
+    """/work/attachments/.manifest.json: {name: {source, sha256, bytes}} for each copy the
+    runner wrote, leaving out whatever in it isn't one (code in the sandbox can write it)."""
+    try:
+        fd = safefs.open_regular(folder, MANIFEST)
+    except OSError:
+        return {}
+    with os.fdopen(fd, "rb") as f:
+        raw = f.read(1 << 20)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        name: {"source": e["source"], "sha256": e["sha256"], "bytes": e["bytes"]}
+        for name, e in data.items()
+        if safe_name(name)
+        and isinstance(e, dict)
+        and isinstance(e.get("source"), str)
+        and UPLOAD_RE.fullmatch(e["source"])
+        and isinstance(e.get("sha256"), str)
+        and isinstance(e.get("bytes"), int)
+    }
+
+
+def unchanged(folder: int, name: str, entry: dict[str, Any]) -> bool | None:
+    """Whether the copy `name` is still what the runner wrote; None when it's gone or isn't
+    a plain file."""
+    try:
+        fd = safefs.open_regular(folder, name)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        if os.fstat(f.fileno()).st_size != entry["bytes"]:
+            return False
+        digest = hashlib.sha256()
+        while chunk := f.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest() == entry["sha256"]
+
+
+def read_upload(uploads: Path, file: str, budget: int) -> tuple[bytes | None, int, str]:
+    """An attachment's text from AnythingLLM's `uploads` folder, read without following a
+    symlink and only if its file is at most `budget` bytes: (text, the file's size, "") or
+    (None, bytes read, why not). Why is "missing" when the file isn't there."""
+    try:
+        with safefs.folder(uploads) as d:
+            fd = safefs.open_regular(d, file)
+    except FileNotFoundError:
+        return None, 0, "missing"
+    except OSError as e:
+        return None, 0, f"couldn't be read ({e.strerror or e})"
+    with os.fdopen(fd, "rb") as f:
+        size = os.fstat(f.fileno()).st_size
+        if size > ATTACHMENT_BYTES:
+            return None, 0, f"is over {ATTACHMENT_BYTES >> 20} MB"
+        if size > budget:
+            over = f"{ATTACHMENTS_BYTES >> 20} MB of attachments it copies"
+            return None, 0, f"would take this run over the {over}"
+        raw = f.read(size + 1)
+    if len(raw) > size:  # it grew while it was read
+        return None, len(raw), "changed while it was read"
+    try:
+        text = json.loads(raw).get("pageContent")
+    except (ValueError, AttributeError):
+        text = None
+    if not isinstance(text, str):
+        return None, len(raw), "has no text AnythingLLM kept"
+    return text.encode(errors="replace"), len(raw), ""
+
+
 @dataclass
 class Job:
     """A run, kept for RESULT_KEEP after it finishes so op_wait can still fetch its result."""
@@ -775,7 +896,17 @@ class Runner(hostrpc.Service):
         language: str,
         code: str,
         timeout: int = DEFAULT_TIMEOUT,
+        attachments: Any = None,
+        attachments_known: bool = False,
+        **newer: Any,
     ) -> dict[str, Any]:
+        """Run a script. `attachments` are the chat's files, [{title, file}] (from the
+        run-code skill, which looks them up), copied as text into /work/attachments first;
+        with `attachments_known`, the lookup was whole, so copies of files no longer
+        attached go. Arguments a newer skill sends that this runner doesn't know are
+        ignored, so the skill and the runner can be updated in either order."""
+        if newer:
+            log.info("run: ignoring arguments %s", ", ".join(sorted(newer)))
         if language not in LANGUAGES:
             raise SandboxError(f"language must be one of: {', '.join(LANGUAGES)}")
         if not isinstance(code, str) or not code.strip():
@@ -786,7 +917,11 @@ class Runner(hostrpc.Service):
         run_id = f"r-{secrets.token_hex(4)}"
         job = Job(
             s.workspace,
-            asyncio.create_task(self.execute(s, language, code, timeout)),
+            asyncio.create_task(
+                self.execute(
+                    s, language, code, timeout, attachments, attachments_known is True
+                )
+            ),
             self.now(),
         )
         job.task.add_done_callback(lambda _: setattr(job, "finished", self.now()))
@@ -810,15 +945,29 @@ class Runner(hostrpc.Service):
         )
 
     async def execute(
-        self, scope: Scope, language: str, code: str, timeout: int
+        self,
+        scope: Scope,
+        language: str,
+        code: str,
+        timeout: int,
+        attachments: Any = None,
+        known: bool = False,
     ) -> dict[str, Any]:
         """One run, start to finish; op_run keeps it as a task, which holds the workspace's
         lock throughout and one of the slots (an address) from writing the script until
-        its container is removed."""
+        its container is removed. The chat's attachments are copied in first, so they
+        aren't among the files the run changed."""
         script, interpreter = LANGUAGES[language]
         name = f"sandbox-{secrets.token_hex(6)}"
         run_dir = self.config.scripts / name
         async with self.lock(scope.workspace):
+            try:
+                copies, notes = await asyncio.to_thread(
+                    self.sync_attachments, scope, attachments, known
+                )
+            except Exception:
+                log.exception("attachments for %s", scope.workspace)
+                copies, notes = [], ["the chat's attachments couldn't be copied"]
             before = await asyncio.to_thread(snapshot, scope)
             if before.total > WORKSPACE_MAX_BYTES:
                 raise self.over_quota(before, "run code")
@@ -885,7 +1034,131 @@ class Runner(hostrpc.Service):
             )
             if after.total > WORKSPACE_WARN_BYTES
             else None,
+            "attachments": copies,
+            "attachment_notes": notes,
         }
+
+    def sync_attachments(
+        self, scope: Scope, attachments: Any, known: bool
+    ) -> tuple[list[str], list[str]]:
+        """Put the chat's attachments, [{title, file}] with `file` a JSON file in AnythingLLM's
+        uploads folder, as text files in /work/attachments: (the names there now, notes on
+        what couldn't be copied). Under the workspace's lock, before a run.
+
+        Only new copies are written; a copy already there stays as it is, edited or not.
+        /work/attachments/.manifest.json says which source each copy came from and what was
+        written. When `known` (the skill's lookup was whole), a copy whose file is no
+        longer attached goes, if it's unchanged; an edited one stays, as the chat's own. A
+        source that's gone is skipped, and its copy kept. A gateway client's scope has no
+        chat, and gets nothing. Nothing here follows a symlink: code in the sandbox can put
+        one anywhere in /work."""
+        if scope.workspace.startswith(CLIENT_PREFIX) or not (attachments or known):
+            return [], []
+        notes: list[str] = []
+        if not isinstance(attachments, list):
+            attachments, known = [], False
+        if len(attachments) > ATTACHMENTS_MAX:
+            notes.append(f"only the first {ATTACHMENTS_MAX} attachments were copied")
+            attachments, known = attachments[:ATTACHMENTS_MAX], False
+        wanted: dict[str, str] = {}  # source file: title
+        for a in attachments:
+            file = a.get("file") if isinstance(a, dict) else None
+            if not isinstance(file, str) or not UPLOAD_RE.fullmatch(file):
+                notes.append("an attachment with a bad file name was skipped")
+                continue
+            title = a.get("title")
+            wanted.setdefault(
+                file,
+                title if isinstance(title, str) and title.strip() else file[:-5],
+            )
+        work = scope.roots["/work"]
+        try:
+            folder = safefs.open_dir(work, (ATTACHMENTS,), make=bool(wanted))
+        except FileNotFoundError:
+            return [], notes  # nothing attached, and no copies to remove
+        except OSError:
+            notes.append(
+                f"/work/{ATTACHMENTS} isn't a folder (a file or link is in its place), so "
+                "the chat's attachments weren't copied"
+            )
+            return [], notes
+        try:
+            return self.fill_attachments(scope, folder, wanted, known, notes), notes
+        finally:
+            os.close(folder)
+            with contextlib.suppress(OSError):
+                os.rmdir(work / ATTACHMENTS)  # only if it's empty, and never a link
+
+    def fill_attachments(
+        self,
+        scope: Scope,
+        folder: int,
+        wanted: dict[str, str],
+        known: bool,
+        notes: list[str],
+    ) -> list[str]:
+        """sync_attachments' work in the open folder /work/attachments."""
+        manifest = read_manifest(folder)
+        before = dict(manifest)
+        there = set(os.listdir(folder))
+        by_source = {e["source"]: name for name, e in manifest.items()}
+        present: list[str] = []
+        new: list[tuple[str, str, bytes]] = []  # (source, name, text)
+        budget = ATTACHMENTS_BYTES
+        for file, title in wanted.items():
+            old = by_source.get(file)
+            if old is not None and old in there:
+                present.append(old)
+                continue
+            # A copy that's gone (the chat deleted it) is written again, under its name.
+            text, read, why = read_upload(self.config.uploads, file, budget)
+            budget -= read
+            if text is None:
+                if why == "missing":
+                    why = "is no longer on the server"
+                    log.warning("attachment %s isn't in %s", file, self.config.uploads)
+                notes.append(f"{title} {why}, so it wasn't copied")
+                continue
+            taken = there | set(manifest) | {n for _, n, _ in new}
+            new.append((file, old or attachment_name(title, taken), text))
+        if new:
+            usage = snapshot(scope)
+            room = WORKSPACE_MAX_BYTES - usage.total
+            for file, name, text in new:
+                if len(text) > room:
+                    notes.append(
+                        f"{name} wasn't copied: the workspace's sandbox is near its "
+                        f"{WORKSPACE_MAX_BYTES >> 20} MB limit"
+                    )
+                    continue
+                try:
+                    safefs.replace(folder, name, text)
+                except OSError as e:
+                    notes.append(f"{name} couldn't be written ({e.strerror or e})")
+                    continue
+                room -= len(text)
+                present.append(name)
+                manifest[name] = {
+                    "source": file,
+                    "sha256": hashlib.sha256(text).hexdigest(),
+                    "bytes": len(text),
+                }
+        if known:
+            for name, entry in list(manifest.items()):
+                if entry["source"] in wanted:
+                    continue
+                if unchanged(folder, name, entry):
+                    with contextlib.suppress(FileNotFoundError):
+                        os.unlink(name, dir_fd=folder)
+                del manifest[name]  # gone, or edited and now the chat's own
+        if manifest != before:
+            if manifest:
+                data = json.dumps(manifest, indent=1, sort_keys=True).encode()
+                safefs.replace(folder, MANIFEST, data)
+            else:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(MANIFEST, dir_fd=folder)
+        return sorted(present)
 
     async def watch(self, scope: Scope, name: str) -> str:
         """While a run goes, look at the workspace's use every WATCH_SECONDS and kill the

@@ -4,7 +4,7 @@
   "name": "Run Code",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Run a Python or bash script in this workspace's Linux sandbox and return its output: arithmetic, data, files, charts, anything you'd otherwise estimate. It runs in /work (this chat's scratch); /project keeps files; /public is live web pages, and the reply lists the pages a run changed. numpy, pandas, matplotlib, requests and zola are installed; pip installs persist; the network reaches PyPI only. Use bash to list, read, move and delete files.",
+  "description": "Run a Python or bash script in this workspace's Linux sandbox and return its output: arithmetic, data, files, charts, anything you'd otherwise estimate. It runs in /work (this chat's scratch); files attached in this chat are in /work/attachments (as text): read them there rather than pasting them into the script; /project keeps files; /public is live web pages, and the reply lists the pages a run changed. numpy, pandas, matplotlib, requests and zola are installed; pip installs persist; the network reaches PyPI only. Use bash to list, read, move and delete files.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

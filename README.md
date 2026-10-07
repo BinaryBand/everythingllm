@@ -777,6 +777,26 @@ rather than a gateway client's folders. Each run mounts:
   builds.
 - `/public`: the workspace's pages on the web (see "Pages are `/public`").
 
+**Chat attachments.** A file attached in an AnythingLLM chat is in that chat's
+`/work/attachments/` as text, for `run-code` to read rather than the agent pasting it into
+a script. AnythingLLM keeps no attached file, only the text it made of it
+(`storage/direct-uploads/<name>-<uuid>.json`, and a row in its `workspace_parsed_files`
+table), so `.csv`, `.tsv`, `.txt`, `.md` and `.json` keep their names and anything else
+becomes `<name>.txt` (a PDF's text; a spreadsheet's sheets as CSV, their names in the file's).
+`run-code` looks the chat's attachments up in AnythingLLM's database, through the server's
+own Prisma client (`_lib/attachments.js`: the skill runs in AnythingLLM's server), and
+sends the runner their titles and file names, at most 50. API, Telegram and job runs have
+no chat and send none; the gateway's `sandbox_run` never does, and the runner ignores them
+for a gateway scope. Before the run, under the workspace's lock, the runner reads each new
+one from `SANDBOX_UPLOADS` (storage's `direct-uploads`) without following a symlink, at
+most 50 MB a file and 200 MB a run, and writes its text; `.manifest.json` beside the copies
+records each one's source and hash. A copy already there stays as it is, edited or not.
+When the lookup was whole, a copy of a file no longer attached is removed if it's
+unchanged, and an edited one stays as the chat's own; a failed lookup removes nothing, and
+neither does an attachment whose text is gone. Copies count toward the workspace's limit
+(past it, they're left out with a note), aren't among the files a run changed, and the
+reply names them.
+
 They live in `~/.local/share/everythingllm/sandbox/workspaces/<workspace>/` (`threads/<thread>/`,
 `project/` and `shared/`), out of the container's reach. The runner's own file operations
 (`write-file`, `publish`) only take paths in the caller's own folders, never another

@@ -60,6 +60,7 @@ def test_the_page_its_files_and_its_state(tmp_path):
         assert "200 OK" in head and f"Content-Security-Policy: {takeover.CSP}" in head
         assert b"Browser \xc2\xb7 career" in body and b'src="app.js"' in body
         assert b'id="problem"' in body  # where a button's failure shows
+        assert b'<button id="fit"' in body  # a phone's view pans at full size
         assert ("front", {"thread": "7"}) in podman.drivers[s.name].calls
         head, body = await answer(port, "GET", f"/{s.token}/app.js")
         assert "text/javascript" in head and b"novnc/core/rfb.js" in body

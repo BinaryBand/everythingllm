@@ -12,9 +12,24 @@ const scheme = location.protocol === "https:" ? "wss://" : "ws://";
 let rfb = null;
 let control = "agent";
 
+// Scaled to fit a phone, the 1280 px screen's text is a few pixels high and nothing can be
+// tapped. So below NARROW the view shows it at its own size and a drag pans it (a tap still
+// clicks once it's yours); the button fits it to the view instead, or back.
+const NARROW = window.matchMedia("(max-width: 800px)");
+let fit = null; // the user's choice, once they've made one
+
+function size() {
+  const scaled = fit ?? !NARROW.matches;
+  $("fit").textContent = scaled ? "Actual size" : "Fit the screen";
+  if (!rfb) return;
+  rfb.scaleViewport = scaled;
+  rfb.clipViewport = !scaled;
+  rfb.dragViewport = !scaled;
+}
+
 function connect() {
   rfb = new RFB($("screen"), scheme + location.host + base + "websockify", { wsProtocols: ["binary"] });
-  rfb.scaleViewport = true;
+  size();
   rfb.resizeSession = false;
   rfb.viewOnly = control !== "user";
   rfb.addEventListener("connect", () => refresh());
@@ -205,6 +220,11 @@ async function post(what, body) {
 }
 
 $("take").addEventListener("click", () => act("take over", "take"));
+$("fit").addEventListener("click", () => {
+  fit = !(fit ?? !NARROW.matches);
+  size();
+});
+NARROW.addEventListener("change", size);
 $("give").addEventListener("click", () => act("hand back", "give"));
 $("add").addEventListener("submit", async (e) => {
   e.preventDefault();

@@ -90,6 +90,7 @@ PAGE = """<!doctype html>
   <span id="state">Connecting…</span>
   <button id="take" hidden>Take over</button>
   <button id="give" hidden>Hand back to the agent</button>
+  <button id="fit" type="button" class="quiet">Actual size</button>
 </header>
 <p id="reason" hidden></p>
 <p id="problem" class="error" hidden></p>

@@ -1,30 +1,18 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const net = require("net");
 const os = require("os");
 const path = require("path");
 
 const attachments = require("../attachments");
+const { fakeService } = require("./fakeservice");
 const runCode = require("../../run-code/handler").runtime;
 
 // A fake sandbox-runner that answers every request with `result`.
 async function fakeRunner(result) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "att-sock-"));
-  const socket = path.join(dir, "runner.sock");
-  const requests = [];
-  const server = net.createServer((conn) => {
-    let buffer = "";
-    conn.on("data", (chunk) => {
-      buffer += chunk;
-      if (!buffer.includes("\n")) return;
-      requests.push(JSON.parse(buffer.split("\n")[0]));
-      conn.end(JSON.stringify({ ok: true, result }) + "\n");
-    });
-  });
-  await new Promise((r) => server.listen(socket, r));
-  process.env.SANDBOX_SOCKET = socket;
-  return { requests, close: () => new Promise((r) => server.close(r)) };
+  const service = await fakeService(() => ({ ok: true, result }));
+  process.env.SANDBOX_SOCKET = service.socket;
+  return service;
 }
 
 // AnythingLLM's Prisma client, as far as the lookup uses it.

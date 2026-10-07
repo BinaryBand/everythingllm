@@ -8,6 +8,7 @@ no alerts; scripts from other hosts don't load; downloads and the directory list
 Skips without podman, or without either image (`uv run hostctl browser-images`).
 """
 
+import functools
 import json
 import shutil
 import subprocess
@@ -21,6 +22,7 @@ CADDY_IMAGE = "docker.io/library/caddy:2-alpine"
 BROWSER_IMAGE = "localhost/everythingllm-browser"
 
 
+@functools.cache
 def _missing() -> str:
     """Why the browser test can't run here, or "" if it can."""
     if shutil.which("podman") is None:

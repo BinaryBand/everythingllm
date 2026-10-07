@@ -108,7 +108,6 @@ class Settings:
     slots: int = 3
     daily_usd: float = 3.0  # 0: no cap
     timezone: str = DEFAULT_TIMEZONE
-    once: Path | None = None  # the one-off registry; None: once.json beside runlogs
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -120,7 +119,6 @@ class Settings:
             slots=int(os.environ.get("AGENTS_SLOTS", "3")),
             daily_usd=float(os.environ.get("AGENTS_DAILY_USD", "3")),
             timezone=os.environ.get("USER_TIMEZONE") or DEFAULT_TIMEZONE,
-            once=hostrpc.data_dir() / "agents" / "once.json",
         )
 
 
@@ -292,6 +290,7 @@ class AgentsLive(live.Live):
 
 class Runner(RunService):
     log = log
+    errors = (AnythingLLMError,)  # its text is the caller's error
     ID_PREFIX = "dg-"
     NOUN = "delegation"
     SUBJECT_KEY = "goal"
@@ -327,10 +326,8 @@ class Runner(RunService):
         if self.jobs is None:
             if self.internal is None:
                 self.internal = InternalAPI.from_env()
-            registry = self.settings.once or self.settings.runlogs.parent / "once.json"
-            self.jobs = ScheduledJobs(
-                self.internal, Registry(registry), self.settings.timezone
-            )
+            registry = Registry(self.settings.runlogs.parent / "once.json")
+            self.jobs = ScheduledJobs(self.internal, registry, self.settings.timezone)
         return self.jobs
 
     def start_poller(self) -> None:
@@ -408,12 +405,9 @@ class Runner(RunService):
         apply: bool = False,
     ) -> str:
         chat_only(scope, "manage scheduled jobs")
-        try:
-            if (action or "list") == "list":
-                return await self.scheduled().listing()
-            return await self.scheduled().act(action, job_id, apply)
-        except AnythingLLMError as e:
-            raise RunnerError(str(e)) from None
+        if (action or "list") == "list":
+            return await self.scheduled().listing()
+        return await self.scheduled().act(action, job_id, apply)
 
     async def op_remind_once(
         self,
@@ -425,19 +419,11 @@ class Runner(RunService):
         apply: bool = False,
     ) -> str:
         chat_only(scope, "make scheduled jobs")
-        try:
-            return await self.scheduled().remind_once(name, prompt, at, tools, apply)
-        except AnythingLLMError as e:
-            raise RunnerError(str(e)) from None
+        return await self.scheduled().remind_once(name, prompt, at, tools, apply)
 
     async def op_update_prompt(self, scope: dict, apply: bool = False) -> str:
-        slug = str((scope or {}).get("workspace") or "")
-        if not slug or slug == "_jobs":
-            raise RunnerError("a scheduled job has no workspace prompt to update")
-        if slug.startswith(prompt.DELEGATED):
-            raise RunnerError(
-                "a delegation role's prompt is agents-runner's, not this skill's"
-            )
+        chat_only(scope, "update a workspace prompt")
+        slug = scope["workspace"]
         client = self.anythingllm()
         try:
             workspace = next(

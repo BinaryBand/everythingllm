@@ -176,7 +176,7 @@ def test_update_prompt_refuses_a_job_a_role_and_an_unknown_workspace(fake, tmp_p
         r = make(fake, tmp_path)
         for workspace, error in [
             ("_jobs", "scheduled job"),
-            ("agents-planner", "delegation role"),
+            ("agents-planner", "delegated task"),
             ("nope", "no workspace 'nope'"),
         ]:
             with pytest.raises(RunnerError, match=error):

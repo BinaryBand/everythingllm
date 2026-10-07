@@ -31,6 +31,7 @@ import shutil
 import sys
 import urllib.error
 import urllib.request
+from collections import Counter
 from collections.abc import Collection
 from pathlib import Path
 
@@ -104,16 +105,15 @@ def live_jobs(names: Collection[str]) -> dict[str, dict]:
     """The live jobs by name; exits if `names` (the ones about to be matched) has a name
     two live jobs share, since which of them a write would reach is anyone's guess."""
     found = api("GET", "/scheduled-jobs")["jobs"]
-    if twice := [
-        n for n in hostjobs.duplicates([j["name"] for j in found]) if n in names
-    ]:
+    counts = Counter(j["name"] for j in found)
+    if twice := [n for n in names if counts[n] > 1]:
         sys.exit(
             f"AnythingLLM has more than one scheduled job named {', '.join(map(repr, twice))}: "
             "delete or rename the extra ones in its UI (Scheduled Jobs), then run this again."
         )
     jobs = {}
     for job in found:
-        job["tools"] = json.loads(job["tools"]) if job.get("tools") else []
+        job["tools"] = hostjobs.job_tools(job) or []
         jobs[job["name"]] = job
     return jobs
 

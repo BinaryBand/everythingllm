@@ -6,8 +6,9 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from agents import jobs, runner
-from agents.anythingllm import InternalAPI
+from agents.anythingllm import AnythingLLMError, InternalAPI
 from hostrpc import RunnerError
+from runs import runlog
 
 NOW = datetime(2026, 10, 7, 10, 0, tzinfo=UTC)  # 12:00 in Stockholm
 STOCKHOLM = ZoneInfo("Europe/Stockholm")
@@ -15,7 +16,7 @@ CHAT = {"workspace": "career", "thread": "default"}
 
 
 def iso(moment: datetime) -> str:
-    return moment.isoformat().replace("+00:00", ".000Z")
+    return runlog.iso(moment.timestamp())
 
 
 class FakeJobsAPI:
@@ -193,7 +194,7 @@ def test_remind_once_shows_first_then_makes_and_registers_the_job(api, tmp_path)
         [entry] = registry(tmp_path)
         assert (entry["id"], entry["fire_at"], entry["state"]) == (
             1,
-            "2026-10-07T12:05:00Z",
+            "2026-10-07T12:05:00.000Z",
             "pending",
         )
         # A plain reminder has no tools at all, not AnythingLLM's default ones.
@@ -399,7 +400,8 @@ def test_the_internal_api_logs_in_again_once_after_a_401(api, tmp_path):
         assert api.logins == [False, True]
         api.login = lambda fresh: {"Authorization": "Bearer wrong"}
         r.internal.login = api.login
-        with pytest.raises(RunnerError, match="refused agents-runner's login"):
+        # The service's `errors` hands this text to the caller.
+        with pytest.raises(AnythingLLMError, match="refused agents-runner's login"):
             await r.op_scheduled_jobs(CHAT)
 
     asyncio.run(main())
@@ -423,7 +425,8 @@ def test_settings_read_the_time_zone_and_put_the_registry_in_the_data_dir(
     monkeypatch.setenv("USER_TIMEZONE", "America/New_York")
     settings = runner.Settings.from_env()
     assert settings.timezone == "America/New_York"
-    assert settings.once.parts[-2:] == ("agents", "once.json")
+    registry = runner.Runner(settings).scheduled().registry.path
+    assert registry.parts[-2:] == ("agents", "once.json")
     monkeypatch.delenv("USER_TIMEZONE")
     assert runner.Settings.from_env().timezone == "Europe/Stockholm"
 

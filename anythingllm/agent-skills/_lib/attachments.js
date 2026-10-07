@@ -76,4 +76,4 @@ async function attachmentArgs(self) {
   }
 }
 
-module.exports = { attachmentArgs, chatOf, source, MAX, PRISMA };
+module.exports = { attachmentArgs, source, MAX, PRISMA };

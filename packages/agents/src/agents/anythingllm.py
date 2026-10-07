@@ -14,7 +14,6 @@ Config (environment, from host.env and agents.env through the unit):
 """
 
 import asyncio
-import json
 import os
 import re
 from collections.abc import Callable
@@ -25,6 +24,7 @@ from urllib.parse import quote
 
 import hostrpc
 import httpx
+from hostctl.jobs import job_tools
 
 THINKING = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 TIMEOUT = httpx.Timeout(connect=10, read=30, write=30, pool=10)
@@ -50,6 +50,26 @@ def status_error(status: int) -> str:
     if status >= 500:
         return f"AnythingLLM hit an error ({status})."
     return f"AnythingLLM turned the request down ({status})."
+
+
+async def send(
+    http: httpx.AsyncClient, method: str, path: str, **kw: Any
+) -> httpx.Response:
+    """http.request, with a timeout or a connection failure as AnythingLLMError."""
+    try:
+        return await http.request(method, path, **kw)
+    except httpx.TimeoutException:
+        raise AnythingLLMError("AnythingLLM didn't answer in time.") from None
+    except httpx.HTTPError as e:
+        raise AnythingLLMError(f"couldn't reach AnythingLLM: {e}") from None
+
+
+def decoded(res: httpx.Response) -> Any:
+    """A reply's JSON, its text when it isn't JSON, or None when it's empty."""
+    try:
+        return res.json() if res.content.strip() else None
+    except ValueError:
+        return res.text
 
 
 def without_thinking(text: str) -> str:
@@ -93,18 +113,10 @@ class AnythingLLM:
             if seconds is None
             else httpx.Timeout(seconds, connect=10)
         )
-        try:
-            res = await self.http.request(method, path, json=body, timeout=timeout)
-        except httpx.TimeoutException:
-            raise AnythingLLMError("AnythingLLM didn't answer in time.") from None
-        except httpx.HTTPError as e:
-            raise AnythingLLMError(f"couldn't reach AnythingLLM: {e}") from None
+        res = await send(self.http, method, path, json=body, timeout=timeout)
         if res.status_code >= 300:
             raise AnythingLLMError(status_error(res.status_code))
-        try:
-            return res.json() if res.content.strip() else None
-        except ValueError:
-            return res.text
+        return decoded(res)
 
     async def aclose(self) -> None:
         if self.http is not None:
@@ -159,13 +171,6 @@ def internal_error(status: int, reply: Any) -> str:
     return status_error(status)
 
 
-def default_login(api: str, env_file: Path) -> Callable[[bool], dict[str, str]]:
-    def login(fresh: bool) -> dict[str, str]:
-        return hostrpc.anythingllm_headers(api, env_file, fresh=fresh)
-
-    return login
-
-
 @dataclass
 class InternalAPI:
     """AnythingLLM's internal API: its scheduled jobs. `login(fresh)` gives the headers
@@ -190,9 +195,12 @@ class InternalAPI:
         return self.base_url.rstrip("/") + "/api"
 
     async def headers(self, fresh: bool = False) -> dict[str, str]:
-        login = self.login or default_login(self.api, self.env_file)
         try:
-            return await asyncio.to_thread(login, fresh)
+            if self.login is not None:
+                return await asyncio.to_thread(self.login, fresh)
+            return await asyncio.to_thread(
+                hostrpc.anythingllm_headers, self.api, self.env_file, fresh=fresh
+            )
         except hostrpc.RunnerError as e:
             raise AnythingLLMError(str(e)) from None
 
@@ -203,18 +211,10 @@ class InternalAPI:
             )
         for fresh in (False, True):
             headers = await self.headers(fresh)
-            try:
-                res = await self.http.request(method, path, json=body, headers=headers)
-            except httpx.TimeoutException:
-                raise AnythingLLMError("AnythingLLM didn't answer in time.") from None
-            except httpx.HTTPError as e:
-                raise AnythingLLMError(f"couldn't reach AnythingLLM: {e}") from None
+            res = await send(self.http, method, path, json=body, headers=headers)
             if res.status_code != 401:
                 break
-        try:
-            reply = res.json() if res.content.strip() else None
-        except ValueError:
-            reply = res.text
+        reply = decoded(res)
         if res.status_code >= 300:
             error = NotFound if res.status_code == 404 else AnythingLLMError
             raise error(internal_error(res.status_code, reply))
@@ -277,14 +277,7 @@ class InternalAPI:
 def parsed_tools(job: dict) -> dict:
     """A job as the API gives it, with `tools` (JSON text there, or null) as a list or
     None; never its latest run's result, which can be long."""
-    job = dict(job)
-    tools = job.get("tools")
-    if isinstance(tools, str):
-        try:
-            tools = json.loads(tools) if tools.strip() else None
-        except ValueError:
-            tools = None
-    job["tools"] = tools
+    job = {**job, "tools": job_tools(job)}
     if isinstance(job.get("latestRun"), dict):
         job["latestRun"] = {k: v for k, v in job["latestRun"].items() if k != "result"}
     return job

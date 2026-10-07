@@ -330,6 +330,7 @@ class Scope:
     thread: str
     home: Path
     public: Path
+    gateway: bool = False  # a gateway client's: no chat behind it
 
     @property
     def roots(self) -> dict[str, Path]:
@@ -618,13 +619,12 @@ NOTICES = (
 def page_notices(text: str, script: bool = False) -> list[str]:
     """What the sandbox the pages site runs scripts in means for a page's HTML, or with
     `script`, for one of its .js files: [] when nothing does."""
-    found = []
-    if not script:
-        found += [what for what, pattern in _PAGE_LIMITS if pattern.search(text)]
-        if SCRIPTS_RE.search(text):
-            found.append(SCRIPTS_NOTICE)
-    if script or SCRIPTS_NOTICE in found:
-        found += [what for what, pattern in _SCRIPT_LIMITS if pattern.search(text)]
+    scripts = script or bool(SCRIPTS_RE.search(text))
+    found = [] if script else [w for w, pattern in _PAGE_LIMITS if pattern.search(text)]
+    if scripts and not script:
+        found.append(SCRIPTS_NOTICE)
+    if scripts:
+        found += [w for w, pattern in _SCRIPT_LIMITS if pattern.search(text)]
     return [n for n in NOTICES if n in found]
 
 
@@ -729,13 +729,13 @@ def read_manifest(folder: int) -> dict[str, dict[str, Any]]:
     }
 
 
-def unchanged(folder: int, name: str, entry: dict[str, Any]) -> bool | None:
-    """Whether the copy `name` is still what the runner wrote; None when it's gone or isn't
-    a plain file."""
+def unchanged(folder: int, name: str, entry: dict[str, Any]) -> bool:
+    """Whether the copy `name` is still what the runner wrote (False when it's gone or isn't
+    a plain file)."""
     try:
         fd = safefs.open_regular(folder, name)
     except OSError:
-        return None
+        return False
     with os.fdopen(fd, "rb") as f:
         if os.fstat(f.fileno()).st_size != entry["bytes"]:
             return False
@@ -748,12 +748,13 @@ def unchanged(folder: int, name: str, entry: dict[str, Any]) -> bool | None:
 def read_upload(uploads: Path, file: str, budget: int) -> tuple[bytes | None, int, str]:
     """An attachment's text from AnythingLLM's `uploads` folder, read without following a
     symlink and only if its file is at most `budget` bytes: (text, the file's size, "") or
-    (None, bytes read, why not). Why is "missing" when the file isn't there."""
+    (None, bytes read, why not)."""
     try:
         with safefs.folder(uploads) as d:
             fd = safefs.open_regular(d, file)
     except FileNotFoundError:
-        return None, 0, "missing"
+        log.warning("attachment %s isn't in %s", file, uploads)
+        return None, 0, "is no longer on the server"
     except OSError as e:
         return None, 0, f"couldn't be read ({e.strerror or e})"
     with os.fdopen(fd, "rb") as f:
@@ -840,6 +841,7 @@ class Runner(hostrpc.Service):
             thread,
             self.config.root / workspace,
             self.config.public_root / workspace,
+            gateway,
         )
         for d in s.roots.values():
             d.mkdir(parents=True, exist_ok=True)
@@ -1124,7 +1126,7 @@ class Runner(hostrpc.Service):
         source that's gone is skipped, and its copy kept. A gateway client's scope has no
         chat, and gets nothing. Nothing here follows a symlink: code in the sandbox can put
         one anywhere in /work."""
-        if scope.workspace.startswith(CLIENT_PREFIX) or not (attachments or known):
+        if scope.gateway or not (attachments or known):
             return [], []
         notes: list[str] = []
         if not isinstance(attachments, list):
@@ -1186,9 +1188,6 @@ class Runner(hostrpc.Service):
             text, read, why = read_upload(self.config.uploads, file, budget)
             budget -= read
             if text is None:
-                if why == "missing":
-                    why = "is no longer on the server"
-                    log.warning("attachment %s isn't in %s", file, self.config.uploads)
                 notes.append(f"{title} {why}, so it wasn't copied")
                 continue
             taken = there | set(manifest) | {n for _, n, _ in new}

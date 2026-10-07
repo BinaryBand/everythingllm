@@ -25,12 +25,13 @@ def repo_jobs(folder: Path = REPO_JOBS) -> dict[str, dict]:
     return jobs
 
 
-def duplicates(names: list[str]) -> list[str]:
-    """The names that occur more than once, in order."""
-    seen: set[str] = set()
-    twice = []
-    for name in names:
-        if name in seen and name not in twice:
-            twice.append(name)
-        seen.add(name)
-    return twice
+def job_tools(job: dict) -> list | None:
+    """A live job's tools: AnythingLLM gives them as JSON text, or null for none. None
+    when there are none or the text isn't a JSON list."""
+    tools = job.get("tools")
+    if isinstance(tools, str):
+        try:
+            tools = json.loads(tools) if tools.strip() else None
+        except ValueError:
+            return None
+    return tools if isinstance(tools, list) else None

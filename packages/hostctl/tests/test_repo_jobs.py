@@ -10,9 +10,10 @@ def test_the_repo_manages_the_daily_news_page():
     assert found["Daily News Page"]["prompt"] and found["Daily News Page"]["schedule"]
 
 
-def test_duplicates():
-    assert jobs.duplicates(["a", "b", "a", "c", "a", "b"]) == ["a", "b"]
-    assert jobs.duplicates([]) == []
+def test_job_tools_reads_anythingllms_json_text():
+    assert jobs.job_tools({"tools": '["web-browsing"]'}) == ["web-browsing"]
+    for tools in (None, "", "not json", '{"a": 1}'):
+        assert jobs.job_tools({"tools": tools}) is None
 
 
 @pytest.fixture

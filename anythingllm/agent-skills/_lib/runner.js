@@ -5,6 +5,7 @@
 
 const { call, socketPath, Down, Refused } = require("./hostrpc");
 const { delegatedRefusal } = require("./delegated");
+const { scopeOf } = require("./scope");
 
 /**
  * `service` is the runner's folder in storage and its unit's name (sites -> sites-runner),
@@ -26,6 +27,12 @@ async function forward(self, { service, env, op, args, timeoutMs = 120_000, repl
     if (e instanceof Refused) return `Error: ${e.message}`;
     return `${op} failed: ${e?.message || e}`;
   }
+}
+
+/** forward, with the call's scope ({workspace, thread}, from the invocation, never the
+ *  model) added to `args`: for an op that acts on the chat's workspace. */
+async function forwardScoped(self, { args, ...spec }) {
+  return forward(self, { ...spec, args: { scope: scopeOf(self), ...args } });
 }
 
 /**
@@ -74,4 +81,4 @@ function asFlag(value) {
   return value === true || String(value).toLowerCase() === "true";
 }
 
-module.exports = { forward, forwardSkill, asObject, asFlag, asInteger };
+module.exports = { forward, forwardScoped, forwardSkill, asObject, asFlag, asInteger };

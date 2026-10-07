@@ -3,32 +3,16 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("fs");
-const net = require("net");
-const os = require("os");
-const path = require("path");
+const { fakeService } = require("./fakeservice");
 
 async function fakeAgents() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-sock-"));
-  const socket = path.join(dir, "runner.sock");
-  const requests = [];
-  const server = net.createServer((conn) => {
-    let buffer = "";
-    conn.on("data", (chunk) => {
-      buffer += chunk;
-      if (!buffer.includes("\n")) return;
-      const msg = JSON.parse(buffer.split("\n")[0]);
-      requests.push(msg);
-      conn.end(JSON.stringify({ ok: true, result: `${msg.op} ok` }) + "\n");
-    });
-  });
-  await new Promise((r) => server.listen(socket, r));
-  process.env.AGENTS_SOCKET = socket;
+  const service = await fakeService((op) => ({ ok: true, result: `${op} ok` }));
+  process.env.AGENTS_SOCKET = service.socket;
   return {
-    requests,
+    requests: service.requests,
     close: () => {
       delete process.env.AGENTS_SOCKET;
-      return new Promise((r) => server.close(r));
+      return service.close();
     },
   };
 }

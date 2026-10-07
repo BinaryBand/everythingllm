@@ -1,35 +1,15 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const net = require("net");
-const os = require("os");
 const path = require("path");
 
 const { asObject, asFlag, asInteger, forwardSkill } = require("../runner");
+const { fakeService } = require("./fakeservice");
 
 const SKILLS = path.join(__dirname, "..", "..");
 // Skills that only read, and so may run in a delegated task. None yet: every skill of ours
 // writes, acts or delegates.
 const READS = new Set([]);
-
-// A fake host service on its own socket: answers each request with respond(op, args).
-async function fakeService(respond) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "svc-sock-"));
-  const socket = path.join(dir, "runner.sock");
-  const requests = [];
-  const server = net.createServer((conn) => {
-    let buffer = "";
-    conn.on("data", (chunk) => {
-      buffer += chunk;
-      if (!buffer.includes("\n")) return;
-      const msg = JSON.parse(buffer.split("\n")[0]);
-      requests.push(msg);
-      conn.end(JSON.stringify(respond(msg.op, msg.args)) + "\n");
-    });
-  });
-  await new Promise((r) => server.listen(socket, r));
-  return { socket, requests, close: () => new Promise((r) => server.close(r)) };
-}
 
 function agent(workspace) {
   return { logger: () => {}, introspect: () => {}, super: { handlerProps: { invocation: { workspace: { slug: workspace }, thread_id: 3 } } } };

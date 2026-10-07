@@ -1,26 +1,9 @@
 """agents-runner's side of AnythingLLM's scheduled jobs: listing them, deleting or disabling
-one, and one-off jobs, which AnythingLLM doesn't have (its cron is UTC, five fields, and
-repeats), so they're made here and deleted once they've run. The scheduled-jobs and
-remind-once skills ask for these through runner.Runner's ops; both refuse a delegated task.
-
-  list                 every job: its cron (UTC), next and last run in the user's time,
-                       the last run's status, and whether it's a one-off, and a missed one
-  delete / disable id  shows the job, and acts only with apply. Never a job the repo
-                       manages (hostctl.jobs; deploy keeps it), nor one with a run queued or
-                       going, since AnythingLLM stops a running run on DELETE and PUT.
-  remind_once          a one-off job, "[once] <name>": a prompt, its tools, and a local
-                       date-time, as a cron for that minute, day and month in UTC. Without
-                       apply it shows what it would make, for the user to agree to.
-
-A one-off made here goes into a registry (data_dir()/agents/once.json: {id, name, fire_at,
-state}), and the poller (`sweep`, every POLL seconds from runner.main) looks at those jobs
-alone, never one only named "[once] …". Once fire_at + GRACE has passed and the job has no
-run queued or going, a completed run started at or after fire_at gets the job deleted; a
-job that never ran is `missed`, and one whose runs failed is `failed`: both are disabled
-(its cron would run it again in a year), kept so the result stays readable, logged once and
-shown by `list`, and the agent offers to delete it.
-A manual run before fire_at doesn't count. While the registry is empty, a tick reads the
-file and does nothing else.
+one (shown first, done only with apply), and one-off jobs, which AnythingLLM doesn't have:
+made here as "[once] <name>" with a cron for that minute, day and month in UTC, kept in a
+registry (data_dir()/agents/once.json), and deleted by the poller once they've run, or
+disabled if they missed or failed. The scheduled-jobs and remind-once skills ask for these
+through runner.Runner's ops. The README's "Scheduled jobs from a chat" has the rules.
 
 Config (environment, from host.env through the unit):
   USER_TIMEZONE  the user's time zone, for one-off times and the times `list` shows
@@ -41,6 +24,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import hostrpc
 from hostctl import jobs as hostjobs
 from hostrpc import RunnerError
+from runs.runlog import iso
 
 from agents.anythingllm import AnythingLLMError, InternalAPI, NotFound
 
@@ -166,6 +150,21 @@ def clipped(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + " …"
 
 
+def timing(job: dict, entry: dict | None, tz: ZoneInfo) -> str:
+    """When a job runs: a one-off's time, or its cron and next run."""
+    if entry:
+        return f"one-off at {local(when(entry.get('fire_at')), tz)}"
+    nxt = local(when(job.get("nextRunAt")), tz)
+    return f'cron "{job.get("schedule")}" (UTC), next {nxt}'
+
+
+def last_run(job: dict, tz: ZoneInfo) -> str:
+    latest = job.get("latestRun") or {}
+    last = when(latest.get("startedAt")) or when(job.get("lastRunAt"))
+    status = f" ({latest['status']})" if latest.get("status") else ""
+    return f"last run {local(last, tz)}{status}"
+
+
 class Registry:
     """The one-offs made here: a JSON list in `path`, replaced whole (hostrpc.atomic_write).
     Its users hold `lock` from reading it to writing it."""
@@ -201,9 +200,6 @@ class ScheduledJobs:
     client: InternalAPI
     registry: Registry
     timezone: str = DEFAULT_TIMEZONE
-    repo_names: Callable[[], set[str]] = field(
-        default=lambda: set(hostjobs.repo_jobs())
-    )
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
 
     @property
@@ -211,7 +207,7 @@ class ScheduledJobs:
         return zone(self.timezone)
 
     async def managed(self) -> set[str]:
-        return await asyncio.to_thread(self.repo_names)
+        return set(await asyncio.to_thread(hostjobs.repo_jobs))
 
     # list
 
@@ -243,12 +239,8 @@ class ScheduledJobs:
         now: datetime,
     ) -> str:
         latest = job.get("latestRun") or {}
-        last = when(latest.get("startedAt")) or when(job.get("lastRunAt"))
-        status = f" ({latest['status']})" if latest.get("status") else ""
-        nxt = when(job.get("nextRunAt"))
+        what = timing(job, entry, tz)
         if entry:
-            fire = when(entry.get("fire_at"))
-            what = f"one-off at {local(fire, tz)}"
             state = self.state(entry, latest, now)
             if state == "missed":
                 what += "; MISSED: it never ran, so it was disabled; offer to delete it"
@@ -259,11 +251,9 @@ class ScheduledJobs:
                 )
             elif state == "done":
                 what += "; it has run, and is deleted within a few minutes"
-        else:
-            what = f'cron "{job.get("schedule")}" (UTC), next {local(nxt, tz)}'
         parts = [
             f'- id {job.get("id")} "{job["name"]}": {what}',
-            f"last run {local(last, tz)}{status}",
+            last_run(job, tz),
             "enabled" if job.get("enabled") else "disabled",
             f"tools: {tools_text(job.get('tools'))}",
         ]
@@ -349,20 +339,10 @@ class ScheduledJobs:
             )
 
     def describe(self, job: dict, once: dict | None, tz: ZoneInfo) -> str:
-        if once:
-            timing = f"one-off at {local(when(once.get('fire_at')), tz)}"
-        else:
-            timing = (
-                f'cron "{job.get("schedule")}" (UTC), next '
-                f"{local(when(job.get('nextRunAt')), tz)}"
-            )
-        latest = job.get("latestRun") or {}
-        last = when(latest.get("startedAt")) or when(job.get("lastRunAt"))
-        status = f" ({latest['status']})" if latest.get("status") else ""
         return (
-            f'Job {job["id"]} "{job["name"]}": {timing}; '
-            f"{'enabled' if job.get('enabled') else 'disabled'}; last run "
-            f"{local(last, tz)}{status}\nTools: {tools_text(job.get('tools'))}\n"
+            f'Job {job["id"]} "{job["name"]}": {timing(job, once, tz)}; '
+            f"{'enabled' if job.get('enabled') else 'disabled'}; {last_run(job, tz)}\n"
+            f"Tools: {tools_text(job.get('tools'))}\n"
             f"Prompt:\n{clipped(job.get('prompt', ''), SHOWN_PROMPT)}"
         )
 
@@ -433,8 +413,7 @@ class ScheduledJobs:
             entry = {
                 "id": job["id"],
                 "name": full,
-                "fire_at": fire.isoformat().replace("+00:00", "Z"),
-                "created": now.isoformat().replace("+00:00", "Z"),
+                "fire_at": iso(fire.timestamp()),
                 "state": "pending",
             }
             try:
@@ -451,58 +430,48 @@ class ScheduledJobs:
     # the poller
 
     async def sweep(self) -> int:
-        """One look at the registered one-offs: delete those that have run, mark those
-        missed or failed. Returns how many are left in the registry."""
+        """One look at the registered one-offs that are due, through one job listing and
+        the rule `list` shows (state): delete those that have run; disable those that
+        missed or failed, since their cron would run them again in a year, and log that
+        once. Returns how many are left in the registry."""
         entries = await self.registry.read()
-        if not entries:
-            return 0
         now = self.clock()
+        due = [
+            e
+            for e in entries
+            if (fire := when(e.get("fire_at"))) is not None and now >= fire + GRACE
+        ]
+        if not due:
+            return len(entries)
+        jobs = {j.get("id"): j for j in await self.client.jobs()}
         gone: set[int] = set()
         states: dict[int, str] = {}
-        for entry in entries:
-            fire = when(entry.get("fire_at"))
-            if fire is None or now < fire + GRACE:
-                continue
-            job_id = entry["id"]
+        for entry in due:
+            job_id, job = entry["id"], jobs.get(entry["id"])
             try:
-                try:
-                    await self.client.job(job_id)
-                except NotFound:
+                if job is None:
                     log.info("one-off %s was deleted elsewhere", job_id)
                     gone.add(job_id)
                     continue
-                runs = await self.client.runs(job_id)
-                if any(r.get("status") in ACTIVE for r in runs):
-                    continue
-                fired = [
-                    r
-                    for r in runs
-                    if (started := when(r.get("startedAt"))) and started >= fire - EARLY
-                ]
-                if any(r.get("status") == "completed" for r in fired):
+                state = self.state(entry, job.get("latestRun") or {}, now)
+                if state == "done":
                     await self.client.delete(job_id)
-                    log.info(
-                        'deleted one-off %s "%s": it has run', job_id, entry["name"]
-                    )
+                    log.info('deleted one-off %s "%s": it has run', job_id, job["name"])
                     gone.add(job_id)
-                    continue
-                state = "failed" if fired else "missed"
-                if entry.get("state") != state:
-                    # Its cron would run it again in a year: off, until the user decides.
-                    await self.client.disable(job_id)
+                elif state != "pending" and entry.get("state") != state:
+                    if job.get("enabled"):
+                        await self.client.disable(job_id)
+                    log.warning(
+                        'one-off %s "%s" %s at %s; disabled, kept, and listed as %s',
+                        job_id,
+                        job["name"],
+                        "never ran" if state == "missed" else "failed",
+                        entry.get("fire_at"),
+                        state,
+                    )
+                    states[job_id] = state
             except AnythingLLMError as e:
                 log.warning("one-off %s: %s", job_id, e)
-                continue
-            if entry.get("state") != state:
-                log.warning(
-                    'one-off %s "%s" %s at %s; disabled, kept, and listed as %s',
-                    job_id,
-                    entry["name"],
-                    "never ran" if state == "missed" else "failed",
-                    entry.get("fire_at"),
-                    state,
-                )
-                states[job_id] = state
         if not gone and not states:
             return len(entries)
         async with self.registry.lock:  # it may have gained entries meanwhile

@@ -47,8 +47,12 @@ workspace's from /shared/<it>/themes), and builds it. The runner copies the outp
 
 The system sites (news, research, status) are built the same way when their repo zola.toml
 names a theme with [extra.build] theme_from (op_build_system_site, which sites.build calls):
-their repo source and entries come in read-only, and the output goes, plain files only,
-into the pages site's `.<site>.new`, which sites.build marks and swaps in. The op takes only
+their repo source and the repo's themes come in read-only, with a copy of their entries
+made without following a symlink (the sites and research containers can write
+pages/entries), and no workspace's /shared; the output goes, plain files only, into the
+pages site's `.<site>.new`, which sites.build marks and swaps in. A page's title for its
+card, and what its CSP blocks, are read the same way: a run could leave a symlink in
+/public pointing at another workspace's files. The op takes only
 a site's name, and reads what to build from the repo itself: its socket is reachable from
 the AnythingLLM container. It is also served alone, with ping, on a second socket
 (SANDBOX_BUILD_SOCKET, `SystemBuilds`), the one the sites and research service containers
@@ -100,6 +104,7 @@ from urllib.parse import quote
 import chatimage.card
 import hostrpc
 import tomllib
+from hostrpc import safefs
 
 log = logging.getLogger("sandbox-runner")
 # Big enough for a run's output, which the runner caps well below this.
@@ -154,6 +159,7 @@ LIST_MAX = 200  # files named in a run's changed list
 WAIT = 45
 RESULT_KEEP = 3600  # how long a finished run's result can still be fetched
 CSP_SCAN = 200  # HTML files of a changed page checked for what the CSP blocks
+ENTRIES_BYTES = 64 << 20  # a system site's entries copied into its build, at most
 
 # What podman produced: exit code, stdout, stderr, and whether it was killed for time.
 PodmanResult = tuple[int, str, str, bool]
@@ -527,12 +533,15 @@ def page_path(slug: str, entry: str) -> str:
 def regular_files(source: Path) -> tuple[list[tuple[Path, str]], int]:
     """Every plain file under `source` with its path inside it, and their size; symlinks,
     anything else that isn't a file or folder, and hidden entries (.git, .cache…) are left
-    out."""
-    if source.is_file():
+    out, as is `source` itself if it's a symlink."""
+    st = os.lstat(source)
+    if stat.S_ISREG(st.st_mode):
         name = (
             "index.html" if source.suffix.lower() in (".html", ".htm") else source.name
         )
-        return [(source, name)], source.stat().st_size
+        return [(source, name)], st.st_size
+    if not stat.S_ISDIR(st.st_mode):
+        return [], 0
     found, size = [], 0
     for dirpath, dirnames, filenames in os.walk(source):
         dirnames[:] = [
@@ -1047,14 +1056,23 @@ class Runner(hostrpc.Service):
         return {"site": site, "path": str(new), "files": files}
 
     def prepare_system_build(self, name: str, site: str, run_dir: Path) -> list[str]:
-        """A system site build's podman arguments: no network, its repo source and entries,
-        the repo's themes and every workspace's shared folder read-only, an empty /out."""
+        """A system site build's podman arguments: no network, its repo source, a copy of its
+        entries and the repo's themes read-only, an empty /out. No workspace's /shared: a
+        system site's theme is the repo's (theme_from = "system").
+
+        The entries are copied, not mounted: the sites and research containers can write
+        pages/entries, and could make the site's folder a symlink that podman would mount
+        wherever it points. The copy follows none, at any depth."""
         (run_dir / "code").mkdir(parents=True)
         (run_dir / "out").mkdir()
-        entries = self.config.sites_content / site
-        if not entries.is_dir():
-            entries = run_dir / "no-entries"
-            entries.mkdir()
+        entries = run_dir / "entries"
+        try:
+            with safefs.folder(self.config.sites_content, (site,)) as d:
+                safefs.copy_tree(d, entries, ENTRIES_BYTES)
+        except FileNotFoundError:
+            entries.mkdir(exist_ok=True)
+        except OSError as e:
+            raise SandboxError(f"couldn't read {site}'s entries: {e}") from None
         shutil.copyfile(SITEBUILD, run_dir / "code" / "sitebuild.py")
         return [
             *self.hardening(name),
@@ -1064,7 +1082,8 @@ class Runner(hostrpc.Service):
             f"{self.config.sites_source / site}:/site:{DATA_RO}",
             "-v",
             f"{entries}:/entries:{DATA_RO}",
-            *self.read_only_mounts(""),  # every workspace's shared folder, and /system
+            "-v",
+            f"{self.config.system_themes}:/system/themes:{DATA_RO}",
             "-v",
             f"{run_dir / 'out'}:/out:rw,noexec,nosuid,nodev",
             "-v",
@@ -1226,10 +1245,9 @@ class Runner(hostrpc.Service):
         ]
         found = set()
         for f in files[:CSP_SCAN]:
-            with open(f, "rb") as text:
-                found.update(
-                    csp_blocked(text.read(WRITE_BYTES).decode(errors="replace"), origin)
-                )
+            html = safefs.read_regular(f.parent, (f.name,), WRITE_BYTES)
+            if html is not None:
+                found.update(csp_blocked(html.decode(errors="replace"), origin))
         return sorted(found)
 
     def page_changes(self, scope: Scope, names: set[str]) -> dict[str, Any] | None:
@@ -1241,7 +1259,7 @@ class Runner(hostrpc.Service):
             item = scope.public / name
             if not os.path.lexists(item):
                 removed.append(name)
-            elif item.is_dir() or item.is_file():
+            elif not item.is_symlink() and (item.is_dir() or item.is_file()):
                 live.append(
                     {
                         "slug": name,
@@ -1322,11 +1340,15 @@ class Runner(hostrpc.Service):
     def page_info(self, workspace: str, item: Path) -> dict[str, Any]:
         """A page's address, size, what its CSP blocks and its link card."""
         url = self.page_url(workspace, item)
-        entry = item / "index.html" if item.is_dir() else item
+        # Read without following a symlink a run left: index.html could point at another
+        # workspace's files, whose title and description would go on the card.
+        entry = (item, "index.html") if item.is_dir() else (item.parent, item.name)
         title, description = item.name, ""
-        if entry.suffix.lower() in (".html", ".htm") and entry.is_file():
-            with open(entry, "rb") as f:
-                html = f.read(WRITE_BYTES).decode(errors="replace")
+        data = None
+        if entry[1].lower().endswith((".html", ".htm")):
+            data = safefs.read_regular(entry[0], (entry[1],), WRITE_BYTES)
+        if data is not None:
+            html = data.decode(errors="replace")
             if m := TITLE_RE.search(html):
                 title = htmllib.unescape(" ".join(m.group(1).split())) or title
             description = page_description(html)

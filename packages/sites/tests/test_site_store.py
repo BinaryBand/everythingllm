@@ -906,3 +906,15 @@ def test_the_sandbox_build_turns_runner_errors_into_build_errors(monkeypatch):
         match="status \\(in the sandbox\\): The sandbox runner isn't running",
     ):
         build.sandbox_build("status")
+
+
+def test_the_build_lock_never_empties_a_file_through_a_symlink(tmp_path):
+    """The sites container can write pages/entries: its .build.lock made a symlink to a
+    host file mustn't have a build on the host truncate that file."""
+    b = builder(tmp_path)
+    target = tmp_path / "authorized_keys"
+    target.write_text("ssh-ed25519 AAAA me")
+    (tmp_path / "content" / ".build.lock").symlink_to(target)
+    with pytest.raises(OSError):
+        b.build("news")
+    assert target.read_text() == "ssh-ed25519 AAAA me"

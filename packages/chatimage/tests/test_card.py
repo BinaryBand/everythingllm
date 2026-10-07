@@ -87,3 +87,21 @@ def test_a_card_for_a_page_served_elsewhere_lives_on_the_pages_site(tmp_path):
         r"\[!\[Trip plan\]\(https://h:8445/_cards/\w+\.png\?v=\w+\)\]\(https://h:8447/career/trip-plan/\)",
         line,
     )
+
+
+def test_a_card_never_goes_through_a_symlink_a_container_planted(tmp_path):
+    """The sites and research containers can write the pages site: _cards or a card made
+    a symlink mustn't send the host's write elsewhere."""
+    site, outside = tmp_path / "site", tmp_path / "outside"
+    site.mkdir()
+    outside.mkdir()
+    (site / "_cards").symlink_to(outside)
+    assert linkcard.make(site, "https://h:8445/a/", "A", "Pages", "") == ""
+    assert list(outside.iterdir()) == []
+    (site / "_cards").unlink()
+    (site / "_cards").mkdir()
+    name = linkcard.card_path(site, "https://h:8445/a/").name
+    (site / "_cards" / name).symlink_to(outside / "planted")
+    assert linkcard.make(site, "https://h:8445/a/", "A", "Pages", "")
+    assert list(outside.iterdir()) == []
+    assert not (site / "_cards" / name).is_symlink()

@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import json
 import os
 import re
 import shutil
@@ -236,7 +237,9 @@ def test_a_workspaces_shared_folder_counts_toward_its_quota(cfg, monkeypatch):
     go(r.op_run(B, "python", "1"))  # other workspaces are unaffected
 
 
-def test_the_workspaces_browser_profile_isnt_the_sandboxs_to_count_or_show(cfg, monkeypatch):
+def test_the_workspaces_browser_profile_isnt_the_sandboxs_to_count_or_show(
+    cfg, monkeypatch
+):
     monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 10)
     r = make(cfg)
     go(r.op_run(A, "bash", "true"))
@@ -929,9 +932,12 @@ def test_a_system_site_builds_in_the_sandbox_into_its_staging_folder(cfg, tmp_pa
     assert args[args.index("--network") + 1] == "none"
     m = mounts(args)
     assert m["/site"] == tmp_path / "sites" / "status"
-    assert m["/entries"] == tmp_path / "entries" / "status"
-    assert m["/shared/career"] == shared(cfg, A) and "/work" not in m
-    assert f"{tmp_path / 'entries' / 'status'}:/entries:ro,noexec,nosuid,nodev" in args
+    # The entries are a copy in the run's folder, and no workspace's /shared is mounted.
+    assert (
+        m["/entries"].name == "entries" and m["/entries"].parent.parent.name == ".runs"
+    )
+    assert not any(k.startswith("/shared") for k in m) and "/work" not in m
+    assert "/system/themes" in m
     assert args[-5:] == [
         "python",
         "/sandbox/sitebuild.py",
@@ -1081,3 +1087,46 @@ def test_a_system_site_cannot_follow_a_workspace_theme(cfg, tmp_path):
     with pytest.raises(runner.SandboxError, match="can only use 'system' until"):
         go(r.op_build_system_site("status"))
     assert r.podman.runs() == []
+
+
+def test_a_system_sites_entries_are_copied_without_following_a_symlink(cfg, tmp_path):
+    """The sites and research containers can write pages/entries: a site's folder made a
+    symlink to the home folder, or a symlink inside it, mustn't put host files in the build."""
+    cfg = system_cfg(cfg, tmp_path)
+    r = make(cfg)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "host.env").write_text("SECRET=1")
+    entries = tmp_path / "entries" / "status"
+    (entries / "reports" / "a.md").write_text("{}\n")
+    (entries / "reports" / "env.md").symlink_to(home / "host.env")
+    (entries / "reports" / "home").symlink_to(home)
+    seen = {}
+
+    def look(m):
+        src = m["/entries"]
+        seen["files"] = sorted(str(p.relative_to(src)) for p in src.rglob("*"))
+        built(m)
+
+    r.podman.effect = look
+    go(r.op_build_system_site("status"))
+    assert seen["files"] == ["reports", "reports/a.md"]
+    entries.rename(tmp_path / "entries" / "status-real")
+    entries.symlink_to(home)
+    with pytest.raises(runner.SandboxError, match="couldn't read status's entries"):
+        go(r.op_build_system_site("status"))
+
+
+def test_publish_never_reads_through_a_symlink_a_run_left_in_public(cfg):
+    """A run can make /public/x/index.html a symlink to another workspace's page: its title
+    and description mustn't come back to the agent or go on the card."""
+    r = make(cfg)
+    go(r.op_write(B, "/project/private.html", "<title>B's secret plans</title>"))
+    go(r.op_write(A, "/public/x/other.html", "<p>x</p>"))
+    (public(cfg, A) / "x" / "index.html").symlink_to(project(cfg, B) / "private.html")
+    res = go(r.op_publish(A, "x"))
+    assert "secret" not in json.dumps(res)
+    # Nor does the scan of what the CSP blocks read a symlink at the top of /public.
+    (public(cfg, A) / "y.html").symlink_to(project(cfg, B) / "private.html")
+    assert runner.regular_files(public(cfg, A) / "y.html") == ([], 0)
+    assert runner.regular_files(public(cfg, A) / "x")[0][0][1] == "other.html"

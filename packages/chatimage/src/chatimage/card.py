@@ -13,13 +13,17 @@ A card's name comes from its page's path, so republishing a page replaces its ca
 is a hash of what the card says (kept in the PNG too), so a card whose text hasn't changed
 isn't drawn again and keeps its URL, and one that has gets a new URL, so the chat doesn't
 show an old card from its cache. No page or site can be called `_cards`: their slugs start
-with a letter or digit.
+with a letter or digit. The sites and research containers can write the pages site, so a
+card is read and written without following a symlink one put there (`save`, `drawn`).
 """
 
+import contextlib
 import hashlib
 import io
 import json
 import logging
+import os
+import stat
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -41,7 +45,6 @@ from chatimage import (
     frame,
     link,
     wrap,
-    write_atomic,
 )
 
 log = logging.getLogger("chatimage.card")
@@ -71,8 +74,7 @@ def make(
     try:
         if drawn(file) != version:
             png = draw(title, label, description, where, version)
-            file.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-            write_atomic(file, png)
+            save(site_dir, file.name, png)
     except Exception as e:  # noqa: BLE001 - a card is a nicety; the caller still gives the link
         log.warning("couldn't make a card for %s: %s", url, e)
         return ""
@@ -85,13 +87,53 @@ def remove(site_dir: Path, url: str) -> None:
     card_path(site_dir, url).unlink(missing_ok=True)
 
 
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
 def drawn(file: Path) -> str | None:
-    """The version of the card in `file`, from its PNG text; None when there's none."""
+    """The version of the card in `file`, from its PNG text; None when there's none (or it
+    isn't a plain file)."""
     try:
-        with Image.open(file) as image:
-            return getattr(image, "text", {}).get("card")
+        fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        with os.fdopen(fd, "rb") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                return None
+            with Image.open(f) as image:
+                return getattr(image, "text", {}).get("card")
     except (OSError, ValueError):
         return None
+
+
+def save(site_dir: Path, name: str, png: bytes) -> None:
+    """Put a card in `site_dir`'s _cards/ in one step: the folder is made and opened
+    relative to the site's, and the file goes in through a temp file of its own, so a
+    symlink in either place is refused or replaced, never followed."""
+    site_dir.mkdir(mode=0o755, parents=True, exist_ok=True)  # the caller's own
+    site = os.open(site_dir, DIR_FLAGS)
+    try:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(FOLDER, 0o755, dir_fd=site)
+        folder = os.open(FOLDER, DIR_FLAGS, dir_fd=site)
+    finally:
+        os.close(site)
+    tmp = f".{name}.{os.urandom(4).hex()}.tmp"
+    try:
+        fd = os.open(
+            tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o644,
+            dir_fd=folder,
+        )
+        with os.fdopen(fd, "wb") as f:
+            os.fchmod(f.fileno(), 0o644)
+            f.write(png)
+        os.replace(tmp, name, src_dir_fd=folder, dst_dir_fd=folder)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp, dir_fd=folder)
+        raise
+    finally:
+        os.close(folder)
 
 
 def card_path(site_dir: Path, url: str) -> Path:

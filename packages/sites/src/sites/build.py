@@ -180,13 +180,22 @@ class Builder:
         names = names or tuple(self.site_names())
         self.content.mkdir(parents=True, exist_ok=True)
         built, errors = [], []
-        with open(self.content / LOCK, "w") as lock:
+        # Opened without following a symlink or truncating: the sites container can
+        # write pages/entries, and a symlink here would have this empty any file.
+        lock = os.open(
+            self.content / LOCK,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            0o644,
+        )
+        try:
             fcntl.flock(lock, fcntl.LOCK_EX)
             for name in names:
                 try:
                     built.append(self._build_one(name))
                 except (BuildError, OSError) as e:
                     errors.append(str(e))
+        finally:
+            os.close(lock)
         if errors:
             raise BuildError("\n".join(errors))
         return built

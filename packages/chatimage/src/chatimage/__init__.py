@@ -19,9 +19,7 @@ No config: the fonts are the host's DejaVu or Liberation Sans, else Pillow's own
 import hashlib
 import os
 import re
-import tempfile
 import unicodedata
-from pathlib import Path
 
 from PIL import ImageDraw, ImageFont
 
@@ -84,18 +82,6 @@ def alt(text: str) -> str:
 def link(url: str) -> str:
     """A URL that can sit in a Markdown link's parentheses."""
     return url.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
-
-
-def write_atomic(file: Path, data: bytes) -> None:
-    fd, tmp = tempfile.mkstemp(dir=file.parent, prefix=f".{file.name}.")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, file)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
 
 
 def clean(text: str) -> str:

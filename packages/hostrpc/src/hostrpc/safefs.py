@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import stat
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -113,3 +114,38 @@ def replace(dir_fd: int, name: str, data: bytes, mode: int = 0o644) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp, dir_fd=dir_fd)
         raise
+
+
+def copy_tree(src: int, dest: Path, limit: int, *, hidden: bool = False) -> int:
+    """Copy the plain files and folders under the open folder `src` into `dest` (a folder
+    of the caller's, made if need be), leaving out symlinks, anything else that isn't a file
+    or folder and, unless `hidden`, dot entries; OSError past `limit` bytes. The bytes
+    copied."""
+    dest.mkdir(parents=True, exist_ok=True)
+    total = 0
+    with os.scandir(src) as entries:
+        listed = sorted((e.name, e.is_dir(follow_symlinks=False)) for e in entries)
+    for name, is_dir in listed:
+        if name.startswith(".") and not hidden:
+            continue
+        if is_dir:
+            try:
+                inner = os.open(name, DIR_FLAGS, dir_fd=src)
+            except OSError:  # swapped for a symlink meanwhile
+                continue
+            try:
+                total += copy_tree(inner, dest / name, limit - total, hidden=hidden)
+            finally:
+                os.close(inner)
+            continue
+        try:
+            fd = open_regular(src, name)
+        except OSError:  # a symlink, a FIFO, a device or socket
+            continue
+        with os.fdopen(fd, "rb") as f:
+            total += os.fstat(f.fileno()).st_size
+            if total > limit:
+                raise OSError(f"over {limit} bytes to copy")
+            with open(dest / name, "xb") as out:
+                shutil.copyfileobj(f, out)
+    return total

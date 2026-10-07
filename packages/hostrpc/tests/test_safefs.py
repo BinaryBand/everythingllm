@@ -82,3 +82,23 @@ def test_replace_replaces_a_symlink_itself(tree):
     assert (root / "a" / "card.png").read_bytes() == b"png"
     assert (outside / "secret.txt").read_text() == "secret"
     assert [p.name for p in (root / "a").iterdir() if p.name.startswith(".")] == []
+
+
+def test_copy_tree_copies_plain_files_and_folders_only(tree, tmp_path):
+    root, outside = tree
+    (root / "a" / "b").mkdir()
+    (root / "a" / "b" / "g.txt").write_text("deep")
+    (root / "a" / ".hidden").write_text("no")
+    (root / "a" / "s.txt").symlink_to(outside / "secret.txt")
+    (root / "a" / "l").symlink_to(outside)
+    os.mkfifo(root / "a" / "pipe")
+    dest = tmp_path / "copy"
+    with safefs.folder(root, ("a",)) as d:
+        assert safefs.copy_tree(d, dest, 1000) == len("inside") + len("deep")
+    assert sorted(str(p.relative_to(dest)) for p in dest.rglob("*")) == [
+        "b",
+        "b/g.txt",
+        "f.txt",
+    ]
+    with safefs.folder(root, ("a",)) as d, pytest.raises(OSError, match="over 5"):
+        safefs.copy_tree(d, tmp_path / "small", 5)

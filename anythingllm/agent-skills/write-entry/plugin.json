@@ -4,7 +4,7 @@
   "name": "Write Entry",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Save an entry on one of the Zola sites (news, research) and rebuild the site, so the entry is live when this returns. If the site doesn't build with it, nothing is saved and the error says why. Get the site's sections and fields from the sites tools' list_sites first; to edit an entry, read it with get_entry and write it again with overwrite.",
+  "description": "Save an entry on a Zola site (news, research) and rebuild it; it's live when this returns. If the site doesn't build with it, nothing is saved and the error says why. Sections and fields come from list_sites; to edit, get_entry and write with overwrite.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

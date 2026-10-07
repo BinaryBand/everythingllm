@@ -4,7 +4,7 @@
   "name": "Deep Research",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Run an in-depth, multi-source web research project on a question and publish a long cited report to the research site. Use only when the user asks for deep or thorough research, a report, a literature or market review, or a comparison that needs many sources; it takes several minutes. For quick facts or current news, use web search instead.",
+  "description": "Multi-source web research that publishes a long cited report to the research site, taking several minutes. Only when the user asks for research, a report, or a review that needs many sources; for quick facts or news, use web search.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -68,19 +68,19 @@
     "file": "handler.js",
     "params": {
       "question": {
-        "description": "The full research question, self-contained and specific: include the scope, time frame and what to compare, since the researchers can't see the chat.",
+        "description": "The research question, self-contained: scope, time frame and what to compare (the researchers can't see the chat).",
         "type": "string"
       },
       "depth": {
-        "description": "How deep to go: \"quick\" (a few minutes), \"standard\" (default, about 5-10 minutes) or \"thorough\" (10-20 minutes, only when the user asks for thorough or exhaustive research). Use quick only when the user asks for something fast.",
+        "description": "\"quick\" (a few minutes, only when asked for fast), \"standard\" (default, 5-10 min) or \"thorough\" (10-20 min, only when asked for thorough).",
         "type": "string"
       },
       "sub_questions": {
-        "description": "Optional: your own split of the question into the parts to research, each a goal (\"What do field studies measure in Norway?\") or {\"goal\": \"...\", \"queries\": [\"search terms\"]}, at most as many as the depth has workers (quick 3, standard 5, thorough 8). Give it when you know how the question should split; without it, the planner splits it.",
+        "description": "Optional: your split of the question, each a goal or {\"goal\": \"...\", \"queries\": [\"...\"]}; at most quick 3, standard 5, thorough 8.",
         "type": "array"
       },
       "title": {
-        "description": "Optional, with sub_questions: the report's title (at most 120 characters). Without it, the title is the question.",
+        "description": "Optional, with sub_questions: the report's title, at most 120 characters.",
         "type": "string"
       }
     }

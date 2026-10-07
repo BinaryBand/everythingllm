@@ -4,7 +4,7 @@
   "name": "Publish",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Get the link and chat card for one of this workspace's pages, or put a file or folder from elsewhere in the sandbox on the web. This workspace's pages are its /public folder, served as they are at https://…:8447/<this workspace>/ and live as soon as they're written: /public/<name>/index.html is the page /<name>/, and other files are served as they are. With a path outside /public (an HTML file, a chart, a CSV, a folder with its index.html), publish copies it into /public/<slug> first. Pages are static for now: scripts don't run and nothing loads from other hosts, but CSS in <style> or style=\"\" works. With no slug or path it lists this workspace's pages; remove deletes a page from /public.",
+  "description": "This workspace's web pages: get a page's link and chat card, list the pages (no arguments), copy a file or folder into /public/<slug>, or remove a page. Anything in /public is live at once: /public/<name>/index.html is https://…:8447/<this workspace>/<name>/. Pages are static: no scripts and nothing from other hosts, but inline CSS works.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -22,15 +22,15 @@
     "file": "handler.js",
     "params": {
       "path": {
-        "description": "A file or folder to copy into /public/<slug>, e.g. '/work/report' or '/project/chart.png', or a page already in /public, e.g. '/public/trip-plan'.",
+        "description": "A file or folder to copy into /public/<slug> (e.g. '/work/report', '/project/chart.png'), or a page already in /public.",
         "type": "string"
       },
       "slug": {
-        "description": "The page's name in its URL: lowercase letters, digits and hyphens, e.g. 'trip-plan'.",
+        "description": "The page's name in its URL: lowercase letters, digits and hyphens.",
         "type": "string"
       },
       "remove": {
-        "description": "Set true to delete the page at slug (or path) from /public, taking it off the web.",
+        "description": "true to take the page at slug (or path) off the web.",
         "type": "boolean"
       }
     }

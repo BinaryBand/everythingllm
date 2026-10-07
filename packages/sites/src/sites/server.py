@@ -70,9 +70,8 @@ async def get_entry(site: Site, section: Section, slug: Slug) -> str:
 async def headlines(
     section: Annotated[str, Field(description=f"One of: {', '.join(SECTIONS)}.")],
 ) -> str:
-    """Recent stories for one news section, read from reputable news feeds: up to 15,
-    newest first, each with its headline, a short summary from the feed, the source, the
-    article's own URL and when it was published (UTC). Duplicates are already removed."""
+    """Up to 15 recent stories for a news section from reputable feeds, newest first and
+    without duplicates: headline, the feed's summary, source, URL and published time (UTC)."""
 
 
 # Writing and deleting entries are skills (anythingllm/agent-skills/write-entry, delete-entry,
@@ -99,14 +98,11 @@ async def write_entry(
         bool, Field(description="Set true to replace an existing entry.")
     ] = False,
 ) -> str:
-    """Save an entry on one of the Zola sites (news, research) and rebuild the site,
-    so the entry is live when this returns. If the site doesn't build with it, nothing is
-    saved and the error says why. Get the site's sections and fields from the sites tools'
-    list_sites first; to edit an entry, read it with get_entry and write it again with
-    overwrite."""
+    """Save an entry on a Zola site (news, research) and rebuild it; it's live when this
+    returns. If the site doesn't build with it, nothing is saved and the error says why.
+    Sections and fields come from list_sites; to edit, get_entry and write with overwrite."""
 
 
 @skills.add
 async def delete_entry(site: Site, section: Section, slug: Slug) -> str:
-    """Permanently delete an entry from one of the Zola sites and rebuild the site without
-    it. Ask the user first."""
+    """Permanently delete an entry and rebuild its site. Ask the user first."""

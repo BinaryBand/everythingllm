@@ -4,7 +4,7 @@
   "name": "Write File",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Write a text file into the sandbox (e.g. data, a module or a page for run-code to use or publish), or delete a file or folder there. Paths are sandbox paths: /work/... (this chat's scratch), /project/... (the workspace's, kept) or /shared/<this workspace>/... (what it shares with the other workspaces, kept) or /public/... (this workspace's pages on the web at https://…:8447/<this workspace>/: a write or delete there is live as soon as it's done); a relative path is under /work. Other workspaces' /shared folders are read-only. Deleting exactly /work, /project or /shared/<this workspace> empties it. Deleting works even when the sandbox is over its size limit.",
+  "description": "Write a text file in the sandbox, or delete a file or folder. Paths: /work (this chat's scratch; relative paths go here), /project (kept), /shared/<this workspace> (kept; other workspaces can read it), /public (live web pages). Other workspaces' /shared folders are read-only. Deleting /work, /project or /shared/<this workspace> itself empties it; deleting works even over the size limit.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -22,15 +22,15 @@
     "file": "handler.js",
     "params": {
       "path": {
-        "description": "The file's path in the sandbox, e.g. '/project/data/in.csv'.",
+        "description": "Sandbox path, e.g. '/project/data/in.csv'.",
         "type": "string"
       },
       "content": {
-        "description": "The whole file (at most 1 MB). Leave out when deleting.",
+        "description": "The whole file, at most 1 MB. Leave out when deleting.",
         "type": "string"
       },
       "delete": {
-        "description": "Set true to delete the file or folder at path instead of writing it.",
+        "description": "true to delete the file or folder at path.",
         "type": "boolean"
       }
     }

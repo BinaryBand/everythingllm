@@ -4,7 +4,7 @@
   "name": "Delete Entry",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Permanently delete an entry from one of the Zola sites and rebuild the site without it. Ask the user first.",
+  "description": "Permanently delete an entry and rebuild its site. Ask the user first.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

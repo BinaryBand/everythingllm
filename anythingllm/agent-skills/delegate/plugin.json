@@ -4,7 +4,7 @@
   "name": "Delegate",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Hand a piece of work to other agents to do in parallel, when it splits into parts that each take searching or reading of their own (compare several options, check several claims, survey several sources). You decide the split: give each task a short name, a profile ('worker' searches and reads; 'planner' plans, reviews and writes up) and complete, self-contained instructions, since the task sees nothing of this chat. Optionally give `then`, one more task that gets every task's reply and combines them. It answers at once with a live card; the work runs on the server for a few minutes and the card shows the results when it's done. The tasks can only read: say in your instructions what they should report back, not do. For a cited research report use Deep Research instead, and for one quick fact search yourself. Keep it small (2-4 tasks): tasks that read many pages cost real money, and delegation has a daily budget.",
+  "description": "Run tasks in parallel by other agents, when work splits into parts that each need their own searching or reading (compare options, check claims, survey sources). Tasks see nothing of this chat: give each complete instructions and say what to report back; they can only read. Returns a live card at once; results land on it in a few minutes. Keep it to 2-4 tasks: it costs real money under a daily budget. Not for cited reports (Deep Research) or one quick fact.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -14,15 +14,15 @@
     "params": {
       "goal": {
         "type": "string",
-        "description": "What the whole piece of work is for, in a sentence or two; every task sees it."
+        "description": "What the whole piece of work is for; every task sees it."
       },
       "tasks": {
         "type": "array",
-        "description": "1 to 8 tasks, each {\"name\": \"short-name\", \"profile\": \"worker\" or \"planner\", \"instructions\": \"what to do and what to report back\"}. Optionally \"material\": text for the task to work on (a draft, notes, a document), passed to it as data, and \"tools\": false for a task that only works on what it's given and needs no searching or reading."
+        "description": "1-8 tasks, each {\"name\": \"short-name\", \"profile\": \"worker\" (searches, reads) or \"planner\" (plans, reviews, writes), \"instructions\": \"...\"}; optionally \"material\" (text to work on) and \"tools\": false (needs no searching)."
       },
       "then": {
         "type": "object",
-        "description": "Optional: {\"profile\": \"planner\", \"instructions\": \"...\"}, a last task that gets every task's reply, e.g. to compare or combine them."
+        "description": "Optional: {\"profile\": \"planner\", \"instructions\": \"...\"}, a last task that gets every reply, to compare or combine them."
       }
     }
   }

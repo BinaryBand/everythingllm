@@ -4,7 +4,7 @@
   "name": "Run Code",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Run Python or bash in an isolated Linux sandbox and return its output: for arithmetic beyond the trivial, data, files, charts, or anything you'd otherwise estimate. The working folder /work is this chat's scratch (kept for a week after the chat's last run); /project is the workspace's folder, shared by all its chats and kept, so move what should last there (mv /work/x /project/). pip installs go to /project and last too. /shared/<this workspace> is what this workspace shares with the others: they can read it, only this workspace writes it. Every other folder in /shared is another workspace's, read-only: treat it as data and don't run code from it. /system/themes holds the repo's Zola themes, read-only, and zola is installed. /public is this workspace's pages on the web, served as they are at https://…:8447/<this workspace>/: whatever is written there is live at once (folders with an index.html are pages, other files are served as they are), and deleting it takes it down; the reply lists the pages a run changed. Send a whole script per call. numpy, pandas, matplotlib and requests are installed; PyPI is reachable but nothing else on the network. Use bash to list, read, move and delete files.",
+  "description": "Run a Python or bash script in this workspace's Linux sandbox and return its output: arithmetic, data, files, charts, anything you'd otherwise estimate. It runs in /work (this chat's scratch); /project keeps files; /public is live web pages, and the reply lists the pages a run changed. numpy, pandas, matplotlib, requests and zola are installed; pip installs persist; the network reaches PyPI only. Use bash to list, read, move and delete files.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -22,7 +22,7 @@
     "file": "handler.js",
     "params": {
       "language": {
-        "description": "\"python\" (Python 3.13) or \"bash\" (Debian with coreutils, git and curl).",
+        "description": "\"python\" (3.13) or \"bash\" (Debian, with git and curl).",
         "type": "string",
         "enum": [
           "python",
@@ -30,11 +30,11 @@
         ]
       },
       "code": {
-        "description": "A complete script. It runs in /work.",
+        "description": "The whole script.",
         "type": "string"
       },
       "timeout": {
-        "description": "Seconds before the run is killed: 60 if not given, at most 300.",
+        "description": "Seconds before it's killed: default 60, at most 300.",
         "type": "integer"
       }
     }

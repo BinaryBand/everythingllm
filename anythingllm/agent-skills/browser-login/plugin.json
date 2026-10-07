@@ -4,7 +4,7 @@
   "name": "Browser Login",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Log in with a login the user saved in this workspace's browser vault, without ever seeing the password: the browser fills it into the fields you name, on the login's own site only. action list shows the saved logins (id, site, username) and which fit this chat's page; login fills one into the username field (user_ref) and/or the password field (pass_ref) from the last read, and submit presses Enter; code fills the current 2FA code into the code field (ref). Some logins ask the user first: this waits for their OK in the browser view. If there's no saved login for the site, ask (on its sign-in page) gives you a card for your reply where the user saves one for this page's site; for a CAPTCHA, SSO or a payment hand the browser to them with browser-handoff. Never ask the user for a password in the chat.",
+  "description": "Log in with a login saved in this workspace's vault without seeing the password; it fills only on that login's own site. list: the saved logins and which fit this page. login: fill one into user_ref and/or pass_ref from the last read. code: fill its current 2FA code into ref. ask (on the sign-in page, when none is saved): returns a card where the user saves one; put it in your reply and end the reply. Some logins wait for the user's OK first. Never ask for a password in the chat.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -37,27 +37,27 @@
           "login",
           "code"
         ],
-        "description": "list the saved logins, ask the user for one for this page's site (ask), fill one in (login), or fill its 2FA code (code)."
+        "description": "list, login, code or ask."
       },
       "login": {
         "type": "string",
-        "description": "The saved login's id, from list."
+        "description": "The login's id, from list."
       },
       "user_ref": {
         "type": "string",
-        "description": "login: the ref of the username or email field (e12), if the page has one."
+        "description": "login: the username or email field's ref (e12)."
       },
       "pass_ref": {
         "type": "string",
-        "description": "login: the ref of the password field, if the page has one."
+        "description": "login: the password field's ref."
       },
       "ref": {
         "type": "string",
-        "description": "code: the ref of the 2FA code field."
+        "description": "code: the 2FA code field's ref."
       },
       "submit": {
         "type": "boolean",
-        "description": "Press Enter in the last field filled, to send the form."
+        "description": "Press Enter in the last field filled."
       }
     }
   }

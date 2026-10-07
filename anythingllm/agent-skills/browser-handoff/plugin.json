@@ -4,7 +4,7 @@
   "name": "Browser Handoff",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Hand this workspace's browser to the user, for what they must do themselves: a login that isn't saved (try browser-login first), a 2FA code, a CAPTCHA, a payment, or anything they'd rather do. It replies at once with a Card line for them to open the browser from; put it in your reply, say what they should do, and end your reply. Until they hand it back, your browser actions are refused. When they say in the chat that they're done, call this again with done: true to take the browser back and read the page.",
+  "description": "Give the user the browser for what they must do themselves: a login that isn't saved (try browser-login first), a 2FA code, a CAPTCHA, a payment. Returns a Card line: put it in your reply, say what they should do, and end the reply. Your browser actions are refused until then; when they say they're done, call with done: true to take it back.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -23,11 +23,11 @@
     "params": {
       "reason": {
         "type": "string",
-        "description": "What the user should do in the browser, in a few words (shown to them there): \"log in to LinkedIn\"."
+        "description": "What the user should do, shown to them, e.g. \"log in to LinkedIn\"."
       },
       "done": {
         "type": "boolean",
-        "description": "true once the user has said they're finished: takes the browser back."
+        "description": "true once the user says they're finished."
       }
     }
   }

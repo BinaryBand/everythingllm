@@ -4,7 +4,7 @@
   "name": "Browser Act",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Do one thing in this chat's browser tab and read the page after: click, fill (replace a field's text), type (key by key, for fields that react as you type), press (one key like Enter, Escape, Tab, Backspace, an arrow or a character, or Shift with Tab or an arrow, on ref or the page; no Control, Meta or Alt shortcuts), select (an option of a dropdown, by its label), check/uncheck, hover, scroll_down/scroll_up (the page, or to ref), back, forward, reload, or wait (text = seconds, up to 10). ref is an element's ref from the last read, like e12. Never type a password, card number or one-time code: log in with browser-login, or hand the browser to the user with browser-handoff. Before anything that sends, buys, posts, deletes or can't be undone, ask the user in your reply first.",
+  "description": "Do one action in this chat's browser tab and read the page after: click, fill (replace a field's text), type (key by key), press (Enter, Escape, Tab, Backspace, an arrow or a character, or Shift with Tab or an arrow; no Control, Meta or Alt), select (an option, by label), check, uncheck, hover, scroll_down, scroll_up, back, forward, reload, wait (text = seconds, at most 10). Never type a password, card number or code: use browser-login or browser-handoff. Ask the user before anything that sends, buys, posts or deletes.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -43,11 +43,11 @@
       },
       "ref": {
         "type": "string",
-        "description": "The element's ref from the last read (e12); none for press on the page, scrolling the page, back, forward, reload and wait."
+        "description": "The element's ref from the last read (e12); not for page-wide press or scroll, back, forward, reload or wait."
       },
       "text": {
         "type": "string",
-        "description": "The text for fill and type, the key for press, the option for select, the seconds for wait."
+        "description": "Text for fill and type, the key for press, the option for select, seconds for wait."
       }
     }
   }

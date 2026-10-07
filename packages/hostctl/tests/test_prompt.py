@@ -89,7 +89,6 @@ def sync(monkeypatch, tmp_path):
     from hostctl import sync
 
     sync = importlib.reload(sync)  # STORAGE is read on import
-    monkeypatch.setattr(sync, "BACKUPS", tmp_path / "backups")
     monkeypatch.setattr(sync, "planned_files", dict)
     monkeypatch.setattr(sync, "repo_jobs", dict)
     return sync

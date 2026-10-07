@@ -28,13 +28,12 @@ import json
 import os
 import shutil
 import sys
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 from hostctl import prompt
-from hostctl.units import BACKUPS, ROOT, anythingllm_headers, storage
+from hostctl.units import ROOT, anythingllm_headers, storage
 
 STORAGE = storage()
 REPO = ROOT / "anythingllm"
@@ -222,11 +221,6 @@ def diff() -> bool:
     return changed
 
 
-def save_backup(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-
-
 def deploy() -> None:
     files = {
         d: t for d, t in planned_files().items() if not d.exists() or d.read_text() != t
@@ -237,9 +231,7 @@ def deploy() -> None:
     if not files and not jobs and default is None and variable is None:
         print("Nothing to deploy.")
         return
-    backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S")
     if default is not None:
-        save_backup(backup / "system-prompt" / "default.md", default.strip() + "\n")
         api(
             "POST",
             "/system/default-system-prompt",
@@ -259,25 +251,15 @@ def deploy() -> None:
                 f"created scheduled job {job['name']!r} (id {created['id']}, enabled)"
             )
             continue
-        save_backup(
-            backup / "scheduled-jobs" / f"{live['id']}.json",
-            json.dumps(live, indent=2) + "\n",
-        )
         api("PUT", f"/scheduled-jobs/{live['id']}", body)
         state = "enabled" if live["enabled"] else "disabled"
         print(f"deployed scheduled job {job['name']!r} (id {live['id']}, {state})")
     for dest, text in files.items():
-        if dest.exists():
-            saved = backup / dest.relative_to(STORAGE)
-            saved.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(dest, saved)
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_name(f".{dest.name}.tmp")
         tmp.write_text(text)
         os.replace(tmp, dest)
         print(f"deployed {dest}")
-    if backup.exists():
-        print(f"previous versions saved to {backup}")
 
 
 def import_skill(name: str) -> None:

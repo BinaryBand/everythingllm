@@ -164,8 +164,7 @@ def data_dir() -> Path:
                            vault/ (the saved logins, sealed)
       research/runs/       the deep-research run log and live runs' markers
       agents/runs/         the delegations' run log and live runs' markers
-      relay/               the Nilson relay's database
-      backups/             what uv run hostctl units and uv run hostctl deploy replaced"""
+      relay/               the Nilson relay's database"""
     return Path("~/.local/share/everythingllm").expanduser()
 
 

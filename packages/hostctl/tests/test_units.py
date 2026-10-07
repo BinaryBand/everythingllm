@@ -83,7 +83,7 @@ def test_install_replaces_links_without_touching_the_repo(tmp_path, monkeypatch)
         ]
     )
     assert len(todo) == 2
-    restart = units.install(todo, tmp_path / "backup")
+    restart = units.install(todo)
     assert (
         not (user / "q.service").is_symlink()
         and not (containers / "x.container.d").is_symlink()
@@ -94,9 +94,6 @@ def test_install_replaces_links_without_touching_the_repo(tmp_path, monkeypatch)
     ).read_text() == "[Container]\nEnvironment=A=1\n"
     # q.service only gained a comment and spelled out %h: nothing to restart.
     assert restart == ["x.service"]
-    assert (
-        tmp_path / "backup" / "x.container.d" / "a.conf"
-    ).read_text() == "[Container]\nEnvironment=A=1\n"
     assert units.changed(todo) == []
 
 
@@ -126,7 +123,6 @@ def test_a_changed_host_unit_restarts_only_if_running_and_containers_go_first(
                 True,
             ),
         ],
-        tmp_path / "backup",
     )
     assert restart == ["c.service", "on.service"]
 
@@ -381,7 +377,7 @@ def test_a_rendered_unit_with_no_template_is_retired(tmp_path, monkeypatch, caps
         "old.timer",
         "old@.service",
     ]
-    start, left = units.retire(old, plan, tmp_path / "backup")
+    start, left = units.retire(old, plan)
     assert (start, left) == (["gone-runner.service"], [])
     # A template's instances can't be stopped by its name; they finish on their own.
     assert ran == [
@@ -389,9 +385,6 @@ def test_a_rendered_unit_with_no_template_is_retired(tmp_path, monkeypatch, caps
         for name in ("gone-runner.service", "linked.service", "made.timer", "old.timer")
     ]
     assert sorted(p.name for p in user.iterdir()) == ["kept.service", "theirs.service"]
-    assert (tmp_path / "backup" / "user" / "old.timer").read_text() == (
-        RENDERED + "[Unit]\n"
-    )
     assert "gone-runner.service: its container takes over" in capsys.readouterr().out
 
 
@@ -405,7 +398,7 @@ def test_a_guarded_runner_with_a_run_going_isnt_retired(tmp_path, monkeypatch):
         unit(tmp_path, tmp_path / "r.container", "x", "research-runner.service", True)
     ]
     old = units.retired(plan, user)
-    assert units.retire(old, plan, tmp_path / "backup") == (
+    assert units.retire(old, plan) == (
         [],
         ["research-runner.service"],
     )
@@ -428,7 +421,7 @@ def test_an_apps_host_units_stay_while_its_containers_cant_start(
     for name in ("research-runner.service", "research-old.timer"):
         (user / name).write_text(RENDERED)
     old = units.retired(planned, user)
-    start, left = units.retire(old, planned, tmp_path / "backup")
+    start, left = units.retire(old, planned)
     assert (start, sorted(left)) == (
         [],
         ["research-old.timer", "research-runner.service"],
@@ -459,7 +452,7 @@ def test_an_archived_apps_host_units_are_all_retired(tmp_path, monkeypatch):
         (user / name).write_text(RENDERED)
     retired = units.retired(planned, user)
     assert [p.name for p in retired] == old
-    assert units.retire(retired, planned, tmp_path / "backup") == ([], [])
+    assert units.retire(retired, planned) == ([], [])
     assert [p.name for p in user.iterdir()] == ["browser-runner.service"]
 
 
@@ -484,7 +477,6 @@ def test_units_retires_the_old_host_unit_then_starts_its_container(
 
     monkeypatch.setattr(units.subprocess, "run", run)
     monkeypatch.setattr(units, "ROOT", tmp_path)  # not a worktree
-    monkeypatch.setattr(units, "BACKUPS", tmp_path / "backups")
     monkeypatch.setattr(units, "host_settings", lambda f: {})
     monkeypatch.setattr(units, "planned", lambda values, c, u: planned)
     monkeypatch.setenv("UNITS_USER_DIR", str(user))
@@ -524,7 +516,6 @@ def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, ca
 
     monkeypatch.setattr(units.subprocess, "run", run)
     monkeypatch.setattr(units, "ROOT", tmp_path)  # not a worktree
-    monkeypatch.setattr(units, "BACKUPS", tmp_path / "backups")
     monkeypatch.setattr(units, "host_settings", lambda f: {})
     monkeypatch.setattr(units, "planned", lambda values, c, u: planned)
     monkeypatch.setenv("UNITS_USER_DIR", str(user))

@@ -6,8 +6,7 @@ repo's path and @KEY@ with KEY from host.env:
   host/systemd/*.service, host/systemd/*.timer -> ~/.config/systemd/user/
 
   diff     show how the installed units differ from the rendered ones
-  install  write the changed ones (previous versions go to
-           ~/.local/share/everythingllm/backups/) and reload systemd.
+  install  write the changed ones and reload systemd.
            A container whose unit or drop-in changed is (re)started; a host unit is
            restarted only if it's running. Enabling host units is up to each `uv run hostctl *-setup`.
            A change to comments alone restarts nothing. Either waits while it's a guarded
@@ -15,8 +14,8 @@ repo's path and @KEY@ with KEY from host.env:
            image or its network isn't there yet (its app's setup makes them), or the
            egress proxy it Wants= isn't installed (`uv run hostctl units egress`).
            A host unit this rendered whose template is gone (removed from host/systemd,
-           or moved to host/quadlet as a container) is retired: stopped and disabled, and
-           its installed copy moved to the backups. A container that took its name over is
+           or moved to host/quadlet as a container) is retired: stopped, disabled and
+           deleted. A container that took its name over is
            started then, since the old copy would hide Quadlet's unit; `diff` lists them.
            An app's host units stay running while one of its containers can't start yet.
            Given app names (`uv run hostctl units relay`), it installs and retires only
@@ -33,7 +32,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -43,7 +41,6 @@ from hostctl import apps, run_guard
 
 ROOT = Path(__file__).resolve().parents[4]
 
-BACKUPS = run_guard.DATA / "backups"  # outside the repo, which the container mounts
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
 # The first line of a unit rendered here (and, before uv run hostctl, by `make units`).
 RENDERED = re.compile(r"# Rendered by `(uv run hostctl|make) units` from ")
@@ -210,7 +207,7 @@ def changed(units: list[Unit]) -> list[Unit]:
     ]
 
 
-def install(todo: list[Unit], backup: Path) -> list[str]:
+def install(todo: list[Unit]) -> list[str]:
     """Write the units; returns the units to restart, in order: containers first."""
     restart = []
     for unit in todo:
@@ -219,10 +216,6 @@ def install(todo: list[Unit], backup: Path) -> list[str]:
         if folder.is_symlink():  # a drop-in folder linked into the repo, the old way
             folder.unlink()
         folder.mkdir(parents=True, exist_ok=True)
-        if old:
-            saved = backup / unit.dest.parent.name / unit.dest.name
-            saved.parent.mkdir(parents=True, exist_ok=True)
-            saved.write_text(old)
         tmp = folder / f".{unit.dest.name}.tmp"
         tmp.write_text(unit.text)
         os.replace(tmp, unit.dest)  # replaces a symlink itself, not what it points to
@@ -344,10 +337,8 @@ def retired(plan: list[Unit], user: Path, root: Path = ROOT) -> list[Path]:
     return old
 
 
-def retire(
-    old: list[Path], plan: list[Unit], backup: Path
-) -> tuple[list[str], list[str]]:
-    """Stop and disable each, and move its installed copy to `backup`. Returns the
+def retire(old: list[Path], plan: list[Unit]) -> tuple[list[str], list[str]]:
+    """Stop, disable and delete each. Returns the
     containers to start now that the host unit of their name is gone, and the units left
     as they are: a guarded runner with a run going (run_guard asks), whose container
     mustn't start beside it, and every old unit of an app whose containers can't start
@@ -383,10 +374,7 @@ def retire(
             subprocess.run(
                 ["systemctl", "--user", "disable", "--now", name], check=False
             )
-        saved = backup / path.parent.name / name
-        saved.parent.mkdir(parents=True, exist_ok=True)
-        saved.write_text(path.read_text() if path.exists() else "")
-        path.unlink()
+        path.unlink(missing_ok=True)
         if name in containers:
             start.append(name)
             print(f"retired {path}: its container takes over")
@@ -459,9 +447,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(
             f"{ROOT} is a git worktree; install from the main checkout, which the units run from."
         )
-    backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S") / "units"
-    restart = install(todo, backup)
-    start, left = retire(old, plan, backup)
+    restart = install(todo)
+    start, left = retire(old, plan)
     restart = [s for s in restart if s not in left]
     restart += [s for s in start if s not in restart]
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
@@ -469,8 +456,6 @@ def main(argv: list[str] | None = None) -> None:
     for service in hold_back(restart, plan, cleared=set(start)):
         subprocess.run(["systemctl", "--user", "restart", service], check=True)
         print(f"restarted {service}")
-    if backup.exists():
-        print(f"previous versions saved to {backup}")
 
 
 if __name__ == "__main__":

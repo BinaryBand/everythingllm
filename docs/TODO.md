@@ -34,8 +34,8 @@ containers"). The checks a script couldn't make, and the cleanup once they've he
   `browser-net` network (`podman network rm browser-net`).
 - **Rolling a container back is partly by hand.** `hostctl.units.retired()` only looks in
   `~/.config/systemd/user`, so going back to a host unit means moving
-  `~/.config/containers/systemd/<x>.container` aside yourself, then restoring the unit from
-  `~/.local/share/everythingllm/backups/`. A `uv run hostctl units --host <app>` could do
+  `~/.config/containers/systemd/<x>.container` aside yourself, then restoring its template
+  to `host/systemd/` from git and running `uv run hostctl units`. A `uv run hostctl units --host <app>` could do
   both.
 
 ## Gateway loose ends

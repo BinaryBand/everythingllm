@@ -133,15 +133,15 @@ templates too. `uv run hostctl units` renders all of them:
 - `host/systemd/*.container.d/` goes next to it
 - `host/systemd/*.service` and `*.timer` go to `~/.config/systemd/user/`
 
-It fills in `@REPO@` (the checkout's path) and the `host.env` settings, and saves older
-versions to `~/.local/share/everythingllm/backups/`. Then it reloads systemd and restarts what changed: a container
+It fills in `@REPO@` (the checkout's path) and the `host.env` settings, overwrites what's
+installed (git has the templates' history), then reloads systemd and restarts what changed: a container
 whose unit or drop-in changed, or a host unit that's running. A change to comments alone
 restarts nothing. A guarded runner with a run going is left running, and a container whose
 image of ours or network isn't there yet isn't started: its app's setup makes them (see
 "Service containers"). Nor is one whose egress proxy (its `Wants=`) isn't installed yet:
 `uv run hostctl units egress` comes first. Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
-A host unit it rendered whose template is gone is retired: stopped, disabled and moved to
-the backups. That is how a dropped app's units go, and how a host runner gives way to
+A host unit it rendered whose template is gone is retired: stopped, disabled and
+deleted. That is how a dropped app's units go, and how a host runner gives way to
 its container, whose Quadlet unit of the same name the old copy would hide (the container
 is started then, unless it's a guarded runner with a run going). While one of an app's
 containers can't start yet, every old host unit of that app stays as it is, so the app is
@@ -348,8 +348,7 @@ through its UI.
 ## Workflow
 
 `uv run hostctl` lists every command. Day to day: `uv run hostctl diff` shows what would change live,
-`uv run hostctl deploy` copies it into storage (old files go to
-`~/.local/share/everythingllm/backups/`), refreshes the MCP deps
+`uv run hostctl deploy` copies it into storage, refreshes the MCP deps
 and restarts AnythingLLM, `uv run hostctl test` runs every test and `uv run hostctl health` checks every unit,
 port, host service and runner socket. `uv run hostctl import-skill <hubId>` (and `import-job`)
 brings something made in the UI under the repo. Slash commands aren't in the repo:
@@ -549,7 +548,7 @@ the sandbox's containers and with one way out, the egress proxy. Each service mo
 on its own: its template goes from `host/systemd/<x>.service` to
 `host/quadlet/<x>.container.in`, and its app's `runner` and journal key follow (`apps.toml`'s
 `container`, `systemd-<x>`). The next `uv run hostctl units` retires the old host unit: it
-stops and disables it and moves its installed copy to the backups (systemd prefers
+stops, disables and deletes its installed copy (systemd prefers
 `~/.config/systemd/user/<x>.service` to the unit Quadlet generates under the same name),
 then starts the container; a guarded runner with a run going is left for a later run.
 `uv run hostctl diff` lists what it would retire. So far the relay, research-runner

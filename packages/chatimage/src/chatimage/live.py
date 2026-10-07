@@ -7,6 +7,12 @@ the browser shows the newest part in the `<img>`. Browsers still support it for 
 and the machine's route must pass each part on as it comes (no buffering). When the response ends, the image
 stays on its last frame; reloading the chat asks again.
 
+Chrome shows a part only once the next part's headers are in, not at its end or at the
+delimiter after it, so a frame followed by none for a while would stay unseen (and a card
+blank) until the next. `push` therefore sends a frame again when no newer one has come
+within SETTLE: the copy's headers show the frame, and the copy waits unseen in its place.
+Every part stays a whole image with its Content-Length, for readers that go by it.
+
 These are helpers for a service's own small asyncio server (research.live is one): it
 reads the request line, then either pushes frames or sends one plain response. An image's
 address may ask for the light theme with `?theme=light` (`theme`); else it's dark. There's
@@ -14,12 +20,14 @@ no framework: GET only, no keep-alive, every response closes its connection.
 """
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from urllib.parse import parse_qs
 
 from chatimage import THEME, THEMES
 
 BOUNDARY = b"frame"
+SETTLE = 0.2  # seconds a frame waits for a newer one before it's sent again to be shown
 MAX_HEAD = 16 * 1024  # a request's line and headers; the machine's route adds a few
 
 
@@ -97,8 +105,20 @@ async def push(
     content_type: str = "image/png",
 ) -> bool:
     """Push each image from `frames` (PNGs, or whatever `content_type` says) as the image's
-    newest frame, until they run out or the client goes; then close. True when every frame
-    went out, False when the client left first (the frames are closed either way)."""
+    newest frame, until they run out or the client goes; then close. A frame no newer one
+    follows within SETTLE is sent again, so that a browser shows it (above). True when
+    every frame went out, False when the client left first (the frames are closed either
+    way)."""
+
+    def part(image: bytes) -> bytes:
+        return b"--%s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n%s\r\n" % (
+            BOUNDARY,
+            content_type.encode(),
+            len(image),
+            image,
+        )
+
+    following: asyncio.Future[bytes] | None = None
     try:
         writer.write(
             head(
@@ -110,18 +130,31 @@ async def push(
                 },
             )
         )
-        async for image in frames:
-            writer.write(
-                b"--%s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n%s\r\n"
-                % (BOUNDARY, content_type.encode(), len(image), image)
-            )
+        shown: bytes | None = None  # the frame sent last, until a part follows it
+        while True:
+            following = asyncio.ensure_future(anext(frames))
+            if shown is not None:
+                done, _ = await asyncio.wait({following}, timeout=SETTLE)
+                if not done:
+                    writer.write(part(shown))
+                    await writer.drain()
+            try:
+                image = await following
+            except StopAsyncIteration:
+                break
+            writer.write(part(image))
             await writer.drain()
+            shown = image
         writer.write(b"--%s--\r\n" % BOUNDARY)
         await writer.drain()
         return True
     except (ConnectionError, OSError):
         return False
     finally:
+        if following is not None and not following.done():
+            following.cancel()  # which closes a generator waiting for its next frame
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                await following
         aclose = getattr(frames, "aclose", None)
         if aclose:
             await aclose()

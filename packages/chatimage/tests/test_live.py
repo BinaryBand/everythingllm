@@ -56,6 +56,61 @@ def test_frames_are_pushed_in_order_and_the_stream_ends():
     assert seen == [("GET", "/x.png", "v=1"), True]
 
 
+def test_a_still_streams_frame_is_followed_by_a_part_so_a_browser_shows_it():
+    """Chrome shows a part once the next part's headers are in, so a frame no newer one
+    follows is sent again, whole, for a reader to take without waiting for a second one."""
+    still = asyncio.Event()
+
+    async def frames():
+        yield b"png0"
+        await still.wait()  # a page that doesn't move
+        yield b"png1"
+
+    async def handler(reader, writer):
+        await live.read_request(reader)
+        await live.push(writer, frames())
+
+    async def go():
+        server, port = await serve(handler)
+        async with server:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"GET /x.png HTTP/1.1\r\n\r\n")
+            await reader.readuntil(b"\r\n\r\n")
+            shown = b""
+            while shown.count(b"--frame\r\n") < 2 or not shown.endswith(b"\r\n"):
+                shown += await asyncio.wait_for(reader.read(1024), live.SETTLE + 2)
+            still.set()
+            rest = await reader.read()
+            writer.close()
+            return shown, rest
+
+    shown, rest = asyncio.run(go())
+    assert parts(shown + rest) == [b"png0", b"png0", b"png1"]
+    assert parts(shown + b"--frame--\r\n") == [b"png0", b"png0"]
+
+
+def test_frames_that_come_quickly_are_sent_once():
+    async def frames():
+        for n in range(3):
+            await asyncio.sleep(live.SETTLE / 10)
+            yield b"png%d" % n
+
+    async def handler(reader, writer):
+        await live.read_request(reader)
+        await live.push(writer, frames())
+
+    async def go():
+        server, port = await serve(handler)
+        async with server:
+            return await get(port)
+
+    assert parts(asyncio.run(go()).partition(b"\r\n\r\n")[2]) == [
+        b"png0",
+        b"png1",
+        b"png2",
+    ]
+
+
 def test_a_client_that_leaves_closes_the_frames():
     closed = asyncio.Event()
     result = []

@@ -159,18 +159,26 @@ class AnythingLLM:
 
 
 def internal_error(status: int, reply: Any) -> str:
-    """A plain-language message for a non-2xx answer from the internal API, with what
-    AnythingLLM said when it said something (a 400's reason)."""
+    """A plain-language message for a non-2xx answer from the internal API: AnythingLLM's
+    own reason when it gave one (a 400's, or "Personalization is disabled."), else what
+    the status means."""
     said = reply.get("error") if isinstance(reply, dict) else None
-    if status == 403 and said:  # a feature that's off ("Personalization is disabled.")
-        return f"AnythingLLM refused it: {said}"
-    if status in (401, 403):
+    if status == 401 or (status == 403 and not said):
         return "AnythingLLM refused agents-runner's login (the password in its .env)."
-    if status == 404:
-        return str(said or "AnythingLLM has no such scheduled job.")
-    if status == 400 and said:
+    if said:
         return f"AnythingLLM turned it down: {said}"
+    if status == 404:
+        return "AnythingLLM has no such item."
     return status_error(status)
+
+
+def created(reply: Any, key: str, what: str) -> dict:
+    """The `key` item of a 2xx reply that makes one, or an error saying AnythingLLM didn't
+    `what`."""
+    if not isinstance(reply, dict) or not reply.get(key):
+        said = reply.get("error") if isinstance(reply, dict) else None
+        raise AnythingLLMError(f"AnythingLLM didn't {what}: {said or reply}")
+    return reply[key]
 
 
 @dataclass
@@ -264,10 +272,7 @@ class InternalAPI:
             "/scheduled-jobs/new",
             {"name": name, "prompt": prompt, "tools": tools, "schedule": schedule},
         )
-        if not isinstance(reply, dict) or not reply.get("job"):
-            said = reply.get("error") if isinstance(reply, dict) else None
-            raise AnythingLLMError(f"AnythingLLM didn't make the job: {said or reply}")
-        return reply["job"]
+        return created(reply, "job", "make the job")
 
     async def delete(self, job_id: int) -> None:
         await self.call("DELETE", f"/scheduled-jobs/{int(job_id)}")
@@ -288,10 +293,7 @@ class InternalAPI:
             f"/workspaces/{quote(slug)}/memories",
             {"content": content, "scope": scope},
         )
-        if not isinstance(reply, dict) or not reply.get("memory"):
-            said = reply.get("error") if isinstance(reply, dict) else None
-            raise AnythingLLMError(f"AnythingLLM didn't save it: {said or reply}")
-        return reply["memory"]
+        return created(reply, "memory", "save it")
 
     async def memory_delete(self, memory_id: int) -> None:
         await self.call("DELETE", f"/memories/{int(memory_id)}")

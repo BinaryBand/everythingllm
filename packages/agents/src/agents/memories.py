@@ -1,14 +1,6 @@
-"""agents-runner's side of AnythingLLM's saved memories: the short facts about the user that
-AnythingLLM adds to every chat's system prompt under "Things I Remember About You" (its
-global ones, and up to 5 of the workspace's, those closest to the chat when it has more).
-It keeps at most 5 global and 20 per workspace, and fills them itself from idle chats too.
-The memories skill lists a chat's (global and its workspace's), saves one, or forgets one,
-shown first and deleted only with apply, through runner.Runner's op, which refuses a
-delegated task and a scheduled job. A chat sees and forgets only its own workspace's and the
-global ones. The README's "Saved memories" has the rules.
-
-Saving is AnythingLLM's own feature, not rag-memory's "store", which embeds text into the
-workspace's documents instead.
+"""agents-runner's side of AnythingLLM's saved memories, for the memories skill: list a
+chat's (global and its workspace's), save one, or forget one, shown first and deleted only
+with apply. The README's "Saved memories" has the rules.
 
 Config (environment, from host.env through the unit):
   USER_TIMEZONE  the user's time zone, for the "last used" times `list` shows
@@ -16,6 +8,7 @@ Config (environment, from host.env through the unit):
 
 from dataclasses import dataclass
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from hostrpc import RunnerError
 
@@ -35,8 +28,8 @@ class SavedMemories:
     client: InternalAPI
     timezone: str = DEFAULT_TIMEZONE
 
-    def describe(self, memory: dict) -> str:
-        used = local(when(memory.get("lastUsedAt")), zone(self.timezone))
+    def describe(self, memory: dict, tz: ZoneInfo) -> str:
+        used = local(when(memory.get("lastUsedAt")), tz)
         return (
             f"{memory.get('id')} ({scope_of(memory)}, last used {used}): "
             f"{memory.get('content', '')}"
@@ -49,13 +42,13 @@ class SavedMemories:
                 "No saved memories, global or for this workspace. Save one with action save "
                 "when the user asks you to remember something."
             )
-        lines = []
+        lines, tz = [], zone(self.timezone)
         for scope, label in (("global", "Global"), ("workspace", "This workspace's")):
             room = LIMITS[scope] - len(found[scope])
             lines.append(
                 f"{label} ({len(found[scope])} of {LIMITS[scope]}, {room} free):"
             )
-            lines += [f"- {self.describe(m)}" for m in found[scope]] or ["- none"]
+            lines += [f"- {self.describe(m, tz)}" for m in found[scope]] or ["- none"]
         return "\n".join(lines)
 
     async def save(self, slug: str, text: Any, scope: Any) -> str:
@@ -88,13 +81,8 @@ class SavedMemories:
                 "give the id of the memory to forget (action list shows them)"
             ) from None
         found = await self.client.memories(slug)
-        memory = next(
-            (
-                m
-                for m in found["global"] + found["workspace"]
-                if m.get("id") == memory_id
-            ),
-            None,
+        memory = {m.get("id"): m for m in found["global"] + found["workspace"]}.get(
+            memory_id
         )
         if memory is None:
             raise RunnerError(
@@ -103,8 +91,25 @@ class SavedMemories:
             )
         if not apply:
             return (
-                f"{self.describe(memory)}\n\nForgetting it deletes it for good. Show the user "
+                f"{self.describe(memory, zone(self.timezone))}\n\nForgetting it deletes it for good. Show the user "
                 "this memory, and call again with apply true only if they agree to forget it."
             )
         await self.client.memory_delete(memory_id)
         return f"Forgot memory {memory_id}: {memory.get('content', '')}"
+
+    async def act(
+        self,
+        slug: str,
+        action: str,
+        text: Any = None,
+        scope: Any = None,
+        memory_id: Any = None,
+        apply: bool = False,
+    ) -> str:
+        if action == "list":
+            return await self.listing(slug)
+        if action == "save":
+            return await self.save(slug, text, scope)
+        if action == "forget":
+            return await self.forget(slug, memory_id, apply)
+        raise RunnerError("action must be list, save or forget")

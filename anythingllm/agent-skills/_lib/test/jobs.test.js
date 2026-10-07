@@ -1,5 +1,5 @@
-// The scheduled-jobs, schedule-job and remind-once skills: what they send agents-runner. Their refusal of
-// a delegated task is delegated.test.js's, which covers every skill.
+// The skills agents-runner serves (scheduled-jobs, schedule-job, remind-once, memories): what they
+// send it. Their refusal of a delegated task is delegated.test.js's, which covers every skill.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -76,6 +76,27 @@ test("schedule-job sends the invocation's workspace, its cron as text and its to
       ["schedule_job", ["@@mcp_sites"], true],
     ]);
     assert.deepEqual(agents.requests[0].args, { scope: { workspace: "career", thread: "3" }, ...base, tools: [], apply: false });
+  } finally {
+    await agents.close();
+  }
+});
+
+test("memories sends the invocation's workspace, a list by default, and its scope apart from the chat's", async () => {
+  const agents = await fakeAgents();
+  try {
+    const { handler } = require("../../memories/handler").runtime;
+    assert.equal(await handler.call(chat("career"), {}), "memories ok");
+    await handler.call(chat("career"), { action: "Save", text: "Lives in Stockholm.", scope: "global", workspace: "x" });
+    await handler.call(chat("career"), { action: "forget", id: 12, apply: "true" });
+    const scope = { workspace: "career", thread: "3" };
+    assert.deepEqual(
+      agents.requests.map((r) => r.args),
+      [
+        { scope, action: "list", apply: false },
+        { scope, action: "save", text: "Lives in Stockholm.", memory_scope: "global", apply: false },
+        { scope, action: "forget", memory_id: 12, apply: true },
+      ]
+    );
   } finally {
     await agents.close();
   }

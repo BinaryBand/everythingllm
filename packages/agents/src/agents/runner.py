@@ -334,20 +334,20 @@ class Runner(RunService):
                 raise RunnerError(str(e)) from None
         return self.client
 
+    def internal_api(self) -> InternalAPI:
+        """AnythingLLM's internal API, for its scheduled jobs and saved memories."""
+        if self.internal is None:
+            self.internal = InternalAPI.from_env()
+        return self.internal
+
     def scheduled(self) -> ScheduledJobs:
         """The scheduled jobs, over the internal API (made on first use)."""
         if self.jobs is None:
-            if self.internal is None:
-                self.internal = InternalAPI.from_env()
             registry = Registry(self.settings.runlogs.parent / "once.json")
-            self.jobs = ScheduledJobs(self.internal, registry, self.settings.timezone)
+            self.jobs = ScheduledJobs(
+                self.internal_api(), registry, self.settings.timezone
+            )
         return self.jobs
-
-    def memories(self) -> SavedMemories:
-        """The saved memories, over the internal API."""
-        if self.internal is None:
-            self.internal = InternalAPI.from_env()
-        return SavedMemories(self.internal, self.settings.timezone)
 
     def start_poller(self) -> None:
         """Watch the one-offs made here, and for jobs made while a delegation runs (only
@@ -465,15 +465,10 @@ class Runner(RunService):
         apply: bool = False,
     ) -> str:
         chat_only(scope, "manage saved memories")
-        slug, memories = scope["workspace"], self.memories()
-        action = action or "list"
-        if action == "list":
-            return await memories.listing(slug)
-        if action == "save":
-            return await memories.save(slug, text, memory_scope)
-        if action == "forget":
-            return await memories.forget(slug, memory_id, apply)
-        raise RunnerError("action must be list, save or forget")
+        memories = SavedMemories(self.internal_api(), self.settings.timezone)
+        return await memories.act(
+            scope["workspace"], action, text, memory_scope, memory_id, apply
+        )
 
     async def op_update_prompt(self, scope: dict, apply: bool = False) -> str:
         chat_only(scope, "update a workspace prompt")

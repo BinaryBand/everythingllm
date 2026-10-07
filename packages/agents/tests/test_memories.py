@@ -5,6 +5,7 @@ import httpx
 import pytest
 from agents import runner
 from agents.anythingllm import AnythingLLMError, InternalAPI
+from agents.memories import LIMITS
 from hostrpc import RunnerError
 
 CHAT = {"workspace": "career", "thread": "default"}
@@ -13,8 +14,6 @@ CHAT = {"workspace": "career", "thread": "default"}
 class FakeMemoriesAPI:
     """AnythingLLM's internal API, as much of its saved memories as agents-runner uses: each
     workspace's own, the global ones, its caps, and its 403 while they're turned off."""
-
-    LIMITS = {"global": 5, "workspace": 20}
 
     def __init__(self):
         self.memories: dict[int, dict] = {}
@@ -56,8 +55,8 @@ class FakeMemoriesAPI:
         if parts[0] == "workspaces" and request.method == "POST":
             body = json.loads(request.content)
             scope = body.get("scope", "workspace")
-            if len(self.of(parts[1])[scope]) >= self.LIMITS[scope]:
-                limit = self.LIMITS[scope]
+            if len(self.of(parts[1])[scope]) >= LIMITS[scope]:
+                limit = LIMITS[scope]
                 error = f"Maximum {scope} memory limit ({limit}) reached."
                 return httpx.Response(400, json={"error": error})
             memory_id = self.add(body["content"].strip(), parts[1], scope)
@@ -95,7 +94,10 @@ def test_list_shows_the_global_ones_and_only_this_workspaces_with_room_left(
         r = make(api, tmp_path)
         text = await r.op_memories(CHAT)
         assert "Global (1 of 5, 4 free):" in text
-        assert "1 (global, last used Wed 2026-10-07 14:05 CEST): Lives in Stockholm." in text
+        assert (
+            "1 (global, last used Wed 2026-10-07 14:05 CEST): Lives in Stockholm."
+            in text
+        )
         assert "This workspace's (1 of 20, 19 free):" in text
         assert "2 (workspace, last used never): Is applying for backend roles." in text
         assert "Rust" not in text
@@ -114,7 +116,9 @@ def test_save_keeps_one_short_fact_in_the_scope_asked_for(api, tmp_path):
     async def main():
         r = make(api, tmp_path)
         text = await r.op_memories(CHAT, "save", "  Prefers  metric\nunits. ")
-        assert text == "Saved memory 1 for this workspace's chats: Prefers metric units."
+        assert (
+            text == "Saved memory 1 for this workspace's chats: Prefers metric units."
+        )
         text = await r.op_memories(CHAT, "save", "Lives in Stockholm.", "Global")
         assert text == "Saved memory 2 for every workspace's chats: Lives in Stockholm."
         assert [(m["scope"], m["workspaceId"]) for m in api.memories.values()] == [
@@ -131,16 +135,16 @@ def test_save_keeps_one_short_fact_in_the_scope_asked_for(api, tmp_path):
                 await r.op_memories(CHAT, "save", text, scope)
         for n in range(4):
             api.add(f"global fact {n}", scope="global")
-        with pytest.raises(AnythingLLMError, match=r"global memory limit \(5\) reached"):
+        with pytest.raises(
+            AnythingLLMError, match=r"global memory limit \(5\) reached"
+        ):
             await r.op_memories(CHAT, "save", "one too many", "global")
         assert len(api.memories) == 6
 
     asyncio.run(main())
 
 
-def test_forget_shows_first_deletes_with_apply_and_only_this_workspaces(
-    api, tmp_path
-):
+def test_forget_shows_first_deletes_with_apply_and_only_this_workspaces(api, tmp_path):
     mine = api.add("Is applying for backend roles.")
     theirs = api.add("Is learning Rust.", workspace="education")
 
@@ -168,13 +172,9 @@ def test_forget_shows_first_deletes_with_apply_and_only_this_workspaces(
 def test_memories_are_a_chats_and_say_when_theyre_turned_off(api, tmp_path):
     async def main():
         r = make(api, tmp_path)
-        for scope, error in [
-            ({"workspace": "_jobs"}, "a scheduled job can't"),
-            ({"workspace": "agents-worker"}, "a delegated task can't"),
-            ({}, "a scheduled job can't"),
-        ]:
-            with pytest.raises(RunnerError, match=error):
-                await r.op_memories(scope)
+        # chat_only's cases are test_scheduled_jobs'; this one shows the op asks it.
+        with pytest.raises(RunnerError, match="a delegated task can't"):
+            await r.op_memories({"workspace": "agents-worker"})
         assert api.calls == []
         with pytest.raises(RunnerError, match="action must be list, save or forget"):
             await r.op_memories(CHAT, "edit")

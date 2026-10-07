@@ -29,6 +29,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -259,11 +260,34 @@ def deploy() -> None:
         state = "enabled" if live["enabled"] else "disabled"
         print(f"deployed scheduled job {job['name']!r} (id {live['id']}, {state})")
     for dest, text in files.items():
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_name(f".{dest.name}.tmp")
-        tmp.write_text(text)
-        os.replace(tmp, dest)
+        write_live(dest, text)
         print(f"deployed {dest}")
+
+
+def write_live(dest: Path, text: str) -> None:
+    """Replace `dest` in storage with `text`, through a temp file of a fresh name (O_EXCL),
+    so a symlink the container left in its folder is never written through."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.")
+    try:
+        os.fchmod(fd, 0o644)  # the container reads it
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, dest)  # replaces a symlink at dest itself
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def symlinks(folder: Path) -> list[str]:
+    """The symlinks under `folder`, relative to it: storage is the container's to write,
+    and copying one would copy whatever it points to on the host."""
+    found = []
+    for top, dirs, files in os.walk(folder):
+        for name in dirs + files:
+            if (Path(top) / name).is_symlink():
+                found.append(str((Path(top) / name).relative_to(folder)))
+    return sorted(found)
 
 
 def import_skill(name: str) -> None:
@@ -275,7 +299,13 @@ def import_skill(name: str) -> None:
         sys.exit(
             f"{dest.relative_to(ROOT)} already exists; remove it first to re-import"
         )
-    shutil.copytree(src, dest)
+    links = symlinks(src)
+    if links:
+        sys.exit(
+            f"{src} holds symlinks ({', '.join(links[:5])}); a skill's files are plain "
+            "files, so it wasn't imported"
+        )
+    shutil.copytree(src, dest, symlinks=True)
     print(f"imported {src} -> {dest.relative_to(ROOT)}")
 
 

@@ -5,21 +5,23 @@ import httpx
 import pytest
 from agents import runner
 from agents.anythingllm import AnythingLLMError, InternalAPI, internal_error
-from agents.memories import LIMITS
 from hostrpc import RunnerError
 
 CHAT = {"workspace": "career", "thread": "default"}
+CAPS = {"global": 5, "workspace": 20}  # AnythingLLM's own (its Memory model)
 
 
 class FakeMemoriesAPI:
     """AnythingLLM's internal API, as much of its saved memories as agents-runner uses: each
-    workspace's own, the global ones, its caps, and its 403 while they're turned off."""
+    workspace's own, the global ones, its caps, its 403 while they're turned off, and its
+    text 404 for a workspace it doesn't have."""
 
     def __init__(self):
         self.memories: dict[int, dict] = {}
         self.calls: list[tuple[str, str]] = []
         self.enabled = True
         self.next_id = 1
+        self.workspaces = {"career", "cloud", "education"}
 
     def add(self, content, workspace="career", scope="workspace", used=None):
         self.memories[self.next_id] = {
@@ -50,13 +52,15 @@ class FakeMemoriesAPI:
         if not self.enabled:
             return httpx.Response(403, json={"error": "Personalization is disabled."})
         parts = path.strip("/").split("/")
+        if parts[0] == "workspaces" and parts[1] not in self.workspaces:
+            return httpx.Response(404, text="Workspace does not exist.")
         if parts[0] == "workspaces" and request.method == "GET":
             return httpx.Response(200, json={"memories": self.of(parts[1])})
         if parts[0] == "workspaces" and request.method == "POST":
             body = json.loads(request.content)
             scope = body.get("scope", "workspace")
-            if len(self.of(parts[1])[scope]) >= LIMITS[scope]:
-                limit = LIMITS[scope]
+            if len(self.of(parts[1])[scope]) >= CAPS[scope]:
+                limit = CAPS[scope]
                 error = f"Maximum {scope} memory limit ({limit}) reached."
                 return httpx.Response(400, json={"error": error})
             memory_id = self.add(body["content"].strip(), parts[1], scope)
@@ -130,6 +134,9 @@ def test_save_keeps_one_short_fact_in_the_scope_asked_for(api, tmp_path):
             ("", None, "give the text to remember"),
             ("x" * 501, None, "at most 500 characters"),
             ("a\x00b", None, "control characters"),
+            ("Lives in \u202eStockholm.", None, "invisible ones"),
+            ("Likes\u200btea.", None, "invisible ones"),
+            ("Likes \x9b31mtea.", None, "invisible ones"),
             (["Lives in Stockholm.", "Likes tea."], None, "as text"),
             ("fine", "thread", "scope must be workspace"),
         ]:
@@ -142,6 +149,31 @@ def test_save_keeps_one_short_fact_in_the_scope_asked_for(api, tmp_path):
         ):
             await r.op_memories(CHAT, "save", "one too many", "global")
         assert len(api.memories) == 6
+
+    asyncio.run(main())
+
+
+def test_save_doesnt_take_a_slot_for_what_a_memory_already_says(api, tmp_path):
+    api.add("Lives in Stockholm.", scope="global")
+    api.add("Prefers\nmetric units.")
+
+    async def main():
+        r = make(api, tmp_path)
+        for text, scope, same in [
+            ("lives in  stockholm.", "global", "1 (global)"),
+            ("Lives in Stockholm.", None, "1 (global)"),
+            ("Prefers metric units.", None, "2 (workspace)"),
+        ]:
+            assert await r.op_memories(CHAT, "save", text, scope) == (
+                f"Memory {same} already says that: {' '.join(text.split())}"
+            )
+        assert len(api.memories) == 2
+        # A workspace's fact asked for globally is saved: global is what was asked.
+        text = await r.op_memories(CHAT, "save", "Prefers metric units.", "global")
+        assert text.startswith("Saved memory 3 for every workspace's chats")
+        # Memories from the UI or AnythingLLM's own extraction show on one line.
+        listing = await r.op_memories(CHAT)
+        assert "- 2 (workspace, last used never): Prefers metric units." in listing
 
     asyncio.run(main())
 
@@ -165,6 +197,7 @@ def test_forget_deletes_at_once_gives_the_text_back_and_only_this_workspaces(
             (None, "give the id of the memory to forget"),
             (True, "give the id of the memory to forget"),
             (theirs + 0.5, "give the id of the memory to forget"),
+            ("1_2", "give the id of the memory to forget"),
         ]:
             with pytest.raises(RunnerError, match=error):
                 await r.op_memories(CHAT, "forget", memory_id=memory_id)
@@ -183,6 +216,8 @@ def test_memories_are_a_chats_and_say_when_theyre_turned_off(api, tmp_path):
         assert api.calls == []
         with pytest.raises(RunnerError, match="action must be list, save or forget"):
             await r.op_memories(CHAT, "edit")
+        with pytest.raises(RunnerError, match="AnythingLLM has no workspace 'gone'"):
+            await r.op_memories({"workspace": "gone"}, "save", "Likes tea.")
         api.enabled = False
         with pytest.raises(AnythingLLMError, match="Personalization is disabled"):
             await r.op_memories(CHAT)

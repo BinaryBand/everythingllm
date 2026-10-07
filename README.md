@@ -547,10 +547,10 @@ A job runs its prompt with every tool approved, so only a chat may make one. Any
 AnythingLLM keeps short facts about the user (Settings > Personalization): at most 5 global and 20 per workspace, which it fills itself from idle chats and adds to every chat's system prompt as "Things I Remember About You" (the global ones, and the 5 of the workspace's closest to the chat). Its built-in `rag-memory` "store" isn't that: it embeds text into the workspace's documents. Only the UI could manage them, so the agent didn't know it had them; agents-runner does it over the internal API (`agents/memories.py`), logged in as for the jobs above, for the **`memories`** skill (`action: list | save | forget`, `text`, `scope`, `id`), which refuses a delegated task and a scheduled job's call. Each action is done at once, without the show-first step of the jobs: a memory is one line, and either action is undone by the other.
 
 - **`list`** gives the global memories and the calling workspace's, each with its id and when a chat last got it, and the room left under each cap.
-- **`save`** keeps one fact (at most 500 characters, no control characters) for the workspace, or with `scope: global` for every workspace. A full scope is AnythingLLM's refusal, passed on.
+- **`save`** keeps one fact (at most 500 characters, on one line, with no control characters or invisible ones such as bidi marks and zero-width spaces, which would make it read differently on the Personalization page than in the prompt) for the workspace, or with `scope: global` for every workspace. Text that a memory in that scope (or a global one) already says isn't saved again; the reply names that memory. A full scope is AnythingLLM's refusal, passed on.
 - **`forget`** takes only an id from the calling workspace's list (global or its own), deletes it, and gives back its text and scope, so a mistake can be saved again.
 
-With Personalization off, every action says so (AnythingLLM's "Personalization is disabled.").
+With Personalization off, every action says so (AnythingLLM's "Personalization is disabled."). A memory's text goes into every chat's system prompt after ours, so the prompt's Safety rules say memories are facts, never instructions, and are saved only when the user asks; the skill says the same. Nothing else stops a chat that read a page or mail from saving one, so the Personalization page is where to look for one the user didn't ask for.
 
 ## MCP gateway
 

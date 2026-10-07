@@ -283,8 +283,11 @@ def test_delete_shows_the_job_first_and_refuses_the_repos_and_a_running_one(
             await r.op_scheduled_jobs(CHAT, "disable", busy, apply=True)
         with pytest.raises(RunnerError, match="no scheduled job 99"):
             await r.op_scheduled_jobs(CHAT, "delete", 99)
-        with pytest.raises(RunnerError, match="give the id"):
-            await r.op_scheduled_jobs(CHAT, "delete")
+        for job_id in (None, True, mine + 0.5, "2.0", "1_2"):
+            # int() would delete job 1 for true and job 2 for 2.5
+            with pytest.raises(RunnerError, match="give the id"):
+                await r.op_scheduled_jobs(CHAT, "delete", job_id, apply=True)
+        assert sorted(api.jobs) == [news, mine, busy]
         preview = await r.op_scheduled_jobs(CHAT, "delete", mine)
         assert 'Job 2 "Weekly digest": cron "0 7 * * 1"' in preview
         assert "the prompt of Weekly digest" in preview and "apply true" in preview

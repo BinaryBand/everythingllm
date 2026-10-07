@@ -283,16 +283,18 @@ class InternalAPI:
         await self.call("PUT", f"/scheduled-jobs/{int(job_id)}", {"enabled": False})
 
     async def memories(self, slug: str) -> dict[str, list[dict]]:
-        """The saved memories a chat in `slug` gets: {global: [...], workspace: [...]},
-        each newest first."""
-        reply = await self.call("GET", f"/workspaces/{quote(slug)}/memories") or {}
+        """The saved memories for `slug`: {global: [...], workspace: [...]}, each newest
+        first (a chat gets every global one and up to 5 of the workspace's)."""
+        reply = (
+            await self.call("GET", f"/workspaces/{quote(slug, safe='')}/memories") or {}
+        )
         found = reply.get("memories") or {}
         return {k: found.get(k) or [] for k in ("global", "workspace")}
 
     async def memory_new(self, slug: str, content: str, scope: str) -> dict:
         reply = await self.call(
             "POST",
-            f"/workspaces/{quote(slug)}/memories",
+            f"/workspaces/{quote(slug, safe='')}/memories",
             {"content": content, "scope": scope},
         )
         return created(reply, "memory", "save it")

@@ -67,6 +67,19 @@ def zone(name: str) -> ZoneInfo:
         ) from None
 
 
+def whole_number(value: Any) -> int | None:
+    """An id the model gave, as an int: a whole number, or its digits as text; None for
+    anything else, since int() would make true 1 and 12.7 12, and act on that one."""
+    if isinstance(value, str):
+        value = value.strip()
+        return int(value) if re.fullmatch(r"[0-9]{1,18}", value) else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None  # also inf and nan
+    return int(value)
+
+
 def when(text: Any) -> datetime | None:
     """A time AnythingLLM gives ("2026-10-07T12:05:00.000Z"), or None."""
     if not text:
@@ -320,12 +333,11 @@ class ScheduledJobs:
     async def act(self, action: str, job_id: Any, apply: bool) -> str:
         if action not in ("delete", "disable"):
             raise RunnerError("action must be list, delete or disable")
-        try:
-            job_id = int(job_id)
-        except (TypeError, ValueError):
+        job_id = whole_number(job_id)
+        if job_id is None:
             raise RunnerError(
                 f"give the id of the job to {action} (scheduled-jobs list shows them)"
-            ) from None
+            )
         try:
             job = await self.client.job(job_id)
         except NotFound:

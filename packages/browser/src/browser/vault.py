@@ -8,10 +8,15 @@ login saved in `career` is never `education`'s. Each file is AES-GCM with a key 
 from the data dir and its backups (`key_file`, made on first use), and the workspace's name
 as associated data, so one workspace's file can't stand in for another's.
 
-A login: {id, site, username, password, totp, ask, added, used}. `site` is a host name
+An entry has a `kind`; a login (`kind` "login", or none, as entries were saved before
+kinds): {id, kind, site, username, password, totp, ask, added, used}. `site` is a host name
 (browser.origin); `totp` an optional base32 2FA secret, from which the runner makes the
 current code; `ask` whether the user wants to approve each use. What leaves the vault for
 anyone but the driver is `public()`: no password, no secret.
+
+A vault keeps only secrets the runner has a way to use without the agent reading them: a
+login goes into fields on its own site, and nothing else is kept until it has a way of its
+own.
 """
 
 from __future__ import annotations
@@ -88,6 +93,7 @@ def public(login: dict[str, Any]) -> dict[str, Any]:
     """What may be shown of a login: never its password or 2FA secret."""
     return {
         "id": login["id"],
+        "kind": login.get("kind", "login"),
         "site": login["site"],
         "username": login["username"],
         "totp": bool(login.get("totp")),
@@ -151,7 +157,10 @@ class Vault:
             raise VaultError(
                 f"{self.file(workspace)} doesn't open with {self.key_file} (another key, or not this workspace's)"
             ) from None
-        return json.loads(plain)
+        entries = json.loads(plain)
+        for entry in entries:
+            entry.setdefault("kind", "login")
+        return entries
 
     def save(self, workspace: str, logins: list[dict[str, Any]]) -> None:
         nonce = secrets.token_bytes(12)
@@ -186,12 +195,17 @@ class Vault:
     def logins(self, workspace: str) -> list[dict[str, Any]]:
         return [public(login) for login in self.load(workspace)]
 
-    def get(self, workspace: str, login_id: str) -> dict[str, Any]:
+    def get(
+        self, workspace: str, login_id: str, kind: str | None = None
+    ) -> dict[str, Any]:
+        """The entry `login_id`, of `kind` if one is given."""
         login = next((x for x in self.load(workspace) if x["id"] == login_id), None)
         if login is None:
             raise VaultError(
                 f"there's no saved login '{login_id}' in this workspace; list them first"
             )
+        if kind is not None and login["kind"] != kind:
+            raise VaultError(f"'{login_id}' is a {login['kind']}, not a {kind}")
         return login
 
     def add(
@@ -219,14 +233,21 @@ class Vault:
         secret = totp_secret(totp) if totp else ""
         with self.changing(workspace) as logins:
             login = next(
-                (x for x in logins if x["site"] == site and x["username"] == username),
+                (
+                    x
+                    for x in logins
+                    if x["kind"] == "login"
+                    and x["site"] == site
+                    and x["username"] == username
+                ),
                 None,
             )
             if login is None:
                 if len(logins) >= MAX_LOGINS:
                     raise VaultError(f"a workspace keeps at most {MAX_LOGINS} logins")
-                login = {"id": secrets.token_hex(4), "site": site, "username": username,
-                         "added": time.strftime("%Y-%m-%d"), "used": ""}  # fmt: skip
+                login = {"id": secrets.token_hex(4), "kind": "login", "site": site,
+                         "username": username, "added": time.strftime("%Y-%m-%d"),
+                         "used": ""}  # fmt: skip
                 logins.append(login)
             if password:
                 login["password"] = password

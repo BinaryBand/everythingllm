@@ -26,8 +26,9 @@ def test_a_saved_login_is_sealed_and_comes_back_only_for_its_workspace(vault, tm
         "hunter2",
         ask=True,
     )
-    assert saved == {"id": saved["id"], "site": "linkedin.com", "username": "alice@example.com",
-                     "totp": False, "ask": True, "used": ""}  # fmt: skip
+    assert saved == {"id": saved["id"], "kind": "login", "site": "linkedin.com",
+                     "username": "alice@example.com", "totp": False, "ask": True,
+                     "used": ""}  # fmt: skip
     raw = vault.file("career").read_bytes()
     assert b"hunter2" not in raw and b"alice" not in raw and raw.startswith(b"bwv1")
     assert stat.S_IMODE(os.stat(vault.file("career")).st_mode) == 0o600
@@ -112,9 +113,27 @@ def test_public_never_has_the_secrets():
     )
     assert "p" not in shown.values() and "S" not in shown.values()
     assert (
-        set(shown) == {"id", "site", "username", "totp", "ask", "used"}
+        set(shown) == {"id", "kind", "site", "username", "totp", "ask", "used"}
         and shown["totp"] is True
+        and shown["kind"] == "login"
     )
+
+
+def test_logins_saved_before_kinds_open_as_logins(vault):
+    vault.save("career", [{"id": "ab12cd34", "site": "x.com", "username": "a",
+                           "password": "p", "ask": False, "added": "", "used": ""}])  # fmt: skip
+    assert vault.logins("career")[0]["kind"] == "login"
+    assert vault.get("career", "ab12cd34", "login")["password"] == "p"
+    assert vault.add("career", "x.com", "a", "new")["id"] == "ab12cd34"
+
+
+def test_an_entry_is_used_only_as_its_kind(vault):
+    vault.save("career", [{"id": "ab12cd34", "kind": "passkey", "site": "x.com",
+                           "username": "a", "ask": True, "added": "", "used": ""}])  # fmt: skip
+    with pytest.raises(VaultError, match="is a passkey, not a login"):
+        vault.get("career", "ab12cd34", "login")
+    # A login of the same site and username is another entry, not the passkey changed.
+    assert vault.add("career", "x.com", "a", "p")["id"] != "ab12cd34"
 
 
 def test_2fa_codes_are_rfc_6238s():

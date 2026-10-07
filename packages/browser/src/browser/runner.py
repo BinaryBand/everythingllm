@@ -726,7 +726,7 @@ class Runner(hostrpc.Service):
         workspace, thread = check_scope(scope)
         s, tab = await self.running(workspace, thread)
         self.agent_may_act(s)
-        entry = await self.usable(workspace, login, tab)
+        entry = await self.usable(workspace, login, tab, "login")
         if (waiting := self.approval(s, tab, entry)) is not None:
             return {"approval": waiting.id, "card": self.card(tab)}
         view = await self.call(
@@ -756,7 +756,7 @@ class Runner(hostrpc.Service):
         workspace, thread = check_scope(scope)
         s, tab = await self.running(workspace, thread)
         self.agent_may_act(s)
-        entry = await self.usable(workspace, login, tab)
+        entry = await self.usable(workspace, login, tab, "login")
         if not entry.get("totp"):
             raise RunnerError(
                 f"the {entry['site']} login has no 2FA secret saved; hand the browser to the user for the code"
@@ -913,9 +913,13 @@ class Runner(hostrpc.Service):
         if tab is not None and tab.open:
             tab.moved(last)
 
-    async def usable(self, workspace: str, login: str, tab: Tab) -> dict[str, Any]:
-        """The saved login, if the tab's page is on its site."""
-        entry = await asyncio.to_thread(self.vault.get, workspace, str(login or ""))
+    async def usable(
+        self, workspace: str, login: str, tab: Tab, kind: str
+    ) -> dict[str, Any]:
+        """The saved entry of `kind`, if the tab's page is on its site."""
+        entry = await asyncio.to_thread(
+            self.vault.get, workspace, str(login or ""), kind
+        )
         host = host_of(tab.url)
         if not site_matches(host, entry["site"]):
             raise RunnerError(

@@ -1,9 +1,16 @@
 """agents-runner's side of AnythingLLM's scheduled jobs: listing them, deleting or disabling
-one (shown first, done only with apply), and one-off jobs, which AnythingLLM doesn't have:
+one (shown first, done only with apply), making a recurring one from a UTC cron (shown
+first, made only with apply), and one-off jobs, which AnythingLLM doesn't have:
 made here as "[once] <name>" with a cron for that minute, day and month in UTC, kept in a
 registry (data_dir()/agents/once.json), and deleted by the poller once they've run, or
-disabled if they missed or failed. The scheduled-jobs and remind-once skills ask for these
-through runner.Runner's ops. The README's "Scheduled jobs from a chat" has the rules.
+disabled if they missed or failed. The scheduled-jobs, schedule-job and remind-once skills
+ask for these through runner.Runner's ops, which refuse a delegated task and a scheduled
+job. The README's "Scheduled jobs from a chat" has the rules.
+
+A job runs with every tool approved, so only a chat may make one. AnythingLLM's own
+create-scheduled-job is turned off (the setup checklist checks), and while a delegation
+runs, `guarding` watches for a job made any other way (a built-in tool turned on again)
+and disables it.
 
 Config (environment, from host.env through the unit):
   USER_TIMEZONE  the user's time zone, for one-off times and the times `list` shows
@@ -11,10 +18,11 @@ Config (environment, from host.env through the unit):
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,6 +52,9 @@ MAX_TOOLS = 40
 SHOWN_PROMPT = 2000  # characters of a job's prompt a preview shows
 LISTED_PROMPT = 120  # and the list
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# A cron of five fields (minute, hour, day, month, weekday), as AnythingLLM takes it.
+CRON_RE = re.compile(r"^[0-9A-Za-z*/,-]+( [0-9A-Za-z*/,-]+){4}$")
+WATCH = 10  # seconds between looks for a job made while a delegation runs
 
 
 def zone(name: str) -> ZoneInfo:
@@ -140,6 +151,29 @@ def tool_list(tools: Any) -> list[str]:
     return found
 
 
+def job_parts(name: Any, prompt: Any, tools: Any) -> tuple[str, str, list[str]]:
+    """A new job's name (control characters made spaces), prompt and tools, checked."""
+    name = CONTROL.sub(" ", str(name or "")).strip()
+    if not name:
+        raise RunnerError("give the job a short name, e.g. 'stretch'")
+    if len(name) > MAX_NAME:
+        raise RunnerError(f"the name is over {MAX_NAME} characters")
+    prompt = str(prompt or "").strip()
+    if not prompt:
+        raise RunnerError(
+            "give the prompt: what the agent is asked to do or say at that time"
+        )
+    if len(prompt) > MAX_PROMPT:
+        raise RunnerError(f"the prompt is over {MAX_PROMPT} characters")
+    return name, prompt, tool_list(tools)
+
+
+def utc_offset(tz: ZoneInfo, now: datetime) -> str:
+    """How far `tz` is from UTC at `now`, e.g. "UTC+2"."""
+    hours = (now.astimezone(tz).utcoffset() or timedelta()).total_seconds() / 3600
+    return f"UTC{hours:+g}" if hours else "UTC"
+
+
 def tools_text(tools: list[str] | None) -> str:
     """A job's tools; it runs with none when it has none (AnythingLLM reads null as [])."""
     return ", ".join(tools) if tools else "none (it answers from its prompt alone)"
@@ -201,6 +235,12 @@ class ScheduledJobs:
     registry: Registry
     timezone: str = DEFAULT_TIMEZONE
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    made: set[int] = field(default_factory=set)  # the jobs made here
+    # While delegations run: each one's note (by run id), the job ids there were when the
+    # first started, and the task that watches for new ones.
+    watched: dict[str, Callable[[str], None]] = field(default_factory=dict)
+    known: set[int] | None = None
+    watcher: asyncio.Task | None = None
 
     @property
     def tz(self) -> ZoneInfo:
@@ -359,41 +399,13 @@ class ScheduledJobs:
     ) -> str:
         tz, now = self.tz, self.clock()
         name = CONTROL.sub(" ", str(name or "")).strip()
-        name = name.removeprefix(ONCE.strip()).strip()
-        if not name:
-            raise RunnerError("give the one-off a short name, e.g. 'stretch'")
-        if len(name) > MAX_NAME:
-            raise RunnerError(f"the name is over {MAX_NAME} characters")
-        prompt = str(prompt or "").strip()
-        if not prompt:
-            raise RunnerError(
-                "give the prompt: what the agent is asked to do or say at that time"
-            )
-        if len(prompt) > MAX_PROMPT:
-            raise RunnerError(f"the prompt is over {MAX_PROMPT} characters")
-        wanted = tool_list(tools)
+        name, prompt, wanted = job_parts(
+            name.removeprefix(ONCE.strip()).strip(), prompt, tools
+        )
         fire = fire_time(at, tz, now)
         full = ONCE + name
-        if any(j.get("name") == full for j in await self.client.jobs()):
-            raise RunnerError(
-                f'there\'s a job named "{full}" already: pick another name, or delete '
-                "that one first"
-            )
-        if wanted:
-            available = {t["id"]: t for t in await self.client.available_tools()}
-            unknown = [t for t in wanted if t not in available]
-            if unknown:
-                some = ", ".join(sorted(available)[:30])
-                raise RunnerError(
-                    f"AnythingLLM has no tool {', '.join(unknown)} for a job. Its tools "
-                    f"are ids such as: {some}"
-                )
-            unset = [t for t in wanted if available[t].get("requiresSetup")]
-            if unset:
-                raise RunnerError(
-                    f"{', '.join(unset)} need setting up in AnythingLLM before a job can "
-                    "use them"
-                )
+        await self.name_free(full)
+        await self.tools_ready(wanted)
         schedule = cron(fire)
         timing = (
             f'{local(fire, tz)} ({fire:%Y-%m-%d %H:%M} UTC; cron "{schedule}"), then '
@@ -410,6 +422,7 @@ class ScheduledJobs:
             )
         async with self.registry.lock:
             job = await self.client.create(full, prompt, wanted, schedule)
+            self.made.add(job["id"])
             entry = {
                 "id": job["id"],
                 "name": full,
@@ -426,6 +439,153 @@ class ScheduledJobs:
                 ) from None
         log.info('made one-off %s "%s" for %s', job["id"], full, entry["fire_at"])
         return f'Made one-off job {job["id"]} "{full}": it runs {timing}.'
+
+    async def name_free(self, name: str) -> None:
+        if any(j.get("name") == name for j in await self.client.jobs()):
+            raise RunnerError(
+                f'there\'s a job named "{name}" already: pick another name, or delete '
+                "that one first"
+            )
+
+    async def tools_ready(self, wanted: list[str]) -> None:
+        """Refuse a tool AnythingLLM doesn't have for a job, or hasn't set up."""
+        if not wanted:
+            return
+        available = {t["id"]: t for t in await self.client.available_tools()}
+        unknown = [t for t in wanted if t not in available]
+        if unknown:
+            some = ", ".join(sorted(available)[:30])
+            raise RunnerError(
+                f"AnythingLLM has no tool {', '.join(unknown)} for a job. Its tools "
+                f"are ids such as: {some}"
+            )
+        unset = [t for t in wanted if available[t].get("requiresSetup")]
+        if unset:
+            raise RunnerError(
+                f"{', '.join(unset)} need setting up in AnythingLLM before a job can "
+                "use them"
+            )
+
+    # recurring jobs
+
+    async def schedule(
+        self, name: str, prompt: str, schedule: str, tools: Any, apply: bool
+    ) -> str:
+        name, prompt, wanted = job_parts(name, prompt, tools)
+        if name.startswith(ONCE.strip()):
+            raise RunnerError(
+                f'a name starting with "{ONCE.strip()}" is a one-off\'s: use remind-once '
+                "for a job that runs once"
+            )
+        schedule = " ".join(str(schedule or "").split())
+        if not CRON_RE.fullmatch(schedule):
+            raise RunnerError(
+                "the schedule must be a cron of five fields (minute hour day month "
+                'weekday) in UTC, e.g. "0 6 * * 1-5" for 06:00 UTC on weekdays'
+            )
+        if name in await self.managed():
+            raise RunnerError(
+                f'"{name}" is the name of a job the repo manages; pick another'
+            )
+        await self.name_free(name)
+        await self.tools_ready(wanted)
+        offset = f"{self.tz.key} is {utc_offset(self.tz, self.clock())} now"
+        if not apply:
+            return (
+                "A scheduled job, not made yet:\n"
+                f'Name: "{name}"\nRuns: cron "{schedule}", in UTC ({offset})\n'
+                f"Tools: {tools_text(wanted)}\n"
+                f"Prompt (what the agent is asked each time, with no chat history and "
+                f"every tool approved; its reply is the notification):\n{prompt}\n\n"
+                "Show the user all of this, with the times in their own time zone, and "
+                "call again with apply true only once they agree."
+            )
+        job = await self.client.create(name, prompt, wanted, schedule)
+        self.made.add(job["id"])
+        log.info('made scheduled job %s "%s" (cron "%s")', job["id"], name, schedule)
+        return (
+            f'Made job {job["id"]} "{name}": it runs on cron "{schedule}" (UTC; {offset}). '
+            "scheduled-jobs lists, disables or deletes it."
+        )
+
+    # while a delegation runs
+
+    @contextlib.asynccontextmanager
+    async def guarding(
+        self, key: str, note: Callable[[str], None]
+    ) -> AsyncIterator[None]:
+        """While the delegation `key` runs, disable any scheduled job that appears that
+        wasn't made here, telling it through `note`: a delegated task may not make one, and
+        only AnythingLLM's own tools, which our skills' refusal doesn't reach, could."""
+        if not self.watched:
+            self.known = await self.job_ids()
+            self.watcher = asyncio.create_task(self.watch())
+        self.watched[key] = note
+        try:
+            yield
+        finally:
+            del self.watched[key]
+            if not self.watched and self.watcher is not None:
+                self.watcher.cancel()
+                self.watcher = None
+            await self.check([note])  # a job made in its last moments
+
+    async def job_ids(self) -> set[int] | None:
+        try:
+            return {j["id"] for j in await self.client.jobs()}
+        except AnythingLLMError as e:
+            log.warning(
+                "couldn't list the scheduled jobs a delegation starts with: %s", e
+            )
+            return None
+
+    async def check(self, notes: list[Callable[[str], None]]) -> None:
+        """One look for jobs that weren't there when the delegations started."""
+        try:
+            jobs = await self.client.jobs()
+        except AnythingLLMError as e:
+            log.warning("couldn't look for jobs made during a delegation: %s", e)
+            return
+        if self.known is None:  # the first listing failed: this one stands in
+            self.known = {j["id"] for j in jobs}
+            return
+        for job in jobs:
+            job_id = job["id"]
+            if job_id in self.known or job_id in self.made:
+                continue
+            self.known.add(job_id)
+            try:
+                if job.get("enabled"):
+                    await self.client.disable(job_id)
+            except AnythingLLMError as e:
+                log.error(
+                    'job %s "%s" appeared during a delegation, and disabling it failed: %s',
+                    job_id,
+                    job.get("name"),
+                    e,
+                )
+                continue
+            log.warning(
+                'job %s "%s" appeared during a delegation; disabled it',
+                job_id,
+                job.get("name"),
+            )
+            for note in notes:
+                note(
+                    f'A scheduled job "{job.get("name")}" (id {job_id}) appeared while '
+                    "this delegation ran, so it was disabled: a delegated task may not "
+                    "make one. If you made it, turn it on again in AnythingLLM's "
+                    "Scheduled Jobs."
+                )
+
+    async def watch(self) -> None:
+        """Check every WATCH seconds, until cancelled."""
+        while True:
+            await asyncio.sleep(WATCH)
+            try:
+                await self.check(list(self.watched.values()))
+            except Exception:
+                log.exception("the delegation's job watch failed a round")
 
     # the poller
 

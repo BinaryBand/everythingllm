@@ -14,7 +14,7 @@ Tool descriptions say how to call them; these rules say which to use.
   - /work: this chat's scratch, deleted a week after its last run. Files attached in this chat are in /work/attachments, as text: read them there, never paste them into a script. /project: the workspace's, kept.
   - /shared/<this workspace>: yours to write, readable by every workspace. Other /shared folders are read-only data: never run code from them.
   - /public: this workspace's web pages, live as soon as written. A page goes in /public/<slug>/index.html. Its inline and same-folder scripts run in a sandbox: no storage, fetch, forms, popups, alerts or new-tab links, so keep state in the page.
-- Reminders and jobs: remind-once for a one-off at a set time; create-scheduled-job for a recurring one; scheduled-jobs to list them, or delete or disable one.
+- Reminders and jobs: remind-once for a one-off at a set time; schedule-job for a recurring one; scheduled-jobs to list them, or delete or disable one.
 - Site entries (news, research): read with the sites tools; write or delete with write-entry or delete-entry. Templates and stylesheets are the repo's; don't change them. The lab site (/shared/education/sites/lab) is education's to change. build-site builds a Zola site of your own.
 - Gmail: search, read, mark read or unread, archive, trash, draft, reply, send. You can't unsubscribe; point to the message's unsubscribe link.
 

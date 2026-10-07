@@ -292,6 +292,32 @@ def test_a_client_cancels_only_its_own_delegations(fake, tmp_path):
     asyncio.run(main())
 
 
+def test_a_delegation_runs_inside_the_scheduled_jobs_guard(fake, tmp_path):
+    """runner.main turns the guard on (start_poller); its tasks run inside it, and what
+    it notes goes on the delegation's events."""
+    import contextlib
+
+    entered: list[str] = []
+
+    class Jobs:
+        @contextlib.asynccontextmanager
+        async def guarding(self, key, note):
+            entered.append(key)
+            yield
+            note("a job appeared")
+
+    async def main():
+        r = make(fake, tmp_path)
+        r.jobs, r.guard_jobs = Jobs(), True
+        task = [{"name": "a", "profile": "worker", "instructions": "x"}]
+        started = await r.op_delegate("g", task)
+        await finish(r, started["run_id"])
+        assert entered == [started["run_id"]]
+        assert "a job appeared" in r.runs[started["run_id"]].events
+
+    asyncio.run(main())
+
+
 def test_what_a_delegation_refuses(fake, tmp_path):
     async def main():
         r = make(fake, tmp_path)

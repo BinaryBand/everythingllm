@@ -25,7 +25,8 @@ Then it does the following:
 6. runs `uv run hostctl health`, which checks the machine's routes (see "The machine's routes")
 7. ends with a checklist of what only AnythingLLM's UI can do. Each item is ticked when
    it's already done: the chat model and embedder, a DeepSeek key, the agent limits in the
-   `.env`, the machine's routes answering, SearXNG answering, a workspace, the built-in skills to turn off, Gmail.
+   `.env`, create-scheduled-job off and no job or file tool running without asking, the
+   machine's routes answering, SearXNG answering, a workspace, the built-in skills to turn off, Gmail.
 
 Every step only changes what's out of date, so running it again is safe.
 
@@ -231,9 +232,10 @@ through its UI.
   - `update-prompt/` — refreshes the calling workspace's EverythingLLM block in its system
     prompt (below), through `agents-runner`'s `update_prompt`; it shows what would change
     first and writes only with `apply`
-  - `scheduled-jobs/`, `remind-once/` — list, delete or disable AnythingLLM's scheduled
-    jobs, and set one-off jobs that are deleted once they've run, through `agents-runner`
-    (see "Scheduled jobs from a chat"); each shows first and acts only with `apply`
+  - `scheduled-jobs/`, `schedule-job/`, `remind-once/` — list, delete or disable
+    AnythingLLM's scheduled jobs, make a recurring one, and set one-off jobs that are
+    deleted once they've run, through `agents-runner` (see "Scheduled jobs from a chat");
+    each shows first and acts only with `apply`
   - `write-entry/`, `delete-entry/` — the ops of the sites runner that write. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
     to its runner (`forwardSkill` in `_lib/runner.js`). They're generated: each is declared
@@ -1300,7 +1302,15 @@ unused). It also serves `update_prompt` and the scheduled jobs' `scheduled_jobs`
   since AnythingLLM has no price for generic-openai, the planner's provider.
 - **Containment.** Every tool loads in a headless run, so every skill of ours that writes,
   acts or delegates refuses a call from an `agents-*` workspace (`_lib/delegated.js`, held
-  by a test). A task can read and report; it can't write, run code or delegate again.
+  by a test). AnythingLLM's built-in tools load there too, and our refusal doesn't reach
+  them, so the ones that would let a task act later or plant text are kept from it by
+  settings that the setup checklist checks (the end of `uv run hostctl install`, or
+  `python3 -m hostctl.machine checklist` from `packages/hostctl/src`): create-scheduled-job is off
+  (`schedule-job` makes jobs instead, and agents-runner disables a job that appears during
+  a delegation; see "Scheduled jobs from a chat"), and it and the filesystem write tools
+  aren't among the tools that run without asking. With those, a task can read and report;
+  it can't write, run code, make a job or delegate again. Gmail's tools, if connected,
+  are AnythingLLM's and load there as well.
 - **The live card** is served on 127.0.0.1:8451 (`AGENTS_LIVE_PORT`) and routed by the machine from
   `https://<PUBLIC_HOST>:8445/_live/agents/`. Its page shows the
   progress, and every task's reply once the delegation is done, escaped and under a CSP
@@ -1323,12 +1333,15 @@ unused). It also serves `update_prompt` and the scheduled jobs' `scheduled_jobs`
 
 ### Scheduled jobs from a chat
 
-AnythingLLM's own tool makes repeating jobs, but can't list, delete or make a job that
-runs once: its cron is five fields in UTC, and a "one-off" set with it repeats every year.
-agents-runner fills that in (`agents/jobs.py`) over AnythingLLM's internal API, logged in
-with its password from storage's `.env` (`ANYTHINGLLM_ENV` names another), for two skills.
-Both refuse a delegated task and a scheduled job's call, show what they'd do, and act only
-when called again with `apply: true`, after the user agrees.
+A job runs its prompt with every tool approved, so only a chat may make one. AnythingLLM's
+own tool for it, create-scheduled-job, is turned off: a delegated task can reach
+AnythingLLM's built-in tools, which our refusal doesn't cover (see "Delegation",
+Containment), and it can't list, delete or make a job that runs once either (its cron is
+five fields in UTC, and a "one-off" set with it repeats every year). agents-runner does it
+instead (`agents/jobs.py`) over AnythingLLM's internal API, logged in with its password
+from storage's `.env` (`ANYTHINGLLM_ENV` names another), for three skills. Each refuses a
+delegated task and a scheduled job's call, shows what it'd do, and acts only when called
+again with `apply: true`, after the user agrees.
 
 - **`scheduled-jobs`** (`action: list | delete | disable`, `id`, `apply`) lists every job:
   its cron (UTC), its next and last run in the user's time zone (`USER_TIMEZONE` in
@@ -1336,6 +1349,10 @@ when called again with `apply: true`, after the user agrees.
   and a missed one. Delete and disable take any job the repo doesn't manage (its names
   are `anythingllm/scheduled-jobs/*/job.json`'s), and never one with a run queued or
   going: AnythingLLM stops a running run when its job is deleted or changed.
+- **`schedule-job`** (`name`, `prompt`, `schedule`, `tools`, `apply`) makes a recurring job
+  on `schedule`, a five-field cron in UTC; the preview says how far the user's time zone is
+  from UTC now, for the agent to show the times in it. It refuses a name in use, one of the
+  repo's jobs' or starting `[once]`, and a tool as `remind-once` does.
 - **`remind-once`** (`name`, `prompt`, `tools`, `at`, `apply`) makes `[once] <name>`, a job
   whose cron is that minute, day and month in UTC, from `at`, the user's local date-time.
   It refuses a time that has passed or is under a minute away, one more than 364 days
@@ -1352,6 +1369,11 @@ when called again with `apply: true`, after the user agrees.
   since its cron would run it again a year on, then kept (its result stays readable),
   logged once and listed as such, and the agent offers to delete it. A run started by hand before `fire_at` doesn't count. While the registry is
   empty, the poller reads the file and nothing else.
+- **The guard during delegations.** While a delegation runs, agents-runner lists the jobs
+  every 10 s, and disables any job that wasn't there when it started and wasn't made by
+  these skills, saying so in the delegation's events and its log: with create-scheduled-job
+  off nothing else should make one, so this catches the tool turned on again. A job made
+  by hand in the UI meanwhile is disabled too; turn it on again there.
 
 ## MCP gateway
 

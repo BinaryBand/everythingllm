@@ -22,6 +22,9 @@ delegations are its own, and it sees and cancels no others (runs.service).
                           list AnythingLLM's scheduled jobs, or delete or disable one the repo
                           doesn't manage, shown first and done only with apply (the
                           scheduled-jobs skill; agents.jobs)
+  schedule_job(scope, name, prompt, schedule, tools=[], apply=False)
+                          a recurring job on a UTC cron, shown first and made only with apply
+                          (the schedule-job skill; agents.jobs)
   remind_once(scope, name, prompt, at, tools=[], apply=False)
                           a one-off job at a local date-time, shown first and made only with
                           apply, and deleted by the poller once it has run (the remind-once
@@ -62,6 +65,7 @@ Config (environment, from host.env and agents.env through the unit):
 """
 
 import asyncio
+import contextlib
 import difflib
 import html
 import logging
@@ -312,6 +316,9 @@ class Runner(RunService):
         self.internal = internal
         self.jobs: ScheduledJobs | None = None  # scheduled() makes it
         self.poller: asyncio.Task | None = None
+        self.guard_jobs = (
+            False  # watch for jobs made during a delegation (start_poller)
+        )
         self.task_slots = asyncio.Semaphore(settings.slots)
         self.cancelled: set[str] = set()
         self.ready = False  # the profiles' workspaces are set up
@@ -335,7 +342,9 @@ class Runner(RunService):
         return self.jobs
 
     def start_poller(self) -> None:
-        """Watch the one-offs made here (only runner.main does, so tests don't)."""
+        """Watch the one-offs made here, and for jobs made while a delegation runs (only
+        runner.main does, so tests don't)."""
+        self.guard_jobs = True
         if self.poller is None:
             self.poller = asyncio.create_task(self.scheduled().poll())
 
@@ -414,6 +423,18 @@ class Runner(RunService):
         if (action or "list") == "list":
             return await self.scheduled().listing()
         return await self.scheduled().act(action, job_id, apply)
+
+    async def op_schedule_job(
+        self,
+        scope: dict,
+        name: str,
+        prompt: str,
+        schedule: str,
+        tools: list | str | None = None,
+        apply: bool = False,
+    ) -> str:
+        chat_only(scope, "make a scheduled job")
+        return await self.scheduled().schedule(name, prompt, schedule, tools, apply)
 
     async def op_remind_once(
         self,
@@ -523,19 +544,25 @@ class Runner(RunService):
                     note(f"{task.name}: failed: {outcome.error}")
                 return outcome
 
-            outcomes = list(
-                await asyncio.gather(
-                    *(one(t, self.message(run.subject, t)) for t in tasks)
-                )
+            guard = (
+                self.scheduled().guarding(run.id, note)
+                if self.guard_jobs
+                else contextlib.nullcontext()
             )
-            last = None
-            if then and run.id not in self.cancelled:
-                if any(o.status == "ok" for o in outcomes):
-                    last = await one(
-                        then, self.then_message(run.subject, outcomes, then)
+            async with guard:
+                outcomes = list(
+                    await asyncio.gather(
+                        *(one(t, self.message(run.subject, t)) for t in tasks)
                     )
-                else:
-                    note("then: skipped, since no task finished.")
+                )
+                last = None
+                if then and run.id not in self.cancelled:
+                    if any(o.status == "ok" for o in outcomes):
+                        last = await one(
+                            then, self.then_message(run.subject, outcomes, then)
+                        )
+                    else:
+                        note("then: skipped, since no task finished.")
             result = self.summary(run, outcomes, last)
         except Exception as e:  # whatever happens, the run log gets its line
             if not isinstance(e, AnythingLLMError):

@@ -451,3 +451,100 @@ def test_only_main_starts_the_poller_and_closing_stops_it(api, tmp_path):
         assert poller.cancelled()
 
     asyncio.run(main())
+
+
+def test_schedule_job_shows_first_then_makes_a_recurring_job(api, tmp_path):
+    async def main():
+        r = make(api, tmp_path)
+        args = {
+            "name": "morning news",
+            "prompt": "Summarize the headlines.",
+            "schedule": "0  6 * * 1-5",
+            "tools": ["@@mcp_sites"],
+        }
+        preview = await r.op_schedule_job(CHAT, **args)
+        assert '"morning news"' in preview and 'cron "0 6 * * 1-5"' in preview
+        assert "Europe/Stockholm is UTC+2 now" in preview
+        assert "call again with apply true" in preview and api.jobs == {}
+        done = await r.op_schedule_job(CHAT, **args, apply=True)
+        assert done.startswith('Made job 1 "morning news"')
+        job = api.jobs[1]
+        assert (job["schedule"], json.loads(job["tools"])) == (
+            "0 6 * * 1-5",
+            ["@@mcp_sites"],
+        )
+        assert registry(tmp_path) == []  # not a one-off: the poller leaves it be
+
+    asyncio.run(main())
+
+
+def test_schedule_job_refuses_a_bad_cron_a_one_offs_name_and_the_wrong_callers(
+    api, tmp_path
+):
+    async def main():
+        r = make(api, tmp_path)
+        api.add("taken")
+        base = {"prompt": "p", "schedule": "0 6 * * *"}
+        for args, error in [
+            ({"name": "x", "schedule": "every morning"}, "cron of five fields"),
+            ({"name": "x", "schedule": "0 6 * *"}, "cron of five fields"),
+            ({"name": "[once] x"}, "one-off's"),
+            ({"name": "taken"}, "already"),
+            ({"name": "Daily News Page"}, "the repo manages"),
+            ({"name": "x", "tools": ["@@nope"]}, "no tool @@nope"),
+        ]:
+            with pytest.raises(RunnerError, match=error):
+                await r.op_schedule_job(CHAT, **{**base, **args}, apply=True)
+        for scope, error in [
+            ({"workspace": "_jobs"}, "a scheduled job can't"),
+            ({"workspace": "agents-worker"}, "a delegated task can't"),
+        ]:
+            with pytest.raises(RunnerError, match=error):
+                await r.op_schedule_job(scope, name="x", **base, apply=True)
+        assert list(api.jobs) == [1]
+
+    asyncio.run(main())
+
+
+def test_a_job_made_during_a_delegation_but_not_here_is_disabled(api, tmp_path):
+    """A delegated task could reach AnythingLLM's own create-scheduled-job, which our
+    refusal doesn't cover: whatever appears while a delegation runs is disabled."""
+
+    async def main():
+        r = make(api, tmp_path)
+        s = r.scheduled()
+        before = api.add("mine already")
+        notes: list[str] = []
+        async with s.guarding("dg-1", notes.append):
+            sneaky = api.add("exfiltrate", schedule="* * * * *")
+            await r.op_remind_once(
+                CHAT, name="ok", prompt="p", at="2026-10-07 14:05", apply=True
+            )
+        made = max(api.jobs)
+        assert api.jobs[before]["enabled"] and api.jobs[made]["enabled"]
+        assert not api.jobs[sneaky]["enabled"]
+        assert len(notes) == 1 and '"exfiltrate"' in notes[0]
+        assert s.watcher is None and s.watched == {}
+
+    asyncio.run(main())
+
+
+def test_the_watch_disables_a_new_job_while_the_delegation_still_runs(
+    api, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(jobs, "WATCH", 0.01)
+
+    async def main():
+        r = make(api, tmp_path)
+        s = r.scheduled()
+        notes: list[str] = []
+        async with s.guarding("dg-1", notes.append):
+            sneaky = api.add("exfiltrate")
+            for _ in range(100):
+                if not api.jobs[sneaky]["enabled"]:
+                    break
+                await asyncio.sleep(0.01)
+            assert not api.jobs[sneaky]["enabled"] and len(notes) == 1
+        assert len(notes) == 1  # noted once, not again at the end
+
+    asyncio.run(main())

@@ -1,0 +1,37 @@
+{
+  "active": true,
+  "hubId": "schedule-job",
+  "name": "Schedule Job",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Set a recurring job: on a cron in UTC, AnythingLLM's agent gets the prompt, with no chat history and only the tools given, and its reply arrives as a notification. Convert the user's local times to UTC for the cron. Call without apply first, show the user the preview (prompt, tools, when it runs in their time), and call again with apply: true only once they agree.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "name": {
+        "type": "string",
+        "description": "A short name for the job."
+      },
+      "prompt": {
+        "type": "string",
+        "description": "What the agent is asked to do or say each time, complete on its own."
+      },
+      "schedule": {
+        "type": "string",
+        "description": "A five-field cron in UTC (minute hour day month weekday), e.g. \"0 6 * * 1-5\"."
+      },
+      "tools": {
+        "type": "array",
+        "description": "Tool ids the job may use, e.g. [\"@@mcp_sites\", \"web-browsing\"]; [] for none."
+      },
+      "apply": {
+        "type": "boolean",
+        "description": "true to make the job, once the user agrees to the preview."
+      }
+    }
+  }
+}

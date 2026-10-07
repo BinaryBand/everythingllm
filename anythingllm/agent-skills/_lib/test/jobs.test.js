@@ -1,4 +1,4 @@
-// The scheduled-jobs and remind-once skills: what they send agents-runner. Their refusal of
+// The scheduled-jobs, schedule-job and remind-once skills: what they send agents-runner. Their refusal of
 // a delegated task is delegated.test.js's, which covers every skill.
 
 const test = require("node:test");
@@ -58,6 +58,23 @@ test("remind-once sends its tools as a list, whether the model gives a list or J
         ["remind_once", ["web-browsing"], false],
       ]
     );
+    assert.deepEqual(agents.requests[0].args, { scope: { workspace: "career", thread: "3" }, ...base, tools: [], apply: false });
+  } finally {
+    await agents.close();
+  }
+});
+
+test("schedule-job sends the invocation's workspace, its cron as text and its tools as a list", async () => {
+  const agents = await fakeAgents();
+  try {
+    const { handler } = require("../../schedule-job/handler").runtime;
+    const base = { name: "news", prompt: "Summarize the headlines.", schedule: "0 6 * * 1-5" };
+    assert.equal(await handler.call(chat("career"), base), "schedule_job ok");
+    await handler.call(chat("career"), { ...base, tools: '["@@mcp_sites"]', apply: "true" });
+    assert.deepEqual(agents.requests.map((r) => [r.op, r.args.tools, r.args.apply]), [
+      ["schedule_job", [], false],
+      ["schedule_job", ["@@mcp_sites"], true],
+    ]);
     assert.deepEqual(agents.requests[0].args, { scope: { workspace: "career", thread: "3" }, ...base, tools: [], apply: false });
   } finally {
     await agents.close();

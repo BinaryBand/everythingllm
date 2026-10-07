@@ -7,12 +7,14 @@
   checklist  what's left to do by hand in AnythingLLM's UI, ticking what's already done
 
 Standard library only, like the rest of hostctl. It only ever checks
-whether a key in AnythingLLM's .env is set; it never prints a value.
+whether a key in AnythingLLM's .env is set, and reads which agent skills are on and
+auto-approved from its database (read-only); it never prints a value.
 """
 
 import argparse
 import json
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -150,6 +152,51 @@ def reranker_off(storage: Path) -> bool:
     return env_file(storage / ".env").get("AGENT_SKILL_RERANKER_ENABLED") == "false"
 
 
+# AnythingLLM's own tools that make a job or write a file: a delegated task can reach them
+# (our skills refuse it; these don't), so none may run without asking, and the job tool
+# is off for schedule-job, which refuses it (README, "Delegation").
+JOB_TOOL = "create-scheduled-job"
+ASK_FIRST = (JOB_TOOL, "filesystem-write-text-file", "filesystem-edit-file")
+
+
+def agent_skills(storage: Path) -> dict[str, list[str]] | None:
+    """AnythingLLM's built-in skills that are on and that run without asking, read-only
+    from its database; None when it can't be read."""
+    db = storage / "anythingllm.db"
+    if not db.is_file():
+        return None
+    labels = {"default_agent_skills": "on", "whitelisted_agent_skills": "auto"}
+    try:
+        con = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)
+        try:
+            rows = con.execute(
+                "SELECT label, value FROM system_settings WHERE label IN (?, ?)",
+                tuple(labels),
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    found: dict[str, list[str]] = {"on": [], "auto": []}
+    for label, value in rows:
+        try:
+            listed = json.loads(value or "[]")
+        except ValueError:
+            return None
+        found[labels[label]] = (
+            [str(x) for x in listed] if isinstance(listed, list) else []
+        )
+    return found
+
+
+def jobs_kept_to_chats(storage: Path) -> bool | None:
+    """Whether create-scheduled-job is off and no job or file tool runs without asking."""
+    skills = agent_skills(storage)
+    if skills is None:
+        return None
+    return JOB_TOOL not in skills["on"] and not set(ASK_FIRST) & set(skills["auto"])
+
+
 def searxng_answers() -> bool:
     try:
         with urllib.request.urlopen(
@@ -199,6 +246,10 @@ def checklist() -> list[tuple[bool | None, str]]:
             reranker_off(Path(values["ANYTHINGLLM_STORAGE"]))
             and keys.get("AGENT_MAX_TOOL_CALLS", False),
             "Add AGENT_SKILL_RERANKER_ENABLED=false and AGENT_MAX_TOOL_CALLS to the .env (see anythingllm/env.example for why), then `uv run hostctl restart`.",
+        ),
+        (
+            jobs_kept_to_chats(Path(values["ANYTHINGLLM_STORAGE"])),
+            "Turn off create-scheduled-job, and take create-scheduled-job, filesystem-write-text-file and filesystem-edit-file off the tools that run without asking (Agent Skills page): a delegated task can reach AnythingLLM's own tools, and a job runs with every tool approved. schedule-job makes recurring jobs instead.",
         ),
         (
             routed(values.get("PUBLIC_HOST", "")),

@@ -67,8 +67,8 @@ must not have it.
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
                     this machine's storage directory and HTTPS name, from host.env
-                    (default /srv/anythingllm/storage, and no name: links use 127.0.0.1;
-                    egress.toml needs PUBLIC_HOST to load)
+                    (default /srv/anythingllm/storage; PUBLIC_HOST is required, since
+                    egress.toml needs it to load)
   SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/everythingllm/sandbox/runner.sock)
   SANDBOX_BUILD_SOCKET  the socket serving only build_system_site (default
                     <storage>/everythingllm/sandbox-build/runner.sock)
@@ -267,8 +267,8 @@ class Config:
     @classmethod
     def from_env(cls) -> Config:
         get = os.environ.get
-        host = get("PUBLIC_HOST")
-        egress = egress_config.load()
+        egress = egress_config.load()  # ValueError without PUBLIC_HOST
+        host = os.environ["PUBLIC_HOST"]
         return cls(
             socket=hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
             network=egress.network,
@@ -286,14 +286,14 @@ class Config:
             site_dir=Path(get("SANDBOX_SITE_DIR", hostrpc.site_dir())),
             site_url=get(
                 "SANDBOX_SITE_URL",
-                f"https://{host}:8445/" if host else "http://127.0.0.1:8445/",
+                f"https://{host}:8445/",
             ),
             public_root=Path(
                 get("SANDBOX_PUBLIC", hostrpc.data_dir() / "sandbox" / "public")
             ),
             public_url=get(
                 "SANDBOX_PUBLIC_URL",
-                f"https://{host}:8447/" if host else "http://127.0.0.1:8447/",
+                f"https://{host}:8447/",
             ),
         )
 
@@ -847,10 +847,11 @@ class Runner(hostrpc.Service):
                             None,
                         )
                         oom = state.strip() == "true"
-                    after = await asyncio.to_thread(snapshot, scope)
                 finally:
                     await self.podman(["rm", "-f", "--ignore", name], 60, None)
                     await asyncio.to_thread(shutil.rmtree, run_dir, True)
+            # Outside the slot: walking the workspace needs no address.
+            after = await asyncio.to_thread(snapshot, scope)
             published = await asyncio.to_thread(
                 self.page_changes, scope, public_changes(before, after)
             )

@@ -230,6 +230,8 @@ def test_hold_back_waits_for_a_containers_image_and_network(
 ):
     have = {("network", "egress-net")}
     monkeypatch.setattr(units, "podman_has", lambda kind, name: (kind, name) in have)
+    # egress-proxy is guarded: never ask the live data dir whether a run is going.
+    monkeypatch.setattr(run_guard, "ok_to_restart", lambda service: True)
     proxy = unit(
         tmp_path,
         tmp_path / "egress-proxy.container",

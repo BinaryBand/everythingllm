@@ -529,12 +529,14 @@ def test_a_bot_check_is_said_in_the_view_so_the_agent_hands_over():
         "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/x",
         {"width": 300, "height": 65},
     )
-    assert "Cloudflare's" in view(page_with(turnstile))["notes"][0]
+    # A box in a page of the site's own may pass by itself: one more look first.
+    assert view(page_with(turnstile))["notes"] == [driver.BOT_BOX.format("Cloudflare's")]
+    assert "read the page again once" in driver.BOT_BOX
     shown = ChallengeFrame(
         "https://newassets.hcaptcha.com/captcha/v1/x/static/hcaptcha.html#frame=checkbox",
         {"width": 303, "height": 78},
     )
-    assert "hCaptcha's" in view(page_with(shown))["notes"][0]
+    assert view(page_with(shown))["notes"] == [driver.BOT_BOX.format("hCaptcha's")]
     # Invisible ones are everywhere, and only other hosts' frames are anyone's checks.
     hidden = ChallengeFrame(shown.url, None)
     tiny = ChallengeFrame(turnstile.url, {"width": 0, "height": 0})
@@ -545,7 +547,9 @@ def test_a_bot_check_is_said_in_the_view_so_the_agent_hands_over():
     gone.frame_element = None  # detached mid-look
     assert view(page_with(hidden, tiny, elsewhere, gone))["notes"] == []
     assert page.challenge_title("Attention Required! | Cloudflare")
+    assert page.challenge_title("Just a moment…")
     assert not page.challenge_title("Waiting just a moment for GitLab")
+    assert not page.challenge_title("Just a Moment - a song by someone")  # the site's own
 
 
 def test_chromium_goes_through_the_proxy_alone():

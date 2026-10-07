@@ -118,6 +118,13 @@ BOT_CHECK = (
     "This page is a bot check ({}), which the agent can't pass, and reloading or waiting "
     "won't get past it. Hand the browser to the user with browser-handoff now, to pass it."
 )
+# A challenge frame in a page of the site's own (a form's Turnstile or hCaptcha box) often
+# passes by itself in a few seconds, so it gets one more look before a handoff.
+BOT_BOX = (
+    "This page shows {} bot check box. It may pass by itself: read the page again once. "
+    "If it's still there, the agent can't pass it, so hand the browser to the user with "
+    "browser-handoff rather than reloading or waiting longer."
+)
 USERLIKE = {"text", "email", "tel", ""}  # input types a username goes into
 CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
 MAX_OFFERS = 5
@@ -378,8 +385,10 @@ class Driver(hostrpc.Service):
             "url": page.url,
             "notes": self.notes.pop(thread, []),
         }
-        if whose := await bot_check(page, title):
-            view["notes"].append(BOT_CHECK.format(whose))
+        if challenge_title(title):
+            view["notes"].append(BOT_CHECK.format("Cloudflare's"))
+        elif whose := await bot_box(page):
+            view["notes"].append(BOT_BOX.format(whose))
         self.downloading.pop(thread, None)
         return scrub(view, self.pieces) if self.filled else view
 
@@ -1096,12 +1105,10 @@ async def title_of(page: Any) -> str:
         return ""
 
 
-async def bot_check(page: Any, title: str) -> str:
-    """Whose bot check the page is, or shows, if it does: Cloudflare's interstitial by its
-    title, else a challenge frame (CHALLENGE_HOSTS) big enough to be seen, since sites load
-    invisible ones everywhere; "" otherwise."""
-    if challenge_title(title):
-        return "Cloudflare's"
+async def bot_box(page: Any) -> str:
+    """Whose bot check box the page shows, if it does: a challenge frame (CHALLENGE_HOSTS)
+    big enough to be seen, since sites load invisible ones everywhere; "" otherwise. (A
+    page that is Cloudflare's interstitial is known by its title, `challenge_title`.)"""
     main = getattr(page, "main_frame", None)
     for frame in page.frames:
         try:

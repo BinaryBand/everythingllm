@@ -12,7 +12,7 @@ never replaces one), then prints the `claude mcp add` command for that client, t
 all: the user runs it on purpose, and it's the one place a token is printed. The client gets
 no tools until grants.toml grants it some and the gateway restarts, which it says.
 
-    python3 -m hostctl.gateway_env [path]   # with hostctl and apps on PYTHONPATH, as appctl does
+    python3 -m hostctl.gateway_env [path]   # with hostctl on PYTHONPATH, as appctl does
 
 Config (environment):
   PUBLIC_HOST  the machine's HTTPS name in the printed command (from host.env, which hostctl reads)

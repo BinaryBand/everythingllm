@@ -5,7 +5,7 @@ optional ntfy settings, which are secrets: the relay needs no key of its own, si
 the client's AnythingLLM key. The file stays outside the repo, which the AnythingLLM
 container mounts. Standard library only, like the rest of hostctl.
 
-    python3 -m hostctl.relay_env [path]   # with hostctl and apps on PYTHONPATH, as appctl does
+    python3 -m hostctl.relay_env [path]   # with hostctl on PYTHONPATH, as appctl does
 """
 
 import os

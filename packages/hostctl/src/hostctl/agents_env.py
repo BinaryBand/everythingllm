@@ -6,7 +6,7 @@ This exits 1 (so the unit isn't started into a crash loop) while the file or the
 missing, and makes the file private (mode 600). It never prints the key. Standard library
 only, like the rest of hostctl.
 
-    python3 -m hostctl.agents_env [path]   # with hostctl and apps on PYTHONPATH, as appctl does
+    python3 -m hostctl.agents_env [path]   # with hostctl on PYTHONPATH, as appctl does
 """
 
 import sys

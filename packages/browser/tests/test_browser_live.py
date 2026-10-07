@@ -73,6 +73,7 @@ def test_the_card_streams_the_tab_and_links_to_the_take_over_view(tmp_path):
                 reader, writer = await get(port, path)
                 head, part, frame = await first_frame(reader)
                 assert b"multipart/x-mixed-replace" in head and b"image/jpeg" in part
+                assert b"Access-Control" not in head  # its screenshots are the user's
                 assert Image.open(io.BytesIO(frame)).format == "JPEG"
                 assert tab.viewers == 1  # watching counts, which keeps the browser up
                 writer.close()

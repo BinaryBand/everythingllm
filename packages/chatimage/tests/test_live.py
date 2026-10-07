@@ -57,6 +57,24 @@ def test_frames_are_pushed_in_order_and_the_stream_ends():
     assert seen == [("GET", "/x.png", "v=1"), True]
 
 
+def test_a_push_without_cors_is_only_its_own_origins_to_read():
+    async def frames():
+        yield b"png0"
+
+    async def handler(reader, writer):
+        await live.read_request(reader)
+        await live.push(writer, frames(), cors=False)
+
+    async def go():
+        server, port = await serve(handler)
+        async with server:
+            return await get(port)
+
+    head, _, body = asyncio.run(go()).partition(b"\r\n\r\n")
+    assert b"Access-Control" not in head
+    assert parts(body) == [b"png0"]
+
+
 def test_a_still_streams_frame_is_followed_by_a_part_so_a_browser_shows_it():
     """Chrome shows a part once the next part's headers are in, so a frame no newer one
     follows is sent again, whole, for a reader to take without waiting for a second one."""

@@ -17,8 +17,10 @@ These are helpers for a service's own small asyncio server (research.live is one
 reads the request line, then either pushes frames or sends one plain response. An image's
 address may ask for the light theme with `?theme=light` (`theme`); else it's dark. There's
 no framework: GET only, no keep-alive, every response closes its connection. An image may
-be read by a page of any origin (CORS): a client's web build fetches the cards to draw them,
-and a card shows nothing that isn't in the picture. Pages and redirects get no such header.
+be read by a page of any origin (CORS), since a client's web build fetches the cards to draw
+them, unless its service says otherwise (`push(cors=False)`): a page that read a browser
+tab's screenshots could read whatever the tab is logged into. Pages and redirects get no
+such header.
 """
 
 import asyncio
@@ -107,12 +109,13 @@ async def push(
     writer: asyncio.StreamWriter,
     frames: AsyncIterator[bytes],
     content_type: str = "image/png",
+    cors: bool = True,
 ) -> bool:
     """Push each image from `frames` (PNGs, or whatever `content_type` says) as the image's
     newest frame, until they run out or the client goes; then close. A frame no newer one
-    follows within SETTLE is sent again, so that a browser shows it (above). True when
-    every frame went out, False when the client left first (the frames are closed either
-    way)."""
+    follows within SETTLE is sent again, so that a browser shows it (above). Without
+    `cors`, only a page of the image's own origin may read it. True when every frame went
+    out, False when the client left first (the frames are closed either way)."""
 
     def part(image: bytes) -> bytes:
         return b"--%s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n%s\r\n" % (
@@ -131,7 +134,7 @@ async def push(
                     "Content-Type": f"multipart/x-mixed-replace; boundary={BOUNDARY.decode()}",
                     "Cache-Control": "no-store",
                     "X-Accel-Buffering": "no",
-                    **CORS,
+                    **(CORS if cors else {}),
                 },
             )
         )

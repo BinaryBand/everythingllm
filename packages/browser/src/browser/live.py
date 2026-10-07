@@ -217,7 +217,11 @@ class Live:
 
         watcher = asyncio.create_task(watch())
         try:
-            await live.push(writer, self.frames(tab, gone, theme), "image/jpeg")
+            # No CORS: the tab may be logged in somewhere, and a page that knew the card's
+            # address could read its screenshots. A web client shows its description.
+            await live.push(
+                writer, self.frames(tab, gone, theme), "image/jpeg", cors=False
+            )
         finally:
             watcher.cancel()
 

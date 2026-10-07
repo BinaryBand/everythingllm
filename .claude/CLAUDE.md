@@ -15,7 +15,7 @@ Code sandbox, Browser, Delegation, …) before changing it.
 - Units in `host/quadlet/` and `host/systemd/` are templates. Editing them changes nothing
   until `uv run hostctl units` renders them (it refuses to run in a worktree). Never edit the installed
   copies; `uv run hostctl diff` shows where they differ.
-- After code changes: `uv run hostctl deploy` (syncs skills, jobs, slash commands, system prompt and
+- After code changes: `uv run hostctl deploy` (syncs skills, jobs, the system prompt and
   MCP config into storage, runs `mcp-sync`, restarts AnythingLLM, rebuilds sites). It
   restarts AnythingLLM, and so the MCP fronts, but not the runners, host units or service
   containers alike: a runner keeps its old code until `uv run hostctl <app>-setup` or

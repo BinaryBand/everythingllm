@@ -204,11 +204,6 @@ through its UI.
   - `daily-news-page/` — writes the day's Daily News edition (US, Sweden, World) to the
     `news` site from the feed headlines of the `sites` server's `headlines` tool; cron is UTC inside the container (18:00 UTC = 20:00 Stockholm in summer, 19:00 in
     winter), and the prompt dates the edition by Stockholm time
-- `anythingllm/slash-commands/<name>/` — slash command presets: `/<name>` (a-z, 0-9,
-  `_`, `-`), `command.json` with its description, and `prompt.md`; deployed through the
-  AnythingLLM API and matched by command. Typing the command in chat swaps in the prompt, and whatever
-  follows it stays after the prompt; a prompt that starts with `@agent` runs in agent mode.
-  - `deep-research/` — `/deep-research <question>` runs the deep-research skill on it
 - `packages/` — MCP servers we write: members of the uv workspace at the repo root
   (`pyproject.toml`, `uv.lock`), one per subdirectory
   - `packages/sites/` — the Zola sites on the tailnet pages site (:8445): list/write/get/delete
@@ -304,8 +299,9 @@ through its UI.
 `uv run hostctl deploy` copies it into storage (old files go to
 `~/.local/share/everythingllm/backups/`), refreshes the MCP deps
 and restarts AnythingLLM, `uv run hostctl test` runs every test and `uv run hostctl health` checks every unit,
-port, host service and runner socket. `uv run hostctl import-skill <hubId>` (and `import-job`,
-`import-command`) brings something made in the UI under the repo.
+port, host service and runner socket. `uv run hostctl import-skill <hubId>` (and `import-job`)
+brings something made in the UI under the repo. Slash commands aren't in the repo:
+they're AnythingLLM's, made and changed in its UI.
 
 Skill handlers are re-required on each load, so skill changes don't need a restart, but
 `uv run hostctl deploy` also runs `uv run hostctl mcp-sync` and `uv run hostctl restart`, so AnythingLLM and every MCP
@@ -313,7 +309,6 @@ server it starts run the code and deps that were just deployed.
 On deploy, a skill's `active` flag and any setup_args `value` saved through the UI
 are kept from the live `plugin.json` unless the repo sets a `value` itself.
 Scheduled jobs keep their live enabled toggle; deploying one reschedules it right away.
-Deploy doesn't delete slash commands that exist only live; remove those in the UI.
 
 ## uv cheatsheet
 

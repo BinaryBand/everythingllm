@@ -15,8 +15,7 @@ whose prompts are their delegation roles' (packages/agents, agents.profiles).
 Scheduled jobs have no workspace, so AnythingLLM gives them its built-in prompt
 instead.
 
-Slash command presets are in the database too and are matched by command name.
-Presets made only in the UI are left alone.
+Slash command presets are AnythingLLM's own: make and change them in the UI.
 
 This machine's settings come from host.env (see host.env.example): ANYTHINGLLM_STORAGE is
 where storage is.
@@ -26,7 +25,6 @@ import argparse
 import difflib
 import json
 import os
-import re
 import shutil
 import sys
 import time
@@ -46,8 +44,6 @@ JOB_FIELDS = ("prompt", "tools", "schedule")
 REPO_PROMPT = REPO / "system-prompt.md"
 # Delegation's role workspaces: agents-runner sets their prompts (agents.profiles).
 DELEGATED = "agents-"
-REPO_COMMANDS = REPO / "slash-commands"
-COMMAND_FIELDS = ("prompt", "description")
 
 
 def merge_plugin_json(repo_text: str, live_text: str | None) -> str:
@@ -157,32 +153,6 @@ def write_prompt(target: str, prompt: str) -> None:
         api("POST", f"/workspace/{target}/update", {"openAiPrompt": prompt})
 
 
-def repo_commands() -> dict[str, dict]:
-    """Presets in the repo by command: <name>/command.json (description) + prompt.md,
-    where /<name> is the command. The name must already be in the form AnythingLLM
-    stores, so it matches the live preset; the server rejects built-ins like /reset."""
-    commands = {}
-    if REPO_COMMANDS.is_dir():
-        for d in sorted(p for p in REPO_COMMANDS.iterdir() if p.is_dir()):
-            if not re.fullmatch(r"[a-z0-9_-]{2,}", d.name):
-                sys.exit(
-                    f"{d.relative_to(ROOT)}: use only a-z, 0-9, _ and - in the name"
-                )
-            meta = json.loads((d / "command.json").read_text())
-            commands["/" + d.name] = {
-                "command": "/" + d.name,
-                "description": meta.get("description", ""),
-                "prompt": (d / "prompt.md").read_text().strip(),
-            }
-    return commands
-
-
-def live_commands() -> dict[str, dict]:
-    return {
-        p["command"]: p for p in api("GET", "/system/slash-command-presets")["presets"]
-    }
-
-
 def print_text_diff(label: str, old: str, new: str) -> None:
     sys.stdout.writelines(
         difflib.unified_diff(
@@ -192,17 +162,6 @@ def print_text_diff(label: str, old: str, new: str) -> None:
             f"repo/{label}",
         )
     )
-
-
-def print_command_diff(cmd: dict, live: dict | None) -> None:
-    label = f"slash-commands{cmd['command']}"
-    if live is None:
-        print(f"new slash command {cmd['command']} ({cmd['description']})")
-        return
-    if cmd["description"] != live["description"]:
-        print(f"{label} description: {live['description']!r} -> {cmd['description']!r}")
-    if cmd["prompt"] != live["prompt"]:
-        print_text_diff(f"{label}/prompt", live["prompt"], cmd["prompt"])
 
 
 def print_job_diff(job: dict, live: dict | None) -> None:
@@ -232,9 +191,6 @@ def diff() -> bool:
     for job, live in planned(repo_jobs(), live_jobs, JOB_FIELDS):
         changed = True
         print_job_diff(job, live)
-    for cmd, live in planned(repo_commands(), live_commands, COMMAND_FIELDS):
-        changed = True
-        print_command_diff(cmd, live)
     for dest, text in planned_files().items():
         old = dest.read_text() if dest.exists() else ""
         if old != text:
@@ -263,8 +219,7 @@ def deploy() -> None:
     }
     jobs = planned(repo_jobs(), live_jobs, JOB_FIELDS)
     prompts = planned_prompts()
-    commands = planned(repo_commands(), live_commands, COMMAND_FIELDS)
-    if not files and not jobs and not prompts and not commands:
+    if not files and not jobs and not prompts:
         print("Nothing to deploy.")
         return
     backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S")
@@ -291,17 +246,6 @@ def deploy() -> None:
         api("PUT", f"/scheduled-jobs/{live['id']}", body)
         state = "enabled" if live["enabled"] else "disabled"
         print(f"deployed scheduled job {job['name']!r} (id {live['id']}, {state})")
-    for cmd, live in commands:
-        if live is None:
-            created = api("POST", "/system/slash-command-presets", cmd)["preset"]
-            print(f"created slash command {cmd['command']} (id {created['id']})")
-            continue
-        save_backup(
-            backup / "slash-commands" / f"{live['id']}.json",
-            json.dumps(live, indent=2) + "\n",
-        )
-        api("POST", f"/system/slash-command-presets/{live['id']}", cmd)
-        print(f"deployed slash command {cmd['command']} (id {live['id']})")
     for dest, text in files.items():
         if dest.exists():
             saved = backup / dest.relative_to(STORAGE)
@@ -351,18 +295,6 @@ def import_job(name: str) -> None:
     print(f"imported scheduled job {name!r} -> {dest.relative_to(ROOT)}")
 
 
-def import_command(name: str) -> None:
-    command = "/" + name.removeprefix("/")
-    live = live_commands().get(command)
-    if live is None:
-        sys.exit(f"no live slash command {command}")
-    dest = REPO_COMMANDS / command.removeprefix("/")
-    write_repo_dir(
-        dest, "command.json", {"description": live["description"]}, live["prompt"]
-    )
-    print(f"imported slash command {command} -> {dest.relative_to(ROOT)}")
-
-
 def mcp_packages() -> list[str]:
     """The workspace members the MCP servers run (each one's `--package`), so `uv run hostctl mcp-sync`
     installs what they need into the container's venv and nothing else."""
@@ -386,10 +318,6 @@ def main(argv: list[str] | None = None) -> None:
         "import-job", help="copy a live scheduled job into the repo"
     )
     imp_job.add_argument("name", help="the job's name as shown in the UI")
-    imp_cmd = sub.add_parser(
-        "import-command", help="copy a live slash command into the repo"
-    )
-    imp_cmd.add_argument("name", help="the command, e.g. /foo")
     sub.add_parser(
         "mcp-packages", help="print the workspace members the MCP servers run"
     )
@@ -403,8 +331,6 @@ def main(argv: list[str] | None = None) -> None:
         deploy()
     elif args.cmd == "import-job":
         import_job(args.name)
-    elif args.cmd == "import-command":
-        import_command(args.name)
     else:
         import_skill(args.name)
 

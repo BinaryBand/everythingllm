@@ -120,7 +120,7 @@ def diff() -> None:
 
 @command(
     "deploy",
-    "write skills, jobs, slash commands, the system prompt and MCP config live (backs up first), refresh MCP deps, restart AnythingLLM, rebuild the sites",
+    "write skills, jobs, the system prompt and MCP config live (backs up first), refresh MCP deps, restart AnythingLLM, rebuild the sites",
 )
 def deploy() -> None:
     from hostctl import sync  # needs ANYTHINGLLM_STORAGE
@@ -162,13 +162,6 @@ def import_job(name: str) -> None:
     from hostctl import sync
 
     sync.main(["import-job", name])
-
-
-@command("import-command", "copy a live slash command into the repo: import-command /foo")
-def import_command(name: str) -> None:
-    from hostctl import sync
-
-    sync.main(["import-command", name])
 
 
 @command(

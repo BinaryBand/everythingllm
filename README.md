@@ -944,12 +944,18 @@ name bound in so one workspace's file can't stand in for another's.
 minutes unused and unwatched; the profile outlives it:
 
     sandbox/workspaces/<workspace>/browser/profile/   cookies, logins, history (mounted at /profile)
-    sandbox/workspaces/<workspace>/project/downloads/ downloads (run-code's /project/downloads)
+    browser/downloads/<workspace>/<thread>/           downloads as they're saved (/downloads)
+    sandbox/workspaces/<workspace>/project/downloads/ where they end up (run-code's /project/downloads)
     browser/sockets/<slot>/                           driver.sock and vnc.sock (/run/browser)
 
 The profile sits in the workspace's sandbox folder, beside the folders the sandbox mounts,
 never in one: no run can read the cookies, and the sandbox's size limit leaves the profile
-out. Downloads go to `/project`, not `/shared`, which every other workspace can read.
+out. The container never mounts a folder a run can write, since a run could make it a
+symlink and podman would mount wherever it points. Downloads are saved to browser-runner's
+own folder (at most 10 between two reads, 256 MB each), and the runner copies each one to
+`/project/downloads` after the thread's next call, opening every step without following a
+symlink (`hostrpc.safefs`). They go to `/project`, not `/shared`, which every other
+workspace can read.
 `uv run hostctl browser-reset <workspace>` stops the workspace's browser and wipes its
 profile.
 

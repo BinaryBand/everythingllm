@@ -538,3 +538,66 @@ def test_websocket_messages_join_fragments_answer_pings_and_refuse_unmasked_fram
             await anext(websocket.messages(bad, Writer()))  # ty: ignore[invalid-argument-type]
 
     asyncio.run(main())
+
+
+@pytest.mark.parametrize(
+    "suggested, name",
+    [
+        ("report.pdf", "report.pdf"),
+        ("../../venvs/x.pth", "x.pth"),
+        ("..\\..\\x.pth", "x.pth"),
+        (".bashrc", "bashrc"),
+        ("..", "download"),
+        ("", "download"),
+        ("a\nb\x00.txt", "ab.txt"),
+        ("x" * 300, "x" * 120),
+    ],
+)
+def test_a_downloads_name_is_a_plain_name_of_its_own(suggested, name):
+    assert driver.download_name(suggested) == name
+
+
+class FakeDownload:
+    def __init__(self, name, data=b"data"):
+        self.suggested_filename, self.data, self.cancelled = name, data, False
+
+    async def save_as(self, path):
+        path.write_bytes(self.data)
+
+    async def cancel(self):
+        self.cancelled = True
+
+
+def test_downloads_are_staged_per_thread_whole_and_at_most_max_downloads(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(driver, "MAX_DOWNLOADS", 2)
+    d = driver.Driver(None, tmp_path)
+    page, stray = object(), object()
+    d.stacks["7"] = [page]
+
+    async def main():
+        loads = [FakeDownload(f"f{i}.txt") for i in range(4)]
+        for load in loads:
+            await d.on_download(page, load)
+        lost = FakeDownload("lost.txt")
+        await d.on_download(stray, lost)  # a page no thread has
+        return loads, lost
+
+    loads, lost = asyncio.run(main())
+    assert sorted(p.name for p in (tmp_path / "7").iterdir()) == ["f0.txt", "f1.txt"]
+    assert [x.cancelled for x in loads] == [False, False, True, True]
+    assert lost.cancelled
+    assert d.notes["7"] == [
+        "the page started more than 2 downloads; the rest were cancelled"
+    ]
+
+
+def test_an_oversized_download_isnt_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(driver, "DOWNLOAD_BYTES", 3)
+    d = driver.Driver(None, tmp_path)
+    page = object()
+    d.stacks["7"] = [page]
+    asyncio.run(d.on_download(page, FakeDownload("big.bin", b"1234")))
+    assert list((tmp_path / "7").iterdir()) == []
+    assert "wasn't kept" in d.notes["7"][0]

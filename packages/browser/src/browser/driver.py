@@ -9,9 +9,11 @@ fetches goes through the egress proxy's public port. browser-runner asks over
 
 Each chat thread has its own tab, made on its first `open`. A popup a tab opens (a login
 window, a link with target=_blank) becomes the thread's tab until it closes. Downloads go
-to /downloads (the workspace's /project/downloads in the sandbox); dialogs are answered
-on their own (alerts accepted, confirms and prompts dismissed) and reported in the next
-read, as downloads are.
+to /downloads/<thread>/, a folder of browser-runner's that no sandbox run can see (it copies
+them to the workspace's /project/downloads, and says so in the thread's next read), at most
+MAX_DOWNLOADS between two reads and DOWNLOAD_BYTES each; dialogs are answered on their own
+(alerts accepted, confirms and prompts dismissed) and reported in the next read, as a
+download that fails is.
 
 Saved logins (browser.vault) come from the runner and go only into fields on their own
 site: the page and the frame a field is in must be on the login's site (browser.origin), as
@@ -48,7 +50,7 @@ Config (environment):
   BROWSER_PROXY      where Chromium sends every request: the egress proxy's public port (required)
   BROWSER_RUN        the folder for driver.sock (default /run/browser)
   BROWSER_PROFILE    the persistent profile (default /profile)
-  BROWSER_DOWNLOADS  where downloads are saved (default /downloads)
+  BROWSER_DOWNLOADS  where downloads are saved, in a folder per thread (default /downloads)
   BROWSER_SCREEN     the screen's size, as Xvfb has it (default 1280x800)
 """
 
@@ -93,6 +95,8 @@ CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
 MAX_OFFERS = 5
 OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
 MAX_SECRET = 1000
+MAX_DOWNLOADS = 10  # downloads a thread's pages may start between two reads
+DOWNLOAD_BYTES = 256 << 20  # the largest download kept
 MAX_FILLED = 20  # the latest passwords and codes filled, kept to hide them in reads
 PIECE = (
     6  # characters of a filled secret that a read never shows (all of a shorter one)
@@ -193,6 +197,7 @@ class Driver(hostrpc.Service):
         # thread -> its pages, the newest (a popup) last; and what to tell it next read
         self.stacks: dict[str, list[Any]] = {}
         self.notes: dict[str, list[str]] = {}
+        self.downloading: dict[str, int] = {}  # thread -> downloads since its last read
         self.capturing = False
         # id -> {site, username, password, at}
         self.offers: dict[str, dict[str, Any]] = {}
@@ -242,19 +247,45 @@ class Driver(hostrpc.Service):
         self.note(page, f"the page showed a {kind} ({answered}): {message}")
 
     async def on_download(self, page: Any, download: Any) -> None:
-        name = Path(download.suggested_filename).name or "download"
-        target = self.downloads / name
+        """Save a download to /downloads/<thread>/, for the runner to copy to /project."""
+        name = download_name(hide(download.suggested_filename, self.pieces))
+        thread = self.owner(page)
+        if thread is None:
+            await cancel(download)
+            return
+        count = self.downloading.get(thread, 0) + 1
+        self.downloading[thread] = count
+        if count > MAX_DOWNLOADS:
+            await cancel(download)
+            if count == MAX_DOWNLOADS + 1:
+                self.note(
+                    page,
+                    f"the page started more than {MAX_DOWNLOADS} downloads; the rest "
+                    "were cancelled",
+                )
+            return
+        folder = self.downloads / thread
+        folder.mkdir(exist_ok=True)
+        target = folder / name
         stem, suffix, n = target.stem, target.suffix, 1
-        while target.exists():
+        while target.exists() or target.is_symlink():
             n += 1
-            target = self.downloads / f"{stem}-{n}{suffix}"
+            target = folder / f"{stem}-{n}{suffix}"
+        # Saved under a dot name the runner passes over, so it never copies half a file.
+        part = folder / f".{target.name}.part"
         try:
-            await download.save_as(target)
-            self.note(
-                page, f"downloaded {target.name} to /project/downloads/{target.name}"
-            )
+            await download.save_as(part)
+            if part.stat().st_size > DOWNLOAD_BYTES:
+                self.note(
+                    page,
+                    f"{name} was over {DOWNLOAD_BYTES >> 20} MB, so it wasn't kept",
+                )
+            else:
+                part.rename(target)
         except Exception as e:  # noqa: BLE001 - reported in the next read
             self.note(page, f"a download of {name} failed: {e}")
+        finally:
+            part.unlink(missing_ok=True)
 
     async def tab(self, thread: str) -> Any:
         """The thread's tab, made if it has none: the window's first blank tab if nobody has
@@ -290,6 +321,7 @@ class Driver(hostrpc.Service):
             "url": page.url,
             "notes": self.notes.pop(thread, []),
         }
+        self.downloading.pop(thread, None)
         return scrub(view, self.pieces) if self.filled else view
 
     async def snapshot(self, page: Any) -> dict[str, Any]:
@@ -655,6 +687,20 @@ class Driver(hostrpc.Service):
                     {"thread": thread, "title": await title_of(page), "url": page.url}
                 )
         return tabs
+
+
+def download_name(suggested: str) -> str:
+    """A download's file name: the page's suggestion, cut to a plain name of its own."""
+    name = Path(suggested.replace("\\", "/")).name
+    name = "".join(c for c in name if c.isprintable()).strip().lstrip(".")[:120]
+    return name or "download"
+
+
+async def cancel(download: Any) -> None:
+    try:
+        await download.cancel()
+    except Exception:  # noqa: BLE001, S110 - it finished or failed already
+        pass
 
 
 def pieces(filled: list[str]) -> dict[int, set[str]]:

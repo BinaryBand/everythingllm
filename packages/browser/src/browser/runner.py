@@ -10,6 +10,12 @@ sandbox's folder for the workspace, beside the folders the sandbox mounts, never
   <root>/<workspace>/browser/profile/   the profile, which no sandbox run can see
   <root>/<workspace>/project/downloads/ downloads, which run-code sees as /project/downloads
 
+The container never mounts a folder a sandbox run can write: a run could make one a symlink,
+and podman would mount wherever it points. Downloads land in <data>/downloads/<workspace>/
+<thread>/ (the container's /downloads), and the runner copies each finished one to
+/project/downloads after each of the thread's calls (collect_downloads), opening every step
+without following a symlink (hostrpc.safefs), and says so in the thread's read.
+
 Each chat thread has its own tab there; a scope of {workspace, thread} says which, and comes
 from the skill's invocation, never the model. Gateway clients' `client-` workspaces have no
 browser. The container is hardened like a service container (read-only root, every
@@ -64,7 +70,8 @@ Config (environment):
   BROWSER_ROOT           the workspaces' folders (default ~/.local/share/everythingllm/sandbox/workspaces,
                          the sandbox's SANDBOX_ROOT)
   BROWSER_DATA           the runner's own folder (default ~/.local/share/everythingllm/browser):
-                         sockets/<slot>/ and novnc/ (copied from the image by hostctl browser-images)
+                         sockets/<slot>/, downloads/<workspace>/ and novnc/ (copied from the image by
+                         hostctl browser-images)
   BROWSER_LIVE_PORT      the live cards' port (default 8453), on LIVE_HOST (default 127.0.0.1)
   BROWSER_TAKEOVER_PORT  the take-over view's port (default 8454), on 127.0.0.1
   BROWSER_VAULT_KEY      the saved logins' key (default ~/.config/everythingllm/browser-vault.key,
@@ -75,10 +82,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import errno
 import logging
 import os
 import re
 import secrets
+import shutil
 import signal
 import time
 from collections.abc import Awaitable, Callable
@@ -89,7 +99,7 @@ from typing import Any
 import hostrpc
 from chatimage import alt, link
 from egress import config as egress_config
-from hostrpc import RunnerError
+from hostrpc import RunnerError, safefs
 
 from browser import page as pagetext
 from browser.origin import host_of, normal_site, site_matches
@@ -121,6 +131,7 @@ DRIVER_SECONDS = 42
 LIMIT = 8 << 20  # a driver's reply: a screenshot is a few hundred KB
 LIVE_PORT = 8453
 TAKEOVER_PORT = 8454
+DOWNLOAD_BYTES = 256 << 20  # as browser.driver's: a bigger file isn't copied
 
 PodmanResult = tuple[int, str, str]
 Podman = Callable[[list[str], float], Awaitable[PodmanResult]]
@@ -182,6 +193,9 @@ class Config:
 
     def sockets(self, slot: str) -> Path:
         return self.data / "sockets" / slot
+
+    def downloads(self, workspace: str) -> Path:
+        return self.data / "downloads" / workspace
 
 
 @dataclass(eq=False)
@@ -274,6 +288,67 @@ class Gone(RunnerError):
     """The workspace's browser stopped under a call (its window was closed, or it crashed)."""
 
 
+def collect_downloads(
+    staging: Path, root: Path, workspace: str
+) -> dict[str, list[str]]:
+    """Move the finished downloads in `staging` (the container's /downloads, a folder per
+    thread) to <root>/<workspace>/project/downloads/: thread -> what to tell it. Both ends
+    are opened a step at a time without following a symlink, the one end because a sandbox
+    run can write /project, the other because the browser can write /downloads; what isn't
+    a plain file there is dropped, and a name that's taken gets -2, -3, … A dot file is one
+    the driver is still saving."""
+    told: dict[str, list[str]] = {}
+    try:
+        threads = sorted(os.listdir(staging))
+    except FileNotFoundError:
+        return told
+    for thread in threads:
+        if not KEY_RE.fullmatch(thread):
+            continue
+        try:
+            folder = safefs.open_dir(staging, (thread,))
+        except OSError:  # not a folder, or a symlink
+            continue
+        try:
+            for name in sorted(os.listdir(folder)):
+                if name.startswith("."):
+                    continue
+                try:
+                    src = safefs.open_regular(folder, name)
+                except OSError:
+                    src = None
+                with contextlib.suppress(OSError):
+                    os.unlink(name, dir_fd=folder)
+                if src is not None:
+                    told.setdefault(thread, []).append(
+                        copy_download(src, name, root, workspace)
+                    )
+        finally:
+            os.close(folder)
+    return told
+
+
+def copy_download(src: int, name: str, root: Path, workspace: str) -> str:
+    """Copy the download open at `src` (closed after) to /project/downloads: what to tell
+    the thread."""
+    with os.fdopen(src, "rb") as f:
+        try:
+            if os.fstat(f.fileno()).st_size > DOWNLOAD_BYTES:
+                raise OSError(f"it's over {DOWNLOAD_BYTES >> 20} MB")
+            with safefs.folder(
+                root, (workspace, "project", "downloads"), make=True
+            ) as d:
+                fd, saved = safefs.create_free(d, name)
+                with os.fdopen(fd, "wb") as out:
+                    shutil.copyfileobj(f, out)
+        except OSError as e:
+            why = e.strerror or str(e)
+            if e.errno in (errno.ELOOP, errno.ENOTDIR):
+                why = "it isn't a plain folder"
+            return f"couldn't save the download {name} to /project/downloads: {why}"
+    return f"downloaded {saved} to /project/downloads/{saved}"
+
+
 def check_scope(scope: Any) -> tuple[str, str]:
     """(workspace, thread) from a skill's scope, as the sandbox checks it."""
     if not isinstance(scope, dict):
@@ -310,6 +385,8 @@ class Runner(hostrpc.Service):
         self.threads: dict[tuple[str, str], Tab] = {}
         self.locks: dict[str, asyncio.Lock] = {}
         self.asked: dict[str, LoginRequest] = {}  # request id -> the request
+        # (workspace, thread) -> what to say of its downloads in its next read
+        self.downloaded: dict[tuple[str, str], list[str]] = {}
         self.vault = Vault(config.data / "vault", config.vault_key)
 
     # --- containers ---
@@ -320,7 +397,7 @@ class Runner(hostrpc.Service):
         mounted (data only: noexec) and the repo read-only for the driver's code."""
         c, ws = self.config, session.workspace
         data = "rw,noexec,nosuid,nodev"
-        home = c.root / ws
+        home = c.root / ws  # only browser/, which no sandbox run mounts
         src = c.repo / "packages"
         return [
             "run", "-d", "--rm", "--init",
@@ -339,7 +416,7 @@ class Runner(hostrpc.Service):
             "-e", f"PYTHONPATH={src / 'browser' / 'src'}:{src / 'hostrpc' / 'src'}",
             "-v", f"{c.repo}:{c.repo}:ro",
             "-v", f"{home / 'browser' / 'profile'}:/profile:{data}",
-            "-v", f"{home / 'project' / 'downloads'}:/downloads:{data}",
+            "-v", f"{c.downloads(ws)}:/downloads:{data}",
             "-v", f"{session.folder}:/run/browser:{data}",
             IMAGE,
         ]  # fmt: skip
@@ -368,7 +445,7 @@ class Runner(hostrpc.Service):
                 f"all {len(self.config.ips)} browsers are in use by other workspaces; try again in a while"
             )
         home = self.config.root / workspace
-        for d in (home / "browser" / "profile", home / "project" / "downloads"):
+        for d in (home / "browser" / "profile", self.config.downloads(workspace)):
             d.mkdir(parents=True, exist_ok=True)
         folder = self.config.sockets(slot[0])
         folder.mkdir(parents=True, exist_ok=True)
@@ -422,6 +499,7 @@ class Runner(hostrpc.Service):
         if s.approval is not None:  # its waiter hears it's stale
             s.approval.answered.set()
         await self.podman(["stop", "-t", "5", s.name], 30)
+        await self.collect(workspace)
         self.forget(workspace)
         log.info("stopped %s's browser", workspace)
 
@@ -447,6 +525,17 @@ class Runner(hostrpc.Service):
             elif now - s.used > IDLE:
                 await self.stop(s.workspace)
 
+    async def collect(self, workspace: str) -> None:
+        """Copy the workspace's finished downloads to its /project/downloads."""
+        told = await asyncio.to_thread(
+            collect_downloads,
+            self.config.downloads(workspace),
+            self.config.root,
+            workspace,
+        )
+        for thread, notes in told.items():
+            self.downloaded.setdefault((workspace, thread), []).extend(notes)
+
     async def cleanup(self) -> None:
         """Remove what an earlier runner left: its containers (profiles stay)."""
         await self.podman(["rm", "-f", "--filter", f"label={LABEL}"], 120)
@@ -457,12 +546,21 @@ class Runner(hostrpc.Service):
         """An op in the workspace's driver. A browser that's gone (its window closed, a
         crash) is forgotten and raises Gone."""
         try:
-            return await hostrpc.request(
+            result = await hostrpc.request(
                 s.driver, op, args, DRIVER_SECONDS, name="browser", limit=LIMIT
             )
         except RunnerError as e:
             if "isn't running" not in str(e) and "closed the connection" not in str(e):
                 raise
+        else:
+            if thread := args.get("thread"):
+                await self.collect(s.workspace)
+                told = self.downloaded.pop((s.workspace, thread), [])
+                if told and isinstance(result, dict) and "notes" in result:
+                    result["notes"] = [*result["notes"], *told]
+                elif told:  # for the thread's next read
+                    self.downloaded[(s.workspace, thread)] = told
+            return result
         if self.sessions.get(s.workspace) is s:
             del self.sessions[s.workspace]
             if s.approval is not None:  # its waiter hears it's stale

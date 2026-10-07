@@ -98,7 +98,7 @@ def test_a_browser_is_hardened_and_mounts_only_its_workspaces_profile_downloads_
     assert volumes == [
         "/repo:/repo:ro",
         f"{home}/browser/profile:/profile:{data}",
-        f"{home}/project/downloads:/downloads:{data}",
+        f"{tmp_path}/data/downloads/career:/downloads:{data}",
         f"{tmp_path}/data/sockets/browser-1:/run/browser:{data}",
     ]
     assert args[-1] == runner_mod.IMAGE
@@ -130,10 +130,9 @@ def test_open_starts_the_workspaces_browser_and_gives_each_thread_a_tab_and_card
             len(podman.runs()) == 1
         )  # one browser for the workspace, a tab per thread
         home = tmp_path / "workspaces" / "career"
-        assert (home / "browser" / "profile").is_dir() and (
-            home / "project" / "downloads"
-        ).is_dir()
-        assert not (home / "shared").exists()
+        assert (home / "browser" / "profile").is_dir()
+        assert (tmp_path / "data" / "downloads" / "career").is_dir()
+        assert not (home / "shared").exists() and not (home / "project").exists()
         acted = await r.op_act(scope(thread="7"), "click", "e1")
         assert "Sign in" in acted["page"]
         found = await r.op_read(scope(thread="7"), "home")
@@ -649,3 +648,96 @@ def test_the_agent_cant_ask_while_the_user_has_the_browser(tmp_path):
             await r.op_ask_login(scope())
 
     test(tmp_path)
+
+
+def test_a_download_is_copied_to_project_downloads_and_said_in_the_threads_read(
+    tmp_path,
+):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(thread="7"), "example.com")
+        staged = tmp_path / "data" / "downloads" / "career" / "7"
+        staged.mkdir()
+        (staged / "a.pdf").write_bytes(b"%PDF")
+        (staged / ".b.pdf.part").write_bytes(b"half")  # still being saved
+        downloads = tmp_path / "workspaces" / "career" / "project" / "downloads"
+        downloads.mkdir(parents=True)
+        (downloads / "a.pdf").write_bytes(b"older")
+        read = await r.op_read(scope(thread="7"))
+        assert "downloaded a-2.pdf to /project/downloads/a-2.pdf" in read["page"]
+        assert (downloads / "a-2.pdf").read_bytes() == b"%PDF"
+        assert (downloads / "a.pdf").read_bytes() == b"older"
+        assert not (staged / "a.pdf").exists() and (staged / ".b.pdf.part").exists()
+        assert "downloaded" not in (await r.op_read(scope(thread="7")))["page"]
+
+    test(tmp_path)
+
+
+def test_a_download_for_another_thread_waits_for_that_threads_read(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(thread="7"), "example.com")
+        await r.op_open(scope(thread="8"), "example.org")
+        staged = tmp_path / "data" / "downloads" / "career" / "8"
+        staged.mkdir()
+        (staged / "x.csv").write_text("1,2")
+        assert "x.csv" not in (await r.op_read(scope(thread="7")))["page"]
+        assert "downloaded x.csv" in (await r.op_read(scope(thread="8")))["page"]
+
+    test(tmp_path)
+
+
+def test_a_run_cant_send_downloads_through_a_symlink(tmp_path):
+    """A sandbox run can make /project/downloads a symlink to anywhere on the host: the
+    browser never mounts it, and the copy refuses to follow it."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    staging = tmp_path / "data" / "downloads" / "career"
+    project = tmp_path / "workspaces" / "career" / "project"
+    project.mkdir(parents=True)
+    (project / "downloads").symlink_to(outside)
+    (staging / "7").mkdir(parents=True)
+    (staging / "7" / "evil.pth").write_text("import os")
+    told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
+    assert list(outside.iterdir()) == []
+    assert told == {
+        "7": [
+            "couldn't save the download evil.pth to /project/downloads: it isn't a plain folder"
+        ]
+    }
+    assert not (staging / "7" / "evil.pth").exists()
+    # nor through a symlinked /project/downloads/<name>
+    (project / "downloads").unlink()
+    (project / "downloads").mkdir()
+    (project / "downloads" / "evil.pth").symlink_to(outside / "planted")
+    (staging / "7" / "evil.pth").write_text("import os")
+    told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
+    assert told == {"7": ["downloaded evil-2.pth to /project/downloads/evil-2.pth"]}
+    assert list(outside.iterdir()) == []
+
+
+def test_the_browser_cant_make_the_copy_read_host_files(tmp_path):
+    """The container can write its /downloads: a symlink there, as a file or a thread's
+    folder, isn't followed."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text("vault key")
+    staging = tmp_path / "data" / "downloads" / "career"
+    (staging / "7").mkdir(parents=True)
+    (staging / "7" / "key.txt").symlink_to(secret)
+    (staging / "8").symlink_to(tmp_path)
+    told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
+    downloads = tmp_path / "workspaces" / "career" / "project" / "downloads"
+    assert not downloads.exists() or list(downloads.iterdir()) == []
+    assert "8" not in told and told.get("7", []) == []
+    assert secret.read_text() == "vault key"
+    assert (tmp_path / "data").is_dir()  # nothing behind the symlinked folder removed
+
+
+def test_an_oversized_download_isnt_copied(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_mod, "DOWNLOAD_BYTES", 3)
+    staging = tmp_path / "data" / "downloads" / "career"
+    (staging / "7").mkdir(parents=True)
+    (staging / "7" / "big.bin").write_bytes(b"1234")
+    told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
+    assert told["7"][0].startswith("couldn't save the download big.bin")
+    assert not (staging / "7" / "big.bin").exists()

@@ -1436,12 +1436,14 @@ version = "0.1.0"
 source = { editable = "packages/sandbox" }
 dependencies = [
     { name = "chatimage" },
+    { name = "egress" },
     { name = "hostrpc" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "chatimage", editable = "packages/chatimage" },
+    { name = "egress", editable = "packages/egress" },
     { name = "hostrpc", editable = "packages/hostrpc" },
 ]
 

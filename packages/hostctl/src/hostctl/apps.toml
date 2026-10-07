@@ -47,9 +47,9 @@ serve = [{ https = 8445, port = 8445 }, { https = 8447, port = 8447 }]
 health = { "pages site" = "http://127.0.0.1:8445/news/", "workspace pages" = "http://127.0.0.1:8447/" }
 
 [sandbox]
-summary = "the code sandbox's runner and PyPI proxy, with their images and network"
+summary = "the code sandbox's runner and its image; its runs reach PyPI through the egress proxy"
 runner = "sandbox-runner.service"
-units = { "sandbox-proxy.service" = "code sandbox PyPI proxy", "sandbox-runner.service" = "code sandbox runner" }
+units = { "sandbox-runner.service" = "code sandbox runner" }
 before = ["python3 -m hostctl sandbox-images"]
 install = true
 

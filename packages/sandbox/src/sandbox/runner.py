@@ -1,9 +1,12 @@
 """The sandbox runner: a host daemon that runs the agent's code in throwaway podman containers
 and builds the sites it makes.
 
-Each run gets a fresh container from the sandbox image with no network except the
-allowlisting proxy on sandbox-net, a read-only root, CPU/memory/process limits and a
-time limit. What it can see depends on where the call came from, which the skills in
+Each run gets a fresh container from the sandbox image on egress-net, at one of the
+egress profile `sandbox`'s addresses (packages/egress/egress.toml), so its only way out
+is the egress proxy, which lets it reach PyPI and nothing else; a read-only root,
+CPU/memory/process limits and a time limit. Each address is a slot: a run or a build holds
+one while its container exists, so no more containers run at once than the profile has
+addresses, and a stopped run's container never keeps an address another is given. What it can see depends on where the call came from, which the skills in
 AnythingLLM pass as a scope of {workspace, thread} (never chosen by the model):
 
   /work            the thread's scratch folder, deleted a week after the thread last used it
@@ -64,7 +67,8 @@ must not have it.
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
                     this machine's storage directory and HTTPS name, from host.env
-                    (default /srv/anythingllm/storage, and no name: links use 127.0.0.1)
+                    (default /srv/anythingllm/storage, and no name: links use 127.0.0.1;
+                    egress.toml needs PUBLIC_HOST to load)
   SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/everythingllm/sandbox/runner.sock)
   SANDBOX_BUILD_SOCKET  the socket serving only build_system_site (default
                     <storage>/everythingllm/sandbox-build/runner.sock)
@@ -87,6 +91,7 @@ Config (environment):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html as htmllib
 import logging
 import os
@@ -97,7 +102,7 @@ import signal
 import stat
 import tempfile
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -106,6 +111,7 @@ from urllib.parse import quote
 import chatimage.card
 import hostrpc
 import tomllib
+from egress import config as egress_config
 from hostrpc import safefs
 
 log = logging.getLogger("sandbox-runner")
@@ -117,11 +123,10 @@ class SandboxError(hostrpc.RunnerError):
     """An error to show the agent: bad arguments, a missing file, the runner being down."""
 
 
-# Also named in hostctl's sandbox-images (cli.py) and host/systemd/sandbox-proxy.service; the proxy's
-# address (10.89.77.2:8888) is set in Containerfile.sandbox, that unit and tinyproxy.conf.
+# Also named in hostctl's sandbox-images (cli.py).
 IMAGE = "localhost/everythingllm-sandbox"
-NETWORK = "sandbox-net"
-PROXY_CONTAINER = "sandbox-proxy"
+PROFILE = "sandbox"  # egress.toml's profile, whose addresses the runs take
+PROXY_CONTAINER = "systemd-egress-proxy"  # the egress proxy's container (Quadlet's name)
 LABEL = "everythingllm-sandbox=1"
 
 LANGUAGES = {"python": ("main.py", "python"), "bash": ("main.sh", "bash")}
@@ -146,7 +151,6 @@ SYSTEM_BUILD_TIMEOUT = (
     40  # a system site's, as sites.build's; its callers give up after 55
 )
 SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
-MAX_PARALLEL = 2
 OUTPUT_BYTES = 20_000  # per stream of a run
 WRITE_BYTES = 1_000_000  # op_write
 WORKSPACE_WARN_BYTES = 4 << 30
@@ -246,6 +250,10 @@ class Config:
     system_themes: Path
     site_dir: Path
     site_url: str
+    # egress-net, the sandbox profile's addresses (one slot each) and the proxy's URL.
+    network: str = ""
+    ips: tuple[str, ...] = ()
+    proxy: str = ""
     public_root: Path = Path("/nonexistent")
     public_url: str = "http://127.0.0.1:8447/"
     sites_source: Path = SYSTEM_ZOLA / "sites"
@@ -260,8 +268,12 @@ class Config:
     def from_env(cls) -> Config:
         get = os.environ.get
         host = get("PUBLIC_HOST")
+        egress = egress_config.load()
         return cls(
             socket=hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
+            network=egress.network,
+            ips=tuple(egress.profiles[PROFILE].ips.values()),
+            proxy=egress.url,
             build_socket=hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET"),
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
@@ -587,11 +599,27 @@ class Runner(hostrpc.Service):
     config: Config
     podman: Podman = podman
     now: Callable[[], float] = time.time
-    _runs: asyncio.Semaphore = field(
-        default_factory=lambda: asyncio.Semaphore(MAX_PARALLEL)
-    )
+    _free: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     _jobs: dict[str, Job] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for ip in self.config.ips:
+            self._free.put_nowait(ip)
+
+    @contextlib.asynccontextmanager
+    async def slot(self) -> AsyncIterator[str]:
+        """One of the sandbox profile's addresses, held until the block ends: a run's
+        container takes it on egress-net, a build's (no network) only its turn."""
+        if not self.config.ips:
+            raise SandboxError(
+                "the sandbox has no addresses on egress-net (egress.toml's sandbox profile)"
+            )
+        ip = await self._free.get()
+        try:
+            yield ip
+        finally:
+            self._free.put_nowait(ip)
 
     # --- scopes and paths ---
 
@@ -693,7 +721,7 @@ class Runner(hostrpc.Service):
     async def op_ping(self) -> dict[str, Any]:
         image, network, proxy = await asyncio.gather(
             self.podman(["image", "exists", IMAGE], 30, None),
-            self.podman(["network", "exists", NETWORK], 30, None),
+            self.podman(["network", "exists", self.config.network], 30, None),
             self.podman(
                 [
                     "container",
@@ -711,11 +739,11 @@ class Runner(hostrpc.Service):
             problems.append(f"image {IMAGE} is missing (uv run hostctl sandbox-setup)")
         if network[0] != 0:
             problems.append(
-                f"network {NETWORK} is missing (uv run hostctl sandbox-setup)"
+                f"network {self.config.network} is missing (uv run hostctl egress-setup)"
             )
         if proxy[0] != 0 or proxy[1].strip() != "true":
             problems.append(
-                f"{PROXY_CONTAINER} isn't running (systemctl --user status sandbox-proxy)"
+                "the egress proxy isn't running (systemctl --user status egress-proxy)"
             )
         return {"problems": problems}
 
@@ -785,7 +813,8 @@ class Runner(hostrpc.Service):
         self, scope: Scope, language: str, code: str, timeout: int
     ) -> dict[str, Any]:
         """One run, start to finish; op_run keeps it as a task, which holds the workspace's
-        lock throughout and one of the MAX_PARALLEL slots while the container runs."""
+        lock throughout and one of the slots (an address) from writing the script until
+        its container is removed."""
         script, interpreter = LANGUAGES[language]
         name = f"sandbox-{secrets.token_hex(6)}"
         run_dir = self.config.scripts / name
@@ -793,11 +822,11 @@ class Runner(hostrpc.Service):
             before = await asyncio.to_thread(snapshot, scope)
             if before.total > WORKSPACE_MAX_BYTES:
                 raise self.over_quota(before, "run code")
-            try:
-                args = await asyncio.to_thread(
-                    self.prepare, name, scope, run_dir, script, code
-                )
-                async with self._runs:
+            async with self.slot() as ip:
+                try:
+                    args = await asyncio.to_thread(
+                        self.prepare, name, scope, run_dir, script, code, ip
+                    )
                     started = self.now()
                     watch = asyncio.create_task(self.watch(scope, name))
                     try:
@@ -818,10 +847,10 @@ class Runner(hostrpc.Service):
                             None,
                         )
                         oom = state.strip() == "true"
-                after = await asyncio.to_thread(snapshot, scope)
-            finally:
-                await self.podman(["rm", "-f", "--ignore", name], 60, None)
-                await asyncio.to_thread(shutil.rmtree, run_dir, True)
+                    after = await asyncio.to_thread(snapshot, scope)
+                finally:
+                    await self.podman(["rm", "-f", "--ignore", name], 60, None)
+                    await asyncio.to_thread(shutil.rmtree, run_dir, True)
             published = await asyncio.to_thread(
                 self.page_changes, scope, public_changes(before, after)
             )
@@ -917,20 +946,24 @@ class Runner(hostrpc.Service):
         ]
 
     def prepare(
-        self, name: str, scope: Scope, run_dir: Path, script: str, code: str
+        self, name: str, scope: Scope, run_dir: Path, script: str, code: str, ip: str
     ) -> list[str]:
-        """Write the run's script and return its podman arguments: the workspace's own
-        folders read-write, every other workspace's shared folder and the repo's themes
-        read-only."""
+        """Write the run's script and return its podman arguments: egress-net at `ip`,
+        with the egress proxy as its only way out; the workspace's own folders read-write,
+        every other workspace's shared folder and the repo's themes read-only."""
         (run_dir / "code").mkdir(parents=True)
         (run_dir / "code" / script).write_text(code)
         # No --rm: the container is kept until execute has asked podman whether it ran out of memory.
         return [
             *self.hardening(name),
             "--network",
-            NETWORK,
+            f"{self.config.network}:ip={ip}",
             "--dns",
             "none",
+            "-e",
+            f"http_proxy={self.config.proxy}",
+            "-e",
+            f"https_proxy={self.config.proxy}",
             *(
                 a
                 for mount, root in scope.roots.items()
@@ -999,7 +1032,7 @@ class Runner(hostrpc.Service):
             url = self.public_url(scope.workspace, slug)
             try:
                 args = await asyncio.to_thread(self.prepare_build, name, scope, run_dir)
-                async with self._runs:
+                async with self.slot():
                     exit_code, out, err, timed_out = await self.podman(
                         [*args, "python", "/sandbox/sitebuild.py", path, url],
                         BUILD_TIMEOUT,
@@ -1062,7 +1095,7 @@ class Runner(hostrpc.Service):
                 args = await asyncio.to_thread(
                     self.prepare_system_build, name, site, run_dir
                 )
-                async with self._runs:
+                async with self.slot():
                     exit_code, out, err, timed_out = await self.podman(
                         [
                             *args,

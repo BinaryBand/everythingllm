@@ -80,11 +80,16 @@ def test_install_keeps_going_past_a_failed_health_check(ran, monkeypatch):
     assert "appctl setup --installed" in ran
 
 
-def test_sandbox_images_creates_the_network_only_when_missing(ran):
+def test_sandbox_images_builds_the_image_and_egress_net(ran):
     cli.main(["sandbox-images"])
-    assert ran[-2:] == [
-        "podman network exists sandbox-net",
-        "podman network create --internal --disable-dns --subnet 10.89.77.0/24 sandbox-net",
+    folder = cli.ROOT / "host" / "containers" / "sandbox"
+    assert ran == [
+        f"podman build -t localhost/everythingllm-sandbox -f {folder}/Containerfile.sandbox {folder}",
+        "podman network exists egress-net",
+        (
+            "podman network create --internal --disable-dns --subnet 10.89.79.0/24"
+            " --ip-range 10.89.79.128/25 egress-net"
+        ),
     ]
 
 

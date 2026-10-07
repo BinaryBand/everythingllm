@@ -60,6 +60,9 @@ def cfg(tmp_path):
         system_themes=tmp_path / "themes",
         site_dir=tmp_path / "site",
         site_url="https://pages.example/",
+        network="egress-net",
+        ips=("10.89.79.40", "10.89.79.41"),
+        proxy="http://10.89.79.2:3128",
         public_root=tmp_path / "public",
         public_url="https://ws.example/",
     )
@@ -118,8 +121,10 @@ def test_podman_args_isolate_the_run(cfg):
     args, timeout, _ = r.podman.runs()[0]
     joined = " ".join(args)
     for flag in [
-        "--network sandbox-net",
+        "--network egress-net:ip=10.89.79.40",
         "--dns none",
+        "-e http_proxy=http://10.89.79.2:3128",
+        "-e https_proxy=http://10.89.79.2:3128",
         "--read-only",
         "--cap-drop ALL",
         "--pids-limit 256",
@@ -225,6 +230,45 @@ def test_runs_in_different_workspaces_overlap(cfg, monkeypatch):
         [("start", "career"), ("start", "home")],
         [("start", "home"), ("start", "career")],
     )
+
+
+def test_each_run_holds_an_address_of_its_own_until_its_container_is_gone(
+    cfg, monkeypatch
+):
+    """Runs in three workspaces, two addresses: the third waits for one, and no address
+    is handed on while the container that had it is still there."""
+    monkeypatch.setattr(runner, "WAIT", 5)
+    held, events = {}, []
+
+    async def main():
+        r = make(cfg, delay=0.1)
+        fake = r.podman
+
+        async def podman(args, timeout, kill):
+            if args[0] == "run":
+                ip = args[args.index("--network") + 1].split("ip=")[1]
+                assert ip not in held.values(), "an address given out twice"
+                held[args[args.index("--name") + 1]] = ip
+                events.append(ip)
+            elif args[0] == "rm":
+                held.pop(args[-1], None)
+            return await fake(args, timeout, kill)
+
+        r.podman = podman
+        C = {"workspace": "third", "thread": "default"}
+        await asyncio.gather(*(r.op_run(s, "bash", "1") for s in (A, B, C)))
+
+    go(main())
+    assert sorted(events) == ["10.89.79.40", "10.89.79.40", "10.89.79.41"] or sorted(
+        events
+    ) == ["10.89.79.40", "10.89.79.41", "10.89.79.41"]
+    assert held == {}
+
+
+def test_a_runner_without_addresses_refuses_to_run(cfg):
+    cfg.ips = ()
+    with pytest.raises(runner.SandboxError, match="no addresses on egress-net"):
+        go(make(cfg).op_run(A, "bash", "true"))
 
 
 def test_a_workspaces_shared_folder_counts_toward_its_quota(cfg, monkeypatch):
@@ -770,12 +814,17 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
         "SANDBOX_PUBLIC_URL",
     ):
         monkeypatch.delenv(var, raising=False)
-    config = runner.Config.from_env()
-    assert config.site_url == "http://127.0.0.1:8445/"
-    assert config.public_url == "http://127.0.0.1:8447/"
+    # egress.toml, where the runs' addresses are, needs this machine's name.
+    with pytest.raises(ValueError, match="PUBLIC_HOST isn't set"):
+        runner.Config.from_env()
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")
     monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
     config = runner.Config.from_env()
+    assert (config.network, config.ips, config.proxy) == (
+        "egress-net",
+        ("10.89.79.40", "10.89.79.41"),
+        "http://10.89.79.2:3128",
+    )
     assert config.socket == Path("/data/allm/everythingllm/sandbox/runner.sock")
     assert config.build_socket == Path(
         "/data/allm/everythingllm/sandbox-build/runner.sock"

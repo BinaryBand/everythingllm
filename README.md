@@ -640,8 +640,7 @@ through the proxy: `ANYTHINGLLM_URL=https://<PUBLIC_HOST>:3001` (the relay) and
 to the host's loopback.
 
 **The egress proxy** (`packages/egress`, the `egress` app) is egress-net's only way out.
-`egress-net` is an internal podman network (`10.89.79.0/24`; `sandbox-net` is
-`10.89.77.0/24`), with no route and no DNS. podman gives a container that names no
+`egress-net` is an internal podman network (`10.89.79.0/24`), with no route and no DNS. podman gives a container that names no
 address one from `10.89.79.128/25` (`ip_range`), apart from every service's, so a stray one
 can't take a stopped service's address and its profile. `egress-proxy` runs in a container of the same
 image, on egress-net at `10.89.79.2` and on podman's default network for its own way out,
@@ -660,6 +659,8 @@ port asked for:
   | relay    | relay (.10)                                                 | no     | `PUBLIC_HOST:3001`, ntfy :443 |
   | research | research-runner (.11)                                       | yes    | `PUBLIC_HOST:8888`            |
   | sites    | sites-runner (.12)                                          | yes    | `PUBLIC_HOST:8888`            |
+  | browser  | the workspaces' browsers (.32–.35, one per slot)            | yes    | none                          |
+  | sandbox  | the code sandbox's runs (.40–.41, one per slot)             | no     | none (PyPI, as every profile) |
 
 - A public host must resolve to public addresses only, all of them: the rule is
   `publicweb.public_address`, the one the services use on the host, so loopback, the LAN,
@@ -841,17 +842,21 @@ agent, won't write into a FIFO or device there, and leaves symlinks out of what 
 or a build copies into `/public`; the sandbox can create any symlink it likes in its own
 folders.
 
-**Network.** Sandboxes sit on `sandbox-net`, a podman network made with `--internal`
-(no route out) and `--disable-dns` (no DNS, so nothing leaks out through lookups either). Their
-only way out is `sandbox-proxy` (tinyproxy, `host/systemd/sandbox-proxy.service`), which is
-also on the default network and lets through only the hosts in
-`host/containers/sandbox/allowlist`: `pypi.org` and `files.pythonhosted.org`. So `pip
-install` works, and the internet, the LAN, CGNAT (a tailnet's AnythingLLM API, Ollama, …)
-and the host's own ports don't. `upload.pypi.org` stays blocked, so code can't push
-data out through a package upload either. To allow another host, add an anchored regex to
-`allowlist` and run `uv run hostctl sandbox-setup`, which rebuilds the proxy image.
+**Network.** A run sits on `egress-net` (see "Service containers"), with no route out and
+no DNS (`--dns none`), at one of the egress profile `sandbox`'s addresses (`10.89.79.40`,
+`.41`): each is a slot, held from writing the run's script until its container is removed,
+so at most two run at once and an address is never handed on while a stopped container
+still has it (a build, with no network, holds a slot too, for its turn). The runner points
+`http_proxy` and `https_proxy` at the egress proxy (`:3128`), whose `sandbox` profile has
+no `public` and no exceptions of its own, only what every profile may reach:
+`pypi.org:443` and `files.pythonhosted.org:443`. So `pip install` works, and the internet,
+the LAN, CGNAT (a tailnet's AnythingLLM API, Ollama, …) and the host's own ports don't.
+`upload.pypi.org` stays blocked, so code can't push data out through a package upload
+either. To allow another host, add it to the profile's `allow` in `egress.toml` and
+restart `egress-proxy`.
 
-`uv run hostctl health` checks both units and pings the runner.
+`uv run hostctl health` checks the unit and pings the runner, which reports a missing
+image or network and an egress proxy that isn't running.
 
 ## Browser
 

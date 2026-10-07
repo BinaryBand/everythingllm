@@ -7,7 +7,6 @@
 
 [network]
 # An internal podman network (no route out, no DNS): the proxy is its only way out.
-# sandbox-net is 10.89.77.0/24 and the old browser-net 10.89.78.0/24.
 name = "egress-net"
 subnet = "10.89.79.0/24"
 # Where podman picks an address for a container that names none: apart from every address
@@ -57,3 +56,11 @@ ips = { sites-runner = "10.89.79.12" }
 public = true
 allow = []
 ips = { browser-1 = "10.89.79.32", browser-2 = "10.89.79.33", browser-3 = "10.89.79.34", browser-4 = "10.89.79.35" }
+
+# The code sandbox's runs (packages/sandbox): sandbox-runner starts each on one of these
+# addresses, the slot it holds while its container exists. pip reaches PyPI (the
+# network's allow), and nothing else.
+[profiles.sandbox]
+public = false
+allow = []
+ips = { sandbox-1 = "10.89.79.40", sandbox-2 = "10.89.79.41" }

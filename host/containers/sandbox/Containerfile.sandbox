@@ -1,7 +1,8 @@
 # The image every sandbox run starts from. The root filesystem is mounted read-only; /work
 # is the thread's scratch folder and /project the workspace's, so pip installs land in
 # /project/.local and last as long as the workspace.
-# The only way out is sandbox-proxy at 10.89.77.2 (host/systemd/sandbox-proxy.service).
+# The only way out is the egress proxy, which sandbox-runner points each run at
+# (http_proxy, https_proxy) and which lets it reach PyPI alone (egress.toml's sandbox profile).
 FROM docker.io/library/python:3.13-slim
 
 RUN apt-get update \
@@ -9,8 +10,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && pip install --no-cache-dir numpy pandas matplotlib requests
 
-# zola, for sites the agent builds (the lab, in education's /shared): the same version as the host's
-# /usr/local/bin/zola, so the theme's Tera 2 components behave as they do in sites-runner.
+# zola, for every site build: the system sites' (news, research, status) and the ones the agent
+# builds (the lab, in education's /shared). The one zola there is, pinned here alone.
 ARG ZOLA_VERSION=0.23.6
 ARG ZOLA_SHA256=8f5132b3522412d04e395e0b25f6d68613ad272a873e54a2b3ebf664873024a4
 RUN curl -fsSL -o /tmp/zola.tar.gz \
@@ -27,7 +28,5 @@ ENV HOME=/work \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     MPLCONFIGDIR=/tmp/matplotlib \
     MPLBACKEND=Agg \
-    http_proxy=http://10.89.77.2:8888 \
-    https_proxy=http://10.89.77.2:8888 \
     PATH=/project/.local/bin:/usr/local/bin:/usr/bin:/bin
 WORKDIR /work

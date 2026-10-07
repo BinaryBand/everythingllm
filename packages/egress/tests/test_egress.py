@@ -36,7 +36,14 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
         "browser-2": "10.89.79.33",
         "browser-3": "10.89.79.34",
         "browser-4": "10.89.79.35",
+        "sandbox-1": "10.89.79.40",
+        "sandbox-2": "10.89.79.41",
     }
+    sandbox = config.profiles["sandbox"]  # PyPI, and nothing public on either port
+    assert sandbox.judge("pypi.org", 443) == "allow"
+    assert sandbox.judge("pypi.org", 443, public_only=True) is None
+    assert sandbox.judge("example.com", 443) is None
+    assert sandbox.judge(HOST, 3001) is None
     browser = config.profiles["browser"]  # public hosts, and only on the public port
     assert browser.public and browser.judge(HOST, 3001) is None
     relay, research = config.profiles["relay"], config.profiles["research"]

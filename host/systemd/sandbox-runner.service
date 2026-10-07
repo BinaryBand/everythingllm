@@ -1,7 +1,8 @@
 [Unit]
 Description=Code sandbox and page publisher for AnythingLLM's run-code, write-file and publish skills (socket in storage/everythingllm/sandbox/)
-After=sandbox-proxy.service
-Wants=sandbox-proxy.service
+# Its runs' only way out, to PyPI (egress.toml's sandbox profile).
+After=egress-proxy.service
+Wants=egress-proxy.service
 
 [Service]
 EnvironmentFile=@REPO@/host.env

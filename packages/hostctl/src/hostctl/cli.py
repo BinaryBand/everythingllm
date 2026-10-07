@@ -30,14 +30,10 @@ from hostctl import appctl, apps, gateway_env, machine, run_guard, units
 ROOT = units.ROOT
 SERVICE = "anythingllm.service"
 CONTAINER = "systemd-anythingllm"
+# The sandbox's image (sandbox.runner.IMAGE) and its Containerfile's folder. Its runs sit
+# on egress-net, at the addresses of egress.toml's sandbox profile.
+SANDBOX_IMAGE = "localhost/everythingllm-sandbox"
 SANDBOX = ROOT / "host" / "containers" / "sandbox"
-# image: its Containerfile in SANDBOX
-SANDBOX_IMAGES = {
-    "localhost/everythingllm-sandbox": "Containerfile.sandbox",
-    "localhost/everythingllm-sandbox-proxy": "Containerfile.proxy",
-}
-# A podman network with no route out and no DNS: (name, subnet).
-SANDBOX_NET = ("sandbox-net", "10.89.77.0/24")
 # The service containers' image, and their network, whose only way out is the egress proxy:
 # its name and subnet are egress.toml's (packages/egress), with the addresses on it.
 SERVICE_IMAGE = (
@@ -264,12 +260,14 @@ def gateway_client(name: str) -> None:
 
 @command(
     "sandbox-images",
-    "build the sandbox's images and its internal network (sandbox-setup runs this first)",
+    "build the sandbox's image and make egress-net, its runs' network (sandbox-setup runs this first)",
 )
 def sandbox_images() -> None:
-    for image, containerfile in SANDBOX_IMAGES.items():
-        run("podman", "build", "-t", image, "-f", str(SANDBOX / containerfile), str(SANDBOX))
-    internal_network(*SANDBOX_NET)
+    run(
+        "podman", "build", "-t", SANDBOX_IMAGE,
+        "-f", str(SANDBOX / "Containerfile.sandbox"), str(SANDBOX),
+    )  # fmt: skip
+    egress_net()
 
 
 def internal_network(name: str, subnet: str, ip_range: str = "") -> None:

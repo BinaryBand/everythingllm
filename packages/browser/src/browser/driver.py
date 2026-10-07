@@ -1090,7 +1090,9 @@ def first_line(e: Exception) -> str:
 def chromium_args(proxy: str, screen: tuple[int, int]) -> list[str]:
     """Chromium's flags: every request through the proxy (the container has no other way
     out, nor DNS), sized to the screen, and not slowed down in a background tab, since the
-    agent and the live card both use tabs the window isn't showing."""
+    agent and the live card both use tabs the window isn't showing. A browser that ended
+    badly (out of memory, a forced stop) doesn't offer to restore its pages: nobody asked
+    for them, and the bubble sat over every take-over view."""
     width, height = screen
     return [
         f"--proxy-server={proxy}",
@@ -1101,6 +1103,7 @@ def chromium_args(proxy: str, screen: tuple[int, int]) -> list[str]:
         "--start-maximized",
         "--no-first-run",
         "--no-default-browser-check",
+        "--hide-crash-restore-bubble",
         "--password-store=basic",
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",

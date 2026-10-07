@@ -488,6 +488,7 @@ def test_chromium_goes_through_the_proxy_alone():
     assert "--proxy-server=http://10.89.79.2:3129" in args
     assert "--proxy-bypass-list=<-loopback>" in args  # loopback goes through it too
     assert "--window-size=1280,800" in args
+    assert "--hide-crash-restore-bubble" in args
     assert driver.screen_size("1280x800") == (1280, 800)
 
 

@@ -238,7 +238,11 @@ def test_while_the_user_has_the_browser_the_agent_waits_for_them(tmp_path):
             await r.op_act(scope(), "click", "e1")
         with pytest.raises(RunnerError, match="the user has"):
             await r.op_open(scope(), "other.example")
-        assert (await r.op_read(scope()))["page"]  # reading is fine
+        # nor read, which would show what the user types (a password they reveal)
+        with pytest.raises(RunnerError, match="the user has"):
+            await r.op_read(scope())
+        with pytest.raises(RunnerError, match="the user has"):
+            await r.op_close(scope())
         back = await r.op_handoff(scope(), done=True)  # they said so in the chat
         assert "Sign in" in back["page"] and s.control == "agent" and not s.asked
         assert tab.last == "The agent has the browser again"
@@ -741,3 +745,20 @@ def test_an_oversized_download_isnt_copied(tmp_path, monkeypatch):
     told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
     assert told["7"][0].startswith("couldn't save the download big.bin")
     assert not (staging / "7" / "big.bin").exists()
+
+
+def test_only_the_user_taking_over_in_the_view_unlocks_the_browser(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://linkedin.com/")
+        s = r.sessions["career"]
+        driver = podman.drivers[s.name]
+        await r.op_handoff(scope(), "log in")
+        assert (
+            driver.capturing and not driver.taken
+        )  # the agent's handoff unlocks nothing
+        await r.op_handoff(scope(), done=True)
+        await r.take(s)
+        assert driver.capturing and driver.taken
+
+    test(tmp_path)

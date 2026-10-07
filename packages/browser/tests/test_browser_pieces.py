@@ -601,3 +601,90 @@ def test_an_oversized_download_isnt_kept(tmp_path, monkeypatch):
     asyncio.run(d.on_download(page, FakeDownload("big.bin", b"1234")))
     assert list((tmp_path / "7").iterdir()) == []
     assert "wasn't kept" in d.notes["7"][0]
+
+
+def test_a_password_stays_hidden_however_many_codes_are_filled_after():
+    d = driver.Driver(None, None)
+    d.keep_filled("hunter2pass")
+    for i in range(50):
+        d.keep_filled(f"{i:06d}", code=True)
+    assert "hunter2pass" in d.filled and len(d.codes) == driver.MAX_CODES
+    assert "000049" in d.codes and "000000" not in d.codes
+    assert "hunter2pass" not in driver.hide('value="hunter2pass"', d.pieces)
+
+
+@pytest.mark.parametrize(
+    "send",
+    [
+        ("open", {"url": "https://other.example/search?q=xhunter2y"}),
+        ("open", {"url": "https://other.example/search?q=%68unter2"}),
+        ("open", {"url": "https://other.example/search?q=hunt+er2pass"}),
+        ("act", {"action": "type", "ref": "e1", "text": "guess hunter2"}),
+        ("act", {"action": "fill", "ref": "e1", "text": "hunter2"}),
+    ],
+)
+def test_sending_part_of_a_secret_locks_the_browser_until_the_user_takes_it(send):
+    """A read hides any piece of a secret, so a guess sent and seen hidden would spell it
+    out: the guess is refused, and nothing more is done for the agent."""
+    d = driver.Driver(None, None)
+    d.keep_filled("hunter2")
+    op, args = send
+    if "+" in args.get("url", ""):
+        d.keep_filled("hunt er2pass")
+    with pytest.raises(RunnerError, match="locked to you"):
+        asyncio.run(getattr(d, f"op_{op}")("t1", **args))
+    assert d.locked
+    for again in (d.op_read("t1"), d.op_open("t1", "https://example.com/")):
+        with pytest.raises(RunnerError, match="locked to you"):
+            asyncio.run(again)
+    asyncio.run(d.op_capture(True))  # the agent's own handoff doesn't unlock it
+    assert d.locked
+    asyncio.run(d.op_capture(True, user=True))
+    assert not d.locked
+
+
+def test_a_run_of_key_presses_counts_as_text_sent():
+    d = driver.Driver(None, None)
+    d.keep_filled("hunter2")
+    d.stacks["t1"] = [login_page()]
+    for key in "hunte":
+        with pytest.raises(RunnerError, match="isn't on the page|ref"):
+            asyncio.run(d.op_act("t1", "press", "e9", key))
+    with pytest.raises(RunnerError, match="locked to you"):
+        asyncio.run(d.op_act("t1", "press", "e9", "r"))
+
+
+class FakeContext:
+    def __init__(self, *pages):
+        self.pages = list(pages)
+
+
+class PasswordFrame:
+    def __init__(self, *values):
+        self.fields = [
+            FakeElement("input", "password", "https://x.example/", value=v)
+            for v in values
+        ]
+
+    def locator(self, selector):
+        assert selector == "input[type=password]"
+        return FakeLocator(self.fields)
+
+
+def test_what_the_user_typed_in_a_password_field_is_hidden_once_the_agent_has_it_back():
+    page = FakePage("https://x.example/", {})
+    page.frames = [PasswordFrame("typed-not-sent", ""), PasswordFrame("other-pass")]
+    d = driver.Driver(FakeContext(page), None)
+    asyncio.run(d.op_capture(True))
+    asyncio.run(d.op_capture(False))
+    assert d.passwords == ["typed-not-sent", "other-pass"]
+
+
+def test_a_login_the_user_sends_is_hidden_from_the_agent():
+    d = driver.Driver(None, None)
+    d.capturing = True
+    d.on_capture(
+        {"frame": FakeFrame("https://www.linkedin.com/login")},
+        {"username": "me@x.org", "password": "s3cret-pass"},
+    )
+    assert "s3cret-pass" in d.passwords and len(d.offers) == 1

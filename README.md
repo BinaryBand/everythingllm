@@ -876,8 +876,10 @@ the same chat keeps the same tab and card from one container to the next. The ta
 redirect from :8445, since the token changes with each container), a page of its own on its
 own tailnet port (`browser.takeover`, :8454), so its scripts run on an origin of their own
 and not the pages site's. It shows the browser's whole screen through noVNC (`static/app.js`),
-view-only while the agent has it. "Take over" makes it yours: the agent's actions are refused
-until you press "Hand back to the agent". The VNC stream reaches the page over a WebSocket
+view-only while the agent has it. "Take over" makes it yours: the agent's actions and reads
+are refused (so it can't watch what you type) until you press "Hand back to the agent". When
+it comes back, whatever is in a password field, sent or not, is hidden from its reads as a
+filled secret is, and so is a login you sent. The VNC stream reaches the page over a WebSocket
 the runner carries to x11vnc's Unix socket (`browser.websocket`); nothing in the container
 listens on a port. A POST or a WebSocket must come from the page's own origin. noVNC's files
 come from the browser image (`uv run hostctl browser-images` copies `/opt/novnc` to
@@ -899,6 +901,11 @@ name bound in so one workspace's file can't stand in for another's.
   it back by the page's "show password" button and an edit: a read hides any six
   characters of a filled secret wherever they show (`driver.hide`), and a field holding
   one can only be submitted, left or replaced, never typed into, trimmed or selected.
+  Passwords stay hidden for the container's life (only 2FA codes, which go stale, are let
+  go after 20). As a read hides what the agent sends too, a guess sent and seen hidden would
+  spell a secret out, so an address or text the agent sends (or a run of its key presses)
+  that holds a piece of one is refused, and the browser is locked to it until you take it
+  over in the view yourself.
 - **Only on its own site.** A login is saved for a site (`linkedin.com`: the host, without
   `www.`) and fills only there or on a subdomain (`browser.origin`), checked by the runner
   against the tab and again by the driver against the frame the field is really in, and a

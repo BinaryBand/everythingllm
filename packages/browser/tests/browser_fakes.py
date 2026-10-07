@@ -26,7 +26,7 @@ class FakeDriver(hostrpc.Service):
         self.pages: dict[str, str] = {}  # thread -> url
         self.calls: list[tuple[str, dict]] = []
         self.filled: list[dict] = []
-        self.capturing = False
+        self.capturing = self.taken = False
         self.offers: dict[str, dict] = {}
 
     def view(self, thread):
@@ -90,8 +90,8 @@ class FakeDriver(hostrpc.Service):
         )
         return self.view(thread)
 
-    async def op_capture(self, on):
-        self.capturing = on
+    async def op_capture(self, on, user=False):
+        self.capturing, self.taken = on, user
         return {}
 
     async def op_offers(self):

@@ -24,7 +24,11 @@ once the page makes it a text field. A field holding one is the agent's only to 
 leave or replace: typing, a key other than SECRET_KEYS, or a choice in it is refused, so
 the agent can't make a value a read would show part of. And `press` sends only plain keys
 (KEYS, and Shift with SHIFTED), never a shortcut, so nothing reaches the clipboard to be
-pasted elsewhere. Chromium's own password saving is off. While the user has the browser, capture.js offers what they log in with for saving;
+pasted elsewhere. Passwords are hidden for the container's life (only stale 2FA codes are
+let go), and so are those the user typed while they had the browser, sent or not. As a
+read hides what the agent sends too, sending a guess and seeing it hidden would spell a
+secret out: an address or text (or a run of key presses) holding a piece of one is
+refused, and locks the browser to the agent until the user takes it over in the view. Chromium's own password saving is off. While the user has the browser, capture.js offers what they log in with for saving;
 the runner asks the user in the take-over view, and saves the offer before dropping it.
 
 The ops that take a thread return the tab's view: {title, url, elements, text, more,
@@ -67,6 +71,7 @@ import signal
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote_plus
 
 import hostrpc
 
@@ -97,7 +102,7 @@ OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
 MAX_SECRET = 1000
 MAX_DOWNLOADS = 10  # downloads a thread's pages may start between two reads
 DOWNLOAD_BYTES = 256 << 20  # the largest download kept
-MAX_FILLED = 20  # the latest passwords and codes filled, kept to hide them in reads
+MAX_CODES = 20  # the latest 2FA codes kept to hide (passwords are kept for the container's life)
 PIECE = (
     6  # characters of a filled secret that a read never shows (all of a shorter one)
 )
@@ -141,6 +146,12 @@ EDITS = {
     "uncheck",
 }  # checked against filled secrets
 FOCUSED = "input:focus, textarea:focus, [contenteditable]:focus"
+TYPED = 64  # the single characters pressed last, checked as text
+LOCKED = (
+    "what you sent holds part of a saved login's secret, so this workspace's browser is "
+    "locked to you until the user takes it over in the take-over view; tell them so in "
+    "your reply"
+)
 
 
 def check_act(action: str, ref: str, text: str) -> None:
@@ -201,8 +212,16 @@ class Driver(hostrpc.Service):
         self.capturing = False
         # id -> {site, username, password, at}
         self.offers: dict[str, dict[str, Any]] = {}
-        self.filled: list[str] = []  # passwords and codes from the vault, newest last
+        # Passwords filled from the vault or typed by the user, kept until the container
+        # stops: dropping one would let a read show it again. 2FA codes go stale, so only
+        # the last MAX_CODES are.
+        self.passwords: list[str] = []
+        self.codes: list[str] = []
         self.pieces: dict[int, set[str]] = {}  # theirs, as `pieces` makes them
+        self.locked = (
+            False  # the agent sent part of a secret: refused until the user takes over
+        )
+        self.typed: dict[str, str] = {}  # thread -> the last characters it pressed
 
     # --- tabs ---
 
@@ -345,6 +364,7 @@ class Driver(hostrpc.Service):
 
     async def op_open(self, thread: str, url: str) -> dict[str, Any]:
         url = check_url(url)
+        self.check_sent(thread, url, unquote_plus(url))
         page = await self.tab(thread)
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=GOTO_MS)
@@ -358,6 +378,16 @@ class Driver(hostrpc.Service):
         self, thread: str, action: str, ref: str = "", text: str = ""
     ) -> dict[str, Any]:
         check_act(action, ref, text)
+        if (
+            action == "press" and len(text) == 1
+        ):  # a run of single characters is text too
+            self.typed[thread] = (self.typed.get(thread, "") + text)[-TYPED:]
+            self.check_sent(thread, self.typed[thread])
+        else:
+            self.typed.pop(thread, None)
+            self.check_sent(
+                thread, text if action in ("fill", "type", "select") else ""
+            )
         page = self.existing(thread)
         target = page.locator(f'[data-bw-ref="{ref}"]').first if ref else None
         try:
@@ -429,6 +459,7 @@ class Driver(hostrpc.Service):
                 await asyncio.sleep(min(MAX_WAIT, max(0, seconds)))
 
     async def op_read(self, thread: str) -> dict[str, Any]:
+        self.check_sent(thread)
         return await self.view(thread, self.existing(thread))
 
     # --- saved logins ---
@@ -516,6 +547,7 @@ class Driver(hostrpc.Service):
         pass_ref: str = "",
         submit: bool = False,
     ) -> dict[str, Any]:
+        self.check_sent(thread)
         page = self.existing(thread)
         if not user_ref and not pass_ref:
             raise hostrpc.RunnerError(
@@ -543,20 +575,43 @@ class Driver(hostrpc.Service):
     async def op_fill_code(
         self, thread: str, site: str, code: str, ref: str, submit: bool = False
     ) -> dict[str, Any]:
+        self.check_sent(thread)
         page = self.existing(thread)
         target = await self.field(page, ref, site, "code")
-        self.keep_filled(code)
+        self.keep_filled(code, code=True)
         await self.fill(page, [(target, code)], submit)
         return await self.view(thread, self.existing(thread))
 
-    def keep_filled(self, secret: str) -> None:
-        """Remember a secret about to be filled, so reads never say it back and the agent
-        can't edit a field holding it."""
-        if secret in self.filled:
-            self.filled.remove(secret)
-        self.filled.append(secret)
-        del self.filled[:-MAX_FILLED]
+    @property
+    def filled(self) -> list[str]:
+        return [*self.passwords, *self.codes]
+
+    def keep_filled(self, secret: str, code: bool = False) -> None:
+        """Remember a secret about to be filled (or that the user typed), so reads never
+        say it back and the agent can't edit a field holding it."""
+        kept = self.codes if code else self.passwords
+        if secret in kept:
+            kept.remove(secret)
+        kept.append(secret)
+        del self.codes[:-MAX_CODES]
         self.pieces = pieces(self.filled)
+
+    def check_sent(self, thread: str, *texts: str) -> None:
+        """Refuse what the agent sends (an address, text to type) if it holds a piece of a
+        filled secret, and lock the browser to it until the user takes over: a read hides
+        such a piece, so sending guesses and seeing which come back hidden would spell a
+        secret out. Single key presses are checked as the run they make."""
+        if self.locked:
+            raise hostrpc.RunnerError(LOCKED)
+        if not self.filled:
+            return
+        if any(holds_secret(t, self.pieces) for t in texts if t):
+            self.locked = True
+            self.typed.clear()
+            log.warning(
+                "the agent sent part of a filled secret; locked until the user takes over"
+            )
+            raise hostrpc.RunnerError(LOCKED)
 
     async def secret_in(self, target: Any) -> bool:
         """Whether the element holds a piece of a filled secret, as Playwright reads its
@@ -618,6 +673,7 @@ class Driver(hostrpc.Service):
             del self.offers[key]
         while len(self.offers) >= MAX_OFFERS:
             del self.offers[min(self.offers, key=lambda k: self.offers[k]["at"])]
+        self.keep_filled(password)  # never read back once the agent has the browser
         self.offers[secrets.token_hex(4)] = {
             "site": site, "username": username, "password": password, "at": time.monotonic(),
         }  # fmt: skip
@@ -628,9 +684,29 @@ class Driver(hostrpc.Service):
             del self.offers[key]
         return self.offers
 
-    async def op_capture(self, on: bool) -> dict[str, Any]:
+    async def op_capture(self, on: bool, user: bool = False) -> dict[str, Any]:
+        """Offer what the user logs in with while they have the browser (`on`); when it
+        comes back, keep whatever is in a password field as a secret to hide, as they may
+        have typed one without sending it. `user`: they took it in the take-over view
+        themselves, which unlocks it."""
+        if self.capturing and not on:
+            await self.keep_typed()
         self.capturing = bool(on)
+        if on and user:
+            self.locked = False
         return {}
+
+    async def keep_typed(self) -> None:
+        for page in list(self.context.pages):
+            for frame in page.frames:
+                try:
+                    fields = frame.locator("input[type=password]")
+                    for i in range(await fields.count()):
+                        value = await fields.nth(i).input_value(timeout=ACT_MS)
+                        if value and len(value) <= MAX_SECRET:
+                            self.keep_filled(value)
+                except Exception:  # noqa: BLE001, S112 - a frame gone mid-look
+                    continue
 
     async def op_offers(self) -> list[dict[str, Any]]:
         return [

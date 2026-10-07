@@ -30,7 +30,7 @@ carries over a WebSocket. Nothing in the container listens on the network.
 
 Who has the browser: the agent, until the user takes over in the take-over view or the
 agent hands it over (`handoff`, for a login, 2FA or a CAPTCHA, after which the agent ends
-its reply so the card shows). While the user has it, the agent's actions are refused. It
+its reply so the card shows). While the user has it, the agent's actions and reads are refused. It
 comes back when the user hands it back in the view, or says in the chat that they're done
 (`handoff` with `done`), or when the browser is stopped.
 
@@ -656,6 +656,7 @@ class Runner(hostrpc.Service):
     async def op_read(self, scope: dict[str, Any], find: str = "") -> dict[str, Any]:
         workspace, thread = check_scope(scope)
         s, tab = await self.running(workspace, thread)
+        self.agent_may_act(s)  # nor watch what the user types
         view = await self.call(s, "read", {"thread": thread})
         tab.title, tab.url = view.get("title") or "", view.get("url") or ""
         return {"page": pagetext.render(view, (find or "").strip())}
@@ -692,6 +693,8 @@ class Runner(hostrpc.Service):
         tab = self.threads.get((workspace, thread))
         if tab is None or not tab.open:
             return {}
+        if (s := self.sessions.get(workspace)) is not None:
+            self.agent_may_act(s)
         tab.open = False
         tab.moved("Closed this chat's tab")
         if (s := self.sessions.get(workspace)) is not None:
@@ -968,11 +971,12 @@ class Runner(hostrpc.Service):
                 "couldn't note a use of %s's login %s: %s", workspace, entry["id"], e
             )
 
-    async def capture(self, s: Session, on: bool) -> None:
+    async def capture(self, s: Session, on: bool, user: bool = False) -> None:
         """Whether logins the user sends in the browser are offered for saving: while they
-        have it."""
+        have it. `user`: they took it in the take-over view, which unlocks a browser the
+        agent sent part of a secret to (browser.driver)."""
         try:
-            await self.call(s, "capture", {"on": on})
+            await self.call(s, "capture", {"on": on, "user": user})
         except RunnerError:
             pass  # a browser that's gone captures nothing
 
@@ -1030,7 +1034,7 @@ class Runner(hostrpc.Service):
         """The user takes the browser from the take-over view."""
         if s.control != "user":
             s.control, s.reason, s.asked = "user", "you took over", False
-            await self.capture(s, True)
+            await self.capture(s, True, user=True)
             for tab in self.tabs.values():
                 if tab.workspace == s.workspace and tab.open:
                     tab.moved("You took over the browser")

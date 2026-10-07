@@ -601,7 +601,12 @@ def test_a_page_written_into_public_is_live_at_once_and_runs_say_where(cfg):
     assert seen_live == [True]  # served from where it was written: no copy
     assert res["published"] == {
         "live": [
-            {"slug": "notes", "url": "https://ws.example/career/notes/", "blocked": []}
+            {
+                "slug": "notes",
+                "url": "https://ws.example/career/notes/",
+                "blocked": [],
+                "notices": [],
+            }
         ]
     }
     assert not (cfg.site_dir / "notes").exists()
@@ -619,7 +624,8 @@ def test_writes_say_which_page_changed_or_went(cfg):
             {
                 "slug": "b.html",
                 "url": "https://ws.example/career/b.html",
-                "blocked": ["scripts"],
+                "blocked": [],
+                "notices": [runner.SCRIPTS_NOTICE],
             }
         ]
     }
@@ -650,6 +656,7 @@ def test_a_run_reports_removed_and_changed_pages_but_not_hidden_ones(cfg):
                 "slug": "new.txt",
                 "url": "https://ws.example/career/new.txt",
                 "blocked": [],
+                "notices": [],
             }
         ],
         "removed": ["old"],
@@ -719,6 +726,7 @@ def test_publish_gives_a_pages_address_and_card(cfg):
             "url": "https://ws.example/career/plot/",
             "files": 2,
             "blocked": [],
+            "notices": [],
         }
     assert (cfg.site_dir / "_cards").is_dir()  # cards stay on the pages site
     assert not (cfg.site_dir / "plot").exists()
@@ -770,6 +778,70 @@ def test_links_on_the_sites_own_origin_arent_blocked(cfg):
     )
     assert res["published"]["live"][0]["blocked"] == [
         "images, media or frames from another host"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("html", "blocked"),
+    [
+        ('<script src="https://cdn.example/x.js"></script>', True),
+        ("<script defer src=//cdn.example/x.js></script>", True),
+        ('<script src="app.js"></script><script>go()</script>', False),
+        ('<script src="https://ws.example/career/lab/a.js"></script>', False),
+        ('<button onclick="go()">go</button><a href="javascript:go()">go</a>', False),
+        ('<a href="https://cdn.example/x.js">the script</a>', False),
+    ],
+)
+def test_only_scripts_from_another_host_are_blocked(html, blocked):
+    found = runner.csp_blocked(html, "https://ws.example")
+    assert found == (["scripts from another host"] if blocked else [])
+
+
+def notice(start: str) -> str:
+    """The one notice that starts with `start`."""
+    (found,) = [n for n in runner.NOTICES if n.startswith(start)]
+    return found
+
+
+def test_a_page_with_scripts_hears_what_the_sandbox_takes_away():
+    scripts = runner.SCRIPTS_NOTICE
+    assert runner.page_notices("<title>Plain</title><p>Important: prompt (x)</p>") == []
+    for html in (
+        "<script>tick()</script>",
+        "<b onclick='go()'>",
+        "<a href=javascript:go()>",
+    ):
+        assert runner.page_notices(html) == [scripts]
+    page = (
+        "<script>localStorage.x = 1; fetch('d.json'); alert('done')</script>"
+        '<script type="module" src="m.js"></script>'
+        '<a href="a.html" target="_blank">a</a><form><button>add</button></form>'
+    )
+    assert runner.page_notices(page) == list(runner.NOTICES)
+    # Without scripts, only what breaks without them; prose that looks like code is fine.
+    assert runner.page_notices(
+        "<p>Important: fetch() and localStorage.</p><a target=_blank href=x>x</a>"
+    ) == [notice("links with target=_blank")]
+    # A script file has no notice of its own that it's a script, and no HTML limits.
+    assert runner.page_notices(
+        "import { a } from './a.js';\nsessionStorage.k = 1; // target=_blank <form>",
+        script=True,
+    ) == [notice("localStorage"), notice("module scripts")]
+
+
+def test_a_pages_script_files_are_checked_too(cfg):
+    r = make(cfg)
+    go(r.op_write(A, "/public/timer/app.js", "let n = localStorage.n;"))
+    res = go(
+        r.op_write(A, "/public/timer/index.html", '<script src="app.js"></script>')
+    )
+    assert res["published"]["live"][0]["notices"] == [
+        runner.SCRIPTS_NOTICE,
+        notice("localStorage"),
+    ]
+    assert go(r.op_publish(A, "timer"))["notices"] == [
+        runner.SCRIPTS_NOTICE,
+        notice("localStorage"),
     ]
 
 
@@ -849,10 +921,9 @@ def test_the_workspace_pages_site_serves_public_as_it_is():
     assert "PublishPort=127.0.0.1:8447:8447" in unit
     workspaces = caddy[caddy.index(":8447 {") :]
     assert "root * /srv/workspaces" in workspaces
-    assert (
-        "script-src 'none'" in workspaces
-    )  # scripts stay off until the switch is used
-    assert "@scripts expression false" in workspaces
+    # Scripts run, but only in the CSP sandbox, with no same-origin, forms or popups.
+    assert 'sandbox allow-scripts allow-downloads"' in workspaces
+    assert "@scripts" not in workspaces
 
 
 # --- site builds ---

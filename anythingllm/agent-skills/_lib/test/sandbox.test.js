@@ -129,7 +129,10 @@ test("write-file and publish replies", async () => {
   const runner = await fakeRunner((op, args) => {
     if (op === "write") return { ok: true, result: args.delete ? { path: args.path, folder: true } : { path: args.path, bytes: 3 } };
     if (args.remove) return { ok: true, result: { slug: args.slug, removed: true } };
-    return { ok: true, result: { slug: args.slug, url: "https://h/plot/", files: 2, blocked: ["scripts"] } };
+    return {
+      ok: true,
+      result: { slug: args.slug, url: "https://h/plot/", files: 2, blocked: ["scripts from another host"], notices: ["it has scripts"] },
+    };
   });
   try {
     const { self } = agent();
@@ -137,7 +140,7 @@ test("write-file and publish replies", async () => {
     assert.equal(await writeFile.handler.call(self, { path: "/work/out", delete: true }), "deleted folder /work/out");
     assert.equal(
       await publish.handler.call(self, { path: "/work/out", slug: "plot" }),
-      "live: https://h/plot/ (2 files)\nwarning: the pages site blocks scripts; the page will show without them"
+      "live: https://h/plot/ (2 files)\nwarning: the pages site blocks scripts from another host; it will show without them\nnote: it has scripts"
     );
     assert.equal(await publish.handler.call(self, { slug: "plot", remove: true }), "removed /public/plot; it's no longer on the web");
     assert.deepEqual(runner.requests[2].args, { scope: { workspace: "career", thread: "12" }, slug: "plot", path: "/work/out", remove: false });
@@ -148,7 +151,9 @@ test("write-file and publish replies", async () => {
 
 test("the pages a call changed come back with run-code and write-file, and publish lists them", async () => {
   const published = {
-    live: [{ slug: "notes", url: "https://h/career/notes/", blocked: ["scripts"] }],
+    live: [
+      { slug: "notes", url: "https://h/career/notes/", blocked: ["scripts from another host"], notices: ["it has scripts", "no new tabs"] },
+    ],
     removed: ["old"],
   };
   let pages = [{ slug: "notes", url: "https://h/career/notes/" }];
@@ -162,7 +167,7 @@ test("the pages a call changed come back with run-code and write-file, and publi
     const reply = await runCode.handler.call(self, { language: "bash", code: "x" });
     assert.match(
       reply,
-      /live: https:\/\/h\/career\/notes\/\nwarning: the pages site blocks scripts in notes; it will show without them\ngone: \/public\/old$/
+      /live: https:\/\/h\/career\/notes\/\nwarning: the pages site blocks scripts from another host in notes; it will show without them\nnote \(notes\): it has scripts\nnote \(notes\): no new tabs\ngone: \/public\/old$/
     );
     assert.equal(
       await writeFile.handler.call(self, { path: "/public/old", delete: true }),

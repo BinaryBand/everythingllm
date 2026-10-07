@@ -26,36 +26,36 @@ def caddy_policies() -> dict[str, dict[str, dict[str, str]]]:
 
 
 def test_pages_csp_still_forbids_scripts():
-    """Agent-written pages are only safe while this holds: no scripts, and nothing fetched
+    """The system sites are only safe while this holds: no scripts, and nothing fetched
     from another host, so CSS can't send anything out either."""
     sites = caddy_policies()
     assert set(sites) == {"8445", "8447"}
     pages, workspaces = sites["8445"], sites["8447"]
-    assert set(pages) == {"default"} and set(workspaces) == {"default", "scripts"}
-    for rules in (pages["default"], workspaces["default"]):
-        assert rules["default-src"] == "'self'" and rules["script-src"] == "'none'"
-        assert (
-            rules["frame-ancestors"]
-            == rules["form-action"]
-            == rules["base-uri"]
-            == "'none'"
-        )
-    # The workspaces' pages may use inline CSS; nothing else is loosened.
+    assert set(pages) == set(workspaces) == {"default"}
+    rules = pages["default"]
+    assert rules["default-src"] == "'self'" and rules["script-src"] == "'none'"
+    assert (
+        rules["frame-ancestors"]
+        == rules["form-action"]
+        == rules["base-uri"]
+        == "'none'"
+    )
+    assert "sandbox" not in rules and "style-src" not in rules
+
+
+def test_workspace_pages_run_scripts_only_in_a_sandbox():
+    """Agent-written pages may run inline and same-site scripts, but each in an opaque
+    origin of its own: allow-same-origin would let one workspace's scripts read and change
+    every other's pages, and forms and popups would let a page post or open anything.
+    Nothing else is loosened (packages/sandbox/tests/test_pages_browser.py tries it)."""
+    pages, workspaces = caddy_policies()["8445"], caddy_policies()["8447"]
+    sandbox = workspaces["default"]["sandbox"].split()
+    assert sandbox == ["allow-scripts", "allow-downloads"]
+    for never in ("allow-same-origin", "allow-forms", "allow-popups"):
+        assert never not in sandbox
     assert workspaces["default"] == {
         **pages["default"],
-        "style-src": "'self' 'unsafe-inline'",
-    }
-
-
-def test_no_workspace_runs_scripts_yet():
-    """The scripts policy is there to be switched on for one workspace, on its own origin
-    (:8447); until then its matcher matches nothing, and it only ever adds scripts."""
-    workspaces = caddy_policies()["8447"]
-    assert workspaces["scripts"] == {
-        **workspaces["default"],
         "script-src": "'self' 'unsafe-inline'",
+        "style-src": "'self' 'unsafe-inline'",
+        "sandbox": "allow-scripts allow-downloads",
     }
-    text = (ROOT / "host" / "caddy" / "pages.Caddyfile").read_text()
-    assert re.findall(r"^\s*@scripts (.*)$", text, flags=re.MULTILINE) == [
-        "expression false"
-    ]

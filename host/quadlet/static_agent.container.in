@@ -6,7 +6,8 @@ Image=docker.io/library/caddy:2-alpine
 Volume=%h/.local/share/everythingllm/pages/public:/srv/site:ro,z
 # Every sandbox workspace's /public, and nothing else of theirs (sandbox.runner).
 Volume=%h/.local/share/everythingllm/sandbox/public:/srv/workspaces:ro,z
-# Its CSPs are what keep the pages the agent writes from running scripts.
+# Its CSPs are what keep the pages the agent writes from running scripts (:8445), or
+# run them only in a sandbox (:8447).
 Volume=@REPO@/host/caddy/pages.Caddyfile:/etc/caddy/Caddyfile:ro,z
 # For redirects from the pages site to the workspace pages site.
 Environment=PUBLIC_HOST=@PUBLIC_HOST@

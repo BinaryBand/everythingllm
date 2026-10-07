@@ -4,7 +4,7 @@
   "name": "Publish",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "This workspace's web pages: get a page's link and chat card, list the pages (no arguments), copy a file or folder into /public/<slug>, or remove a page. Anything in /public is live at once: /public/<name>/index.html is https://…:8447/<this workspace>/<name>/. Pages are static: no scripts and nothing from other hosts, but inline CSS works.",
+  "description": "This workspace's web pages: get a page's link and chat card, list the pages (no arguments), copy a file or folder into /public/<slug>, or remove a page. Anything in /public is live at once: /public/<name>/index.html is https://…:8447/<this workspace>/<name>/. Inline CSS works, and inline and same-folder scripts run in a sandbox: no storage, no fetch, no forms, popups or alerts, nothing from other hosts. Tell the user what a page's scripts do and ask before publishing one.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

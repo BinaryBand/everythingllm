@@ -115,16 +115,24 @@ the service containers (see "Service containers"), these two:
     anywhere, and no `<base>` repoints a page's links. Its front page and the workspace
     pages' old addresses redirect to :8447.
   - **the workspace pages site** (:8447): every sandbox workspace's `/public`, mounted
-    read-only from `sandbox/public/` and served as it is (see "Code sandbox"). The same
-    policy, but inline CSS is allowed. It's a port, and so a browser origin, of its own, so
-    that whatever its pages ever run can't post to
-    `/news/write`. Scripts are off for every workspace; `@scripts` in the Caddyfile is the
-    switch for letting one workspace's pages run them (`script-src 'self'
-    'unsafe-inline'`, still nothing from other hosts), and matches nothing yet.
+    read-only from `sandbox/public/` and served as it is (see "Code sandbox"). It's a port,
+    and so a browser origin, of its own, so that whatever its pages run can't post to
+    `/news/write`. The same policy, but inline CSS is allowed, and so are inline scripts
+    and scripts from the site itself (`script-src 'self' 'unsafe-inline'`), in every
+    workspace, only ever in a CSP sandbox: `sandbox allow-scripts allow-downloads`. Each
+    page gets an opaque origin of its own, so its scripts can't use storage or cookies,
+    read the site's other pages and files (not even its own folder's, with `fetch`), load
+    module scripts, submit forms, open windows or new tabs, or show `alert()`s; downloads
+    and Caddy's directory listing still work. `allow-same-origin` must never be added: it
+    would let one workspace's scripts read and rewrite every other's pages.
+    `packages/sandbox/tests/test_pages_browser.py` checks all of this in a real Chromium.
 
   `publish` and the sandbox's replies warn the agent when a page uses something the CSP
   blocks (scripts, stylesheets, fonts or images from other hosts), since the page would
-  otherwise just render without it.
+  otherwise just render without it. They also pass on the page's notices: that it has
+  scripts, so the agent tells the user what they do and asks before publishing it, and
+  which of the sandbox's limits (storage, `fetch`, module scripts, alerts, `target=_blank`
+  links, forms) it runs into.
 
 The host's own units in `host/systemd/` are templates too. `uv run hostctl units` renders all of them:
 
@@ -721,7 +729,8 @@ web, at `https://<PUBLIC_HOST>:8447/<workspace>/`: `public/notes/index.html` is
 live at once, and deleting it takes it down; there's no copy, no sync and no page names to
 claim, since each workspace owns its prefix. A half-written or broken page is the
 workspace's own business. The replies of `run-code`, `write-file` and `build-site` list the
-pages they changed, with their URLs and what in them the CSP blocks. Caddy's directory
+pages they changed, with their URLs, what in them the CSP blocks and their notices
+(scripts, and the sandbox's limits on them). Caddy's directory
 listing is the index, of the workspaces at the root and of a workspace's pages under it;
 dotfiles aren't served.
 
@@ -815,8 +824,8 @@ workspaces can read it and copy it. It started as a copy of the `agent-site` the
 welcome entry, with a `README.md` for the agent and a git repository so it can roll back.
 It's built with `build-site` (`path` `/shared/education/sites/lab`, slug `lab`), which
 puts it at `https://<PUBLIC_HOST>:8447/education/lab/`. Nothing in the repo or on the host reads it,
-so it can break without breaking anything else, and the CSP still holds for whatever it
-serves.
+so it can break without breaking anything else, and the CSP and its sandbox still hold
+for whatever it serves.
 
 **Building sites.** `build-site` (`op_build_site`) builds a Zola site from a folder in the
 workspace's own `/project`, `/shared/<workspace>` or `/work` (the folder's name is the

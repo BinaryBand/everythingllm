@@ -39,10 +39,13 @@ but /public folders (SANDBOX_PUBLIC, `<public>/<workspace>/`). The workspace pag
 workspace under its own prefix: there's no copy, no page to claim, and a half-written page
 is the workspace's own business. Nothing private is in the tree, so a symlink in it can't
 reach another workspace's /project or /work. The site's CSP is one rule for every
-workspace (no scripts yet; the Caddyfile has the switch for letting a workspace's pages run
-them, on an origin of their own). A run, write or build that changed /public says which
-pages changed and where they are; op_publish gives a page's address and link card, and can
-copy a file or folder into /public first.
+workspace: pages may run inline and same-site scripts, but in a CSP sandbox, where each
+page has an opaque origin (no storage, no reading the site's files, no forms, popups or
+alerts), and nothing loads from another host. A run, write or build that changed /public
+says which pages changed and where they are, what in them the CSP blocks, and its notices:
+that a page has scripts (so the agent asks the user before publishing it) and which of the
+sandbox's limits it runs into. op_publish gives the same for a page, with its address and
+link card, and can copy a file or folder into /public first.
 
 A site build (op_build_site) runs the repo's sitebuild.py in a container with no network
 and every folder read-only but an empty /out: it copies a Zola site from the workspace's
@@ -56,8 +59,8 @@ their repo source and the repo's themes come in read-only, with a copy of their 
 made without following a symlink (the sites and research containers can write
 pages/entries), and no workspace's /shared; the output goes, plain files only, into the
 pages site's `.<site>.new`, which sites.build marks and swaps in. A page's title for its
-card, and what its CSP blocks, are read the same way: a run could leave a symlink in
-/public pointing at another workspace's files. The op takes only
+card, and what its CSP blocks and its notices, are read the same way: a run could leave a
+symlink in /public pointing at another workspace's files. The op takes only
 a site's name, and reads what to build from the repo itself: its socket is reachable from
 the AnythingLLM container. It is also served alone, with ping, on a second socket
 (SANDBOX_BUILD_SOCKET, `SystemBuilds`), the one the sites and research service containers
@@ -177,7 +180,7 @@ LIST_MAX = 200  # files named in a run's changed list
 # on it again with op_wait.
 WAIT = 45
 RESULT_KEEP = 3600  # how long a finished run's result can still be fetched
-CSP_SCAN = 200  # HTML files of a changed page checked for what the CSP blocks
+CSP_SCAN = 200  # HTML and .js files of a changed page checked (blocked, notices)
 ENTRIES_BYTES = 64 << 20  # a system site's entries copied into its build, at most
 # A chat's attachments, as text in /work/attachments (sync_attachments): AnythingLLM keeps
 # each one's text as <uploads>/<name>-<uuid>.json, and the skill names the chat's.
@@ -510,14 +513,9 @@ def remove_path(path: Path) -> None:
 # a page full of stray "<" can't make a pattern scan to the end of it again and again.
 _OFFSITE = r"""["']?\s*(?:https?:)?//"""
 _CSP_BLOCKED = (
-    ("scripts", re.compile(r"<script\b", re.IGNORECASE)),
     (
-        "inline event handlers (onclick= and the like)",
-        re.compile(r"<[^<>]*\son[a-z]+\s*=", re.IGNORECASE),
-    ),
-    (
-        "javascript: links",
-        re.compile(r"""(?:href|src)\s*=\s*["']?\s*javascript:""", re.IGNORECASE),
+        "scripts from another host",
+        re.compile(r"<script\b[^<>]*\bsrc\s*=" + _OFFSITE, re.IGNORECASE),
     ),
     (
         "stylesheets or fonts from another host",
@@ -554,6 +552,80 @@ def csp_blocked(html: str, origin: str = "") -> list[str]:
     if origin:  # only where the origin ends: https://site.example.evil/ is another host
         html = re.sub(re.escape(origin) + r"""(?=[/"'\s>)]|$)""", "", html)
     return [what for what, pattern in _CSP_BLOCKED if pattern.search(html)]
+
+
+# What the agent should know about a page whose scripts run: the pages site runs them in a
+# CSP sandbox (allow-scripts allow-downloads), where each page has an opaque origin of its
+# own. tests/test_pages_browser.py checks each of these limits in a real browser.
+SCRIPTS_RE = re.compile(
+    r"""<script\b|<[^<>]*\son[a-z]+\s*=|(?:href|src)\s*=\s*["']?\s*javascript:""",
+    re.IGNORECASE,
+)
+SCRIPTS_NOTICE = (
+    "it has scripts, which run sandboxed (no storage, no reading the site's files, no "
+    "forms, popups or alerts): tell the user what they do and ask before publishing it"
+)
+# What breaks in the sandbox, looked for in a page with scripts and in its .js files.
+_SCRIPT_LIMITS = (
+    (
+        (
+            "localStorage, sessionStorage, IndexedDB and cookies throw; keep its state "
+            "in the page"
+        ),
+        re.compile(r"\b(?:localStorage|sessionStorage|indexedDB|document\.cookie)\b"),
+    ),
+    (
+        (
+            "fetch and XMLHttpRequest can't read the site's files (or another host's); "
+            "put the data in the page"
+        ),
+        re.compile(r"\bfetch\(|\bXMLHttpRequest\b"),
+    ),
+    (
+        "module scripts can't load files (src= or import); use plain scripts",
+        re.compile(
+            r"""(?i:<script\b[^<>]*\btype\s*=\s*["']?module)"""
+            r"""|\bimport\(|^\s*import\b\s*[\w{*"']""",
+            re.MULTILINE,
+        ),
+    ),
+    (
+        "alert, confirm and prompt do nothing; show messages in the page",
+        re.compile(r"\b(?:alert|confirm|prompt)\("),
+    ),
+)
+# What breaks in the sandbox with or without scripts.
+_PAGE_LIMITS = (
+    (
+        "links with target=_blank won't open (no new tabs); drop the target",
+        re.compile(r"""\btarget\s*=\s*["']?_blank""", re.IGNORECASE),
+    ),
+    (
+        (
+            "forms don't submit, and their submit event never fires; use a button's "
+            "click handler"
+        ),
+        re.compile(r"<form\b", re.IGNORECASE),
+    ),
+)
+NOTICES = (
+    SCRIPTS_NOTICE,
+    *(what for what, _ in _SCRIPT_LIMITS),
+    *(what for what, _ in _PAGE_LIMITS),
+)
+
+
+def page_notices(text: str, script: bool = False) -> list[str]:
+    """What the sandbox the pages site runs scripts in means for a page's HTML, or with
+    `script`, for one of its .js files: [] when nothing does."""
+    found = []
+    if not script:
+        found += [what for what, pattern in _PAGE_LIMITS if pattern.search(text)]
+        if SCRIPTS_RE.search(text):
+            found.append(SCRIPTS_NOTICE)
+    if script or SCRIPTS_NOTICE in found:
+        found += [what for what, pattern in _SCRIPT_LIMITS if pattern.search(text)]
+    return [n for n in NOTICES if n in found]
 
 
 def page_description(html: str) -> str:
@@ -1581,23 +1653,32 @@ class Runner(hostrpc.Service):
             workspace, quote(item.name) + ("/" if item.is_dir() else "")
         )
 
-    def blocked(self, item: Path) -> list[str]:
-        """What in a page's HTML the site's CSP blocks, so the agent hears it won't run."""
+    def checked(self, item: Path) -> dict[str, list[str]]:
+        """What in a page the site's CSP blocks, so the agent hears it won't load, and what
+        it should know about the sandbox the page's scripts run in (`notices`)."""
         origin = "/".join(self.config.public_url.split("/")[:3])
         files = [
-            f for f, name in regular_files(item)[0] if name.endswith((".html", ".htm"))
+            (f, name.endswith((".js", ".mjs")))
+            for f, name in regular_files(item)[0]
+            if name.endswith((".html", ".htm", ".js", ".mjs"))
         ]
-        found = set()
-        for f in files[:CSP_SCAN]:
-            html = safefs.read_regular(f.parent, (f.name,), WRITE_BYTES)
-            if html is not None:
-                found.update(csp_blocked(html.decode(errors="replace"), origin))
-        return sorted(found)
+        blocked, notices = set(), set()
+        for f, script in files[:CSP_SCAN]:
+            data = safefs.read_regular(f.parent, (f.name,), WRITE_BYTES)
+            if data is not None:
+                text = data.decode(errors="replace")
+                if not script:
+                    blocked.update(csp_blocked(text, origin))
+                notices.update(page_notices(text, script))
+        return {
+            "blocked": sorted(blocked),
+            "notices": [n for n in NOTICES if n in notices],
+        }
 
     def page_changes(self, scope: Scope, names: set[str]) -> dict[str, Any] | None:
         """Where the top-level entries `names` of /public that changed are now, with what
-        their CSP blocks, and which of them are gone; None when there are none. Hidden
-        entries are left out: the site doesn't serve them."""
+        their CSP blocks and their notices (`checked`), and which of them are gone; None
+        when there are none. Hidden entries are left out: the site doesn't serve them."""
         live, removed = [], []
         for name in sorted(n for n in names if not n.startswith(".")):
             item = scope.public / name
@@ -1608,7 +1689,7 @@ class Runner(hostrpc.Service):
                     {
                         "slug": name,
                         "url": self.page_url(scope.workspace, item),
-                        "blocked": self.blocked(item),
+                        **self.checked(item),
                     }
                 )
         result = {"live": live, "removed": removed}
@@ -1682,7 +1763,7 @@ class Runner(hostrpc.Service):
         }
 
     def page_info(self, workspace: str, item: Path) -> dict[str, Any]:
-        """A page's address, size, what its CSP blocks and its link card."""
+        """A page's address, size, what its CSP blocks, its notices and its link card."""
         url = self.page_url(workspace, item)
         # Read without following a symlink a run left: index.html could point at another
         # workspace's files, whose title and description would go on the card.
@@ -1700,7 +1781,7 @@ class Runner(hostrpc.Service):
             "slug": item.name,
             "url": url,
             "files": len(regular_files(item)[0]),
-            "blocked": self.blocked(item),
+            **self.checked(item),
             "card": chatimage.card.make(
                 self.config.site_dir,
                 url,

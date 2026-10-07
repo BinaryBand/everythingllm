@@ -171,8 +171,10 @@ async def publish(
     web. This client's pages are its /public, served as they are at
     https://…:8447/client-<this client>/ and live as soon as they're written:
     /public/<name>/index.html is the page /<name>/. With a path outside /public, it's copied
-    into /public/<slug> first. Pages are static: no scripts and nothing from other hosts,
-    but CSS works. With no slug or path, this client's pages; remove takes one down."""
+    into /public/<slug> first. CSS works, and inline and same-folder scripts run in a
+    sandbox: no storage, no fetch, no forms, popups or alerts, and nothing from other
+    hosts; `notices` says what a page runs into. With no slug or path, this client's
+    pages; remove takes one down."""
 
 
 @tool

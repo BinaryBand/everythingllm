@@ -165,8 +165,9 @@ is 3.13. Keep code 3.12-compatible, and check with
 - The exception is free-form pages: a sandbox workspace's `/public` is its pages, kept in
   `~/.local/share/everythingllm/sandbox/public/<workspace>/` (a tree holding nothing else)
   and served as it is by Caddy on :8447 under `/<workspace>/`, with no copy or sync.
-  That port is an origin of its own; its scripts are off, and the Caddyfile's `@scripts`
-  is the switch for one workspace.
+  That port is an origin of its own, and its CSP runs every page's scripts in a sandbox
+  (`allow-scripts allow-downloads`, an opaque origin per page); never add
+  `allow-same-origin`, `allow-forms` or `allow-popups`.
 - Sites live in `packages/sites/zola/sites/<name>/` and share the `packages/sites/zola/themes/agent-site/` theme
   (Tera 2 `{% component %}`s, not macros). Each site documents its fields for the agent in
   `agent_help` in its `zola.toml`.

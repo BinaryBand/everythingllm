@@ -27,19 +27,17 @@
 # Every sandbox workspace's /public (sandbox.runner), served as it is: /<workspace>/... is
 # that workspace's, whatever it put there, live the moment it's written. The folder mounted
 # here holds nothing but /public folders, so a symlink in one can't reach anything private.
-# A port of its own makes these pages an origin of their own: whatever they ever run can't
-# post to /news/write on :8445.
+# A port of its own makes these pages an origin of their own: whatever they run can't post
+# to /news/write on :8445.
+# Pages may run inline scripts and scripts from this site, but only in a CSP sandbox: each
+# page gets an opaque origin, so it can't use storage or cookies, read the site's other
+# pages or files, submit forms, open windows or tabs, or show alert()s; downloads work.
+# Never add allow-same-origin (one workspace's scripts could then read every other's
+# pages), allow-forms or allow-popups. packages/sandbox/tests/test_pages_browser.py checks
+# this in a real browser.
 :8447 {
   root * /srv/workspaces
-  # Which workspaces' pages may run scripts: none yet. To let one, match its prefix here,
-  # e.g. `@scripts path /education/*`, and restart static_agent.
-  @scripts expression false
-  # In a route, so the scripts header is set after the default (outside one, Caddy would
-  # run the unmatched header last and undo it).
-  route {
-    header Content-Security-Policy "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
-    header @scripts Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
-  }
+  header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; sandbox allow-scripts allow-downloads"
   header X-Content-Type-Options nosniff
   file_server browse {
     hide .*

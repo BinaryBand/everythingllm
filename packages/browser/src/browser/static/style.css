@@ -22,3 +22,15 @@ button.quiet { background: transparent; color: var(--muted); border: 1px solid #
 input:not([type=checkbox]) { font: inherit; padding: 0.3rem 0.5rem; border-radius: 6px; border: 1px solid #3a3f4b; background: #12151b; color: var(--fg); min-width: 10rem; }
 .note { color: var(--muted); margin: 0.3rem 0; }
 .error { color: #f07178; }
+#asked > div { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; margin: 0; padding: 0.5rem 1rem; background: #3a2f1f; color: var(--user); }
+#asked a { color: var(--fg); }
+/* A login request's form (/login/<id>/). */
+body.ask-login { display: block; max-width: 34rem; margin: 0 auto; padding: 1.5rem 1rem; height: auto; }
+.ask-login h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+.ask-login .site { color: var(--user); }
+.ask-login .url { overflow-wrap: anywhere; color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.85rem; }
+#ask-form { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1.2rem; }
+#ask-form[hidden] { display: none; }
+#ask-form select { font: inherit; padding: 0.3rem 0.5rem; border-radius: 6px; border: 1px solid #3a3f4b; background: #12151b; color: var(--fg); margin-left: 0.4rem; }
+#ask-form .buttons { display: flex; gap: 0.6rem; }
+#result { padding: 0.6rem 0.8rem; border-radius: 6px; background: #1f3a2c; color: #63d297; }

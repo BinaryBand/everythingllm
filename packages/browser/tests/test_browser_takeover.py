@@ -261,3 +261,66 @@ def test_the_view_answers_the_agents_request_and_saves_offers(tmp_path):
         assert "400" in head and "isn't waiting" in json.loads(body)["error"]
 
     test(tmp_path)
+
+
+def test_the_form_for_a_login_the_agent_asked_for(tmp_path):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        await r.op_open(scope(), "https://accounts.example.com/signin?next=<b>")
+        asked = await r.op_ask_login(scope())
+        base = f"/login/{asked['request']}"
+        head, _ = await answer(port, "GET", base)
+        assert "302" in head and f"Location: {base}/" in head
+        head, body = await answer(port, "GET", f"{base}/")
+        page = body.decode()
+        assert "200 OK" in head and f"Content-Security-Policy: {takeover.CSP}" in head
+        assert (
+            "Referrer-Policy: no-referrer" in head and "Cache-Control: no-store" in head
+        )
+        assert "<title>Log in to accounts.example.com</title>" in page
+        assert (
+            "next=&lt;b&gt;" in page and "<b>" not in page
+        )  # the page's address, as text
+        assert '<option value="accounts.example.com">' in page
+        assert '<option value="example.com">' in page
+        assert 'id="ask-form">' in page and 'id="result" hidden' in page
+        for f in ("login.js", "style.css"):
+            assert "200 OK" in (await answer(port, "GET", f"{base}/{f}"))[0]
+        # The take-over view lists it, with no more than its site.
+        state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
+        assert state["asked"] == [
+            {"id": asked["request"], "site": "accounts.example.com", "link": f"{base}/"}
+        ]
+        # Only from the page's own origin, and only for its sites.
+        save = {"site": "example.com", "username": "alice", "password": "hunter2"}
+        head, _ = await post(port, f"{base}/save", save, origin="https://evil.example")
+        assert "403" in head and r.vault.logins("career") == []
+        head, body = await post(port, f"{base}/save", {**save, "site": "evil.example"})
+        assert "400" in head and "not 'evil.example'" in json.loads(body)["error"]
+        head, body = await post(port, f"{base}/save", save)
+        assert "200 OK" in head and b"hunter2" not in body
+        assert json.loads(body)["state"] == "saved"
+        [login] = r.vault.logins("career")
+        assert login["site"] == "example.com" and login["username"] == "alice"
+        assert r.vault.get("career", login["id"])["password"] == "hunter2"
+        head, body = await post(port, f"{base}/save", {**save, "password": "other"})
+        assert "400" in head and "isn't waiting" in json.loads(body)["error"]
+        head, body = await answer(port, "GET", f"{base}/")
+        assert 'id="ask-form" hidden' in body.decode() and b"Saved." in body
+        state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
+        assert state["asked"] == []
+        assert (
+            json.loads((await answer(port, "GET", f"{base}/state"))[1])["state"]
+            == "saved"
+        )
+        assert "404" in (await post(port, f"{base}/frobnicate"))[0]
+        # Another request, turned down; and one nobody made.
+        await r.op_open(scope(thread="8"), "https://example.org/")
+        other = (await r.op_ask_login(scope(thread="8")))["request"]
+        head, body = await post(port, f"/login/{other}/drop")
+        assert json.loads(body)["state"] == "declined"
+        assert "404" in (await answer(port, "GET", "/login/lr-" + "0" * 32 + "/"))[0]
+        assert "404" in (await answer(port, "GET", f"/login/{s.token}/"))[0]
+
+    test(tmp_path)

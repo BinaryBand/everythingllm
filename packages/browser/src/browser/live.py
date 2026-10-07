@@ -18,8 +18,17 @@ and strips the prefix, so paths are taken with or without it.
   (a redirect to browser.takeover, whose address changes with each container), else a
   page saying it's closed.
 
-A tab's id is `bw-` and 16 hex digits, not guessable: the card and its link are the only
-way to it. A connection from anywhere but loopback or the server's own address is refused
+The agent's request for a login (Runner.op_ask_login) has a card too:
+
+    [![Log in to <site>](https://<host>:8445/_live/browser/login/<id>.png)](https://<host>:8445/_live/browser/login/<id>)
+
+- `login/<id>.png` says what the request is for and how it stands (waiting, saved, declined
+  or run out), pushed again when that changes.
+- `login/<id>` is where it links: the request's form in the take-over view (a redirect,
+  /login/<id>/ there), or a page saying it isn't known.
+
+A tab's id is `bw-` and 16 hex digits, not guessable, and a request's `lr-` and 32: the
+card and its link are the only way to either. A connection from anywhere but loopback or the server's own address is refused
 (hostrpc.local_peer).
 
 Config (environment):
@@ -53,7 +62,7 @@ from chatimage import (
 from PIL import Image, ImageDraw, ImageEnhance
 
 if TYPE_CHECKING:
-    from browser.runner import Runner, Tab
+    from browser.runner import LoginRequest, Runner, Tab
 
 HOST = "127.0.0.1"
 CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -113,6 +122,7 @@ class Live:
     TICK = 30.0  # seconds between frames at most, the same one again if nothing changed
     MAX_STREAM = 30 * 60  # seconds one connection is pushed frames; a reload asks again
     ROUTE = re.compile(r"(?:/_live/browser)?/(bw-[0-9a-f]{16})(\.jpg)?")
+    ASK_ROUTE = re.compile(r"(?:/_live/browser)?/login/(lr-[0-9a-f]{32})(\.png)?")
 
     def __init__(self, runner: Runner):
         self.runner = runner
@@ -135,6 +145,16 @@ class Live:
             return await live.send(writer, "403 Forbidden", b"Not from here.\n")
         if method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET only.\n")
+        if asked := self.ASK_ROUTE.fullmatch(path):
+            try:
+                return await self.asked(reader, writer, asked[1], bool(asked[2]))
+            except Exception:
+                self.runner.log.exception("login request card %s failed", asked[1])
+                if not writer.is_closing():
+                    await live.send(
+                        writer, "500 Internal Server Error", b"Something went wrong.\n"
+                    )
+                return
         route = self.ROUTE.fullmatch(path)
         if not route:
             return await live.send(writer, "404 Not Found", b"No such tab.\n")
@@ -232,6 +252,99 @@ class Live:
         finally:
             tab.viewers -= 1
 
+    async def asked(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        request: str,
+        image: bool,
+    ) -> None:
+        """A login request's card, or (not `image`) where it links."""
+        req = self.runner.asked_by_id(request)
+        if image and req is None:
+            frame = await asyncio.to_thread(
+                progress.draw,
+                "This login request isn't known here",
+                "Browser · login",
+                None,
+                "The browser service restarted since, or it's a day old; the agent can ask again.",
+                "interrupted",
+            )
+            return await live.send(writer, "200 OK", frame, "image/png")
+        if image:
+            gone = asyncio.Event()
+
+            async def watch() -> None:
+                with contextlib.suppress(ConnectionError, OSError):
+                    while await reader.read(1024):
+                        pass
+                gone.set()
+
+            watcher = asyncio.create_task(watch())
+            try:
+                await live.push(writer, self.asked_frames(req, gone), "image/png")
+            finally:
+                watcher.cancel()
+            return
+        if req is not None:
+            location = self.runner.login_form(req)
+            return await live.send(
+                writer, "302 Found", b"", headers={"Location": location}
+            )
+        await self.note(
+            writer,
+            "Log in",
+            "This login request isn't known here (the browser service restarted since, "
+            "or it's over a day old). Ask the agent to ask again.",
+        )
+
+    async def asked_frames(
+        self, req: LoginRequest, gone: asyncio.Event
+    ) -> AsyncIterator[bytes]:
+        """A frame now and one each time the request's state changes, until it's no longer
+        waiting, MAX_STREAM passes or the viewer is `gone`."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.MAX_STREAM
+        while True:
+            state = self.runner.asked_state(req)
+            yield await asyncio.to_thread(asked_picture, req, state)
+            left = min(
+                deadline - loop.time(),
+                self.runner.asked_left(req),  # when it runs out
+            )
+            if state not in ("waiting", "saving") or left <= 0 or gone.is_set():
+                return
+            req.changed.clear()
+            waits = [
+                asyncio.ensure_future(req.changed.wait()),
+                asyncio.ensure_future(gone.wait()),
+            ]
+            try:
+                await asyncio.wait(
+                    waits, timeout=left + 0.1, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                for w in waits:
+                    w.cancel()
+            if gone.is_set():
+                return
+
+    async def note(self, writer: asyncio.StreamWriter, title: str, what: str) -> None:
+        body = (
+            "<!doctype html><html lang='en'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>{html.escape(title)}</title>"
+            "<body style='font:16px/1.5 system-ui,sans-serif;max-width:40em;margin:3em auto;padding:0 1em'>"
+            f"<h1>{html.escape(title)}</h1><p>{html.escape(what)}</p></body></html>"
+        ).encode()
+        await live.send(
+            writer,
+            "200 OK",
+            body,
+            "text/html; charset=utf-8",
+            headers={"Content-Security-Policy": CSP},
+        )
+
     async def page(self, writer: asyncio.StreamWriter, tab: Tab | None) -> None:
         s = self.runner.sessions.get(tab.workspace) if tab is not None else None
         if tab is not None and tab.open and s is not None:
@@ -247,17 +360,29 @@ class Live:
             if tab is not None
             else "This browser tab isn't known here (the browser service restarted since)."
         )
-        body = (
-            "<!doctype html><html lang='en'><meta charset='utf-8'>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>Browser</title>"
-            "<body style='font:16px/1.5 system-ui,sans-serif;max-width:40em;margin:3em auto;padding:0 1em'>"
-            f"<h1>Browser</h1><p>{html.escape(what)}</p></body></html>"
-        ).encode()
-        await live.send(
-            writer,
-            "200 OK",
-            body,
-            "text/html; charset=utf-8",
-            headers={"Content-Security-Policy": CSP},
-        )
+        await self.note(writer, "Browser", what)
+
+
+ASKED = {
+    "waiting": (
+        "running",
+        "Open this card to save your login; the agent can use it there, never read it",
+    ),
+    "saving": ("running", "Saving it in this workspace's logins…"),
+    "saved": ("done", "Saved in this workspace's logins; tell the agent in the chat"),
+    "declined": ("failed", "You didn't give a login"),
+    "expired": ("interrupted", "Nobody answered in time; the agent can ask again"),
+}
+
+
+def asked_picture(req: LoginRequest, state: str) -> bytes:
+    """A login request's card as a PNG, in the progress cards' style."""
+    look, line = ASKED[state]
+    label = f"Browser · {req.workspace} · login · {state}"
+    return progress.draw(
+        f"Log in to {req.site}",
+        label,
+        None if state in ("waiting", "saving") else 1.0,
+        line,
+        look,
+    )

@@ -852,7 +852,7 @@ watch and take over, like the browser in Meta's Muse but split by workspace: a l
   done, and it calls `browser-handoff` with `done: true`.
 
 - `browser-login` logs in with a login saved in the workspace's vault, without the agent
-  ever seeing it (see "Saved logins" below).
+  ever seeing it, or asks you for one on a card (see "Saved logins" below).
 
 They're skills, not MCP tools, because they act and must know their workspace: each call's
 scope is `{workspace, thread}` from AnythingLLM's invocation (`_lib/scope.js`, as the
@@ -915,6 +915,20 @@ name bound in so one workspace's file can't stand in for another's.
   it to you), a form you send with a password in it is offered for saving there ("Save the
   login you just used on …?"), with the site taken from the frame it came from, whatever the
   page says (`capture.js`). Offers last 10 minutes and are only ever made while you have it.
+- **Asking for one.** When there's no login for the site, `browser-login` with `ask` gives
+  the agent a card for its reply, "Log in to <site>"
+  (`https://<PUBLIC_HOST>:8445/_live/browser/login/<id>.png`, drawn like a progress card and
+  pushed again as it's answered). It links to a page of its own in the take-over view,
+  `/login/<id>/` on :8454: a form with nothing else on it (no noVNC, so it works on a
+  phone) for a username, password and optional 2FA secret, which go into the vault. The
+  runner names the site from the chat's page (`Runner.op_ask_login`), never the model, and
+  the form lets you widen it only to a parent short of a public suffix
+  (`accounts.google.com` or `google.com`); it shows the page's address too, so a page that
+  talks the agent into asking can only ask for its own site's login, in plain sight. The
+  request's id (`lr-` and 32 hex digits) is the page's only key, so it needs no token and
+  outlives the browser; it waits 30 minutes (`ASK_SECONDS`), takes one answer, and the
+  take-over view lists the waiting ones. You tell the agent in the chat once it's saved,
+  and it logs in with it as with any other.
 - Chromium's own password saving is off in every profile, so what you type stays out of
   the profile. `browser-reset` wipes a profile but leaves the workspace's saved logins;
   delete those in the panel.

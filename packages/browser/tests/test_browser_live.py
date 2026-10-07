@@ -121,3 +121,59 @@ def test_a_closed_tab_shows_its_last_look_until_its_opened_again(tmp_path):
             await podman.close()
 
     asyncio.run(main())
+
+
+def test_a_login_requests_card_shows_how_it_stands_and_links_to_its_form(tmp_path):
+    async def main():
+        podman = FakePodman()
+        r = Runner(config(tmp_path), podman=podman, now=Clock())
+        server = await live.Live(r).serve(0)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            await r.op_open(scope(), "https://linkedin.com/login")
+            asked = await r.op_ask_login(scope())
+            req = r.asked[asked["request"]]
+            for path in (f"/_live/browser/login/{req.id}.png", f"/login/{req.id}.png"):
+                reader, writer = await get(port, path)
+                head, part, frame = await first_frame(reader)
+                assert b"multipart/x-mixed-replace" in head and b"image/png" in part
+                assert Image.open(io.BytesIO(frame)).format == "PNG"
+                writer.close()
+            # The stream sends the answer, then ends.
+            reader, writer = await get(port, f"/_live/browser/login/{req.id}.png")
+            await first_frame(reader)
+            await r.fulfil(req, "linkedin.com", "alice", "pw", "", False)
+            rest = await asyncio.wait_for(reader.read(), 5)
+            assert rest.count(b"Content-Type: image/png") == 1 and rest.endswith(
+                b"--\r\n"
+            )
+            reader, _ = await get(port, f"/_live/browser/login/{req.id}")
+            head = await reader.read()
+            assert b"302 Found" in head
+            assert f"Location: {r.login_form(req)}".encode() in head
+            assert (
+                r.login_form(req) == f"https://host.example.ts.net:8454/login/{req.id}/"
+            )
+            nobody = "lr-" + "0" * 32
+            reader, _ = await get(port, f"/_live/browser/login/{nobody}.png")
+            head, _, body = (await reader.read()).partition(b"\r\n\r\n")
+            assert b"image/png" in head and Image.open(io.BytesIO(body)).format == "PNG"
+            reader, _ = await get(port, f"/_live/browser/login/{nobody}")
+            head, _, body = (await reader.read()).partition(b"\r\n\r\n")
+            assert b"200 OK" in head and b"isn&#x27;t known here" in body
+            reader, _ = await get(port, "/_live/browser/login/lr-short.png")
+            assert b"404" in await reader.read()
+        finally:
+            server.close()
+            await podman.close()
+
+    asyncio.run(main())
+
+
+def test_every_state_of_a_login_request_has_a_card():
+    from browser.runner import LoginRequest
+
+    req = LoginRequest("lr-x", "career", "7", "bw-x", ["linkedin.com"], "https://x/", 0)
+    for state in live.ASKED:
+        image = Image.open(io.BytesIO(live.asked_picture(req, state)))
+        assert image.format == "PNG"

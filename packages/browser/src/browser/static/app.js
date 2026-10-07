@@ -1,7 +1,7 @@
 // The take-over view's page (browser.takeover): noVNC showing the workspace's browser,
 // view-only while the agent has it, and the buttons that take it and hand it back; the
-// agent's requests to use a saved login, offers to save what you logged in with, and the
-// workspace's saved logins. Everything from the server goes in as text, never as HTML: a
+// agent's requests to use a saved login or for one it hasn't got, offers to save what you
+// logged in with, and the workspace's saved logins. Everything from the server goes in as text, never as HTML: a
 // username can come from a web page.
 import RFB from "./novnc/core/rfb.js";
 
@@ -68,6 +68,20 @@ function showApproval(a) {
   $("approval-text").textContent = `The agent wants to use your login for ${who(a)}.`;
   $("allow").onclick = () => act("allow the request", `approve/${a.id}`);
   $("deny").onclick = () => act("refuse the request", `deny/${a.id}`);
+}
+
+// The agent's requests for logins it has none of: each links to its own form.
+function showAsked(asked) {
+  $("asked").replaceChildren(
+    ...asked.map((a) =>
+      el(
+        "div",
+        {},
+        el("span", { textContent: `The agent asked for your login for ${a.site}.` }),
+        el("a", { href: a.link, textContent: "Enter it", target: "_blank", rel: "noopener noreferrer" })
+      )
+    )
+  );
 }
 
 function showOffers(offers) {
@@ -138,6 +152,7 @@ async function refresh() {
 function render(s) {
   show(s);
   showApproval(s.approval);
+  showAsked(s.asked || []);
   showOffers(s.offers || []);
   showLogins(s.logins || []);
 }

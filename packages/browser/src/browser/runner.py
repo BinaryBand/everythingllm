@@ -34,6 +34,12 @@ login's own site. A login the user marked `ask` waits for their OK in the take-o
 (and on the card) before each use, good for GRANT minutes. While the user has the browser,
 logins they send are offered for saving there too.
 
+Without a saved login, the agent can ask for one (`ask_login`): a card in the chat links to
+a page of its own on the take-over view's origin (/login/<id>/, browser.takeover) with a
+form for the site of the chat's page, which only the runner names, and what the user sends
+there goes into the vault. The request's id is the only way to the page, so it's long; it
+outlives the browser (a save needs only the vault) until ASK_SECONDS pass.
+
 Ops (each takes `scope`):
   open(url)                      go to url in the thread's tab -> {page, card, new}
   act(action, ref?, text?)       one browser.driver action -> {page}
@@ -46,6 +52,8 @@ Ops (each takes `scope`):
                                  {approval, card} while it waits for the user's OK
   code(login, ref, submit?)      fill a saved login's 2FA code -> as login
   wait_approval(approval)        up to WAIT s -> {done, approved}
+  ask_login()                    ask the user for a login for the thread's page's site
+                                 -> {request, site, card}
 
 `page` is browser.page's text; `card` the tab's live card line (browser.live), "" without
 PUBLIC_HOST; `new` whether the card is new to this chat (the tab was just made).
@@ -84,7 +92,7 @@ from egress import config as egress_config
 from hostrpc import RunnerError
 
 from browser import page as pagetext
-from browser.origin import host_of, site_matches
+from browser.origin import host_of, normal_site, site_matches
 from browser.vault import Vault, VaultError, totp
 
 log = logging.getLogger("browser-runner")
@@ -103,6 +111,9 @@ IDLE = 20 * 60  # seconds unused and unwatched before a browser is stopped
 GRANT = 10 * 60  # seconds the user's OK to use a login lasts
 WAIT = 40  # what wait_approval waits at most, inside a skill call's patience
 MAX_ANSWERS = 20  # the user's last answers kept, for a wait_approval that comes late
+ASK_SECONDS = 30 * 60  # how long a request for a login waits for the user
+KEEP_ASKED = 24 * 3600  # how long an answered one is kept, for its card to say so
+MAX_ASKED = 10  # requests for logins waiting in a workspace at once
 VAULT_KEY = Path("~/.config/everythingllm/browser-vault.key").expanduser()
 START_SECONDS = 40  # for a container's driver to answer
 # An op in the driver: its own limits are shorter (30 s for a page load).
@@ -210,6 +221,25 @@ class Approval:
 
 
 @dataclass(eq=False)
+class LoginRequest:
+    """The agent asking the user for a login for the site of its chat's page."""
+
+    id: str  # `lr-` and 32 hex digits: the card's and the form's only key
+    workspace: str
+    thread: str
+    tab: str  # the tab's id
+    sites: list[str]  # the site of the page and its parents, narrowest first
+    url: str  # the page's address when it asked
+    made: float
+    state: str = "waiting"  # or "saving", "saved", "declined"
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+
+    @property
+    def site(self) -> str:
+        return self.sites[0]
+
+
+@dataclass(eq=False)
 class Session:
     """A workspace's running browser container."""
 
@@ -279,6 +309,7 @@ class Runner(hostrpc.Service):
         # from one container to the next
         self.threads: dict[tuple[str, str], Tab] = {}
         self.locks: dict[str, asyncio.Lock] = {}
+        self.asked: dict[str, LoginRequest] = {}  # request id -> the request
         self.vault = Vault(config.data / "vault", config.vault_key)
 
     # --- containers ---
@@ -471,6 +502,18 @@ class Runner(hostrpc.Service):
         url = f"{self.config.takeover_url.rstrip('/')}/{s.token}/"
         return url + (f"?tab={tab.id}" if tab else "")
 
+    def login_card(self, req: LoginRequest) -> str:
+        """A request's card line, as `card`; "" without a public URL."""
+        if not self.config.pages_url:
+            return ""
+        page = f"{self.config.pages_url.rstrip('/')}/_live/browser/login/{req.id}"
+        return (
+            f"[![{alt(f'Log in to {req.site}')}]({link(page + '.png')})]({link(page)})"
+        )
+
+    def login_form(self, req: LoginRequest) -> str:
+        return f"{self.config.takeover_url.rstrip('/')}/login/{req.id}/"
+
     # --- ops ---
 
     async def op_open(self, scope: dict[str, Any], url: str) -> dict[str, Any]:
@@ -651,6 +694,123 @@ class Runner(hostrpc.Service):
             return stale
         return {"done": True, "approved": waiting.answer}
 
+    async def op_ask_login(self, scope: dict[str, Any]) -> dict[str, Any]:
+        """Ask the user for a login for the site of the thread's page, on a card: the site
+        is the page's, never the model's. The thread's request for the same site, while
+        it waits, is asked again rather than twice."""
+        workspace, thread = check_scope(scope)
+        s, tab = await self.running(workspace, thread)
+        self.agent_may_act(s)
+        host = host_of(tab.url)
+        try:
+            site = normal_site(host)
+        except ValueError:
+            raise RunnerError(
+                f"this chat's page is on {host or 'no site'}, which can't have a saved login; "
+                "hand the browser to the user with browser-handoff instead"
+            ) from None
+        self.prune_asked()
+        req = next(
+            (
+                r
+                for r in self.asked.values()
+                if (r.workspace, r.thread, r.site) == (workspace, thread, site)
+                and self.waiting(r)
+            ),
+            None,
+        )
+        if req is None:
+            waiting = [
+                r for r in self.asked.values()
+                if r.workspace == workspace and self.waiting(r)
+            ]  # fmt: skip
+            if len(waiting) >= MAX_ASKED:
+                raise RunnerError(
+                    f"{MAX_ASKED} requests for logins are already waiting in this workspace; "
+                    "ask the user to answer them first"
+                )
+            req = LoginRequest(
+                f"lr-{secrets.token_hex(16)}", workspace, thread, tab.id,
+                parent_sites(site), tab.url, self.now(),
+            )  # fmt: skip
+            self.asked[req.id] = req
+        req.url = tab.url
+        tab.moved(f"Waiting for your login for {site}")
+        return {"request": req.id, "site": site, "card": self.login_card(req)}
+
+    def waiting(self, req: LoginRequest) -> bool:
+        return req.state == "waiting" and self.asked_left(req) > 0
+
+    def asked_left(self, req: LoginRequest) -> float:
+        """Seconds until a request runs out."""
+        return req.made + ASK_SECONDS - self.now()
+
+    def asked_state(self, req: LoginRequest) -> str:
+        """waiting, saving, saved, declined, or expired (a wait that ran out)."""
+        if req.state == "waiting" and not self.waiting(req):
+            return "expired"
+        return req.state
+
+    def prune_asked(self) -> None:
+        for req in [r for r in self.asked.values() if self.now() - r.made > KEEP_ASKED]:
+            del self.asked[req.id]
+
+    def asked_by_id(self, request: str) -> LoginRequest | None:
+        """A request by its id (compared in constant time, as the view's token)."""
+        self.prune_asked()
+        return next(
+            (r for r in self.asked.values() if secrets.compare_digest(r.id, request)),
+            None,
+        )
+
+    async def fulfil(
+        self,
+        req: LoginRequest,
+        site: str,
+        username: str,
+        password: str,
+        totp: str,
+        ask: bool,
+    ) -> dict[str, Any]:
+        """Save what the user sent for a request into the vault, for the site they chose
+        of the request's own (the page's, or a parent of it), once: a second send while
+        the first is being saved finds it no longer waiting."""
+        if not self.waiting(req):
+            raise RunnerError(
+                f"this request isn't waiting any more ({self.asked_state(req)})"
+            )
+        if site not in req.sites:
+            raise RunnerError(
+                f"the login is for {' or '.join(req.sites)}, not '{site}'"
+            )
+        if not password:
+            raise RunnerError("enter the password")
+        req.state = "saving"
+        try:
+            saved = await asyncio.to_thread(
+                self.vault.add, req.workspace, site, username, password, totp, ask
+            )
+        except BaseException:
+            req.state = "waiting"  # for the user to fix and send again
+            req.changed.set()
+            raise
+        self.answer_asked(req, "saved", f"You saved a login for {site}")
+        return saved
+
+    def decline(self, req: LoginRequest) -> None:
+        if not self.waiting(req):
+            raise RunnerError(
+                f"this request isn't waiting any more ({self.asked_state(req)})"
+            )
+        self.answer_asked(req, "declined", f"You didn't give a login for {req.site}")
+
+    def answer_asked(self, req: LoginRequest, state: str, last: str) -> None:
+        req.state = state
+        req.changed.set()
+        tab = self.tabs.get(req.tab)
+        if tab is not None and tab.open:
+            tab.moved(last)
+
     async def usable(self, workspace: str, login: str, tab: Tab) -> dict[str, Any]:
         """The saved login, if the tab's page is on its site."""
         entry = await asyncio.to_thread(self.vault.get, workspace, str(login or ""))
@@ -810,6 +970,19 @@ class Runner(hostrpc.Service):
         if not tab.open or s is None:
             return "closed"
         return "user" if s.control == "user" else "agent"
+
+
+def parent_sites(site: str) -> list[str]:
+    """`site` and the sites above it a login could be saved for, narrowest first:
+    accounts.google.com, google.com; never a public suffix."""
+    sites = [site]
+    parts = site.split(".")
+    for i in range(1, len(parts) - 1):
+        try:
+            sites.append(normal_site(".".join(parts[i:])))
+        except ValueError:
+            break
+    return sites
 
 
 def describe(action: str, ref: str, text: str) -> str:

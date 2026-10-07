@@ -12,7 +12,7 @@ container, so a stopped browser's old address goes nowhere.
   GET  /<token>/novnc/<path>     noVNC's core and vendor files (copied from the browser image
                                  into <data>/novnc by hostctl browser-images)
   GET  /<token>/state            {workspace, control, reason, waiting, tabs, approval,
-                                 offers, logins}: logins and offers without their secrets
+                                 asked, offers, logins}: logins and offers without their secrets
   POST /<token>/take             the user takes the browser
   POST /<token>/give             the user hands it back to the agent
   POST /<token>/approve/<id>, deny/<id>   answer the agent's wish to use a saved login
@@ -22,10 +22,18 @@ container, so a stopped browser's old address goes nowhere.
                                  save, or not, a login the user just sent in the browser
   GET  /<token>/websockify       the WebSocket noVNC speaks, carried to the container's
                                  x11vnc socket (browser.websocket)
+  GET  /login/<id>/              the form for a login the agent asked for (Runner.op_ask_login),
+                                 which the request's card links to; login.js, style.css beside it
+  GET  /login/<id>/state         {state, site, sites}
+  POST /login/<id>/save {site, username, password, totp, ask}, /login/<id>/drop
+                                 save the login in the vault, for the request's site or a
+                                 parent of it the user picks; or turn the request down
   GET  /health                   ok
 
 A POST or a WebSocket must come from the page's own origin (its Origin header), so no
-other page can drive the browser. Nothing here ever sends a password or 2FA secret back:
+other page can drive the browser. A login request's form needs no token: its id, long and
+known only to its card, is its key, and it can only add a login for the site the agent's
+page was on. Nothing here ever sends a password or 2FA secret back:
 the page can save and delete logins, not read them. Connections are taken only from loopback or the
 server's own address (hostrpc.local_peer), where tailscale serve delivers them.
 """
@@ -85,6 +93,7 @@ PAGE = """<!doctype html>
   <button id="allow">Allow</button>
   <button id="deny" class="quiet">Don't allow</button>
 </section>
+<section id="asked"></section>
 <section id="offers"></section>
 <details id="logins">
   <summary>Saved logins</summary>
@@ -105,6 +114,44 @@ PAGE = """<!doctype html>
 </body>
 </html>
 """
+LOGIN_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Log in to {site}</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="ask-login">
+<h1>Log in to <span class="site">{site}</span></h1>
+<p>The agent in <strong>{workspace}</strong> asked for your login for the page it has open:</p>
+<p class="url">{url}</p>
+<p class="note">It's saved in this workspace's logins. The agent can have the browser fill it
+in on the site you pick here, never anywhere else, and can never read it. Only enter the login
+you use on that site.</p>
+<form id="ask-form"{form_hidden}>
+  <label>Site <select name="site">{options}</select></label>
+  <input name="username" placeholder="Username or email" autocomplete="off">
+  <input name="password" type="password" placeholder="Password" autocomplete="new-password" required>
+  <input name="totp" placeholder="2FA secret (optional)" autocomplete="off">
+  <label><input name="ask" type="checkbox"> Ask me before each use</label>
+  <div class="buttons">
+    <button>Save login</button>
+    <button type="button" id="decline" class="quiet">Not now</button>
+  </div>
+</form>
+<p id="result"{result_hidden}>{result}</p>
+<p id="error" class="error" hidden></p>
+<script type="module" src="login.js"></script>
+</body>
+</html>
+"""
+ASKED = {
+    "saving": "Saving it…",
+    "saved": "Saved. Tell the agent in the chat, and it will log in with it.",
+    "declined": "You turned this request down.",
+    "expired": "This request ran out. Ask the agent to ask again.",
+}
 
 
 @contextlib.contextmanager
@@ -209,6 +256,8 @@ class Takeover:
             return await live.send(writer, "200 OK", b"ok\n")
         _, token, *rest = req.path.split("/", 2) + [""]
         what = rest[0]
+        if token == "login":
+            return await self.asked(req, reader, writer, what)
         s = self.runner.by_token(token) if token else None
         if s is None:
             return await live.send(
@@ -254,6 +303,81 @@ class Takeover:
             return await self.bridge(req, reader, writer, s)
         await live.send(writer, "404 Not Found", b"No such thing.\n")
 
+    async def asked(
+        self,
+        req: Request,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        what: str,
+    ) -> None:
+        """A login request's form, its files, its state and its POSTs."""
+        r = self.runner
+        request, slash, rest = what.partition("/")
+        asked = r.asked_by_id(request) if request.startswith("lr-") else None
+        if asked is None:
+            return await live.send(
+                writer,
+                "404 Not Found",
+                b"This login request isn't known here (the browser service restarted "
+                b"since, or it's over a day old).\n",
+            )
+        if not slash:  # the page's relative links need the slash
+            return await live.send(
+                writer, "302 Found", b"", headers={"Location": f"/login/{request}/"}
+            )
+        if req.method == "POST":
+            if not req.same_origin():
+                return await live.send(writer, "403 Forbidden", b"Not from the page.\n")
+            try:
+                await req.read_body(reader)
+                body = req.body
+                if rest == "save":
+                    await r.fulfil(
+                        asked, text(body, "site"), text(body, "username"),
+                        text(body, "password"), text(body, "totp"), body.get("ask") is True,
+                    )  # fmt: skip
+                elif rest == "drop":
+                    r.decline(asked)
+                else:
+                    return await live.send(writer, "404 Not Found", b"No such thing.\n")
+            except live.BadRequest as e:
+                return await live.send(writer, "400 Bad Request", f"{e}\n".encode())
+            except hostrpc.RunnerError as e:
+                return await self.json(writer, {"error": str(e)}, "400 Bad Request")
+            return await self.json(writer, self.asked_state(asked))
+        if req.method != "GET":
+            return await live.send(writer, "405 Method Not Allowed", b"GET or POST.\n")
+        if rest == "":
+            state = r.asked_state(asked)
+            options = "".join(
+                f'<option value="{html.escape(site)}">{html.escape(site)}</option>'
+                for site in asked.sites
+            )
+            body = LOGIN_PAGE.format(
+                site=html.escape(asked.site),
+                workspace=html.escape(asked.workspace),
+                url=html.escape(asked.url),
+                options=options,
+                form_hidden="" if state == "waiting" else " hidden",
+                result_hidden=" hidden" if state == "waiting" else "",
+                result=html.escape(ASKED.get(state, "")),
+            ).encode()
+            return await self.send(writer, body, "text/html; charset=utf-8")
+        if rest in ("login.js", "style.css"):
+            return await self.file(writer, STATIC / rest)
+        if rest == "state":
+            return await self.json(writer, self.asked_state(asked))
+        await live.send(writer, "404 Not Found", b"No such thing.\n")
+
+    def asked_state(self, asked) -> dict:
+        state = self.runner.asked_state(asked)
+        return {
+            "state": state,
+            "site": asked.site,
+            "sites": asked.sites,
+            "message": ASKED.get(state, ""),
+        }
+
     async def post(self, s: Session, what: str, body: dict) -> bool:
         """Do what a POST asks; False for a path that isn't one."""
         r, ws = self.runner, s.workspace
@@ -297,6 +421,11 @@ class Takeover:
             if t.workspace == s.workspace and t.open
         ]
         approval = s.approval
+        asked = [
+            {"id": a.id, "site": a.site, "link": f"/login/{a.id}/"}
+            for a in self.runner.asked.values()
+            if a.workspace == s.workspace and self.runner.waiting(a)
+        ]
         try:
             logins = await asyncio.to_thread(self.runner.vault.logins, s.workspace)
         except hostrpc.RunnerError as e:
@@ -314,6 +443,7 @@ class Takeover:
             }
             if approval is not None
             else None,
+            "asked": asked,
             "offers": await self.runner.offers(s),
             "logins": logins,
         }
@@ -333,6 +463,8 @@ class Takeover:
             headers={
                 "Content-Security-Policy": CSP,
                 "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+                "Cache-Control": "no-store",
             },
         )
 

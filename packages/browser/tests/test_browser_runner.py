@@ -524,3 +524,128 @@ def test_logins_are_offered_for_saving_only_while_the_user_has_the_browser(tmp_p
         assert driver.capturing
 
     test(tmp_path)
+
+
+def test_the_agent_asks_for_a_login_for_its_pages_site_and_the_user_saves_it(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        with pytest.raises(RunnerError, match="no page open"):
+            await r.op_ask_login(scope())
+        await r.op_open(scope(), "https://accounts.google.com/signin?x=1")
+        asked = await r.op_ask_login(scope())
+        assert asked["site"] == "accounts.google.com"
+        assert asked["card"] == (
+            "[![Log in to accounts.google.com](https://host.example.ts.net:8445/_live/browser/login/"
+            f"{asked['request']}.png)](https://host.example.ts.net:8445/_live/browser/login/{asked['request']})"
+        )
+        req = r.asked[asked["request"]]
+        assert len(req.id) == 35 and req.sites == ["accounts.google.com", "google.com"]
+        assert req.url == "https://accounts.google.com/signin?x=1"
+        tab = r.threads[("career", "7")]
+        assert tab.last == "Waiting for your login for accounts.google.com"
+        # Asking again while it waits is the same request; another thread's is its own.
+        assert (await r.op_ask_login(scope()))["request"] == req.id
+        await r.op_open(scope(thread="8"), "https://accounts.google.com/")
+        assert (await r.op_ask_login(scope(thread="8")))["request"] != req.id
+        # Only for one of the request's sites, and with a password.
+        with pytest.raises(RunnerError, match="not 'evil.example'"):
+            await r.fulfil(req, "evil.example", "alice", "pw", "", False)
+        with pytest.raises(RunnerError, match="not 'com'"):
+            await r.fulfil(req, "com", "alice", "pw", "", False)
+        with pytest.raises(RunnerError, match="enter the password"):
+            await r.fulfil(req, "google.com", "alice", "", "", False)
+        saved = await r.fulfil(req, "google.com", "alice", "hunter2", "", True)
+        assert "hunter2" not in str(saved)
+        assert saved["site"] == "google.com" and saved["ask"]
+        assert r.vault.get("career", saved["id"])["password"] == "hunter2"
+        assert r.asked_state(req) == "saved" and req.changed.is_set()
+        assert tab.last == "You saved a login for google.com"
+        # Once.
+        with pytest.raises(RunnerError, match=r"isn't waiting any more \(saved\)"):
+            await r.fulfil(req, "google.com", "mallory", "x", "", False)
+        with pytest.raises(RunnerError, match="isn't waiting"):
+            r.decline(req)
+        assert len(r.vault.logins("career")) == 1
+        # The agent fills it like any other.
+        listed = await r.op_logins(scope())
+        assert listed["logins"][0]["here"]
+
+    test(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "url", ["http://10.0.0.1/login", "https://github.io/", "about:blank"]
+)
+def test_a_page_without_a_site_of_its_own_cant_be_asked_for(tmp_path, url):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), url)
+        with pytest.raises(RunnerError, match="can't have a saved login"):
+            await r.op_ask_login(scope())
+        assert r.asked == {}
+
+    test(tmp_path)
+
+
+def test_a_request_runs_out_is_kept_a_while_and_is_capped(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://linkedin.com/")
+        first = r.asked[(await r.op_ask_login(scope()))["request"]]
+        assert first.sites == ["linkedin.com"]
+        clock.t += runner_mod.ASK_SECONDS + 1
+        assert r.asked_state(first) == "expired"
+        with pytest.raises(RunnerError, match=r"\(expired\)"):
+            await r.fulfil(first, "linkedin.com", "alice", "pw", "", False)
+        # A new one takes its place, and the old one's card still says how it ended,
+        # for a day.
+        second = (await r.op_ask_login(scope()))["request"]
+        assert second != first.id and r.asked_by_id(first.id) is first
+        clock.t += runner_mod.KEEP_ASKED - runner_mod.ASK_SECONDS
+        assert r.asked_by_id(first.id) is None and r.asked_by_id("lr-nope") is None
+        second = (await r.op_ask_login(scope()))["request"]
+        # The browser stopping doesn't end one: the save needs only the vault.
+        await r.stop("career")
+        req = r.asked_by_id(second)
+        await r.fulfil(req, "linkedin.com", "alice", "pw", "", False)
+        assert r.vault.logins("career")[0]["site"] == "linkedin.com"
+        # At most MAX_ASKED wait in a workspace.
+        for n in range(runner_mod.MAX_ASKED):
+            await r.op_open(scope(thread=f"t{n}"), "https://linkedin.com/")
+            await r.op_ask_login(scope(thread=f"t{n}"))
+        await r.op_open(scope(thread="last"), "https://linkedin.com/")
+        with pytest.raises(RunnerError, match="already waiting"):
+            await r.op_ask_login(scope(thread="last"))
+        await r.op_open(scope("education"), "https://linkedin.com/")
+        assert (await r.op_ask_login(scope("education")))["site"] == "linkedin.com"
+
+    test(tmp_path)
+
+
+def test_a_save_the_vault_refuses_leaves_the_request_waiting(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://linkedin.com/")
+        req = r.asked[(await r.op_ask_login(scope()))["request"]]
+        with pytest.raises(RunnerError, match="too long"):
+            await r.fulfil(req, "linkedin.com", "a" * 1001, "pw", "", False)
+        assert r.asked_state(req) == "waiting"
+        r.decline(req)
+        assert r.asked_state(req) == "declined"
+        assert (
+            r.threads[("career", "7")].last
+            == "You didn't give a login for linkedin.com"
+        )
+
+    test(tmp_path)
+
+
+def test_the_agent_cant_ask_while_the_user_has_the_browser(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://linkedin.com/")
+        await r.take(r.sessions["career"])
+        with pytest.raises(RunnerError, match="the user has"):
+            await r.op_ask_login(scope())
+
+    test(tmp_path)

@@ -4,7 +4,7 @@
   "name": "Browser Login",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Log in with a login the user saved in this workspace's browser vault, without ever seeing the password: the browser fills it into the fields you name, on the login's own site only. action list shows the saved logins (id, site, username) and which fit this chat's page; login fills one into the username field (user_ref) and/or the password field (pass_ref) from the last read, and submit presses Enter; code fills the current 2FA code into the code field (ref). Some logins ask the user first: this waits for their OK in the browser view. If there's no saved login for the site, hand the browser to the user with browser-handoff. Never ask the user for a password in the chat.",
+  "description": "Log in with a login the user saved in this workspace's browser vault, without ever seeing the password: the browser fills it into the fields you name, on the login's own site only. action list shows the saved logins (id, site, username) and which fit this chat's page; login fills one into the username field (user_ref) and/or the password field (pass_ref) from the last read, and submit presses Enter; code fills the current 2FA code into the code field (ref). Some logins ask the user first: this waits for their OK in the browser view. If there's no saved login for the site, ask (on its sign-in page) gives you a card for your reply where the user saves one for this page's site; for a CAPTCHA, SSO or a payment hand the browser to them with browser-handoff. Never ask the user for a password in the chat.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -12,6 +12,10 @@
     {
       "prompt": "(on LinkedIn's sign-in page)",
       "call": "{\"action\": \"list\"}"
+    },
+    {
+      "prompt": "(on GitHub's sign-in page, and the list has no login for github.com)",
+      "call": "{\"action\": \"ask\"}"
     },
     {
       "prompt": "(the list shows 3f2a9c1d for linkedin.com)",
@@ -29,10 +33,11 @@
         "type": "string",
         "enum": [
           "list",
+          "ask",
           "login",
           "code"
         ],
-        "description": "list the saved logins, fill one in (login), or fill its 2FA code (code)."
+        "description": "list the saved logins, ask the user for one for this page's site (ask), fill one in (login), or fill its 2FA code (code)."
       },
       "login": {
         "type": "string",

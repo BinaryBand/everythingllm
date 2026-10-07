@@ -128,7 +128,7 @@ test("browser-login lists logins without secrets, fills one, and waits for the u
     assert.deepEqual(runner.requests[1].args, {
       scope: { workspace: "career", thread: "12" }, login: "3f2a9c1d", user_ref: "e1", pass_ref: "e2", submit: true,
     });
-    assert.match(await login.handler.call(agent(), { action: "steal" }), /^Error: action is list, login or code/);
+    assert.match(await login.handler.call(agent(), { action: "steal" }), /^Error: action is list, ask, login or code/);
   } finally {
     delete process.env.BROWSER_SOCKET;
     await runner.close();
@@ -141,6 +141,23 @@ test("browser-login says so when the user refuses", async () => {
   );
   try {
     assert.match(await login.handler.call(agent(), { action: "code", login: "x", ref: "e3" }), /didn't allow that login/);
+  } finally {
+    delete process.env.BROWSER_SOCKET;
+    await runner.close();
+  }
+});
+
+test("browser-login asks the user for a login on a card, with the scope and nothing from the model", async () => {
+  const ASKED = "[![Log in to github.com](https://h:8445/_live/browser/login/lr-0.png)](https://h:8445/_live/browser/login/lr-0)";
+  let card = ASKED;
+  const runner = await fakeRunner(() => ({ ok: true, result: { request: "lr-0", site: "github.com", card } }));
+  try {
+    const reply = await login.handler.call(agent(), { action: "ask", login: "evil.example" });
+    assert.match(reply, /^Card: \[!\[Log in to github\.com\]/);
+    assert.match(reply, /save their github\.com login there \(never in the chat\), and end your reply/);
+    assert.deepEqual(runner.requests.map((r) => [r.op, r.args]), [["ask_login", { scope: { workspace: "career", thread: "12" } }]]);
+    card = ""; // no public host: no card
+    assert.match(await login.handler.call(agent(), { action: "ask" }), /^Ask the user to save their github\.com login in the browser's take-over view/);
   } finally {
     delete process.env.BROWSER_SOCKET;
     await runner.close();

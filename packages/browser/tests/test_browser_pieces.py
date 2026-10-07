@@ -82,6 +82,40 @@ def test_actions_that_need_nothing_more():
     driver.check_act("click", "e12", "")
 
 
+@pytest.mark.parametrize(
+    "key",
+    ["Enter", "a", "7", "@", "Space", " ", "Shift+Tab", "Shift+ArrowLeft", "PageDown"],
+)
+def test_press_sends_plain_keys(key):
+    driver.check_act("press", "e1", key)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "Control+c",
+        "Control+C",
+        "Meta+c",
+        "ControlOrMeta+v",
+        "Control+Insert",
+        "Shift+Insert",
+        "Shift+Delete",
+        "Alt+Tab",
+        "F12",
+        "Insert",
+        "ContextMenu",
+        "KeyC",
+        "Control+Shift+i",
+        "enter",
+        "\x03",
+        "Shift+a",
+    ],
+)
+def test_press_sends_no_shortcut_that_could_reach_the_clipboard(key):
+    with pytest.raises(RunnerError, match="isn't a key press sends"):
+        driver.check_act("press", "e1", key)
+
+
 def test_only_web_addresses_open():
     assert driver.check_url(" example.com/a ") == "https://example.com/a"
     assert driver.check_url("http://example.com") == "http://example.com"
@@ -105,9 +139,10 @@ class FakeFrame:
 class FakeElement:
     """An element as Playwright reports it: its tag, its real type attribute and frame."""
 
-    def __init__(self, tag, kind, frame_url):
+    def __init__(self, tag, kind, frame_url, value=None):
         self.tag, self.kind, self.frame = tag, kind, FakeFrame(frame_url)
-        self.filled, self.pressed = None, None
+        self.filled, self.pressed, self.focused = value, None, False
+        self.reads = 0  # values read, as the driver checks them for secrets
 
     async def owner_frame(self):
         return self.frame
@@ -122,16 +157,54 @@ class FakeElement:
     async def press(self, key, timeout):
         self.pressed = key
 
+    async def press_sequentially(self, text, delay, timeout):
+        self.filled = (self.filled or "") + text
+
+    async def select_option(self, label=None, value=None, timeout=None):
+        self.filled = label or value
+
+    async def set_checked(self, on, timeout):
+        self.filled = on
+
+    async def input_value(self, timeout):
+        self.reads += 1
+        if self.tag not in ("input", "textarea", "select"):
+            raise ValueError("Not an <input>, <textarea> or <select> element")
+        return self.filled or ""
+
+    async def inner_text(self, timeout):
+        self.reads += 1
+        return "Sign in" if self.filled is None else str(self.filled)
+
 
 class FakeLocator:
+    """A locator of the elements found; acting on it acts on the first."""
+
     def __init__(self, found):
         self.found, self.first = found, self
 
     async def count(self):
         return len(self.found)
 
+    def nth(self, i):
+        return FakeLocator(self.found[i : i + 1])
+
     async def element_handle(self, timeout):
         return self.found[0]
+
+    def __getattr__(self, name):
+        return getattr(self.found[0], name)
+
+
+class FakePageFrame:
+    """A page's frame as `focused_secret` asks it: which of its fields has focus."""
+
+    def __init__(self, page):
+        self.page = page
+
+    def locator(self, selector):
+        assert selector == driver.FOCUSED
+        return FakeLocator([e for e in self.page.elements.values() if e.focused])
 
 
 class FakePage:
@@ -139,6 +212,18 @@ class FakePage:
 
     def __init__(self, url, elements, closed=False):
         self.url, self.elements, self.closed = url, elements, closed
+        self.frames = [FakePageFrame(self)]
+        self.keys = []  # what was pressed on the page, with no ref
+
+    @property
+    def keyboard(self):
+        page = self
+
+        class Keyboard:
+            async def press(self, key):
+                page.keys.append(key)
+
+        return Keyboard()
 
     def is_closed(self):
         return self.closed
@@ -239,11 +324,159 @@ def test_a_filled_secret_isnt_read_back_when_the_page_shows_it():
     assert view["elements"][1] == '[e2] input[text] "Password" (filled) (disabled)'
     view = asyncio.run(d.op_fill_code("t1", "linkedin.com", "123456", "e3"))
     assert "123456" not in str(view) and "hunter2" not in str(view)
-    # Clipped, and its spaces squeezed, as snapshot.js shows it.
+
+
+def hidden(text, *secrets):
+    return driver.hide(text, driver.pieces(list(secrets)))
+
+
+@pytest.mark.parametrize(
+    "shown",
+    [
+        "hunter2",  # whole
+        "hunter2x",  # with something typed after it
+        "xhunter2",  # or before it
+        "hunter",  # cut short
+        "unter2",
+        "my password is hunter2, ok",
+        "hunter2 hunter2",
+    ],
+)
+def test_no_piece_of_a_filled_secret_is_read(shown):
+    out = hidden(shown, "hunter2")
+    assert "•••" in out
+    assert not any("hunter2"[i : i + 6] in out for i in range(2))
+
+
+def test_a_long_or_spaced_secret_is_hidden_as_snapshot_shows_it():
     long = "a  b" + "c" * 100
-    assert driver.masked([f'x value="{driver.clip(long, 80)}"'], [long]) == [
-        "x (filled)"
+    clipped = "a b" + "c" * 76 + "…"  # snapshot.js squeezes and clips a value to 80
+    assert hidden(f'x value="{clipped}"', long) == 'x value="•••…"'
+    assert hidden("pin 4321 here", "4321") == "pin ••• here"
+
+
+def test_what_shares_less_than_a_piece_with_a_secret_is_read():
+    assert hidden('[e1] input[email] "Email" value="john"', "john1234") == (
+        '[e1] input[email] "Email" value="john"'
+    )
+    assert hidden("abcde", "abcdef") == "abcde"
+
+
+def test_a_read_hides_secrets_everywhere_but_the_address_host():
+    view = {
+        "title": "Welcome hunter2",
+        "url": "https://hunter2.example/login?pw=hunter2",
+        "elements": [
+            '[e2] input[text] "Password" value="hunter2x" (disabled)',
+            '[e3] input[text] "Shown" value="hunter2"',
+        ],
+        "text": "Your password: hunter2",
+        "more": False,
+        "notes": ["the page showed a alert (accepted): hunter2"],
+    }
+    out = driver.scrub(view, driver.pieces(["hunter2"]))
+    assert "hunter" not in str({**out, "url": ""})
+    assert out["url"] == "https://hunter2.example/login?pw=•••"
+    assert out["elements"] == [
+        '[e2] input[text] "Password" value="•••x" (disabled)',
+        '[e3] input[text] "Shown" (filled)',
     ]
+
+
+def filled_page():
+    """A login page after a saved login was filled, and its driver."""
+    page = login_page()
+    d = driver.Driver(None, None)
+    d.stacks["t1"] = [page]
+
+    async def view(thread, page):
+        return {"url": page.url}
+
+    d.view = view
+    asyncio.run(
+        d.op_fill_login("t1", "linkedin.com", "me@x.org", "hunter2", "e1", "e2")
+    )
+    return page, d
+
+
+def act(d, action, ref="", text=""):
+    return asyncio.run(d.op_act("t1", action, ref, text))
+
+
+@pytest.mark.parametrize(
+    "action,text",
+    [
+        ("type", "x"),
+        ("press", "Backspace"),
+        ("press", "a"),
+        ("press", "Shift+Home"),
+        ("select", "x"),
+        ("check", ""),
+    ],
+)
+def test_a_field_holding_a_filled_secret_cant_be_edited(action, text):
+    page, d = filled_page()
+    password = page.elements["e2"]
+    password.kind = "text"  # "show password": the lock follows the value, not the type
+    with pytest.raises(RunnerError, match="e2 holds a saved login's secret"):
+        act(d, action, "e2", text)
+    assert password.filled == "hunter2" and password.pressed is None
+    # Nor a field the page put the secret in (an input swapped in to show it).
+    page.elements["e4"] = swapped = FakeElement("input", "text", page.url, "hunter2")
+    with pytest.raises(RunnerError, match="e4 holds"):
+        act(d, action, "e4", text)
+    assert swapped.filled == "hunter2"
+
+
+@pytest.mark.parametrize("key", sorted(driver.SECRET_KEYS))
+def test_a_field_holding_a_filled_secret_can_be_submitted_or_left(key):
+    page, d = filled_page()
+    act(d, "press", "e2", key)
+    assert page.elements["e2"].pressed == key
+
+
+def test_a_field_holding_a_filled_secret_can_be_replaced_and_others_edited():
+    page, d = filled_page()
+    act(d, "fill", "e2", "x")
+    assert page.elements["e2"].filled == "x"
+    act(d, "type", "e1", "!")  # the username holds no piece of the password
+    assert page.elements["e1"].filled == "me@x.org!"
+
+
+def test_a_key_on_the_page_doesnt_reach_a_focused_field_holding_a_secret():
+    page, d = filled_page()
+    page.elements["e2"].focused = True
+    with pytest.raises(RunnerError, match="the focused field holds"):
+        act(d, "press", text="Backspace")
+    act(d, "press", text="Enter")
+    page.elements["e2"].focused, page.elements["e1"].focused = False, True
+    act(d, "press", text="Backspace")
+    assert page.keys == ["Enter", "Backspace"]
+
+
+def test_a_field_that_cant_be_read_counts_as_holding_a_secret():
+    page, d = filled_page()
+
+    async def broken(timeout):
+        raise TimeoutError
+
+    page.elements["e1"].input_value = page.elements["e1"].inner_text = broken
+    with pytest.raises(RunnerError, match="e1 holds"):
+        act(d, "type", "e1", "x")
+
+
+def test_nothing_is_read_for_secrets_until_one_was_filled():
+    page = login_page()
+    d = driver.Driver(None, None)
+    d.stacks["t1"] = [page]
+
+    async def view(thread, page):
+        return {"url": page.url}
+
+    d.view = view
+    act(d, "type", "e1", "x")
+    act(d, "press", text="Backspace")
+    assert page.elements["e1"].reads == 0 and page.elements["e1"].filled == "x"
 
 
 def test_chromium_goes_through_the_proxy_alone():

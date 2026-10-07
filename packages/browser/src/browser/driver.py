@@ -16,9 +16,13 @@ read, as downloads are.
 Saved logins (browser.vault) come from the runner and go only into fields on their own
 site: the page and the frame a field is in must be on the login's site (browser.origin), as
 Playwright sees them, not the page's scripts; a password goes only into a password field;
-and nothing filled is ever said back (a read shows a field holding a filled password or
-code as filled, even once the page makes it a text field). Chromium's own password saving
-is off. While the user has the browser, capture.js offers what they log in with for saving;
+and nothing filled is ever said back. A read hides any piece of a filled password or code
+(PIECE characters of it) wherever it shows, and shows a field holding one as filled, even
+once the page makes it a text field. A field holding one is the agent's only to submit,
+leave or replace: typing, a key other than SECRET_KEYS, or a choice in it is refused, so
+the agent can't make a value a read would show part of. And `press` sends only plain keys
+(KEYS, and Shift with SHIFTED), never a shortcut, so nothing reaches the clipboard to be
+pasted elsewhere. Chromium's own password saving is off. While the user has the browser, capture.js offers what they log in with for saving;
 the runner asks the user in the take-over view, and saves the offer before dropping it.
 
 The ops that take a thread return the tab's view: {title, url, elements, text, more,
@@ -26,6 +30,7 @@ notes}, snapshot.js's reading of the page (browser.page renders it).
 
   open(thread, url)                 go to url in the thread's tab, made if need be
   act(thread, action, ref, text)    one of ACTIONS on the element `ref` from a read
+                                    (press: a key of KEYS, or Shift with SHIFTED)
   read(thread)                      the view as it is
   fill_login(thread, site, username, password, user_ref, pass_ref, submit)
                                     a saved login into the fields with those refs
@@ -88,8 +93,50 @@ CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
 MAX_OFFERS = 5
 OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
 MAX_SECRET = 1000
-MAX_FILLED = 20  # the latest passwords and codes filled, kept to mask them in reads
-VALUE_CLIP = 80  # snapshot.js's clip of a field's value
+MAX_FILLED = 20  # the latest passwords and codes filled, kept to hide them in reads
+PIECE = (
+    6  # characters of a filled secret that a read never shows (all of a shorter one)
+)
+# The keys `press` sends, as Playwright names them, besides one printable character; and
+# those it sends with Shift. No Control, Meta or Alt: no copying, cutting or pasting.
+KEYS = {
+    "Enter",
+    "Tab",
+    "Escape",
+    "Backspace",
+    "Delete",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Space",
+}
+SHIFTED = {
+    "Tab",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+}
+# What the agent may do to a field holding a filled secret, besides click, fill and hover:
+# the keys that submit it or leave it as it is.
+SECRET_KEYS = {"Enter", "Tab", "Shift+Tab", "Escape"}
+EDITS = {
+    "type",
+    "press",
+    "select",
+    "check",
+    "uncheck",
+}  # checked against filled secrets
+FOCUSED = "input:focus, textarea:focus, [contenteditable]:focus"
 
 
 def check_act(action: str, ref: str, text: str) -> None:
@@ -106,6 +153,22 @@ def check_act(action: str, ref: str, text: str) -> None:
         raise hostrpc.RunnerError(f"'{ref}' isn't a ref; they look like e12")
     if action in NEEDS_TEXT and not text:
         raise hostrpc.RunnerError(f"{action} needs text")
+    if action == "press" and not key_allowed(text):
+        raise hostrpc.RunnerError(
+            f"'{text[:40]}' isn't a key press sends: one key (Enter, Tab, Escape, Backspace, "
+            "an arrow, a character…) or Shift with Tab or an arrow; shortcuts with "
+            "Control, Meta or Alt aren't sent"
+        )
+
+
+def key_allowed(key: str) -> bool:
+    """Whether `press` sends `key`: one of KEYS, a printable character, or Shift+ one of
+    SHIFTED, spelled as Playwright spells them. Anything else (a shortcut, an F key,
+    Insert, a key code like KeyC) isn't guessed at."""
+    if key in KEYS or (len(key) == 1 and key.isprintable()):
+        return True
+    modifier, _, rest = key.partition("+")
+    return modifier == "Shift" and rest in SHIFTED
 
 
 def check_url(url: str) -> str:
@@ -134,6 +197,7 @@ class Driver(hostrpc.Service):
         # id -> {site, username, password, at}
         self.offers: dict[str, dict[str, Any]] = {}
         self.filled: list[str] = []  # passwords and codes from the vault, newest last
+        self.pieces: dict[int, set[str]] = {}  # theirs, as `pieces` makes them
 
     # --- tabs ---
 
@@ -220,14 +284,13 @@ class Driver(hostrpc.Service):
         except Exception:  # noqa: BLE001 - mid-navigation (an error page loading): once more
             await self.settle(page)
             snap = await self.snapshot(page)
-        if self.filled:
-            snap["elements"] = masked(snap.get("elements") or [], self.filled)
-        return {
+        view = {
             **snap,
             "title": await title_of(page),
             "url": page.url,
             "notes": self.notes.pop(thread, []),
         }
+        return scrub(view, self.pieces) if self.filled else view
 
     async def snapshot(self, page: Any) -> dict[str, Any]:
         try:
@@ -266,7 +329,7 @@ class Driver(hostrpc.Service):
         page = self.existing(thread)
         target = page.locator(f'[data-bw-ref="{ref}"]').first if ref else None
         try:
-            await self.do(page, target, action, text)
+            await self.do(page, target, action, text, ref)
         except hostrpc.RunnerError:
             raise
         except Exception as e:  # noqa: BLE001 - Playwright's errors, for the agent
@@ -274,11 +337,24 @@ class Driver(hostrpc.Service):
         await self.settle(page)
         return await self.view(thread, self.existing(thread))
 
-    async def do(self, page: Any, target: Any, action: str, text: str) -> None:
+    async def do(
+        self, page: Any, target: Any, action: str, text: str, ref: str = ""
+    ) -> None:
         if target is not None and not await target.count():
             raise hostrpc.RunnerError(
                 "that ref isn't on the page any more; read it again for current refs"
             )
+        if self.filled and action in EDITS:
+            if target is not None:
+                holds, where = await self.secret_in(target), ref or "that field"
+            else:
+                holds, where = await self.focused_secret(page), "the focused field"
+            if holds and not (action == "press" and text in SECRET_KEYS):
+                raise hostrpc.RunnerError(
+                    f"{where} holds a saved login's secret: it can only be submitted "
+                    "(press Enter), left (Tab, Escape) or replaced (fill); log in again "
+                    "with browser-login"
+                )
         match action:
             case "click":
                 await target.click(timeout=ACT_MS)
@@ -442,11 +518,43 @@ class Driver(hostrpc.Service):
         return await self.view(thread, self.existing(thread))
 
     def keep_filled(self, secret: str) -> None:
-        """Remember a secret about to be filled, so reads never say it back."""
+        """Remember a secret about to be filled, so reads never say it back and the agent
+        can't edit a field holding it."""
         if secret in self.filled:
             self.filled.remove(secret)
         self.filled.append(secret)
         del self.filled[:-MAX_FILLED]
+        self.pieces = pieces(self.filled)
+
+    async def secret_in(self, target: Any) -> bool:
+        """Whether the element holds a piece of a filled secret, as Playwright reads its
+        value (or, not being a field, its text), not the page's scripts. One that can't be
+        read counts as holding one."""
+        if not self.filled:
+            return False
+        try:
+            try:
+                value = await target.input_value(timeout=ACT_MS)
+            except Exception:  # noqa: BLE001 - not an input, textarea or select
+                value = await target.inner_text(timeout=ACT_MS)
+        except Exception:  # noqa: BLE001 - gone, or unreadable: refuse rather than guess
+            return True
+        return holds_secret(value, self.pieces)
+
+    async def focused_secret(self, page: Any) -> bool:
+        """Whether the field a key pressed on the page goes to (the focused one, in any
+        frame) holds a piece of a filled secret; a frame that can't be asked counts as
+        one that does."""
+        for frame in page.frames:
+            try:
+                focused = frame.locator(FOCUSED)
+                n = await focused.count()
+            except Exception:  # noqa: BLE001 - detached mid-check
+                return True
+            for i in range(n):
+                if await self.secret_in(focused.nth(i)):
+                    return True
+        return False
 
     # --- offering what the user logs in with ---
 
@@ -549,24 +657,70 @@ class Driver(hostrpc.Service):
         return tabs
 
 
-def clip(text: str, n: int) -> str:
-    """snapshot.js's clip: spaces squeezed, and cut to n characters with an ellipsis."""
-    text = re.sub(r"\s+", " ", text).strip()
-    return text[: n - 1] + "…" if len(text) > n else text
-
-
-def masked(elements: list[str], filled: list[str]) -> list[str]:
-    """A read's elements with any field whose value is a filled secret shown as filled,
-    not as its value. snapshot.js says a password field's value never, but a page can turn
-    the field into a text one (a "show password" button, which the agent can click), and a
-    2FA code often goes into a text field."""
-    values = [f' value="{clip(secret, VALUE_CLIP)}"' for secret in filled]
-    out = []
-    for line in elements:
-        for value in values:
-            line = line.replace(value, " (filled)")
-        out.append(line)
+def pieces(filled: list[str]) -> dict[int, set[str]]:
+    """Every PIECE characters of each secret (all of a shorter one), by length: as typed,
+    and with its spaces squeezed as snapshot.js shows a value."""
+    out: dict[int, set[str]] = {}
+    for secret in filled:
+        for form in {secret, re.sub(r"\s+", " ", secret).strip()}:
+            if form:
+                k = min(PIECE, len(form))
+                out.setdefault(k, set()).update(
+                    form[i : i + k] for i in range(len(form) - k + 1)
+                )
     return out
+
+
+def hide(text: str, pieces: dict[int, set[str]]) -> str:
+    """`text` with every run of it made of pieces of a filled secret replaced by •••: what
+    is left beside a run is less than a piece, so a secret shows whole, cut short, or with
+    something added, and none of it is read."""
+    if not text or not pieces:
+        return text
+    covered = [False] * len(text)
+    for k, found in pieces.items():
+        for i in range(len(text) - k + 1):
+            if text[i : i + k] in found:
+                covered[i : i + k] = [True] * k
+    if not any(covered):
+        return text
+    out, i = [], 0
+    while i < len(text):
+        if covered[i]:
+            while i < len(text) and covered[i]:
+                i += 1
+            out.append("•••")
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def holds_secret(text: str, pieces: dict[int, set[str]]) -> bool:
+    return hide(text, pieces) != text
+
+
+def scrub(view: dict[str, Any], pieces: dict[int, set[str]]) -> dict[str, Any]:
+    """A read with no piece of a filled secret in it. snapshot.js never says a password
+    field's value, but a page can make the field a text one (a "show password" button, which
+    the agent can click), a 2FA code often goes into a text field, and a page can show
+    either in its text. A field holding one is shown as filled. The address keeps its host,
+    which the runner checks logins against."""
+    url = view.get("url") or ""
+    at = url.find("/", url.find("://") + 3) if "://" in url else 0
+    if at >= 0:
+        url = url[:at] + hide(url[at:], pieces)
+    return {
+        **view,
+        "elements": [
+            hide(line, pieces).replace(' value="•••"', " (filled)")
+            for line in view.get("elements") or []
+        ],
+        "text": hide(view.get("text") or "", pieces),
+        "title": hide(view.get("title") or "", pieces),
+        "url": url,
+        "notes": [hide(note, pieces) for note in view.get("notes") or []],
+    }
 
 
 async def title_of(page: Any) -> str:

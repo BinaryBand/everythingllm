@@ -844,6 +844,8 @@ watch and take over, like the browser in Meta's Muse but split by workspace: a l
   the tab's live card.
 - `browser-act` does one thing to an element by its ref (click, fill, type, press, select,
   check, hover, scroll, back, forward, reload, wait) and replies with the page after.
+  `press` sends plain keys only (Enter, Tab, an arrow, a character, Shift with Tab or an
+  arrow), never a Control, Meta or Alt shortcut, so nothing goes through the clipboard.
 - `browser-read` reads the page again, or only its lines that contain `find`.
 - `browser-handoff` gives you the browser (to log in, enter a 2FA code, solve a CAPTCHA, pay)
   and replies at once with the card. The agent puts the card in its reply and ends the reply,
@@ -893,7 +895,10 @@ name bound in so one workspace's file can't stand in for another's.
   and whether it asks first; never a password or 2FA secret) and which fit this chat's
   page. The agent names a login and the fields from its last read; the runner sends the
   secret to the driver, which types it in. It never comes back in a reply, a log or the
-  card, and the agent never types a password itself.
+  card, and the agent never types a password itself. Once it's in, the agent can't read
+  it back by the page's "show password" button and an edit: a read hides any six
+  characters of a filled secret wherever they show (`driver.hide`), and a field holding
+  one can only be submitted, left or replaced, never typed into, trimmed or selected.
 - **Only on its own site.** A login is saved for a site (`linkedin.com`: the host, without
   `www.`) and fills only there or on a subdomain (`browser.origin`), checked by the runner
   against the tab and again by the driver against the frame the field is really in, and a

@@ -4,7 +4,7 @@
   "name": "Browser Act",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Do one thing in this chat's browser tab and read the page after: click, fill (replace a field's text), type (key by key, for fields that react as you type), press (a key like Enter or Escape, on ref or the page), select (an option of a dropdown, by its label), check/uncheck, hover, scroll_down/scroll_up (the page, or to ref), back, forward, reload, or wait (text = seconds, up to 10). ref is an element's ref from the last read, like e12. Never type a password, card number or one-time code: log in with browser-login, or hand the browser to the user with browser-handoff. Before anything that sends, buys, posts, deletes or can't be undone, ask the user in your reply first.",
+  "description": "Do one thing in this chat's browser tab and read the page after: click, fill (replace a field's text), type (key by key, for fields that react as you type), press (one key like Enter, Escape, Tab, Backspace, an arrow or a character, or Shift with Tab or an arrow, on ref or the page; no Control, Meta or Alt shortcuts), select (an option of a dropdown, by its label), check/uncheck, hover, scroll_down/scroll_up (the page, or to ref), back, forward, reload, or wait (text = seconds, up to 10). ref is an element's ref from the last read, like e12. Never type a password, card number or one-time code: log in with browser-login, or hand the browser to the user with browser-handoff. Before anything that sends, buys, posts, deletes or can't be undone, ask the user in your reply first.",
   "author": "anything",
   "license": "MIT",
   "imported": true,

@@ -16,8 +16,9 @@ A one-off made here goes into a registry (data_dir()/agents/once.json: {id, name
 state}), and the poller (`sweep`, every POLL seconds from runner.main) looks at those jobs
 alone, never one only named "[once] …". Once fire_at + GRACE has passed and the job has no
 run queued or going, a completed run started at or after fire_at gets the job deleted; a
-job that never ran is `missed`, and one whose runs failed is `failed`: both are kept, logged
-once and shown by `list` (each would run again in a year, so the agent offers to delete it).
+job that never ran is `missed`, and one whose runs failed is `failed`: both are disabled
+(its cron would run it again in a year), kept so the result stays readable, logged once and
+shown by `list`, and the agent offers to delete it.
 A manual run before fire_at doesn't count. While the registry is empty, a tick reads the
 file and does nothing else.
 
@@ -250,14 +251,11 @@ class ScheduledJobs:
             what = f"one-off at {local(fire, tz)}"
             state = self.state(entry, latest, now)
             if state == "missed":
-                what += (
-                    f"; MISSED: it never ran, and runs again {local(nxt, tz)} unless "
-                    "deleted"
-                )
+                what += "; MISSED: it never ran, so it was disabled; offer to delete it"
             elif state == "failed":
                 what += (
-                    f"; its run {latest.get('status') or 'failed'}, and it runs again "
-                    f"{local(nxt, tz)} unless deleted"
+                    f"; its run {latest.get('status') or 'failed'}, so it was disabled; "
+                    "offer to delete it"
                 )
             elif state == "done":
                 what += "; it has run, and is deleted within a few minutes"
@@ -489,12 +487,15 @@ class ScheduledJobs:
                     gone.add(job_id)
                     continue
                 state = "failed" if fired else "missed"
+                if entry.get("state") != state:
+                    # Its cron would run it again in a year: off, until the user decides.
+                    await self.client.disable(job_id)
             except AnythingLLMError as e:
                 log.warning("one-off %s: %s", job_id, e)
                 continue
             if entry.get("state") != state:
                 log.warning(
-                    'one-off %s "%s" %s at %s; kept, and listed as %s',
+                    'one-off %s "%s" %s at %s; disabled, kept, and listed as %s',
                     job_id,
                     entry["name"],
                     "never ran" if state == "missed" else "failed",

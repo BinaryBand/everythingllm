@@ -345,7 +345,7 @@ def test_the_poller_deletes_a_one_off_only_after_it_has_run(api, tmp_path):
     asyncio.run(main())
 
 
-def test_a_missed_or_failed_one_off_is_kept_and_listed(api, tmp_path, caplog):
+def test_a_missed_or_failed_one_off_is_disabled_kept_and_listed(api, tmp_path, caplog):
     async def main():
         r = make(api, tmp_path)
         jobs_ = r.scheduled()
@@ -363,9 +363,10 @@ def test_a_missed_or_failed_one_off_is_kept_and_listed(api, tmp_path, caplog):
         assert await jobs_.sweep() == 2
         assert [e["state"] for e in registry(tmp_path)] == ["missed", "failed"]
         assert sorted(api.jobs) == [1, 2]
+        assert [api.jobs[i]["enabled"] for i in (1, 2)] == [False, False]
         text = await r.op_scheduled_jobs(CHAT)
-        assert "MISSED: it never ran, and runs again Thu 2027-10-07 14:05 CEST" in text
-        assert "its run failed" in text
+        assert "MISSED: it never ran, so it was disabled" in text
+        assert "its run failed, so it was disabled" in text
         warned = [m for m in caplog.messages if "kept, and listed" in m]
         await jobs_.sweep()  # logged once, not every round
         assert (

@@ -1348,9 +1348,9 @@ when called again with `apply: true`, after the user agrees.
   every 60 s agents-runner looks at those jobs, never one only named `[once] …`. Two
   minutes after `fire_at`, with no run queued or going, a completed run started at or after
   `fire_at` gets the job deleted (with its runs: AnythingLLM deletes them with the job). A
-  job that never ran (missed, e.g. AnythingLLM was down) or whose run failed is kept,
-  logged once, and listed as such: it would run again a year on, so the agent offers to
-  delete it. A run started by hand before `fire_at` doesn't count. While the registry is
+  job that never ran (missed, e.g. AnythingLLM was down) or whose run failed is disabled,
+  since its cron would run it again a year on, then kept (its result stays readable),
+  logged once and listed as such, and the agent offers to delete it. A run started by hand before `fire_at` doesn't count. While the registry is
   empty, the poller reads the file and nothing else.
 
 ## MCP gateway

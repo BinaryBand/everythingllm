@@ -68,6 +68,42 @@ Left open by the code review of the browser's saved logins (2026-10-07):
 reformats unrelated code, and the churn has to be undone by hand. Format them once, alone,
 in a commit of their own.
 
+## Gaps the Muse probes showed
+
+From `docs/muse-parity.md` (2026-10-07), after page scripts, chat attachments in `/work` and
+the scheduled-job skills. Most of these combine tools the agent already has rather than
+adding services.
+
+- **Decide whether `docs/muse-parity.md` stays in the public repo.** It's committed but
+  unpushed, and since then it has an uncommitted edit (B1 marked fixed) that names a
+  personal Gmail address and the calendar bridge's setup. Either keep a public version
+  without those details, or move it to `docs/.proposals/` and drop it from history before
+  the next push.
+- **Post long jobs back to their chat.** Deep research and delegations end on a live card;
+  the chat is never told. One mechanism in `runs` (the library every runner shares) that
+  appends a message to the originating thread through the developer API would cover both,
+  and any later background work.
+- **One `notify` call.** The relay already posts to ntfy. A skill (or a job tool) that
+  sends a short notice would carry reminders, job results and check-ins to the phone.
+- **Pages that keep state.** Sandboxed pages have an opaque origin, so no `localStorage`:
+  a flashcard deck forgets its place. Persistence needs an origin per workspace (a port
+  or subdomain each) or a write-back op through the sandbox runner.
+- **Activity feed.** A scheduled job that writes a page from the run logs (research,
+  agents, scheduled jobs), linked by its card.
+- **Memory the agent can see (B6).** AnythingLLM has a native `memories` table the agent
+  doesn't know about. A skill to list and forget entries, and a prompt line, rather than a
+  new store.
+- **The built-in `create-scheduled-job` gets the day wrong** across midnight and DST: its
+  local→UTC conversion shifts only the minute and hour. Recurring jobs made with it can
+  run on the wrong day. Upstream's to fix; until then the prompt could steer daily
+  times that cross midnight UTC through the new skills.
+- **Model choice for agent turns.** Several probe failures (a "one-off" stored as yearly,
+  not knowing the home city that the prompt states) look like `glm-5.3-flash`'s limits.
+  Try a stronger model for agent turns and compare on the probes.
+- **The probes as scenario runs.** Run the 11 probes through agents-runner on demand and
+  keep their tool calls and results, so each change is measured against the 2026-10-07
+  baseline.
+
 ## Push notifications for Nilson through UnifiedPush
 
 The relay can post to ntfy (`NTFY_URL`, `NTFY_TOKEN` in `relay.env`) when an answer is ready

@@ -32,11 +32,6 @@ containers"). The checks a script couldn't make, and the cleanup once they've he
 - **Once the containers have run for a week:** delete the old host venvs
   `~/.local/share/everythingllm/venvs/{relay,research,sites}`, and the leftover
   `browser-net` network (`podman network rm browser-net`).
-- **What the archived podcasts and audit left behind** (archived 2026-10-07): their venvs
-  `~/.local/share/everythingllm/venvs/{audit,splice,podcasts-*-ctr}` (about 1.7 GB), and
-  the podcasts workers' shares of AnythingLLM's `.env` (the DeepSeek key) in
-  `~/.config/everythingllm/ctr/podcasts-*.env`. Nothing reads them; delete them. Their data
-  is in `~/archive/everythingllm/`.
 - **Rolling a container back is partly by hand.** `hostctl.units.retired()` only looks in
   `~/.config/systemd/user`, so going back to a host unit means moving
   `~/.config/containers/systemd/<x>.container` aside yourself, then restoring the unit from

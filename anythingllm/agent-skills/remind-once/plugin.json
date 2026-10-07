@@ -1,0 +1,37 @@
+{
+  "active": true,
+  "hubId": "remind-once",
+  "name": "Remind Once",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Set a one-off job: at a local date-time, AnythingLLM's agent gets the prompt, with no chat history and only the tools given, and its reply arrives as a notification; the job is deleted once it has run. For a plain reminder, a prompt such as \"Remind the user to stretch.\" and no tools. Call without apply first, show the user the preview (prompt, tools, time), and call again with apply: true only once they agree.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "name": {
+        "type": "string",
+        "description": "A short name; the job is called \"[once] <name>\"."
+      },
+      "prompt": {
+        "type": "string",
+        "description": "What the agent is asked to do or say then, complete on its own."
+      },
+      "at": {
+        "type": "string",
+        "description": "The user's local date and time, YYYY-MM-DD HH:MM, no UTC offset."
+      },
+      "tools": {
+        "type": "array",
+        "description": "Tool ids the job may use, e.g. [\"@@mcp_sites\", \"web-browsing\"]; [] for none."
+      },
+      "apply": {
+        "type": "boolean",
+        "description": "true to make the job, once the user agrees to the preview."
+      }
+    }
+  }
+}

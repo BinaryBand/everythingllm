@@ -231,6 +231,9 @@ through its UI.
   - `update-prompt/` — refreshes the calling workspace's EverythingLLM block in its system
     prompt (below), through `agents-runner`'s `update_prompt`; it shows what would change
     first and writes only with `apply`
+  - `scheduled-jobs/`, `remind-once/` — list, delete or disable AnythingLLM's scheduled
+    jobs, and set one-off jobs that are deleted once they've run, through `agents-runner`
+    (see "Scheduled jobs from a chat"); each shows first and acts only with `apply`
   - `write-entry/`, `delete-entry/` — the ops of the sites runner that write. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
     to its runner (`forwardSkill` in `_lib/runner.js`). They're generated: each is declared
@@ -259,6 +262,8 @@ through its UI.
   so they get AnythingLLM's built-in prompt instead; their own prompts carry what they need.
 - `anythingllm/scheduled-jobs/<slug>/` — scheduled jobs (`job.json` with name, cron and
   tools, plus `prompt.md`), deployed through the AnythingLLM API and matched by name
+  (`hostctl.jobs`): two live jobs sharing a repo job's name stop deploy, and the
+  `scheduled-jobs` skill won't delete or disable a repo job
   - `daily-news-page/` — writes the day's Daily News edition (US, Sweden, World) to the
     `news` site from the feed headlines of the `sites` server's `headlines` tool; cron is UTC inside the container (18:00 UTC = 20:00 Stockholm in summer, 19:00 in
     winter), and the prompt dates the edition by Stockholm time
@@ -1276,7 +1281,8 @@ hand:
 Over its socket, `storage/everythingllm/agents/runner.sock`: `delegate(goal, tasks: [{name,
 profile, instructions, material?, tools?}], then?)` answers at once with a run id and a live
 card; `wait`, `runs` and `cancel` (tasks that haven't started won't; running ones finish,
-unused).
+unused). It also serves `update_prompt` and the scheduled jobs' `scheduled_jobs` and
+`remind_once` (below), which only skills call.
 
 - **Profiles are workspaces.** A task's `profile` is its role, and each role is an
   AnythingLLM workspace with its model and a system prompt (`agents/profiles.py`,
@@ -1314,6 +1320,38 @@ unused).
   `~/.config/everythingllm/agents.env` (`ANYTHINGLLM_API_KEY`, mode 600, put there by hand);
   `uv run hostctl agents-setup` checks it. Like research-runner, it isn't restarted by `uv run hostctl units`
   while a delegation is going (`hostctl.run_guard`).
+
+### Scheduled jobs from a chat
+
+AnythingLLM's own tool makes repeating jobs, but can't list, delete or make a job that
+runs once: its cron is five fields in UTC, and a "one-off" set with it repeats every year.
+agents-runner fills that in (`agents/jobs.py`) over AnythingLLM's internal API, logged in
+with its password from storage's `.env` (`ANYTHINGLLM_ENV` names another), for two skills.
+Both refuse a delegated task and a scheduled job's call, show what they'd do, and act only
+when called again with `apply: true`, after the user agrees.
+
+- **`scheduled-jobs`** (`action: list | delete | disable`, `id`, `apply`) lists every job:
+  its cron (UTC), its next and last run in the user's time zone (`USER_TIMEZONE` in
+  `host.env`, default Europe/Stockholm), the last run's status, and whether it's a one-off,
+  and a missed one. Delete and disable take any job the repo doesn't manage (its names
+  are `anythingllm/scheduled-jobs/*/job.json`'s), and never one with a run queued or
+  going: AnythingLLM stops a running run when its job is deleted or changed.
+- **`remind-once`** (`name`, `prompt`, `tools`, `at`, `apply`) makes `[once] <name>`, a job
+  whose cron is that minute, day and month in UTC, from `at`, the user's local date-time.
+  It refuses a time that has passed or is under a minute away, one more than 364 days
+  ahead, one that doesn't exist or happens twice when the clocks change, a name in use,
+  and a tool that `/api/scheduled-jobs/available-tools` doesn't list (or that needs
+  setting up). Any tools may be given; the preview shows them, with the prompt and the time
+  in both zones. The job's reply arrives as AnythingLLM's notification.
+- **The registry and the poller.** A one-off made here is recorded in
+  `~/.local/share/everythingllm/agents/once.json` (`{id, name, fire_at, state}`), and
+  every 60 s agents-runner looks at those jobs, never one only named `[once] …`. Two
+  minutes after `fire_at`, with no run queued or going, a completed run started at or after
+  `fire_at` gets the job deleted (with its runs: AnythingLLM deletes them with the job). A
+  job that never ran (missed, e.g. AnythingLLM was down) or whose run failed is kept,
+  logged once, and listed as such: it would run again a year on, so the agent offers to
+  delete it. A run started by hand before `fire_at` doesn't count. While the registry is
+  empty, the poller reads the file and nothing else.
 
 ## MCP gateway
 

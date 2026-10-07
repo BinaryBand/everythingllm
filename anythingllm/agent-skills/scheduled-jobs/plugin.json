@@ -1,0 +1,29 @@
+{
+  "active": true,
+  "hubId": "scheduled-jobs",
+  "name": "Scheduled Jobs",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "List AnythingLLM's scheduled jobs (times in the user's zone, one-offs marked, missed ones flagged), or delete or disable one by its id. Delete and disable show the job first: show the user, and call again with apply: true only if they agree. Jobs the repo manages (Daily News Page) and a job that's running are refused.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "action": {
+        "type": "string",
+        "description": "list (the default), delete or disable."
+      },
+      "id": {
+        "type": "number",
+        "description": "The job's id, from list; for delete and disable."
+      },
+      "apply": {
+        "type": "boolean",
+        "description": "true to delete or disable, once the user agrees."
+      }
+    }
+  }
+}

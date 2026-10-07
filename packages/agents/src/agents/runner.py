@@ -14,6 +14,14 @@ gets their results. Callers (the delegate skill, agents-run) ask over its socket
                           refresh the calling workspace's EverythingLLM block (hostctl.prompt)
                           from anythingllm/system-prompt.md, keeping its own text around it;
                           without apply, only show what would change (the update-prompt skill)
+  scheduled_jobs(scope, action=list|delete|disable, job_id?, apply=False)
+                          list AnythingLLM's scheduled jobs, or delete or disable one the repo
+                          doesn't manage, shown first and done only with apply (the
+                          scheduled-jobs skill; agents.jobs)
+  remind_once(scope, name, prompt, at, tools=[], apply=False)
+                          a one-off job at a local date-time, shown first and made only with
+                          apply, and deleted by the poller once it has run (the remind-once
+                          skill; agents.jobs)
 
 A task's `material` is text for it to work on (findings to write up, a draft to check),
 longer than instructions may be (MAX_MATERIAL a task, MAX_MATERIAL_TOTAL in all); it goes
@@ -44,7 +52,9 @@ Config (environment, from host.env and agents.env through the unit):
   AGENTS_SLOTS        tasks running at once, across delegations (default 3)
   AGENTS_DAILY_USD    what delegations may cost in 24 hours, in USD (default 3; 0 = no cap)
   PUBLIC_HOST         the machine's HTTPS name in the cards' URLs (no card without it)
-  and what agents.anythingllm reads (ANYTHINGLLM_URL, ANYTHINGLLM_API_KEY).
+  USER_TIMEZONE       the user's time zone, for one-off jobs and the times jobs list in
+                      (an IANA name; default Europe/Stockholm; agents.jobs)
+  and what agents.anythingllm reads (ANYTHINGLLM_URL, ANYTHINGLLM_API_KEY, ANYTHINGLLM_ENV).
 """
 
 import asyncio
@@ -66,7 +76,8 @@ from runs import live
 from runs.runlog import RunLog, iso, since
 from runs.service import Meter, Progress, Run, RunService
 
-from agents.anythingllm import AnythingLLM, AnythingLLMError
+from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI
+from agents.jobs import DEFAULT_TIMEZONE, Registry, ScheduledJobs
 from agents.profiles import PROFILES, ensure
 
 log = logging.getLogger("agents-runner")
@@ -96,6 +107,8 @@ class Settings:
     live_port: int = 8451
     slots: int = 3
     daily_usd: float = 3.0  # 0: no cap
+    timezone: str = DEFAULT_TIMEZONE
+    once: Path | None = None  # the one-off registry; None: once.json beside runlogs
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -106,7 +119,19 @@ class Settings:
             live_port=int(os.environ.get("AGENTS_LIVE_PORT", "8451")),
             slots=int(os.environ.get("AGENTS_SLOTS", "3")),
             daily_usd=float(os.environ.get("AGENTS_DAILY_USD", "3")),
+            timezone=os.environ.get("USER_TIMEZONE") or DEFAULT_TIMEZONE,
+            once=hostrpc.data_dir() / "agents" / "once.json",
         )
+
+
+def chat_only(scope: dict, what: str) -> None:
+    """Refuse a call from a scheduled job (no workspace) or a delegation role's workspace:
+    only a chat, where the user sees what's shown first, may `what`."""
+    slug = str((scope or {}).get("workspace") or "")
+    if not slug or slug == "_jobs":
+        raise RunnerError(f"a scheduled job can't {what}; only a chat can")
+    if slug.startswith(prompt.DELEGATED):
+        raise RunnerError(f"a delegated task can't {what}")
 
 
 def spent(runlogs: Path, now: float | None = None) -> float:
@@ -272,10 +297,18 @@ class Runner(RunService):
     SUBJECT_KEY = "goal"
     MAX_RUNS = 4  # delegations at once; their tasks share the task slots
 
-    def __init__(self, settings: Settings, client: AnythingLLM | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        client: AnythingLLM | None = None,
+        internal: InternalAPI | None = None,
+    ):
         super().__init__()
         self.settings = settings
         self.client = client
+        self.internal = internal
+        self.jobs: ScheduledJobs | None = None  # scheduled() makes it
+        self.poller: asyncio.Task | None = None
         self.task_slots = asyncio.Semaphore(settings.slots)
         self.cancelled: set[str] = set()
         self.ready = False  # the profiles' workspaces are set up
@@ -289,9 +322,29 @@ class Runner(RunService):
                 raise RunnerError(str(e)) from None
         return self.client
 
+    def scheduled(self) -> ScheduledJobs:
+        """The scheduled jobs, over the internal API (made on first use)."""
+        if self.jobs is None:
+            if self.internal is None:
+                self.internal = InternalAPI.from_env()
+            registry = self.settings.once or self.settings.runlogs.parent / "once.json"
+            self.jobs = ScheduledJobs(
+                self.internal, Registry(registry), self.settings.timezone
+            )
+        return self.jobs
+
+    def start_poller(self) -> None:
+        """Watch the one-offs made here (only runner.main does, so tests don't)."""
+        if self.poller is None:
+            self.poller = asyncio.create_task(self.scheduled().poll())
+
     async def aclose(self) -> None:
+        if self.poller:
+            self.poller.cancel()
         if self.client:
             await self.client.aclose()
+        if self.internal:
+            await self.internal.aclose()
 
     async def op_delegate(
         self, goal: str, tasks: list, then: dict | None = None
@@ -346,6 +399,36 @@ class Runner(RunService):
         if not run.done:
             self.cancelled.add(run_id)
         return {"run_id": run_id, "cancelled": not run.done}
+
+    async def op_scheduled_jobs(
+        self,
+        scope: dict,
+        action: str = "list",
+        job_id: int | None = None,
+        apply: bool = False,
+    ) -> str:
+        chat_only(scope, "manage scheduled jobs")
+        try:
+            if (action or "list") == "list":
+                return await self.scheduled().listing()
+            return await self.scheduled().act(action, job_id, apply)
+        except AnythingLLMError as e:
+            raise RunnerError(str(e)) from None
+
+    async def op_remind_once(
+        self,
+        scope: dict,
+        name: str,
+        prompt: str,
+        at: str,
+        tools: list | str | None = None,
+        apply: bool = False,
+    ) -> str:
+        chat_only(scope, "make scheduled jobs")
+        try:
+            return await self.scheduled().remind_once(name, prompt, at, tools, apply)
+        except AnythingLLMError as e:
+            raise RunnerError(str(e)) from None
 
     async def op_update_prompt(self, scope: dict, apply: bool = False) -> str:
         slug = str((scope or {}).get("workspace") or "")
@@ -558,9 +641,13 @@ class Runner(RunService):
         outcome.seconds = round(time.monotonic() - started, 1)
 
 
-async def serve(settings: Settings, socket: Path, runner: Runner | None = None) -> None:
+async def serve(
+    settings: Settings, socket: Path, runner: Runner | None = None, poll: bool = False
+) -> None:
     runner = runner or Runner(settings)
     card = AgentsLive(runner, settings.runlogs, settings.pages_url)
+    if poll:
+        runner.start_poller()
     await runner.serve(socket, card, settings.live_port, settings.runlogs, limit=LIMIT)
 
 
@@ -568,5 +655,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     asyncio.run(
-        serve(Settings.from_env(), hostrpc.socket_path("agents", "AGENTS_SOCKET"))
+        serve(
+            Settings.from_env(),
+            hostrpc.socket_path("agents", "AGENTS_SOCKET"),
+            poll=True,
+        )
     )

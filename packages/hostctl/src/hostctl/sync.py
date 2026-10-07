@@ -6,8 +6,9 @@ the setup values entered in the UI); those are kept from the live copy on
 deploy so the UI and the repo don't fight.
 
 Scheduled jobs live in the database, so they go through the AnythingLLM API
-(which also reschedules the in-memory cron timer). They are matched by name;
-the enabled toggle stays whatever it is live.
+(which also reschedules the in-memory cron timer). They are matched by name
+(hostctl.jobs), so two live jobs with a repo job's name stop deploy rather than have it
+write the wrong one; the enabled toggle stays whatever it is live.
 
 A workspace's system prompt is AnythingLLM's, and deploy never writes one. It sets
 the system prompt's block (system-prompt.md, as hostctl.prompt wraps it) as the
@@ -30,8 +31,10 @@ import shutil
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Collection
 from pathlib import Path
 
+from hostctl import jobs as hostjobs
 from hostctl import prompt
 from hostctl.units import ROOT, anythingllm_headers, storage
 
@@ -39,7 +42,7 @@ STORAGE = storage()
 REPO = ROOT / "anythingllm"
 LIVE_SKILLS = STORAGE / "plugins" / "agent-skills"
 LIVE_MCP = STORAGE / "plugins" / "anythingllm_mcp_servers.json"
-REPO_JOBS = REPO / "scheduled-jobs"
+REPO_JOBS = hostjobs.REPO_JOBS
 API = os.environ.get("ANYTHINGLLM_API", "http://127.0.0.1:3001/api")
 JOB_FIELDS = ("prompt", "tools", "schedule")
 
@@ -94,19 +97,22 @@ def api(method: str, path: str, body: dict | None = None, fresh: bool = False) -
 
 def repo_jobs() -> dict[str, dict]:
     """Jobs in the repo by name: <slug>/job.json (name, schedule, tools) + prompt.md."""
-    jobs = {}
-    if REPO_JOBS.is_dir():
-        for d in sorted(p for p in REPO_JOBS.iterdir() if p.is_dir()):
-            job = json.loads((d / "job.json").read_text())
-            job.setdefault("tools", [])
-            job["prompt"] = (d / "prompt.md").read_text().strip()
-            jobs[job["name"]] = job
-    return jobs
+    return hostjobs.repo_jobs(REPO_JOBS)
 
 
-def live_jobs() -> dict[str, dict]:
+def live_jobs(names: Collection[str]) -> dict[str, dict]:
+    """The live jobs by name; exits if `names` (the ones about to be matched) has a name
+    two live jobs share, since which of them a write would reach is anyone's guess."""
+    found = api("GET", "/scheduled-jobs")["jobs"]
+    if twice := [
+        n for n in hostjobs.duplicates([j["name"] for j in found]) if n in names
+    ]:
+        sys.exit(
+            f"AnythingLLM has more than one scheduled job named {', '.join(map(repr, twice))}: "
+            "delete or rename the extra ones in its UI (Scheduled Jobs), then run this again."
+        )
     jobs = {}
-    for job in api("GET", "/scheduled-jobs")["jobs"]:
+    for job in found:
         job["tools"] = json.loads(job["tools"]) if job.get("tools") else []
         jobs[job["name"]] = job
     return jobs
@@ -197,7 +203,8 @@ def diff() -> bool:
         live_var, value = variable
         old = live_var["value"] if live_var else "(none)"
         print(f"{{{prompt.VARIABLE}}}: {old} -> {value}")
-    for job, live in planned(repo_jobs(), live_jobs, JOB_FIELDS):
+    wanted = repo_jobs()
+    for job, live in planned(wanted, lambda: live_jobs(wanted), JOB_FIELDS):
         changed = True
         print_job_diff(job, live)
     for dest, text in planned_files().items():
@@ -221,7 +228,8 @@ def deploy() -> None:
     files = {
         d: t for d, t in planned_files().items() if not d.exists() or d.read_text() != t
     }
-    jobs = planned(repo_jobs(), live_jobs, JOB_FIELDS)
+    wanted = repo_jobs()
+    jobs = planned(wanted, lambda: live_jobs(wanted), JOB_FIELDS)
     default = planned_default()
     variable = planned_variable()
     if not files and not jobs and default is None and variable is None:
@@ -283,7 +291,7 @@ def write_repo_dir(dest: Path, meta_file: str, meta: dict, prompt: str) -> None:
 
 
 def import_job(name: str) -> None:
-    live = live_jobs().get(name)
+    live = live_jobs([name]).get(name)
     if live is None:
         sys.exit(f"no live scheduled job named {name!r}")
     slug = "-".join("".join(c if c.isalnum() else " " for c in name.lower()).split())

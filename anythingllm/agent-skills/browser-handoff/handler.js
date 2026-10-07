@@ -4,18 +4,20 @@
 // returns at once: the agent puts the card in its reply and ends it, since the user can only
 // see the card once the reply is out.
 
-const { withBrowser, cardLines } = require("../_lib/browser");
+const { withBrowser, cardLines, say } = require("../_lib/browser");
 const { asFlag } = require("../_lib/runner");
 
 module.exports.runtime = {
   handler: async function ({ reason, done }) {
     return withBrowser(this, async (request) => {
       if (asFlag(done)) {
+        say(this, "Taking the browser back");
         const r = await request("handoff", { done: true });
         if (r === null) return null;
         return ["You have the browser again.", r.page].filter(Boolean).join("\n");
       }
       const why = reason == null ? "" : String(reason).trim();
+      say(this, "Handing the browser to you");
       const r = await request("handoff", { reason: why });
       if (r === null) return null;
       const where = r.card ? cardLines(r.card) : [`The browser for the user: ${r.takeover}`, ""];

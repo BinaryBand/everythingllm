@@ -141,9 +141,41 @@ def test_open_starts_the_workspaces_browser_and_gives_each_thread_a_tab_and_card
             and "Sign in to go on" not in found["page"]
         )
         tab = r.threads[("career", "7")]
-        assert tab.last == "Clicked e1" and tab.url == "example.org"
+        assert tab.last == "Clicked Sign in" and tab.url == "example.org"
+        assert await r.op_label(scope(thread="7"), " e2 ") == {"label": "Home"}
+        assert await r.op_label(scope(thread="7"), "e9") == {"label": ""}
+        assert await r.op_label(scope(thread="9"), "e1") == {"label": ""}  # no tab
 
     test(tmp_path)
+
+
+def test_an_elements_label_is_its_name_in_the_last_view():
+    view = {
+        "elements": [
+            '[e1] button "Sign in"',
+            '[e2] link "Home" -> /',
+            '[e3] input[text] "Customer name" value="Ada"',
+            '[e4] input[checkbox] "Say "yes"" (checked)',
+            '[e5] input[password] "" (filled)',
+            '[e6] select "Size" options: *Small | Large',
+            '[e7] textarea "Notes" placeholder="Anything"',
+            f'[e8] button "{"x" * 90}"',
+            "not an element",
+        ]
+    }
+    found = runner_mod.labels(view)
+    assert found == {
+        "e1": "Sign in",
+        "e2": "Home",
+        "e3": "Customer name",
+        "e4": 'Say "yes"',
+        "e6": "Size",
+        "e7": "Notes",
+        "e8": "x" * (runner_mod.LABEL_CHARS - 1) + "…",
+    }
+    assert (
+        runner_mod.describe("fill", "Customer name", "Ada") == "Filled in Customer name"
+    )
 
 
 def test_without_a_public_host_there_is_no_card(tmp_path):

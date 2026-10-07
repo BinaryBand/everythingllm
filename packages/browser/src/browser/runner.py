@@ -76,6 +76,8 @@ Ops (each takes `scope`):
   wait_approval(approval)        up to WAIT s -> {done, approved}
   ask_login()                    ask the user for a login for the thread's page's site
                                  -> {request, site, card}
+  label(ref)                     the name the thread's last view gave element `ref`, for
+                                 the skill's progress line -> {label}, "" if it gave none
 
 `page` is browser.page's text; `card` the tab's live card line (browser.live), "" without
 PUBLIC_HOST; `new` whether the card is new to this chat (the tab was just made).
@@ -233,11 +235,18 @@ class Tab:
     shot_at: float = 0.0
     viewers: int = 0  # live cards streaming it
     changed: asyncio.Event = field(default_factory=asyncio.Event)
+    # ref -> its element's name in the last view the agent got, to say what it acts on
+    labels: dict[str, str] = field(default_factory=dict)
+
+    def seen(self, view: dict[str, Any]) -> None:
+        """Note what a view the agent got says of the page."""
+        self.title, self.url = view.get("title") or "", view.get("url") or ""
+        self.labels = labels(view)
 
     def moved(self, last: str, view: dict[str, Any] | None = None) -> None:
         self.last = last
         if view:
-            self.title, self.url = view.get("title") or "", view.get("url") or ""
+            self.seen(view)
         self.shot_at = 0.0  # the next frame takes a new one
         self.changed.set()
 
@@ -702,20 +711,30 @@ class Runner(hostrpc.Service):
         workspace, thread = check_scope(scope)
         s, tab = await self.running(workspace, thread)
         self.agent_may_act(s)
+        label = tab.labels.get(ref or "", "")
         view = await self.call(
             s,
             "act",
             {"thread": thread, "action": action, "ref": ref or "", "text": text or ""},
         )
-        tab.moved(describe(action, ref, text), view)
+        tab.moved(describe(action, label or ref, text), view)
         return {"page": pagetext.render(view)}
+
+    async def op_label(self, scope: dict[str, Any], ref: str = "") -> dict[str, Any]:
+        """What the thread's last view called element `ref` (the page's own words, cut
+        short), for the line the skill shows in the chat while it acts on it."""
+        workspace, thread = check_scope(scope)
+        tab = self.threads.get((workspace, thread))
+        if tab is None or not tab.open:
+            return {"label": ""}
+        return {"label": tab.labels.get(str(ref or "").strip(), "")}
 
     async def op_read(self, scope: dict[str, Any], find: str = "") -> dict[str, Any]:
         workspace, thread = check_scope(scope)
         s, tab = await self.running(workspace, thread)
         self.agent_may_act(s)  # nor watch what the user types
         view = await self.call(s, "read", {"thread": thread})
-        tab.title, tab.url = view.get("title") or "", view.get("url") or ""
+        tab.seen(view)
         return {"page": pagetext.render(view, (find or "").strip())}
 
     async def op_handoff(
@@ -1244,8 +1263,25 @@ def parent_sites(site: str) -> list[str]:
     return sites
 
 
+# An element as page.render lists it: [e12] button "Sign in" -> …, (checked), value="…"
+ELEMENT_RE = re.compile(
+    r'\[(e\d{1,6})\] \S+ "(.*?)"(?=$| -> | \(| value="| placeholder="| options: )'
+)
+LABEL_CHARS = 60
+
+
+def labels(view: dict[str, Any]) -> dict[str, str]:
+    """ref -> the element's name, from a view's elements; none for an unnamed one."""
+    found = {}
+    for line in view.get("elements") or []:
+        if (m := ELEMENT_RE.match(str(line))) and (name := " ".join(m[2].split())):
+            found[m[1]] = pagetext.clip(name, LABEL_CHARS)
+    return found
+
+
 def describe(action: str, ref: str, text: str) -> str:
-    """An action as the card says it; what's typed isn't shown (it may be a password)."""
+    """An action as the card says it, `ref` being the element's name when it has one; what's
+    typed isn't shown (it may be a password)."""
     what = {
         "click": "Clicked", "fill": "Filled in", "type": "Typed into", "press": "Pressed",
         "select": "Chose", "check": "Ticked", "uncheck": "Unticked", "hover": "Pointed at",

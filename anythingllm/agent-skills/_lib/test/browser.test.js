@@ -43,10 +43,57 @@ test("the browser skills send the call's own scope and give the card only when i
     assert.deepEqual(runner.requests.map((r) => [r.op, r.args]), [
       ["open", { scope: { workspace: "career", thread: "12" }, url: "example.com" }],
       ["open", { scope: { workspace: "career", thread: "12" }, url: "example.com" }],
+      ["label", { scope: { workspace: "career", thread: "12" }, ref: "e3" }],
       ["act", { scope: { workspace: "career", thread: "12" }, action: "click", ref: "e3", text: "" }],
       ["read", { scope: { workspace: "career", thread: "12" }, find: "next" }],
       ["read", { scope: { workspace: "_jobs", thread: "default" }, find: "" }],
     ]);
+  } finally {
+    delete process.env.BROWSER_SOCKET;
+    await runner.close();
+  }
+});
+
+test("each browser step says in the chat what it does, by the element's name and never what's typed", async () => {
+  const runner = await fakeRunner((op, args) => {
+    if (op === "label") return args.ref === "e4" ? { ok: false, error: "unknown op 'label'" } : { ok: true, result: { label: args.ref === "e2" ? "Customer name" : "" } };
+    if (op === "open") return { ok: true, result: { page: "Page: x", card: CARD, new: false } };
+    if (op === "handoff") return { ok: true, result: args.done ? { page: "Page: x" } : { card: CARD, takeover: "t" } };
+    return { ok: true, result: { page: "Page: x" } };
+  });
+  const lines = [];
+  const self = { ...agent(), introspect: (m) => lines.push(m) };
+  try {
+    await browse.handler.call(self, { url: "https://httpbin.org/forms/post?token=s3cret" });
+    await browse.handler.call(self, { url: "example.com/x" });
+    await act.handler.call(self, { action: "fill", ref: "e2", text: "hunter2" });
+    await act.handler.call(self, { action: "click", ref: "e3" }); // no name: its ref
+    await act.handler.call(self, { action: "click", ref: "e4" }); // a runner without label
+    await act.handler.call(self, { action: "select", ref: "e2", text: "Large" });
+    await act.handler.call(self, { action: "press", text: "Enter" });
+    await act.handler.call(self, { action: "press", text: "h" });
+    await act.handler.call(self, { action: "scroll_down" });
+    await read.handler.call(self, {});
+    await read.handler.call(self, { find: "total" });
+    await handoff.handler.call(self, { reason: "log in" });
+    await handoff.handler.call(self, { done: true });
+    assert.deepEqual(lines, [
+      "Opening httpbin.org",
+      "Opening example.com",
+      "Filling in Customer name",
+      "Clicking e3",
+      "Clicking e4",
+      "Choosing an option in Customer name",
+      "Pressing Enter",
+      "Pressing a key",
+      "Scrolling down",
+      "Reading the page",
+      "Looking for something on the page",
+      "Handing the browser to you",
+      "Taking the browser back",
+    ]);
+    assert.ok(!lines.join("\n").match(/hunter2|Large|s3cret|\bh\b/));
+    assert.equal(runner.requests.filter((r) => r.op === "act").length, 7); // a failed label stops none
   } finally {
     delete process.env.BROWSER_SOCKET;
     await runner.close();

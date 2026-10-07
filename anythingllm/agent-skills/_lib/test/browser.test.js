@@ -1,9 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("fs");
-const net = require("net");
-const os = require("os");
-const path = require("path");
+const { fakeService } = require("./fakeservice");
 
 const browse = require("../../browse/handler").runtime;
 const act = require("../../browser-act/handler").runtime;
@@ -12,22 +9,9 @@ const handoff = require("../../browser-handoff/handler").runtime;
 
 // A fake browser-runner: answers each request with respond(op, args).
 async function fakeRunner(respond) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bw-sock-"));
-  const socket = path.join(dir, "runner.sock");
-  const requests = [];
-  const server = net.createServer((conn) => {
-    let buffer = "";
-    conn.on("data", (chunk) => {
-      buffer += chunk;
-      if (!buffer.includes("\n")) return;
-      const msg = JSON.parse(buffer.split("\n")[0]);
-      requests.push(msg);
-      conn.end(JSON.stringify(respond(msg.op, msg.args)) + "\n");
-    });
-  });
-  await new Promise((r) => server.listen(socket, r));
-  process.env.BROWSER_SOCKET = socket;
-  return { requests, close: () => new Promise((r) => server.close(r)) };
+  const service = await fakeService(respond);
+  process.env.BROWSER_SOCKET = service.socket;
+  return service;
 }
 
 function agent(invocation = { workspace: { slug: "career" }, thread_id: 12 }) {

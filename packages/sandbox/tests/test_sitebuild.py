@@ -142,9 +142,13 @@ def test_a_workspaces_theme_reached_through_a_symlink_is_refused(tmp_path, roots
     elsewhere.mkdir(parents=True)
     (elsewhere / "theme.toml").write_text("")
     (shared / "career" / "themes" / "minimal2").symlink_to(elsewhere)
-    conf = {"theme": "minimal2", "extra": {"build": {"theme_from": "career"}}}
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "zola.toml").write_text(
+        'theme = "minimal2"\n[extra.build]\ntheme_from = "career"\n'
+    )
     with pytest.raises(BuildError, match="is a symlink"):
-        theme_source(conf, system, shared)
+        assemble(site, tmp_path / "work", system, shared)
 
 
 def test_a_workspaces_theme_swapped_for_a_symlink_after_the_check_isnt_followed(

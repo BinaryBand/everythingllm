@@ -29,7 +29,6 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -38,7 +37,7 @@ from pathlib import Path
 
 from hostctl import jobs as hostjobs
 from hostctl import prompt
-from hostctl.units import ROOT, anythingllm_headers, storage
+from hostctl.units import ROOT, anythingllm_headers, replace_file, storage
 
 STORAGE = storage()
 REPO = ROOT / "anythingllm"
@@ -260,23 +259,8 @@ def deploy() -> None:
         state = "enabled" if live["enabled"] else "disabled"
         print(f"deployed scheduled job {job['name']!r} (id {live['id']}, {state})")
     for dest, text in files.items():
-        write_live(dest, text)
+        replace_file(dest, text)  # never through a symlink the container left
         print(f"deployed {dest}")
-
-
-def write_live(dest: Path, text: str) -> None:
-    """Replace `dest` in storage with `text`, through a temp file of a fresh name (O_EXCL),
-    so a symlink the container left in its folder is never written through."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.")
-    try:
-        os.fchmod(fd, 0o644)  # the container reads it
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        os.replace(tmp, dest)  # replaces a symlink at dest itself
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
 
 
 def symlinks(folder: Path) -> list[str]:

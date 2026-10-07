@@ -316,9 +316,6 @@ class Runner(RunService):
         self.internal = internal
         self.jobs: ScheduledJobs | None = None  # scheduled() makes it
         self.poller: asyncio.Task | None = None
-        self.guard_jobs = (
-            False  # watch for jobs made during a delegation (start_poller)
-        )
         self.task_slots = asyncio.Semaphore(settings.slots)
         self.cancelled: set[str] = set()
         self.ready = False  # the profiles' workspaces are set up
@@ -344,7 +341,6 @@ class Runner(RunService):
     def start_poller(self) -> None:
         """Watch the one-offs made here, and for jobs made while a delegation runs (only
         runner.main does, so tests don't)."""
-        self.guard_jobs = True
         if self.poller is None:
             self.poller = asyncio.create_task(self.scheduled().poll())
 
@@ -546,7 +542,7 @@ class Runner(RunService):
 
             guard = (
                 self.scheduled().guarding(run.id, note)
-                if self.guard_jobs
+                if self.poller is not None  # runner.main's; tests don't watch
                 else contextlib.nullcontext()
             )
             async with guard:

@@ -398,14 +398,12 @@ class ScheduledJobs:
         self, name: str, prompt: str, at: str, tools: Any, apply: bool
     ) -> str:
         tz, now = self.tz, self.clock()
-        name = CONTROL.sub(" ", str(name or "")).strip()
         name, prompt, wanted = job_parts(
-            name.removeprefix(ONCE.strip()).strip(), prompt, tools
+            str(name or "").strip().removeprefix(ONCE.strip()), prompt, tools
         )
         fire = fire_time(at, tz, now)
         full = ONCE + name
-        await self.name_free(full)
-        await self.tools_ready(wanted)
+        await self.can_make(full, wanted)
         schedule = cron(fire)
         timing = (
             f'{local(fire, tz)} ({fire:%Y-%m-%d %H:%M} UTC; cron "{schedule}"), then '
@@ -440,18 +438,30 @@ class ScheduledJobs:
         log.info('made one-off %s "%s" for %s', job["id"], full, entry["fire_at"])
         return f'Made one-off job {job["id"]} "{full}": it runs {timing}.'
 
-    async def name_free(self, name: str) -> None:
-        if any(j.get("name") == name for j in await self.client.jobs()):
+    async def can_make(
+        self, name: str, wanted: list[str], repos_too: bool = False
+    ) -> None:
+        """Refuse a name in use (with `repos_too`, also one of the repo's jobs') and a tool
+        AnythingLLM doesn't have for a job, or hasn't set up; looked up all at once."""
+
+        async def none() -> Any:
+            return ()
+
+        jobs, tools, managed = await asyncio.gather(
+            self.client.jobs(),
+            self.client.available_tools() if wanted else none(),
+            self.managed() if repos_too else none(),
+        )
+        if name in managed:
+            raise RunnerError(
+                f'"{name}" is the name of a job the repo manages; pick another'
+            )
+        if any(j.get("name") == name for j in jobs):
             raise RunnerError(
                 f'there\'s a job named "{name}" already: pick another name, or delete '
                 "that one first"
             )
-
-    async def tools_ready(self, wanted: list[str]) -> None:
-        """Refuse a tool AnythingLLM doesn't have for a job, or hasn't set up."""
-        if not wanted:
-            return
-        available = {t["id"]: t for t in await self.client.available_tools()}
+        available = {t["id"]: t for t in tools}
         unknown = [t for t in wanted if t not in available]
         if unknown:
             some = ", ".join(sorted(available)[:30])
@@ -483,12 +493,7 @@ class ScheduledJobs:
                 "the schedule must be a cron of five fields (minute hour day month "
                 'weekday) in UTC, e.g. "0 6 * * 1-5" for 06:00 UTC on weekdays'
             )
-        if name in await self.managed():
-            raise RunnerError(
-                f'"{name}" is the name of a job the repo manages; pick another'
-            )
-        await self.name_free(name)
-        await self.tools_ready(wanted)
+        await self.can_make(name, wanted, repos_too=True)
         offset = f"{self.tz.key} is {utc_offset(self.tz, self.clock())} now"
         if not apply:
             return (

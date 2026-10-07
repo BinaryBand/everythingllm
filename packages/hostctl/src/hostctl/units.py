@@ -31,6 +31,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -196,16 +197,28 @@ def changed(units: list[Unit]) -> list[Unit]:
     ]
 
 
+def replace_file(dest: Path, text: str, mode: int = 0o644) -> None:
+    """Replace `dest` with `text`, mode `mode`, through a temp file of a fresh name in its
+    folder (O_EXCL), so a symlink left there is never written through; os.replace swaps a
+    symlink at `dest` itself, not what it points to."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.")
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, dest)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def install(todo: list[Unit]) -> list[str]:
     """Write the units; returns the units to restart, in order: containers first."""
     restart = []
     for unit in todo:
         old = installed(unit)
-        folder = unit.dest.parent
-        folder.mkdir(parents=True, exist_ok=True)
-        tmp = folder / f".{unit.dest.name}.tmp"
-        tmp.write_text(unit.text)
-        os.replace(tmp, unit.dest)  # replaces a symlink itself, not what it points to
+        replace_file(unit.dest, unit.text)
         cosmetic = bool(old) and meaning(old) == meaning(unit.text)
         print(f"installed {unit.dest}" + (" (comments only)" if cosmetic else ""))
         if (

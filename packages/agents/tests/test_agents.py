@@ -308,7 +308,7 @@ def test_a_delegation_runs_inside_the_scheduled_jobs_guard(fake, tmp_path):
 
     async def main():
         r = make(fake, tmp_path)
-        r.jobs, r.guard_jobs = Jobs(), True
+        r.jobs, r.poller = Jobs(), asyncio.Future()  # as start_poller leaves it
         task = [{"name": "a", "profile": "worker", "instructions": "x"}]
         started = await r.op_delegate("g", task)
         await finish(r, started["run_id"])

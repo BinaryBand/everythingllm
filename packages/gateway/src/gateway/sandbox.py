@@ -65,16 +65,22 @@ runner = hostrpc.caller(
 )
 
 
-def scope() -> dict[str, Any]:
-    """The calling client's scope: its own workspace, and the one thread a client has."""
+def client_key(what: str) -> str:
+    """The calling client as "client-<name>": its sandbox workspace, and the owner of its
+    runs elsewhere (gateway.agents). `what` names what needs it, for the error."""
     name = grants.client.get()
-    workspace = f"{WORKSPACE}{name}"
-    if not name or not KEY_RE.fullmatch(workspace):
+    key = f"{WORKSPACE}{name}"
+    if not name or not KEY_RE.fullmatch(key):
         raise ToolError(
-            f"The sandbox needs a gateway client whose name is lowercase letters, digits "
+            f"{what} needs a gateway client whose name is lowercase letters, digits "
             f"and hyphens, not {name!r}."
         )
-    return {"workspace": workspace, "thread": THREAD, "gateway": True}
+    return key
+
+
+def scope() -> dict[str, Any]:
+    """The calling client's scope: its own workspace, and the one thread a client has."""
+    return {"workspace": client_key("The sandbox"), "thread": THREAD, "gateway": True}
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:

@@ -69,14 +69,7 @@ def theme_source(
         raise BuildError(
             f"there's no theme '{theme}' in {root} (no {theme}/theme.toml)"
         )
-    if origin != "system" and any(
-        p.is_symlink() for p in (root, root / theme, root / theme / "theme.toml")
-    ):
-        raise BuildError(
-            f"the theme '{theme}' in {root} is a symlink; a theme from a workspace must "
-            "be a folder in its /shared"
-        )
-    return root / theme
+    return root / theme  # a workspace's is opened step by step (copy_shared_theme)
 
 
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC

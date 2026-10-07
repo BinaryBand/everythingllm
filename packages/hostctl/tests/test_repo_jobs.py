@@ -44,18 +44,18 @@ def test_deploy_wont_match_a_repo_job_two_live_jobs_share_a_name(sync, monkeypat
         sync.live_jobs(["Mine"])
 
 
-def test_deploy_writes_through_no_symlink_the_container_left(sync, tmp_path):
+def test_deploy_writes_through_no_symlink_the_container_left(tmp_path):
     target = tmp_path / "outside"
     target.write_text("mine")
     dest = tmp_path / "skills" / "s" / "handler.js"
     dest.parent.mkdir(parents=True)
     (dest.parent / ".handler.js.tmp").symlink_to(target)  # the old fixed temp name
-    sync.write_live(dest, "new")
+    units.replace_file(dest, "new")
     assert dest.read_text() == "new" and target.read_text() == "mine"
     assert dest.stat().st_mode & 0o777 == 0o644
     dest.unlink()
     dest.symlink_to(target)
-    sync.write_live(dest, "again")
+    units.replace_file(dest, "again")
     assert not dest.is_symlink() and target.read_text() == "mine"
 
 

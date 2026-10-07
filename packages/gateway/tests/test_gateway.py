@@ -177,8 +177,8 @@ class FakeSites(hostrpc.Service):
         return f"wrote {site}/{section}/{slug}: {title} ({date}, {extra}, {overwrite})"
 
 
-class FakeAgents(hostrpc.Service):
-    """Records each op with its args."""
+class Recording(hostrpc.Service):
+    """A fake runner that records each op with its args."""
 
     def __init__(self):
         super().__init__()
@@ -188,6 +188,8 @@ class FakeAgents(hostrpc.Service):
         self.calls.append((msg["op"], msg["args"]))
         return await super().reply(msg)
 
+
+class FakeAgents(Recording):
     async def op_runs(self, owner):
         return {"runs": [{"run_id": "dg-1"}]}
 
@@ -421,16 +423,8 @@ def test_gateway_client_makes_the_names_and_keys_the_gateway_reads(monkeypatch):
 # --- the sandbox, in the client's own workspace ---
 
 
-class FakeSandbox(hostrpc.Service):
-    """Records each op with its args; a run is still going until it's waited on."""
-
-    def __init__(self):
-        super().__init__()
-        self.calls = []
-
-    async def reply(self, msg):
-        self.calls.append((msg["op"], msg["args"]))
-        return await super().reply(msg)
+class FakeSandbox(Recording):
+    """A run is still going until it's waited on."""
 
     async def op_run(self, scope, language, code, timeout):
         return {"run_id": "r-1", "running": True, "seconds": 45.0}

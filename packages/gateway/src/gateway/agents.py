@@ -21,8 +21,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from gateway import grants
-from gateway.sandbox import KEY_RE, WORKSPACE
+from gateway.sandbox import client_key
 
 mcp = MCPServer("agents")
 
@@ -38,21 +37,9 @@ skills = hostrpc.Skills("agents", "AGENTS_SOCKET")
 runner = hostrpc.caller(skills.folder, skills.env, "agents runner", error=ToolError)
 
 
-def owner() -> str:
-    """The calling client, as the owner of its delegations."""
-    name = grants.client.get()
-    owner = f"{WORKSPACE}{name}"
-    if not name or not KEY_RE.fullmatch(owner):
-        raise ToolError(
-            f"Delegation needs a gateway client whose name is lowercase letters, digits "
-            f"and hyphens, not {name!r}."
-        )
-    return owner
-
-
 async def call(op: str, args: dict[str, Any]) -> Any:
     """Send `op` with the client as owner, never one from the arguments."""
-    return await runner(op, {**args, "owner": owner()})
+    return await runner(op, {**args, "owner": client_key("Delegation")})
 
 
 tool = hostrpc.forwarder(call, mcp.add_tool)

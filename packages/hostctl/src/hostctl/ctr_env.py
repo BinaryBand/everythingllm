@@ -15,12 +15,10 @@ restart takes up a key changed in AnythingLLM's settings. With hostctl and apps 
 PYTHONPATH, as the templates run it; standard library only, like the rest of hostctl.
 """
 
-import os
 import sys
-import tempfile
 from pathlib import Path
 
-from hostctl.units import env_file
+from hostctl.units import env_file, replace_file
 
 PRESENT = "set"  # what a `KEY?` gets when the .env has it
 
@@ -41,14 +39,7 @@ def write(out: Path, text: str) -> None:
     """Replace `out` with `text`, mode 600, in a mode 700 folder."""
     out.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     out.parent.chmod(0o700)
-    fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=f".{out.name}.")
-    try:
-        with os.fdopen(fd, "w") as f:  # mkstemp makes it 600
-            f.write(text)
-        os.replace(tmp, out)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    replace_file(out, text, 0o600)
 
 
 def main(argv: list[str] | None = None) -> None:

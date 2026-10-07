@@ -15,8 +15,10 @@ function scopeOf(self) {
 }
 
 /** The invocation of a call from a chat in AnythingLLM's UI, or null. Only such a chat has
- *  an invocation row of its own, with thread_id (null in the workspace's main chat); API,
- *  Telegram and scheduled job runs have no such key. */
+ *  an invocation row of its own, with thread_id (null in the workspace's main chat). API and
+ *  Telegram runs have no such key, because AnythingLLM (1.16.2) leaves their thread out of
+ *  the invocation it gives skills, not because they have none; scheduled jobs have none.
+ *  Were it to pass an API chat's thread_id, that chat would count as one here too. */
 function uiInvocation(self) {
   const invocation = self.super?.handlerProps?.invocation || {};
   return Object.hasOwn(invocation, "thread_id") ? invocation : null;

@@ -120,7 +120,7 @@ def diff() -> None:
 
 @command(
     "deploy",
-    "write skills, jobs, the system prompt and MCP config live (backs up first), refresh MCP deps, restart AnythingLLM, rebuild the sites",
+    "write skills, jobs, the default prompt and its version, and MCP config live (backs up first), refresh MCP deps, restart AnythingLLM, rebuild the sites",
 )
 def deploy() -> None:
     from hostctl import sync  # needs ANYTHINGLLM_STORAGE

@@ -178,6 +178,9 @@ through its UI.
     `sandbox-runner` on the host (see "Code sandbox")
   - `browse/`, `browser-act/`, `browser-read/`, `browser-handoff/`, `browser-login/` — the
     workspace's browser and its saved logins, run by `browser-runner` on the host (see "Browser")
+  - `update-prompt/` — refreshes the calling workspace's EverythingLLM block in its system
+    prompt (below), through `agents-runner`'s `update_prompt`; it shows what would change
+    first and writes only with `apply`
   - `write-entry/`, `delete-entry/` — the ops of the sites runner that write. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
     to its runner (`forwardSkill` in `_lib/runner.js`). They're generated: each is declared
@@ -196,9 +199,14 @@ through its UI.
 - `anythingllm/mcp_servers.json` — deployed to `storage/plugins/anythingllm_mcp_servers.json`
 - `anythingllm/env.example` — keys used in the live `.env` (values stay out of git)
 - `anythingllm/system-prompt.md` — the system prompt for chat and the agent: which tool
-  to reach for, the tool-call budget, safety rules. Deployed through the API to every
-  workspace and as the default for new ones. Scheduled jobs have no workspace, so they get
-  AnythingLLM's built-in prompt instead; their own prompts carry what they need.
+  to reach for, the tool-call budget, safety rules. A workspace's prompt is AnythingLLM's,
+  edited in its UI, and deploy never writes one: ours goes in as a block marked with its
+  version (`hostctl.prompt`), which deploy sets as the default for new workspaces. Deploy
+  also keeps the System Prompt Variable `{everythingllm_version}` at the repo's version;
+  the block asks the model to tell the user once when it's behind, and the `update-prompt`
+  skill refreshes it, keeping the workspace's own text around it. `uv run hostctl health`
+  lists the workspaces whose block is behind or missing. Scheduled jobs have no workspace,
+  so they get AnythingLLM's built-in prompt instead; their own prompts carry what they need.
 - `anythingllm/scheduled-jobs/<slug>/` — scheduled jobs (`job.json` with name, cron and
   tools, plus `prompt.md`), deployed through the AnythingLLM API and matched by name
   - `daily-news-page/` — writes the day's Daily News edition (US, Sweden, World) to the

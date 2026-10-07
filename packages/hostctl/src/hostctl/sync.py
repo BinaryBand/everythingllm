@@ -9,11 +9,12 @@ Scheduled jobs live in the database, so they go through the AnythingLLM API
 (which also reschedules the in-memory cron timer). They are matched by name;
 the enabled toggle stays whatever it is live.
 
-The system prompt (system-prompt.md) also goes through the API: it is set on
-every workspace and as the default for new ones, except the agents-* workspaces,
-whose prompts are their delegation roles' (packages/agents, agents.profiles).
-Scheduled jobs have no workspace, so AnythingLLM gives them its built-in prompt
-instead.
+A workspace's system prompt is AnythingLLM's, and deploy never writes one. It sets
+the system prompt's block (system-prompt.md, as hostctl.prompt wraps it) as the
+default for new workspaces, and the static System Prompt Variable
+everythingllm_version to the repo's version, so a workspace whose block is behind
+says so; the update-prompt skill refreshes it. Scheduled jobs have no workspace, so
+AnythingLLM gives them its built-in prompt instead.
 
 Slash command presets are AnythingLLM's own: make and change them in the UI.
 
@@ -32,6 +33,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from hostctl import prompt
 from hostctl.units import BACKUPS, ROOT, anythingllm_headers, storage
 
 STORAGE = storage()
@@ -41,9 +43,6 @@ LIVE_MCP = STORAGE / "plugins" / "anythingllm_mcp_servers.json"
 REPO_JOBS = REPO / "scheduled-jobs"
 API = os.environ.get("ANYTHINGLLM_API", "http://127.0.0.1:3001/api")
 JOB_FIELDS = ("prompt", "tools", "schedule")
-REPO_PROMPT = REPO / "system-prompt.md"
-# Delegation's role workspaces: agents-runner sets their prompts (agents.profiles).
-DELEGATED = "agents-"
 
 
 def merge_plugin_json(repo_text: str, live_text: str | None) -> str:
@@ -129,28 +128,45 @@ def planned(
     ]
 
 
-def planned_prompts() -> list[tuple[str, str]]:
-    """(target, live prompt) for each place the repo system prompt would change:
-    "default" (the default for new workspaces) or a workspace slug."""
-    if not REPO_PROMPT.exists():
-        return []
-    prompt = REPO_PROMPT.read_text().strip()
-    live = [
-        ("default", api("GET", "/system/default-system-prompt")["defaultSystemPrompt"])
-    ]
-    live += [
-        (w["slug"], w["openAiPrompt"] or "")
-        for w in api("GET", "/workspaces")["workspaces"]
-        if not w["slug"].startswith(DELEGATED)
-    ]
-    return [(target, text) for target, text in live if text.strip() != prompt]
+def planned_default() -> str | None:
+    """The live default prompt for new workspaces if deploy would change it, else None."""
+    if not prompt.REPO_PROMPT.exists():
+        return None
+    live = api("GET", "/system/default-system-prompt")["defaultSystemPrompt"] or ""
+    return live if live.strip() != repo_block() else None
 
 
-def write_prompt(target: str, prompt: str) -> None:
-    if target == "default":
-        api("POST", "/system/default-system-prompt", {"defaultSystemPrompt": prompt})
+def repo_block() -> str:
+    return prompt.block(prompt.REPO_PROMPT.read_text())
+
+
+def planned_variable() -> tuple[dict | None, str] | None:
+    """(the live everythingllm_version variable or None, the repo's version) if deploy
+    would set it, else None."""
+    if not prompt.REPO_PROMPT.exists():
+        return None
+    value = prompt.version(prompt.REPO_PROMPT.read_text())
+    live = next(
+        (
+            v
+            for v in api("GET", "/system/prompt-variables")["variables"]
+            if v.get("key") == prompt.VARIABLE and v.get("id") is not None
+        ),
+        None,
+    )
+    return None if live and live["value"] == value else (live, value)
+
+
+def write_variable(live: dict | None, value: str) -> None:
+    body = {
+        "key": prompt.VARIABLE,
+        "value": value,
+        "description": "The version of EverythingLLM's system prompt (hostctl.prompt)",
+    }
+    if live is None:
+        api("POST", "/system/prompt-variables", body)
     else:
-        api("POST", f"/workspace/{target}/update", {"openAiPrompt": prompt})
+        api("PUT", f"/system/prompt-variables/{live['id']}", body)
 
 
 def print_text_diff(label: str, old: str, new: str) -> None:
@@ -178,16 +194,14 @@ def print_job_diff(job: dict, live: dict | None) -> None:
 
 def diff() -> bool:
     changed = False
-    for target, live in planned_prompts():
+    if (live := planned_default()) is not None:
         changed = True
-        sys.stdout.writelines(
-            difflib.unified_diff(
-                (live.strip() + "\n").splitlines(keepends=True),
-                REPO_PROMPT.read_text().strip().splitlines(keepends=True) + ["\n"],
-                f"live/system-prompt/{target}",
-                "repo/system-prompt.md",
-            )
-        )
+        print_text_diff("system-prompt/default", live.strip(), repo_block())
+    if (variable := planned_variable()) is not None:
+        changed = True
+        live_var, value = variable
+        old = live_var["value"] if live_var else "(none)"
+        print(f"{{{prompt.VARIABLE}}}: {old} -> {value}")
     for job, live in planned(repo_jobs(), live_jobs, JOB_FIELDS):
         changed = True
         print_job_diff(job, live)
@@ -218,17 +232,23 @@ def deploy() -> None:
         d: t for d, t in planned_files().items() if not d.exists() or d.read_text() != t
     }
     jobs = planned(repo_jobs(), live_jobs, JOB_FIELDS)
-    prompts = planned_prompts()
-    if not files and not jobs and not prompts:
+    default = planned_default()
+    variable = planned_variable()
+    if not files and not jobs and default is None and variable is None:
         print("Nothing to deploy.")
         return
     backup = BACKUPS / time.strftime("%Y%m%d-%H%M%S")
-    for target, live in prompts:
-        save_backup(backup / "system-prompt" / f"{target}.md", live.strip() + "\n")
-        write_prompt(target, REPO_PROMPT.read_text().strip())
-        print(
-            f"deployed system prompt to {target if target == 'default' else 'workspace ' + target}"
+    if default is not None:
+        save_backup(backup / "system-prompt" / "default.md", default.strip() + "\n")
+        api(
+            "POST",
+            "/system/default-system-prompt",
+            {"defaultSystemPrompt": repo_block()},
         )
+        print("deployed the default prompt for new workspaces")
+    if variable is not None:
+        write_variable(*variable)
+        print(f"set {{{prompt.VARIABLE}}} to {variable[1]}")
     for job, live in jobs:
         body = {f: job[f] for f in JOB_FIELDS}
         if live is None:

@@ -1,0 +1,21 @@
+{
+  "active": true,
+  "hubId": "update-prompt",
+  "name": "Update Prompt",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Refresh this workspace's system prompt from EverythingLLM's current one, when your prompt says it is out of date or the user asks. It replaces only the EverythingLLM block and keeps the workspace's own instructions around it. Call it first without apply: it answers with what would change. Show the user, and call again with apply true only if they agree.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "apply": {
+        "type": "boolean",
+        "description": "true to write the change, once the user has agreed to it; leave out to see what would change."
+      }
+    }
+  }
+}

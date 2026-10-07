@@ -10,6 +10,10 @@ gets their results. Callers (the delegate skill, agents-run) ask over its socket
   wait(run_id, since=0)   up to WAIT seconds for news: {events, done, result once done}
   runs()                  the delegations it holds: {run_id, goal, started, done}
   cancel(run_id)          tasks that haven't started won't; running ones finish, unused
+  update_prompt(scope, apply=False)
+                          refresh the calling workspace's EverythingLLM block (hostctl.prompt)
+                          from anythingllm/system-prompt.md, keeping its own text around it;
+                          without apply, only show what would change (the update-prompt skill)
 
 A task's `material` is text for it to work on (findings to write up, a draft to check),
 longer than instructions may be (MAX_MATERIAL a task, MAX_MATERIAL_TOTAL in all); it goes
@@ -44,6 +48,7 @@ Config (environment, from host.env and agents.env through the unit):
 """
 
 import asyncio
+import difflib
 import html
 import logging
 import math
@@ -55,6 +60,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import hostrpc
+from hostctl import prompt
 from hostrpc import RunnerError
 from runs import live
 from runs.runlog import RunLog, iso, since
@@ -340,6 +346,53 @@ class Runner(RunService):
         if not run.done:
             self.cancelled.add(run_id)
         return {"run_id": run_id, "cancelled": not run.done}
+
+    async def op_update_prompt(self, scope: dict, apply: bool = False) -> str:
+        slug = str((scope or {}).get("workspace") or "")
+        if not slug or slug == "_jobs":
+            raise RunnerError("a scheduled job has no workspace prompt to update")
+        if slug.startswith(prompt.DELEGATED):
+            raise RunnerError(
+                "a delegation role's prompt is agents-runner's, not this skill's"
+            )
+        client = self.anythingllm()
+        try:
+            workspace = next(
+                (w for w in await client.workspaces() if w.get("slug") == slug), None
+            )
+            if workspace is None:
+                raise RunnerError(f"AnythingLLM has no workspace '{slug}'")
+            text = await asyncio.to_thread(prompt.REPO_PROMPT.read_text)
+            current = (workspace.get("openAiPrompt") or "").strip()
+            new = prompt.splice(current, text)
+            version = prompt.version(text)
+            if new == current:
+                return (
+                    f"This workspace's prompt is already current (version {version})."
+                )
+            changes = "".join(
+                difflib.unified_diff(
+                    (current + "\n").splitlines(keepends=True),
+                    (new + "\n").splitlines(keepends=True),
+                    "now",
+                    "after",
+                )
+            )
+            if not apply:
+                return (
+                    f"Updating this workspace's prompt to version {version} would change:\n"
+                    f"{changes}\nShow the user what changes, and call again with apply true "
+                    "only if they agree."
+                )
+            await client.workspace_update(slug, {"openAiPrompt": new})
+        except AnythingLLMError as e:
+            raise RunnerError(str(e)) from None
+        log.info("updated %s's prompt to version %s", slug, version)
+        return (
+            f"Updated this workspace's prompt to version {version}; its own text outside "
+            "the EverythingLLM block is unchanged, and AnythingLLM keeps the earlier prompt "
+            f"in its history. What changed:\n{changes}"
+        )
 
     async def execute(
         self,

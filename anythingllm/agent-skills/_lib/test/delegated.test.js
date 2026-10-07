@@ -143,3 +143,24 @@ test("delegate starts a delegation and hands back its card", async () => {
     await service.close();
   }
 });
+
+test("update-prompt sends the invocation's workspace, not one the model names", async () => {
+  const service = await fakeService((op, args) =>
+    op === "update_prompt" ? { ok: true, result: `would update ${args.scope.workspace}` } : { ok: false, error: "?" }
+  );
+  process.env.AGENTS_SOCKET = service.socket;
+  try {
+    const update = require("../../update-prompt/handler").runtime;
+    const reply = await update.handler.call(agent("career"), { apply: "true", workspace: "education" });
+    assert.equal(reply, "would update career");
+    assert.deepEqual(service.requests[0], {
+      op: "update_prompt",
+      args: { scope: { workspace: "career", thread: "3" }, apply: true },
+    });
+    await update.handler.call(agent("career"), {});
+    assert.equal(service.requests[1].args.apply, false);
+  } finally {
+    delete process.env.AGENTS_SOCKET;
+    await service.close();
+  }
+});

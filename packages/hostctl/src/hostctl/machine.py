@@ -196,7 +196,7 @@ def checklist() -> list[tuple[bool | None, str]]:
         ),
         (
             workspaces > 0,
-            "Create a workspace, then run `uv run hostctl deploy` again so it gets the system prompt.",
+            "Create a workspace (it starts with the system prompt, as the default for new workspaces).",
         ),
         (
             None,

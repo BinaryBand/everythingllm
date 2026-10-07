@@ -9,6 +9,7 @@ import httpx
 import pytest
 from agents import cli, profiles, runner
 from agents.anythingllm import AnythingLLM, AnythingLLMError, without_thinking
+from hostctl import prompt
 from hostrpc import RunnerError
 from runs.runlog import find, sweep_interrupted
 
@@ -38,7 +39,10 @@ class FakeAnythingLLM:
         path = request.url.path.removeprefix("/api/v1")
         body = json.loads(request.content) if request.content else {}
         if path == "/workspaces":
-            have = [{"slug": s} for s in self.workspaces]
+            have = [
+                {"slug": s, "openAiPrompt": w.get("openAiPrompt")}
+                for s, w in self.workspaces.items()
+            ]
             await asyncio.sleep(0.01)  # long enough for two setups to overlap
             return httpx.Response(200, json={"workspaces": have})
         if path == "/workspace/new":
@@ -142,6 +146,41 @@ def test_ensure_makes_the_profiles_workspaces_once_and_sets_them(fake):
         )
         assert "delegated task" in worker["openAiPrompt"]
         assert fake.workspaces["agents-planner"]["chatModel"] == "glm-5.3"
+
+    asyncio.run(main())
+
+
+def test_update_prompt_shows_the_change_first_then_writes_only_the_block(
+    fake, tmp_path
+):
+    async def main():
+        r = make(fake, tmp_path)
+        fake.workspaces["career"]["openAiPrompt"] = "Speak like a pirate."
+        scope = {"workspace": "career", "thread": "default"}
+        preview = await r.op_update_prompt(scope)
+        assert "call again with apply true" in preview
+        assert fake.workspaces["career"]["openAiPrompt"] == "Speak like a pirate."
+        done = await r.op_update_prompt(scope, apply=True)
+        assert done.startswith("Updated this workspace's prompt")
+        written = fake.workspaces["career"]["openAiPrompt"]
+        text = prompt.REPO_PROMPT.read_text()
+        assert prompt.written_version(written) == prompt.version(text)
+        assert written.endswith("Your own instructions:\nSpeak like a pirate.")
+        assert "already current" in await r.op_update_prompt(scope, apply=True)
+
+    asyncio.run(main())
+
+
+def test_update_prompt_refuses_a_job_a_role_and_an_unknown_workspace(fake, tmp_path):
+    async def main():
+        r = make(fake, tmp_path)
+        for workspace, error in [
+            ("_jobs", "scheduled job"),
+            ("agents-planner", "delegation role"),
+            ("nope", "no workspace 'nope'"),
+        ]:
+            with pytest.raises(RunnerError, match=error):
+                await r.op_update_prompt({"workspace": workspace}, apply=True)
 
     asyncio.run(main())
 

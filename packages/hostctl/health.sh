@@ -46,6 +46,10 @@ echo "Sockets"
 # The host services the container talks to over sockets in storage.
 appctl sockets || failed=1
 
+echo "Prompts"
+# Notices only: a workspace's prompt is its own, and update-prompt refreshes its block.
+PYTHONPATH=packages/hostctl/src:packages/apps/src python3 -m hostctl.prompt check
+
 echo
 [ "$failed" = 0 ] && echo "All good." || echo "Something needs a look (FAIL lines above)."
 exit "$failed"

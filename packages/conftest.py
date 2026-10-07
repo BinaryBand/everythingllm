@@ -1,6 +1,7 @@
 import functools
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,17 +12,29 @@ SITEBUILD = PACKAGES / "sandbox" / "src" / "sandbox" / "sitebuild.py"
 THEMES = PACKAGES / "sites" / "zola" / "themes"
 
 
+# Where tests find AnythingLLM: a port nothing listens on, so a test that forgets its fake
+# fails rather than reaching this machine's AnythingLLM.
+NO_ANYTHINGLLM = "http://127.0.0.1:9"
+
+
 @pytest.fixture(autouse=True)
-def no_host_settings(monkeypatch):
+def no_host_settings(monkeypatch, tmp_path_factory):
     """Tests run the same on any machine: none of this one's host.env (which `uv run hostctl test`
-    exports, and which the site builds would find at the repo root) reaches them."""
+    exports, and which the site builds would find at the repo root) reaches them, and none
+    reaches its AnythingLLM or reads its storage (where its .env, with the password, is)."""
     monkeypatch.delenv("PUBLIC_HOST", raising=False)
-    monkeypatch.delenv("ANYTHINGLLM_STORAGE", raising=False)
+    monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path_factory.mktemp("storage")))
+    monkeypatch.setenv("ANYTHINGLLM_URL", NO_ANYTHINGLLM)
+    monkeypatch.setenv("ANYTHINGLLM_API", f"{NO_ANYTHINGLLM}/api")
+    monkeypatch.delenv("ANYTHINGLLM_ENV", raising=False)
+    # hostctl reads its address on import.
+    for name in ("hostctl.sync", "hostctl.machine"):
+        if name in sys.modules:
+            monkeypatch.setattr(sys.modules[name], "API", f"{NO_ANYTHINGLLM}/api")
     # Nor a service container's: its egress proxy and the addresses it reaches the host by.
     for key in (
         "EGRESS_PROXY",
         "SEARXNG_URL",
-        "ANYTHINGLLM_API",
         "LIVE_HOST",
         "ARTICLES_HOST",
     ):

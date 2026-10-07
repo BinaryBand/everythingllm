@@ -1,6 +1,7 @@
 import io
 import re
 
+import chatimage
 from chatimage import card as linkcard
 from PIL import Image
 
@@ -19,9 +20,23 @@ def test_a_card_is_saved_and_linked(tmp_path):
     )
     assert m
     file = tmp_path / "_cards" / m.group(1)
-    assert file.stat().st_mode & 0o777 == 0o644
-    assert Image.open(file).size == (linkcard.WIDTH, linkcard.HEIGHT)
-    assert [p.name for p in file.parent.iterdir()] == [file.name]  # no temp files left
+    light = file.with_suffix(".light.png")
+    for f in (file, light):
+        assert f.stat().st_mode & 0o777 == 0o644
+        assert Image.open(f).size == (linkcard.WIDTH, linkcard.HEIGHT)
+    # no temp files left
+    assert sorted(p.name for p in file.parent.iterdir()) == sorted(
+        [file.name, light.name]
+    )
+
+
+def test_a_card_is_drawn_in_each_theme(tmp_path):
+    linkcard.make(tmp_path, "https://h/a/", "A", "Pages · career", "About a")
+    for theme, palette in chatimage.THEMES.items():
+        image = Image.open(linkcard.card_path(tmp_path, "https://h/a/", theme))
+        assert image.convert("RGB").getpixel((linkcard.WIDTH // 2, 20)) == palette.panel
+        assert image.getpixel((linkcard.WIDTH // 2, 0))[:3] == palette.line
+        assert image.getpixel((0, 0))[3] == 0  # the rounded corners are see-through
 
 
 def test_republishing_replaces_the_card_and_changes_its_version(tmp_path):
@@ -30,7 +45,7 @@ def test_republishing_replaces_the_card_and_changes_its_version(tmp_path):
     two = linkcard.make(tmp_path, url, "Two", "News")
     assert one.split("](")[1].split("?v=")[0] == two.split("](")[1].split("?v=")[0]
     assert one.split("?v=")[1] != two.split("?v=")[1]
-    assert len(list((tmp_path / "_cards").iterdir())) == 1
+    assert len(list((tmp_path / "_cards").iterdir())) == len(chatimage.THEMES)
     linkcard.remove(tmp_path, url)
     assert not list((tmp_path / "_cards").iterdir())
     linkcard.remove(tmp_path, url)  # nothing left to remove is fine
@@ -72,7 +87,7 @@ def test_an_unchanged_card_is_not_drawn_again(tmp_path, monkeypatch):
     )
     assert drew == []
     linkcard.make(tmp_path, url, "Daily News", "Site · news", "New description")
-    assert len(drew) == 1
+    assert [a[-1] for a in drew] == list(chatimage.THEMES)
 
 
 def test_a_card_for_a_page_served_elsewhere_lives_on_the_pages_site(tmp_path):

@@ -53,7 +53,7 @@ def test_frames_are_pushed_in_order_and_the_stream_ends():
     assert b"Content-Type: multipart/x-mixed-replace; boundary=frame" in head
     assert b"Cache-Control: no-store" in head
     assert parts(body) == [b"png0", b"png1", b"png2"]
-    assert seen == [("GET", "/x.png"), True]
+    assert seen == [("GET", "/x.png", "v=1"), True]
 
 
 def test_a_client_that_leaves_closes_the_frames():
@@ -108,3 +108,11 @@ def test_a_plain_response_and_a_bad_request():
     )
     assert b"Content-Length: 0\r\n" in ok and b"Connection: close\r\n" in ok
     assert bad.startswith(b"HTTP/1.1 400 Bad Request")
+
+
+def test_a_query_asks_for_a_theme():
+    assert live.theme("") == "dark"
+    assert live.theme("theme=light") == "light"
+    assert live.theme("v=abc&theme=light") == "light"
+    assert live.theme("theme=sepia") == "dark"
+    assert live.theme("theme=light&theme=dark") == "dark"

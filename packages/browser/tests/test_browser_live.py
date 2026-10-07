@@ -7,6 +7,7 @@ import io
 from browser import live
 from browser.runner import Runner
 from browser_fakes import Clock, FakePodman, config, jpeg, scope
+from chatimage import THEMES
 from PIL import Image
 
 
@@ -24,6 +25,16 @@ def test_a_frame_is_the_strip_over_the_screenshot_dimmed_once_closed():
         assert (middle[0] > 200) == (state != "closed")
     blank = Image.open(io.BytesIO(live.picture(b"", "career", "agent", "", "", "")))
     assert blank.size == (live.WIDTH, live.STRIP + 360)
+
+    def near(a, b):  # a JPEG's colours are only close
+        return all(abs(x - y) <= 6 for x, y in zip(a, b, strict=True))
+
+    for theme, p in THEMES.items():
+        themed = Image.open(
+            io.BytesIO(live.picture(b"", "career", "user", "", "", "", theme))
+        ).convert("RGB")
+        assert near(themed.getpixel((live.WIDTH // 2, live.STRIP + 20)), p.panel)
+        assert near(themed.getpixel((4, 20)), p.user)  # the strip's stripe
     assert (
         Image.open(
             io.BytesIO(live.picture(b"not a jpeg", "w", "agent", "", "", ""))
@@ -177,3 +188,5 @@ def test_every_state_of_a_login_request_has_a_card():
     for state in live.ASKED:
         image = Image.open(io.BytesIO(live.asked_picture(req, state)))
         assert image.format == "PNG"
+        light = Image.open(io.BytesIO(live.asked_picture(req, state, "light")))
+        assert light.convert("RGB").getpixel((800, 20)) == THEMES["light"].panel

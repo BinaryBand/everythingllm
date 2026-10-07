@@ -8,12 +8,16 @@ and the machine's route must pass each part on as it comes (no buffering). When 
 stays on its last frame; reloading the chat asks again.
 
 These are helpers for a service's own small asyncio server (research.live is one): it
-reads the request line, then either pushes frames or sends one plain response. There's
+reads the request line, then either pushes frames or sends one plain response. An image's
+address may ask for the light theme with `?theme=light` (`theme`); else it's dark. There's
 no framework: GET only, no keep-alive, every response closes its connection.
 """
 
 import asyncio
 from collections.abc import AsyncIterator
+from urllib.parse import parse_qs
+
+from chatimage import THEME, THEMES
 
 BOUNDARY = b"frame"
 MAX_HEAD = 16 * 1024  # a request's line and headers; the machine's route adds a few
@@ -23,8 +27,8 @@ class BadRequest(Exception):
     pass
 
 
-async def read_request(reader: asyncio.StreamReader) -> tuple[str, str]:
-    """The request's method and path (with its query cut off), once its headers are in.
+async def read_request(reader: asyncio.StreamReader) -> tuple[str, str, str]:
+    """The request's method, path and query (without its ?), once its headers are in.
     Raises BadRequest for anything that isn't an HTTP/1 request line, or is too big."""
     read = 0
     try:
@@ -43,7 +47,14 @@ async def read_request(reader: asyncio.StreamReader) -> tuple[str, str]:
     if len(parts) != 3 or not parts[2].startswith("HTTP/1."):
         raise BadRequest("not an HTTP/1 request")
     method, target, _ = parts
-    return method, target.split("?", 1)[0]
+    path, _, query = target.partition("?")
+    return method, path, query
+
+
+def theme(query: str) -> str:
+    """The theme a request's query asks for (`theme=light`), else the default."""
+    asked = parse_qs(query).get("theme", [])
+    return asked[-1] if asked and asked[-1] in THEMES else THEME
 
 
 def head(status: str, headers: dict[str, str]) -> bytes:

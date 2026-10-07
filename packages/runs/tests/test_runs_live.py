@@ -1,6 +1,7 @@
 import asyncio
 import io
 
+from chatimage import THEMES
 from PIL import Image
 from runs import live
 from runs.runlog import append_line
@@ -89,6 +90,10 @@ def test_a_run_from_the_log_gets_one_frame_and_its_page(tmp_path):
         port = server.sockets[0].getsockname()[1]
         head, body = await get(port, "/th-0123abcd.png")
         assert b"image/png" in head and Image.open(io.BytesIO(body)).format == "PNG"
+        for query, theme in (("", "dark"), ("?theme=light", "light")):
+            head, body = await get(port, f"/th-0123abcd.png{query}")
+            image = Image.open(io.BytesIO(body)).convert("RGB")
+            assert image.getpixel((800, 20)) == THEMES[theme].panel
         head, body = await get(port, "/th-0123abcd")
         assert b"<h1>old</h1>" in body and b"failed" in body and b"refresh" not in body
         head, body = await get(port, "/th-99999999.png")

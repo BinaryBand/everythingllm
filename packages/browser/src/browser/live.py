@@ -13,7 +13,8 @@ stripping the prefix or not, so paths are taken with or without it.
   checked every GAP seconds, until MAX_STREAM passes. A card being watched keeps the
   browser from being stopped as idle. A closed tab shows its last screenshot, dimmed, and
   the stream waits for it to open again. A tab the runner doesn't know (from before a
-  restart) gets one frame saying so.
+  restart) gets one frame saying so. `?theme=light` draws it in the light theme
+  (chatimage.live.theme), as it does the login request's card.
 - `<id>` is where the card links: the take-over view of the tab's browser while it runs
   (a redirect to browser.takeover, whose address changes with each container), else a
   page saying it's closed.
@@ -48,10 +49,9 @@ from typing import TYPE_CHECKING
 
 import hostrpc
 from chatimage import (
-    BACKGROUND,
-    FAINT,
-    MUTED,
-    TITLE,
+    EDGE,
+    THEME,
+    THEMES,
     accent_for,
     clean,
     fit,
@@ -70,7 +70,6 @@ HOST = "127.0.0.1"
 CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 WIDTH = 1280  # the screen's width; the chat shows it at up to 800
 STRIP = 132  # the strip above the screenshot
-USER = (242, 181, 107)  # the strip's colour while the user has the browser
 STATES = {
     "agent": "the agent is browsing",
     "user": "you have it",
@@ -79,11 +78,18 @@ STATES = {
 
 
 def picture(
-    shot: bytes, workspace: str, state: str, title: str, url: str, last: str
+    shot: bytes,
+    workspace: str,
+    state: str,
+    title: str,
+    url: str,
+    last: str,
+    theme: str = THEME,
 ) -> bytes:
     """A frame as a JPEG: the strip (who has the browser, the page's title, its address and
     what was done last) above the screenshot, dimmed once the tab is closed."""
-    accent = {"user": USER, "closed": FAINT}.get(state, accent_for("Browser"))
+    p = THEMES[theme]
+    accent = {"user": p.user, "closed": p.faint}.get(state, accent_for("Browser", p))
     try:
         screen = Image.open(io.BytesIO(shot)).convert("RGB") if shot else None
     except OSError:
@@ -91,8 +97,9 @@ def picture(
     if screen is not None and screen.width != WIDTH:
         screen = screen.resize((WIDTH, round(screen.height * WIDTH / screen.width)))
     height = screen.height if screen is not None else 360
-    image = Image.new("RGB", (WIDTH, STRIP + height), BACKGROUND)
+    image = Image.new("RGB", (WIDTH, STRIP + height), p.panel)
     d = ImageDraw.Draw(image)
+    d.rectangle((0, 0, WIDTH - 1, STRIP + height - 1), outline=p.line, width=EDGE)
     d.rectangle((0, 0, 10, STRIP), fill=accent)
     x, width = 36, WIDTH - 72
     small, big = font("regular", 26), font("bold", 36)
@@ -102,17 +109,17 @@ def picture(
         (x, 50),
         fit(d, clean(title) or clean(url) or "A new tab", big, width),
         font=big,
-        fill=TITLE,
+        fill=p.title,
     )
     line = " · ".join(t for t in (clean(url), clean(last)) if t)
-    d.text((x, 96), fit(d, line, small, width), font=small, fill=MUTED)
+    d.text((x, 96), fit(d, line, small, width), font=small, fill=p.text)
     if screen is not None:
         if state == "closed":
             screen = ImageEnhance.Brightness(screen).enhance(0.4)
         image.paste(screen, (0, STRIP))
     else:
         note = "Nothing to show yet" if state != "closed" else "The browser is closed"
-        d.text((x, STRIP + 150), note, font=big, fill=FAINT)
+        d.text((x, STRIP + 150), note, font=big, fill=p.faint)
     out = io.BytesIO()
     image.save(out, "JPEG", quality=72, optimize=True)
     return out.getvalue()
@@ -138,7 +145,7 @@ class Live:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
-            method, path = await asyncio.wait_for(live.read_request(reader), 10)
+            method, path, query = await asyncio.wait_for(live.read_request(reader), 10)
         except (live.BadRequest, TimeoutError):
             return await live.send(writer, "400 Bad Request", b"Bad request.\n")
         if not hostrpc.local_peer(
@@ -147,9 +154,10 @@ class Live:
             return await live.send(writer, "403 Forbidden", b"Not from here.\n")
         if method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET only.\n")
+        theme = live.theme(query)
         if asked := self.ASK_ROUTE.fullmatch(path):
             try:
-                return await self.asked(reader, writer, asked[1], bool(asked[2]))
+                return await self.asked(reader, writer, asked[1], bool(asked[2]), theme)
             except Exception:
                 self.runner.log.exception("login request card %s failed", asked[1])
                 if not writer.is_closing():
@@ -163,7 +171,7 @@ class Live:
         tab = self.runner.tabs.get(route[1])
         try:
             if route[2] and tab is not None:
-                await self.stream(reader, writer, tab)
+                await self.stream(reader, writer, tab, theme)
             elif route[2]:
                 frame = await asyncio.to_thread(
                     progress.draw,
@@ -172,6 +180,7 @@ class Live:
                     None,
                     "It was open before the browser service restarted.",
                     "interrupted",
+                    theme,
                 )
                 await live.send(writer, "200 OK", frame, "image/png")
             else:
@@ -184,7 +193,11 @@ class Live:
                 )
 
     async def stream(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, tab: Tab
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        tab: Tab,
+        theme: str,
     ) -> None:
         """Push the tab's frames until the viewer goes: a viewer sends nothing after its
         request, so the end of what it sends is its leaving, noticed at once rather than
@@ -199,12 +212,12 @@ class Live:
 
         watcher = asyncio.create_task(watch())
         try:
-            await live.push(writer, self.frames(tab, gone), "image/jpeg")
+            await live.push(writer, self.frames(tab, gone, theme), "image/jpeg")
         finally:
             watcher.cancel()
 
     async def frames(
-        self, tab: Tab, gone: asyncio.Event | None = None
+        self, tab: Tab, gone: asyncio.Event | None = None, theme: str = THEME
     ) -> AsyncIterator[bytes]:
         """A frame now, then one whenever the tab looks different, until MAX_STREAM or the
         viewer is `gone`."""
@@ -228,6 +241,7 @@ class Live:
                         tab.title,
                         tab.url,
                         tab.last,
+                        theme,
                     )
                 left = deadline - loop.time()
                 if left <= 0 or gone.is_set():
@@ -260,6 +274,7 @@ class Live:
         writer: asyncio.StreamWriter,
         request: str,
         image: bool,
+        theme: str,
     ) -> None:
         """A login request's card, or (not `image`) where it links."""
         req = self.runner.asked_by_id(request)
@@ -271,6 +286,7 @@ class Live:
                 None,
                 "The browser service restarted since, or it's a day old; the agent can ask again.",
                 "interrupted",
+                theme,
             )
             return await live.send(writer, "200 OK", frame, "image/png")
         if image:
@@ -284,7 +300,9 @@ class Live:
 
             watcher = asyncio.create_task(watch())
             try:
-                await live.push(writer, self.asked_frames(req, gone), "image/png")
+                await live.push(
+                    writer, self.asked_frames(req, gone, theme), "image/png"
+                )
             finally:
                 watcher.cancel()
             return
@@ -301,7 +319,7 @@ class Live:
         )
 
     async def asked_frames(
-        self, req: LoginRequest, gone: asyncio.Event
+        self, req: LoginRequest, gone: asyncio.Event, theme: str
     ) -> AsyncIterator[bytes]:
         """A frame now and one each time the request's state changes, until it's no longer
         waiting, MAX_STREAM passes or the viewer is `gone`."""
@@ -309,7 +327,7 @@ class Live:
         deadline = loop.time() + self.MAX_STREAM
         while True:
             state = self.runner.asked_state(req)
-            yield await asyncio.to_thread(asked_picture, req, state)
+            yield await asyncio.to_thread(asked_picture, req, state, theme)
             left = min(
                 deadline - loop.time(),
                 self.runner.asked_left(req),  # when it runs out
@@ -377,7 +395,7 @@ ASKED = {
 }
 
 
-def asked_picture(req: LoginRequest, state: str) -> bytes:
+def asked_picture(req: LoginRequest, state: str, theme: str = THEME) -> bytes:
     """A login request's card as a PNG, in the progress cards' style."""
     look, line = ASKED[state]
     label = f"Browser · {req.workspace} · login · {state}"
@@ -387,4 +405,5 @@ def asked_picture(req: LoginRequest, state: str) -> bytes:
         None if state in ("waiting", "saving") else 1.0,
         line,
         look,
+        theme,
     )

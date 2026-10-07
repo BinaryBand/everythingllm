@@ -3,7 +3,7 @@ chatimage.live to push to the chat as the job goes on.
 
 A frame has the job's label (what it is and how it stands), its title, a bar and the
 latest thing it did. `state` sets the colours: "running" in the label's accent, "done" in
-green with a full bar, "failed" and "interrupted" in red. A running job that can't say
+green with a full bar, "failed" and "interrupted" in red; `theme` picks the palette. A running job that can't say
 how far along it is (a queued one) gets a striped bar instead of a fraction.
 """
 
@@ -12,13 +12,10 @@ import io
 from PIL import Image, ImageChops, ImageDraw
 
 from chatimage import (
-    BAD,
     BAR,
-    GOOD,
-    MUTED,
     PAD,
-    TITLE,
-    TRACK,
+    THEME,
+    THEMES,
     WIDTH,
     accent_for,
     clean,
@@ -40,20 +37,22 @@ def draw(
     fraction: float | None = None,
     line: str = "",
     state: str = "running",
+    theme: str = THEME,
 ) -> bytes:
     """The frame as a PNG: label, title (up to 2 lines), the bar with its percentage, and
     `line` under it."""
     if state not in STATES:
         raise ValueError(f"unknown state {state!r}")
     title, label, line = map(clean, (title, label, line))
-    accent = {"done": GOOD, "failed": BAD, "interrupted": BAD}.get(
-        state, accent_for(label)
+    p = THEMES[theme]
+    accent = {"done": p.done, "failed": p.failed, "interrupted": p.failed}.get(
+        state, accent_for(label, p)
     )
     if state == "done":
         fraction = 1.0
     image = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     d = ImageDraw.Draw(image)
-    frame(d, HEIGHT, accent)
+    frame(d, HEIGHT, accent, p)
 
     width = WIDTH - BAR - 2 * PAD
     x = BAR + PAD
@@ -72,14 +71,17 @@ def draw(
 
     y = 104
     for text in wrap(d, title, big, width, 2):
-        d.text((x, y), text, font=big, fill=TITLE)
+        d.text((x, y), text, font=big, fill=p.title)
         y += 66
 
     top = HEIGHT - 140
-    track(image, (x, top, x + width, top + BAR_HEIGHT), fraction, accent)
+    track(image, (x, top, x + width, top + BAR_HEIGHT), fraction, accent, p.track)
     if line:
         d.text(
-            (x, top + BAR_HEIGHT + 26), fit(d, line, body, width), font=body, fill=MUTED
+            (x, top + BAR_HEIGHT + 26),
+            fit(d, line, body, width),
+            font=body,
+            fill=p.text,
         )
 
     out = io.BytesIO()
@@ -87,12 +89,12 @@ def draw(
     return out.getvalue()
 
 
-def track(image: Image.Image, box, fraction: float | None, colour) -> None:
+def track(image: Image.Image, box, fraction: float | None, colour, behind) -> None:
     """The bar: filled up to `fraction`, or striped across when that's unknown."""
     d = ImageDraw.Draw(image)
     left, top, right, bottom = box
     radius = (bottom - top) // 2
-    d.rounded_rectangle(box, radius, fill=TRACK)
+    d.rounded_rectangle(box, radius, fill=behind)
     if fraction is None:
         stripes = Image.new("RGBA", (right - left, bottom - top), (0, 0, 0, 0))
         s = ImageDraw.Draw(stripes)

@@ -12,7 +12,10 @@ paste as is:
 A card's name comes from its page's path, so republishing a page replaces its card. ?v=
 is a hash of what the card says (kept in the PNG too), so a card whose text hasn't changed
 isn't drawn again and keeps its URL, and one that has gets a new URL, so the chat doesn't
-show an old card from its cache. No page or site can be called `_cards`: their slugs start
+show an old card from its cache. Each card is saved twice, `<name>.png` in the dark theme and
+`<name>.light.png` in the light one; the pages site's Caddyfile serves the light one when
+the address asks for it (`&theme=light` after the ?v=), and the dark one for a card drawn
+before there were two. No page or site can be called `_cards`: their slugs start
 with a letter or digit. The sites and research containers can write the pages site, so a
 card is read and written without following a symlink one put there (`save`, `drawn`).
 """
@@ -32,10 +35,9 @@ from PIL.PngImagePlugin import PngInfo
 
 from chatimage import (
     BAR,
-    FAINT,
-    MUTED,
     PAD,
-    TITLE,
+    THEME,
+    THEMES,
     WIDTH,
     accent_for,
     alt,
@@ -50,7 +52,7 @@ from chatimage import (
 log = logging.getLogger("chatimage.card")
 
 FOLDER = "_cards"
-DESIGN = 1  # part of every card's hash: raise it when the drawing changes, to redraw them all
+DESIGN = 2  # part of every card's hash: raise it when the drawing changes, to redraw them all
 HEIGHT = 460
 
 
@@ -70,21 +72,23 @@ def make(
     version = hashlib.sha256(
         json.dumps([DESIGN, title, label, description, where]).encode()
     ).hexdigest()[:10]
-    file = card_path(site_dir, url)
+    files = {theme: card_path(site_dir, url, theme) for theme in THEMES}
     try:
-        if drawn(file) != version:
-            png = draw(title, label, description, where, version)
-            save(site_dir, file.name, png)
+        for theme, file in files.items():
+            if drawn(file) != version:
+                png = draw(title, label, description, where, version, theme)
+                save(site_dir, file.name, png)
     except Exception as e:  # noqa: BLE001 - a card is a nicety; the caller still gives the link
         log.warning("couldn't make a card for %s: %s", url, e)
         return ""
-    image = urljoin(images or url, f"/{FOLDER}/{file.name}?v={version}")
+    image = urljoin(images or url, f"/{FOLDER}/{files[THEME].name}?v={version}")
     return f"[![{alt(title)}]({link(image)})]({link(url)})"
 
 
 def remove(site_dir: Path, url: str) -> None:
-    """Delete the card for the page at `url`, if it has one."""
-    card_path(site_dir, url).unlink(missing_ok=True)
+    """Delete the card for the page at `url`, if it has one, in every theme."""
+    for theme in THEMES:
+        card_path(site_dir, url, theme).unlink(missing_ok=True)
 
 
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -99,7 +103,7 @@ def drawn(file: Path) -> str | None:
             if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
                 return None
             with Image.open(f) as image:
-                return getattr(image, "text", {}).get("card")
+                return image.info.get("card")  # a chunk before the pixels: no decoding
     except (OSError, ValueError):
         return None
 
@@ -136,9 +140,11 @@ def save(site_dir: Path, name: str, png: bytes) -> None:
         os.close(folder)
 
 
-def card_path(site_dir: Path, url: str) -> Path:
+def card_path(site_dir: Path, url: str, theme: str = THEME) -> Path:
     name = hashlib.sha256(urlsplit(url).path.encode()).hexdigest()[:20]
-    return site_dir / FOLDER / f"{name}.png"
+    return (
+        site_dir / FOLDER / (f"{name}.png" if theme == THEME else f"{name}.{theme}.png")
+    )
 
 
 def shown_url(url: str) -> str:
@@ -148,15 +154,21 @@ def shown_url(url: str) -> str:
 
 
 def draw(
-    title: str, label: str, description: str, where: str, version: str = ""
+    title: str,
+    label: str,
+    description: str,
+    where: str,
+    version: str = "",
+    theme: str = THEME,
 ) -> bytes:
     """The card as a PNG: label, title (up to 3 lines), description in what's left, and
     the URL along the bottom."""
     title, label, description, where = map(clean, (title, label, description, where))
-    accent = accent_for(label)
+    p = THEMES[theme]
+    accent = accent_for(label, p)
     image = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     d = ImageDraw.Draw(image)
-    frame(d, HEIGHT, accent)
+    frame(d, HEIGHT, accent, p)
 
     width = WIDTH - BAR - 2 * PAD
     x = BAR + PAD
@@ -167,19 +179,19 @@ def draw(
     y += 62
     lines = wrap(d, title or where, big, width, 3 if not description else 2)
     for line in lines:
-        d.text((x, y), line, font=big, fill=TITLE)
+        d.text((x, y), line, font=big, fill=p.title)
         y += 76
     room = 3 - len(lines)
     if description and room:
         y += 14
         for line in wrap(d, description, body, width, room):
-            d.text((x, y), line, font=body, fill=MUTED)
+            d.text((x, y), line, font=body, fill=p.text)
             y += 48
     d.text(
         (x, HEIGHT - 54 - 32),
         fit(d, f"→ {where}", small, width),
         font=small,
-        fill=FAINT,
+        fill=p.faint,
     )
 
     out = io.BytesIO()

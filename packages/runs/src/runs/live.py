@@ -11,7 +11,8 @@ The machine routes https://<host>:8445<PATH> to the service's port (see
   on (chatimage.live), at most one every GAP seconds, until the run ends or MAX_STREAM
   passes. A connection watching it counts as someone following the run. A run the service
   no longer holds (finished over an hour ago, or from before a restart) gets one frame of
-  how it ended, from the run log.
+  how it ended, from the run log. `<id>.png?theme=light` draws it in the light theme
+  (chatimage.live.theme), for a client in a light theme.
 - `<id>` is where the card links: `destination` (e.g. a published report) once there is
   one, until then a page of the run (`body`) that reloads itself every few seconds while
   it goes (no script). Pages are sent with a CSP that allows nothing but their own inline
@@ -87,7 +88,7 @@ class Live:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
-            method, path = await asyncio.wait_for(live.read_request(reader), 10)
+            method, path, query = await asyncio.wait_for(live.read_request(reader), 10)
         except (live.BadRequest, TimeoutError):
             return await live.send(writer, "400 Bad Request", b"Bad request.\n")
         if not hostrpc.local_peer(
@@ -101,11 +102,12 @@ class Live:
             return await live.send(writer, "404 Not Found", b"No such run.\n")
         run_id, image = route[1], bool(route[2])
         run = self.service.runs.get(run_id)
+        theme = live.theme(query)
         try:
             if image and run:
-                await live.push(writer, self.frames(run))
+                await live.push(writer, self.frames(run, theme))
             elif image:
-                frame = await asyncio.to_thread(self.logged_frame, run_id)
+                frame = await asyncio.to_thread(self.logged_frame, run_id, theme)
                 await live.send(writer, "200 OK", frame, "image/png")
             else:
                 await self.page(writer, run_id, run)
@@ -116,7 +118,7 @@ class Live:
                     writer, "500 Internal Server Error", b"Something went wrong.\n"
                 )
 
-    async def frames(self, run: Run) -> AsyncIterator[bytes]:
+    async def frames(self, run: Run, theme: str) -> AsyncIterator[bytes]:
         """A frame now, then one whenever the run moves on, until it ends or MAX_STREAM."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.MAX_STREAM
@@ -127,7 +129,7 @@ class Live:
                 now = (len(run.events), run.fraction, run.done, run.minutes())
                 if now != shown:
                     shown = now
-                    yield await asyncio.to_thread(self.frame, run)
+                    yield await asyncio.to_thread(self.frame, run, theme)
                 if run.done or loop.time() >= deadline:
                     return
                 await asyncio.sleep(self.GAP)
@@ -147,13 +149,14 @@ class Live:
     def state_of(self, result: dict[str, Any] | None) -> str:
         return self.STATES.get((result or {}).get("status", ""), "failed")
 
-    def frame(self, run: Run) -> bytes:
+    def frame(self, run: Run, theme: str) -> bytes:
         if not run.done:
             return progress.draw(
                 run.title,
                 f"{self.LABEL} · running · {run.minutes()} min",
                 run.fraction,
                 run.events[-1] if run.events else "Starting.",
+                theme=theme,
             )
         state = self.state_of(run.result)
         return progress.draw(
@@ -162,9 +165,10 @@ class Live:
             1.0 if state == "done" else run.fraction,
             self.ended_line(state, run.result or {}),
             state,
+            theme,
         )
 
-    def logged_frame(self, run_id: str) -> bytes:
+    def logged_frame(self, run_id: str, theme: str) -> bytes:
         """One frame of how a run this service doesn't hold ended, from the run log."""
         record = find(self.runlogs, run_id)
         if record is None:
@@ -174,6 +178,7 @@ class Live:
                 None,
                 self.unknown_line(),
                 "interrupted",
+                theme,
             )
         state = self.STATES.get(record.get("status", ""), "interrupted")
         minutes = max(1, round((record.get("seconds") or 0) / 60))
@@ -183,6 +188,7 @@ class Live:
             None if state != "done" else 1.0,
             self.ended_line(state, record),
             state,
+            theme,
         )
 
     # --- what a service says ---

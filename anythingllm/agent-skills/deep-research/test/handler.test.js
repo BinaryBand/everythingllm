@@ -6,6 +6,24 @@ const os = require("os");
 const path = require("path");
 
 const { runtime } = require("../handler");
+const { fakeService } = require("../../_lib/test/fakeservice");
+
+// Never the live agents-runner: a test that follows a run sets its own.
+const NO_AGENTS = path.join(os.tmpdir(), `dr-no-agents-${process.pid}.sock`);
+process.env.AGENTS_SOCKET = NO_AGENTS;
+
+// A fake agents-runner, which follows runs for their chats.
+async function fakeAgents() {
+  const service = await fakeService((op) => ({ ok: true, result: { following: op } }));
+  process.env.AGENTS_SOCKET = service.socket;
+  return {
+    requests: service.requests,
+    close: () => {
+      process.env.AGENTS_SOCKET = NO_AGENTS;
+      return service.close();
+    },
+  };
+}
 
 // A fake research-runner on a socket of its own: answers each request with respond(op, args).
 async function fakeRunner(respond) {
@@ -28,12 +46,14 @@ async function fakeRunner(respond) {
   return { requests, close: () => new Promise((r) => server.close(r)) };
 }
 
-function agent({ workspace = { slug: "career", name: "Career" }, thread_id, runtimeArgs = {} } = {}) {
+// A chat in AnythingLLM's UI has thread_id (null in the main chat); an API, Telegram or job
+// run's invocation (`chat: false`) has no such key.
+function agent({ workspace = { slug: "career", name: "Career" }, thread_id = null, chat = true, runtimeArgs = {} } = {}) {
   return {
     runtimeArgs,
     introspect: () => {},
     logger: () => {},
-    super: { handlerProps: { invocation: { workspace, thread_id } } },
+    super: { handlerProps: { invocation: chat ? { workspace, thread_id } : { workspace } } },
   };
 }
 
@@ -41,6 +61,7 @@ const CARD = "[![Deep research: Bitcoin?](https://h:8445/_live/research/dr-1.png
 
 test("a run is started and the skill answers at once with its live card", async () => {
   const runner = await fakeRunner(() => ({ ok: true, result: { run_id: "dr-1", queued: 0, card: CARD } }));
+  const agents = await fakeAgents();
   try {
     const self = agent({ thread_id: 7, runtimeArgs: { PLANNER_MODEL: "glm-5.3" } });
     const reply = await runtime.handler.call(self, {
@@ -64,6 +85,44 @@ test("a run is started and the skill answers at once with its live card", async 
         },
       },
     ]);
+    // agents-runner tells the chat when it ends, since research-runner can't.
+    assert.deepEqual(agents.requests, [
+      { op: "follow", args: { run_id: "dr-1", chat: { workspace: "career", thread: 7 }, card: CARD, question: "Bitcoin?" } },
+    ]);
+    assert.match(reply, /a notice comes back into this chat/);
+  } finally {
+    await runner.close();
+    await agents.close();
+  }
+});
+
+test("only a chat in AnythingLLM's UI is followed, its main chat as thread null", async () => {
+  const runner = await fakeRunner(() => ({ ok: true, result: { run_id: "dr-3", queued: 0, card: CARD } }));
+  const agents = await fakeAgents();
+  try {
+    await runtime.handler.call(agent(), { question: "q" });
+    const api = await runtime.handler.call(agent({ chat: false }), { question: "q" });
+    assert.deepEqual(
+      agents.requests.map((r) => r.args.chat),
+      [{ workspace: "career", thread: null }]
+    );
+    assert.doesNotMatch(api, /notice/);
+    assert.deepEqual(runner.requests[1].args.scope, { workspace: "career", thread: "default" });
+  } finally {
+    await runner.close();
+    await agents.close();
+  }
+});
+
+test("a follow agents-runner can't take still answers with the started run", async () => {
+  const runner = await fakeRunner(() => ({ ok: true, result: { run_id: "dr-4", queued: 0, card: CARD } }));
+  const logs = [];
+  try {
+    const self = { ...agent({ thread_id: 7 }), logger: (m) => logs.push(m) };
+    const reply = await runtime.handler.call(self, { question: "q" });
+    assert.match(reply, /^Deep research started \(run dr-4\)/);
+    assert.doesNotMatch(reply, /notice/);
+    assert.match(logs.join("\n"), /couldn't have dr-4 followed/);
   } finally {
     await runner.close();
   }

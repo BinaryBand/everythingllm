@@ -116,8 +116,17 @@ test("delegate starts a delegation and hands back its card", async () => {
     assert.match(reply, /Delegation started \(run dg-1\)[\s\S]*Card: \[!\[D\]\(c\.png\)\]\(p\)/);
     assert.deepEqual(service.requests[0], {
       op: "delegate",
-      args: { goal: "compare", tasks: [{ name: "a", profile: "worker", instructions: "x" }], then: null },
+      // The chat it came from, told when it ends.
+      args: {
+        goal: "compare", tasks: [{ name: "a", profile: "worker", instructions: "x" }], then: null,
+        chat: { workspace: "career", thread: 3 },
+      },
     });
+    assert.match(reply, /a notice comes back into this chat/);
+    const job = { logger: () => {}, super: { handlerProps: { invocation: { workspace: { slug: "career" } } } } };
+    const unseen = await delegate.handler.call(job, { goal: "g", tasks: "[]" });
+    assert.equal(service.requests[1].args.chat, undefined);
+    assert.doesNotMatch(unseen, /notice/);
   } finally {
     delete process.env.AGENTS_SOCKET;
     await service.close();

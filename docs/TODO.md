@@ -41,7 +41,7 @@ Left open by the code review of the browser's saved logins (2026-10-07):
 
 From the Muse parity notes (2026-10-07, now in the private notes), after page scripts, chat attachments in `/work`, and the scheduled-job and memories skills. Most of these combine tools the agent already has rather than adding services.
 
-- **Post long jobs back to their chat.** A research run from a Nilson chat now tells it through the relay's ntfy topic when it ends (RunService's `ended` hook), but an AnythingLLM chat's research and every delegation still end on a live card the chat is never told about. Appending a message to the originating thread through the developer API, from that same hook, would cover both and any later background work.
+- **Post long jobs back to their chat: what's left.** A chat in AnythingLLM's UI now gets a notice when its research run or delegation ends (`agents.postback`), and a Nilson chat's research run an ntfy notice. Still untold: a delegation from a Nilson chat or Telegram (their invocations carry no thread), and an open tab, which shows the notice only after a reload since AnythingLLM's UI doesn't refresh a thread.
 - **One `notify` call.** The relay already posts to ntfy. A skill (or a job tool) that sends a short notice would carry reminders, job results and check-ins to the phone.
 - **Pages that keep state.** Sandboxed pages have an opaque origin, so no `localStorage`: a flashcard deck forgets its place. Persistence needs an origin per workspace (a port or subdomain each) or a write-back op through the sandbox runner.
 - **Activity feed.** A scheduled job that writes a page from the run logs (research, agents, scheduled jobs), linked by its card.

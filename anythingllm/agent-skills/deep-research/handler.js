@@ -5,18 +5,33 @@
 // while the run goes. The card links to the report once it's published.
 //
 // The run belongs to the runner: if the chat closes or AnythingLLM restarts, it still
-// finishes and publishes.
+// finishes and publishes. research-runner can't reach AnythingLLM, so for a chat in
+// AnythingLLM's UI, agents-runner is asked to follow the run and tell the chat when it ends
+// (agents.postback).
 
 const hostrpc = require("../_lib/hostrpc");
 const { delegatedRefusal } = require("../_lib/delegated");
 const { asObject } = require("../_lib/runner");
-const { scopeOf } = require("../_lib/scope");
+const { scopeOf, chatOf } = require("../_lib/scope");
 
 const { Down } = hostrpc;
 
 /** One request to research-runner. */
 function call(op, args) {
   return hostrpc.call(hostrpc.socketPath("research", "RESEARCH_SOCKET"), op, args, { name: "the research runner" });
+}
+
+/** Ask agents-runner to tell the chat when the run ends; whether it will. */
+async function follow(self, chat, runId, card, question) {
+  try {
+    const socket = hostrpc.socketPath("agents", "AGENTS_SOCKET");
+    const args = { run_id: runId, chat, card, question };
+    await hostrpc.call(socket, "follow", args, { name: "the agents runner", timeoutMs: 10_000 });
+    return true;
+  } catch (e) {
+    self.logger?.(`deep-research couldn't have ${runId} followed: ${e?.message || e}`);
+    return false;
+  }
 }
 
 module.exports.runtime = {
@@ -50,6 +65,8 @@ module.exports.runtime = {
     }
 
     const { run_id: runId, queued = 0, card = "" } = started;
+    const chat = chatOf(this);
+    const told = chat !== null && (await follow(this, chat, runId, card, question));
     const waits = queued ? ` It waits for ${queued} other research run${queued === 1 ? "" : "s"} to finish first.` : "";
     return [
       `Deep research started (run ${runId}). It runs on the server for several minutes and publishes a cited report ` +
@@ -59,6 +76,7 @@ module.exports.runtime = {
         ? "Put the Card line in your reply exactly as given, on its own line: it shows the run's progress live and " +
           "opens the report once it's published. Tell the user that in a sentence."
         : "Tell the user the report will be on the research site when it's done.",
+      told ? "When it ends, a notice comes back into this chat (it shows once the chat is reloaded)." : "",
       "Don't wait for the run, search on your own or start it again. When the user asks how it went, find the " +
         "report with `sites list_entries`.",
     ]

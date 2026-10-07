@@ -11,4 +11,17 @@ function scopeOf(self) {
   };
 }
 
-module.exports = { scopeOf };
+/** The chat in AnythingLLM's UI a call came from, told when a job it starts ends
+ *  (agents-runner's agents.postback): {workspace, thread}, the thread's id, or null in the
+ *  workspace's main chat. Only a chat in the UI has an invocation row of its own, with
+ *  thread_id; API, Telegram and scheduled job runs have none, and get null. */
+function chatOf(self) {
+  const invocation = self.super?.handlerProps?.invocation || {};
+  const workspace = invocation.workspace?.slug;
+  if (typeof workspace !== "string" || !workspace || !Object.hasOwn(invocation, "thread_id")) return null;
+  const thread = invocation.thread_id;
+  if (thread !== null && !Number.isInteger(thread)) return null;
+  return { workspace, thread };
+}
+
+module.exports = { scopeOf, chatOf };

@@ -1,9 +1,10 @@
 """Small clients for AnythingLLM's two APIs, as much of them as agents-runner needs.
 
-`AnythingLLM` is the developer API (/api/v1), for delegation: workspaces, threads and a
-thread's chat, which runs the workspace's agent headless when the message starts with
-@agent. `InternalAPI` is the internal one (/api, which AnythingLLM's UI uses), for its
-scheduled jobs and saved memories, which the developer API doesn't have; it logs in with
+`AnythingLLM` is the developer API (/api/v1), for delegation and telling a chat a job
+ended: workspaces, threads and a thread's chat, which runs the workspace's agent headless
+when the message starts with @agent. `InternalAPI` is the internal one (/api, which
+AnythingLLM's UI uses), for its scheduled jobs, saved memories and threads' ids, which the
+developer API doesn't have; it logs in with
 AnythingLLM's password (hostrpc.anythingllm_headers), and once more after a 401.
 
 Config (environment, from host.env and agents.env through the unit):
@@ -143,11 +144,17 @@ class AnythingLLM:
 
     async def chat(self, slug: str, thread: str, message: str) -> tuple[str, dict]:
         """The agent's reply to `message` in the thread, and the run's metrics (model, cost)."""
+        return await self.chat_at(
+            f"/workspace/{quote(slug)}/thread/{quote(thread)}/chat", message
+        )
+
+    async def workspace_chat(self, slug: str, message: str) -> tuple[str, dict]:
+        """`chat`, in the workspace's main chat rather than a thread."""
+        return await self.chat_at(f"/workspace/{quote(slug)}/chat", message)
+
+    async def chat_at(self, path: str, message: str) -> tuple[str, dict]:
         reply = await self.call(
-            "POST",
-            f"/workspace/{quote(slug)}/thread/{quote(thread)}/chat",
-            {"message": message, "mode": "chat"},
-            seconds=CHAT_SECONDS,
+            "POST", path, {"message": message, "mode": "chat"}, seconds=CHAT_SECONDS
         )
         if not isinstance(reply, dict):
             raise AnythingLLMError("AnythingLLM's answer wasn't JSON.")
@@ -185,7 +192,7 @@ def created(reply: Any, key: str, what: str) -> dict:
 
 @dataclass
 class InternalAPI:
-    """AnythingLLM's internal API: its scheduled jobs and saved memories. `login(fresh)` gives the headers
+    """AnythingLLM's internal API: its scheduled jobs, saved memories and threads' ids. `login(fresh)` gives the headers
     (by default hostrpc.anythingllm_headers, with the password in `env_file`); it runs in
     a thread, since it blocks, and once more with fresh=True after a 401."""
 
@@ -301,6 +308,11 @@ class InternalAPI:
 
     async def memory_delete(self, memory_id: int) -> None:
         await self.call("DELETE", f"/memories/{int(memory_id)}")
+
+    async def threads(self, slug: str) -> list[dict]:
+        """The workspace's threads, with their ids (the developer API gives only slugs)."""
+        reply = await self.call("GET", f"/workspace/{quote(slug, safe='')}/threads")
+        return (reply or {}).get("threads") or []
 
 
 def parsed_tools(job: dict) -> dict:

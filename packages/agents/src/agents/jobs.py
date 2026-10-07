@@ -213,11 +213,13 @@ def last_run(job: dict, tz: ZoneInfo) -> str:
 
 
 class Registry:
-    """The one-offs made here: a JSON list in `path`, replaced whole (hostrpc.atomic_write).
-    Its users hold `lock` from reading it to writing it."""
+    """Entries kept across restarts (by default the one-offs made here): a JSON list in
+    `path`, replaced whole (hostrpc.atomic_write). Its users hold `lock` from reading it to
+    writing it."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, what: str = "the one-off registry"):
         self.path = path
+        self.what = what
         self.lock = asyncio.Lock()
 
     def _read(self) -> list[dict]:
@@ -226,9 +228,9 @@ class Registry:
         except FileNotFoundError:
             return []
         except (OSError, ValueError) as e:
-            raise RunnerError(f"the one-off registry {self.path} is unreadable: {e}")
+            raise RunnerError(f"{self.what} {self.path} is unreadable: {e}")
         if not isinstance(entries, list):
-            raise RunnerError(f"the one-off registry {self.path} isn't a list")
+            raise RunnerError(f"{self.what} {self.path} isn't a list")
         return [e for e in entries if isinstance(e, dict) and "id" in e]
 
     def _write(self, entries: list[dict]) -> None:

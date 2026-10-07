@@ -163,7 +163,9 @@ def data_dir() -> Path:
       browser/             browser-runner's: sockets/<slot>/ (each browser's), novnc/ and
                            vault/ (the saved logins, sealed)
       research/runs/       the deep-research run log and live runs' markers
-      agents/runs/         the delegations' run log and live runs' markers
+      agents/runs/         the delegations' run log and live runs' markers; agents/ also
+                           keeps the one-offs made (once.json) and the research runs
+                           followed for their chats (followed.json)
       relay/               the Nilson relay's database"""
     return Path("~/.local/share/everythingllm").expanduser()
 

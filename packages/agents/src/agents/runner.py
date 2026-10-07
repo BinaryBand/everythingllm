@@ -5,8 +5,13 @@ headless, in the workspace of its role (agents.profiles), and an optional `then`
 gets their results. Callers (the delegate skill, agents-run) ask over its socket:
 
   delegate(goal, tasks: [{name, profile, instructions, material?, tools?}],
-           then?: {profile, instructions, material?, tools?}, owner?)
-                          -> {run_id, queued, card}, at once
+           then?: {profile, instructions, material?, tools?}, owner?, chat?)
+                          -> {run_id, queued, card}, at once; `chat` ({workspace,
+                          thread}, the delegate skill's) is told when it ends
+                          (agents.postback)
+  follow(run_id, chat, card?, question?)
+                          tell `chat` when the deep research run `run_id` ends (the
+                          deep-research skill; agents.postback)
   wait(run_id, since=0, owner?)
                           up to WAIT seconds for news: {events, done, result once done}
   runs(owner?)            the delegations it holds: {run_id, goal, started, done}
@@ -90,6 +95,13 @@ from runs.service import Meter, Progress, Run, RunService
 from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI
 from agents.jobs import DEFAULT_TIMEZONE, Registry, ScheduledJobs
 from agents.memories import SavedMemories
+from agents.postback import (
+    Following,
+    check_chat,
+    delegation_notice,
+    post,
+    tag_safe,
+)
 from agents.profiles import PROFILES, ensure
 
 log = logging.getLogger("agents-runner")
@@ -120,6 +132,11 @@ class Settings:
     slots: int = 3
     daily_usd: float = 3.0  # 0: no cap
     timezone: str = DEFAULT_TIMEZONE
+    research_runlogs: Path | None = None  # research's run log, for the runs followed
+
+    @property
+    def followed(self) -> Path:
+        return self.runlogs.parent / "followed.json"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -131,6 +148,7 @@ class Settings:
             slots=int(os.environ.get("AGENTS_SLOTS", "3")),
             daily_usd=float(os.environ.get("AGENTS_DAILY_USD", "3")),
             timezone=os.environ.get("USER_TIMEZONE") or DEFAULT_TIMEZONE,
+            research_runlogs=hostrpc.data_dir() / "research" / "runs",
         )
 
 
@@ -199,11 +217,6 @@ def task_of(raw: Any, where: str) -> Task:
     if not isinstance(tools, bool):
         raise RunnerError(f"{where}'s tools must be true or false")
     return Task(name, profile, instructions, material.strip(), tools)
-
-
-def tag_safe(text: str, tag: str) -> str:
-    """`text` for inside a <tag>…</tag>, which it can't close."""
-    return re.sub(rf"<\s*/\s*({tag})", r"<\\/\1", text, flags=re.IGNORECASE)
 
 
 def quoted(outcomes: list[Outcome]) -> str:
@@ -320,6 +333,10 @@ class Runner(RunService):
         self.internal = internal
         self.jobs: ScheduledJobs | None = None  # scheduled() makes it
         self.poller: asyncio.Task | None = None
+        # A delegation's id -> the chat told when it ends.
+        self.chats: dict[str, dict] = {}
+        self.following = Following(settings.followed, settings.research_runlogs)
+        self.watcher: asyncio.Task | None = None
         self.task_slots = asyncio.Semaphore(settings.slots)
         self.cancelled: set[str] = set()
         self.ready = False  # the profiles' workspaces are set up
@@ -354,9 +371,33 @@ class Runner(RunService):
         if self.poller is None:
             self.poller = asyncio.create_task(self.scheduled().poll())
 
+    def start_watching(self) -> None:
+        """Tell the chats of the research runs followed when they end (only runner.main
+        does; tests sweep by hand)."""
+        if self.watcher is None:
+            self.watcher = asyncio.create_task(self.following.watch(self.tell))
+
+    async def tell(self, chat: dict, text: str) -> None:
+        """Post `text` into the chat (agents.postback); a failure is only logged."""
+        try:
+            await post(self.anythingllm(), self.internal_api(), chat, text)
+        except (AnythingLLMError, RunnerError) as e:
+            log.warning("couldn't tell %s: %s", chat, e)
+        else:
+            log.info("told %s", chat)
+
+    async def ended(self, run: Run) -> None:
+        chat = self.chats.pop(run.id, None)
+        if chat and run.result is not None:
+            card = AgentsLive.card_line(self.settings.pages_url, run.id, run.subject)
+            await self.tell(
+                chat, delegation_notice(run.id, run.subject, run.result, card)
+            )
+
     async def aclose(self) -> None:
-        if self.poller:
-            self.poller.cancel()
+        for task in (self.poller, self.watcher):
+            if task:
+                task.cancel()
         if self.client:
             await self.client.aclose()
         if self.internal:
@@ -368,6 +409,7 @@ class Runner(RunService):
         tasks: list,
         then: dict | None = None,
         owner: str | None = None,
+        chat: dict | None = None,
     ) -> dict:
         goal = str(goal or "").strip()
         if not goal:
@@ -386,6 +428,7 @@ class Runner(RunService):
         if len(set(names)) != len(names):
             raise RunnerError("task names must differ")
         last = replace(task_of(then, "then"), name="then") if then else None
+        told = check_chat(chat) if chat is not None and owner is None else None
         if sum(len(t.material) for t in [*parsed, *([last] if last else [])]) > (
             MAX_MATERIAL_TOTAL
         ):
@@ -403,6 +446,8 @@ class Runner(RunService):
             )
         client = self.anythingllm()
         run = self.new_run(goal, owner)
+        if told:
+            self.chats[run.id] = told
         card = AgentsLive.card_line(self.settings.pages_url, run.id, goal)
 
         async def work(run: Run, progress: Progress, meter: Meter) -> dict[str, Any]:
@@ -411,6 +456,13 @@ class Runner(RunService):
         queued = self.launch(run, work)
         log.info("%s started: %s (%d tasks)", run.id, goal[:120], len(parsed))
         return {"run_id": run.id, "queued": queued, "card": card}
+
+    async def op_follow(
+        self, run_id: str, chat: dict, card: str = "", question: str = ""
+    ) -> dict:
+        """Tell `chat` when the deep research run `run_id` ends (the deep-research skill
+        asks, since research-runner can't reach AnythingLLM)."""
+        return await self.following.add(run_id, chat, card, question)
 
     async def op_cancel(self, run_id: str, owner: str | None = None) -> dict:
         run = self.held(run_id, owner)
@@ -687,6 +739,7 @@ async def serve(
     card = AgentsLive(runner, settings.runlogs, settings.pages_url)
     if poll:
         runner.start_poller()
+        runner.start_watching()
     await runner.serve(socket, card, settings.live_port, settings.runlogs, limit=LIMIT)
 
 

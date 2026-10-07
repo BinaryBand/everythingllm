@@ -7,21 +7,29 @@ from pathlib import Path
 import hostrpc
 import httpx
 import pytest
-from agents import cli, profiles, runner
-from agents.anythingllm import AnythingLLM, AnythingLLMError, without_thinking
+from agents import cli, postback, profiles, runner
+from agents.anythingllm import (
+    AnythingLLM,
+    AnythingLLMError,
+    InternalAPI,
+    without_thinking,
+)
 from hostctl import prompt
 from hostrpc import RunnerError
 from runs.runlog import find, sweep_interrupted
 
 
 class FakeAnythingLLM:
-    """AnythingLLM's developer API, as much as delegation uses. A chat's reply depends on
-    its message: "fail" in it answers 500, "slow" takes a while."""
+    """AnythingLLM's developer API, as much as delegation uses, and the internal API's
+    thread list. A chat's reply depends on its message: "fail" in it answers 500, "slow"
+    takes a while. A notice (agents.postback) goes to `posts`, as (workspace, thread)."""
 
     def __init__(self):
         self.workspaces = {"career": {}}
         self.threads: dict[str, set[str]] = {}
+        self.ids = {"career": [{"id": 7, "slug": "chat-seven", "name": "Plans"}]}
         self.messages: list[tuple[str, str]] = []
+        self.posts: list[tuple[str, str | None, str]] = []
         self.created: list[str] = []
         self.running = 0
         self.peak = 0
@@ -35,9 +43,20 @@ class FakeAnythingLLM:
         }
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
+        if not request.url.path.startswith("/api/v1/"):  # the internal API
+            assert request.headers["Authorization"] == "Bearer internal"
+            parts = request.url.path.split("/")  # /api/workspace/<slug>/threads
+            if parts[4:] == ["threads"] and parts[3] in self.ids:
+                return httpx.Response(200, json={"threads": self.ids[parts[3]]})
+            return httpx.Response(400, json={"error": "no such workspace"})
         assert request.headers["Authorization"] == "Bearer k"
         path = request.url.path.removeprefix("/api/v1")
         body = json.loads(request.content) if request.content else {}
+        if body.get("message", "").startswith(postback.MARK):
+            parts = path.split("/")
+            thread = parts[4] if parts[3] == "thread" else None
+            self.posts.append((parts[2], thread, body["message"]))
+            return httpx.Response(200, json={"textResponse": "It's done."})
         if path == "/workspaces":
             have = [
                 {"slug": s, "openAiPrompt": w.get("openAiPrompt")}
@@ -97,11 +116,23 @@ def client(fake):
     return AnythingLLM("http://allm", "k", transport=httpx.MockTransport(fake))
 
 
+def internal(fake):
+    return InternalAPI(
+        "http://allm",
+        Path("/nonexistent/.env"),
+        transport=httpx.MockTransport(fake),
+        login=lambda fresh: {"Authorization": "Bearer internal"},
+    )
+
+
 def make(fake, tmp_path, slots=3):
     settings = runner.Settings(
-        runlogs=tmp_path / "runs", pages_url="https://h:8445/", slots=slots
+        runlogs=tmp_path / "runs",
+        pages_url="https://h:8445/",
+        slots=slots,
+        research_runlogs=tmp_path / "research",
     )
-    return runner.Runner(settings, client(fake))
+    return runner.Runner(settings, client(fake), internal(fake))
 
 
 async def finish(r, run_id):
@@ -614,5 +645,106 @@ def test_delegation_stops_at_its_daily_budget(fake, tmp_path):
         assert (await r.op_delegate("g", ok))["run_id"].startswith("dg-")
         r.settings.daily_usd = 0  # no cap
         await r.op_delegate("g", ok)
+
+    asyncio.run(main())
+
+
+def test_a_delegation_from_a_chat_tells_that_chat_when_it_ends(fake, tmp_path):
+    async def main():
+        r = make(fake, tmp_path)
+        task = [{"name": "a", "profile": "worker", "instructions": "x"}]
+        thread = {"workspace": "career", "thread": 7}
+        main_chat = {"workspace": "career", "thread": None}
+        ok = await r.op_delegate("look it up", task, chat=thread)
+        failed = await r.op_delegate(
+            "try", [{**task[0], "instructions": "fail it"}], chat=main_chat
+        )
+        for started in (ok, failed):
+            await finish(r, started["run_id"])
+        await asyncio.gather(*r.tasks)  # ended() runs after the waiters have the result
+        (s1, t1, first), (s2, t2, second) = sorted(fake.posts, key=lambda p: p[1] or "")
+        assert (s1, t1) == ("career", None) and (s2, t2) == ("career", "chat-seven")
+        assert f"the delegation {ok['run_id']} has ended (ok)" in second
+        assert "It was for: look it up" in second and "a (ok): reply to" in second
+        assert f"Link: https://h:8445/_live/agents/{ok['run_id']}" in second
+        assert f"the delegation {failed['run_id']} has ended (failed)" in first
+        assert "a (failed): AnythingLLM hit an error (500)." in first
+        assert r.chats == {}
+
+    asyncio.run(main())
+
+
+def test_a_delegation_tells_no_chat_without_one_or_from_a_client(fake, tmp_path):
+    async def main():
+        r = make(fake, tmp_path)
+        task = [{"name": "a", "profile": "worker", "instructions": "x"}]
+        chat = {"workspace": "career", "thread": 7}
+        for started in [
+            await r.op_delegate("g", task),
+            await r.op_delegate("g", task, owner="client-a", chat=chat),
+        ]:
+            await finish(r, started["run_id"])
+        await asyncio.gather(*r.tasks)
+        assert fake.posts == []
+
+    asyncio.run(main())
+
+
+def test_a_chat_that_cant_be_told_leaves_the_delegation_as_it_was(fake, tmp_path):
+    async def main():
+        r = make(fake, tmp_path)
+        task = [{"name": "a", "profile": "worker", "instructions": "x"}]
+        for chat in [
+            {"workspace": "career", "thread": 8},  # deleted since
+            {"workspace": "gone", "thread": 7},
+        ]:
+            started = await r.op_delegate("g", task, chat=chat)
+            assert (await finish(r, started["run_id"]))["status"] == "ok"
+        await asyncio.gather(*r.tasks)
+        assert fake.posts == [] and r.chats == {}
+
+    asyncio.run(main())
+
+
+def test_only_a_chat_is_told(fake, tmp_path):
+    async def main():
+        r = make(fake, tmp_path)
+        task = [{"name": "a", "profile": "worker", "instructions": "x"}]
+        for chat, why in [
+            ("career", "must be"),
+            ({"workspace": "_jobs", "thread": None}, "only a chat"),
+            ({"workspace": "", "thread": None}, "only a chat"),
+            ({"workspace": "agents-worker", "thread": None}, "delegated task"),
+            ({"workspace": "career", "thread": "7"}, "thread id"),
+            ({"workspace": "career", "thread": True}, "thread id"),
+            ({"workspace": "career", "thread": 0}, "thread id"),
+        ]:
+            with pytest.raises(RunnerError, match=why):
+                await r.op_delegate("g", task, chat=chat)
+        assert r.runs == {}
+
+    asyncio.run(main())
+
+
+def test_a_research_run_followed_from_a_chat_is_told_there(fake, tmp_path):
+    from runs.runlog import append_line
+
+    async def main():
+        r = make(fake, tmp_path)
+        chat = {"workspace": "career", "thread": 7}
+        assert await r.op_follow("dr-0000000a", chat, "", "Bitcoin?") == {
+            "following": "dr-0000000a"
+        }
+        started = "2026-10-07T10:00:00.000Z"
+        append_line(
+            tmp_path / "research",
+            started,
+            {"run_id": "dr-0000000a", "status": "ok", "url": "https://h/r/"},
+        )
+        await r.following.sweep(r.tell)
+        [(slug, thread, text)] = fake.posts
+        assert (slug, thread) == ("career", "chat-seven")
+        assert "deep research run dr-0000000a has ended (ok)" in text
+        assert "It was for: Bitcoin?" in text
 
     asyncio.run(main())

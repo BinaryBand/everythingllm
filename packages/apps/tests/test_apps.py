@@ -83,14 +83,10 @@ def test_a_runner_may_be_a_containers_service(tmp_path):
     assert apps.runners(loaded) == {"research-runner": "research"}
     assert set(apps.guarded(loaded)) == {"research-runner.service"}
     assert apps.app_of("research-runner.service", loaded) is research
-    # The audit reads its logs by the container's name, Quadlet's systemd-<x>.
-    assert apps.watched(loaded) == {
-        "systemd-research-runner": ("CONTAINER_NAME", "deep-research runner")
-    }
 
 
 def test_no_container_template_names_its_container():
-    # Quadlet names it systemd-<x>, which is how the registry, the audit and <app>-logs
+    # Quadlet names it systemd-<x>, which is how the registry and <app>-logs
     # know it; ContainerName= would change that.
     for template in (HOST / "quadlet").glob("*.container.in"):
         text = template.read_text()
@@ -123,15 +119,13 @@ def test_setup_steps_exist_and_install_says_why_not():
             )
 
 
-def test_the_tools_views_are_what_the_audit_had():
+def test_the_registrys_views():
     assert apps.runners() == {
         "sandbox-runner": "sandbox",
         "browser-runner": "browser",
-        "podcasts-runner": "podcasts",
         "research-runner": "research",
         "agents-runner": "agents",
         "sites-runner": "sites",
-        "audit-runner": "audit",
     }
     guarded = apps.guarded()
     assert {u: (g.runs, g.noun) for u, g in guarded.items()} == {
@@ -142,20 +136,10 @@ def test_the_tools_views_are_what_the_audit_had():
             "Deep-research runs (their requests go through the proxy)",
         ),
     }
-    assert apps.watched()["systemd-static_agent"] == (
-        "CONTAINER_NAME",
-        "pages site (Caddy)",
-    )
-    assert apps.watched()["systemd-podcasts-sync-worker"] == (
-        "CONTAINER_NAME",
-        "podcast sync",
-    )
-    assert apps.watched()["podcasts-web.service"] == (
-        "_SYSTEMD_USER_UNIT",
-        "podcasts-web",
-    )
-    app = apps.app_of("podcasts-transcribe-worker.service")
-    assert app is not None and app.name == "podcasts"
+    app = apps.app_of("static_agent.service")
+    assert app is not None and app.name == "pages"
+    app = apps.app_of("sites-runner.service")
+    assert app is not None and app.name == "sites"
     assert apps.app_of("nothing.service") is None
 
 
@@ -189,8 +173,6 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     pages = {m.port for app, m in apps.serve_mappings() if app == "pages"}
     assert PAGES_PORT in pages
     assert f":{port_of('searxng')}/" in SEARXNG
-    web = (HOST / "systemd" / "podcasts-web.service").read_text()
-    assert f"--port {port_of('podcasts', '/podcasts')}" in web
     caddy = (HOST / "caddy" / "pages.Caddyfile").read_text()
     assert {int(p) for p in re.findall(r"^:(\d+) \{", caddy, re.MULTILINE)} == pages
 

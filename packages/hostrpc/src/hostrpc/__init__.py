@@ -162,7 +162,6 @@ def data_dir() -> Path:
       sandbox/public/      each sandbox workspace's /public, served as it is on :8447
       browser/             browser-runner's: sockets/<slot>/ (each browser's), novnc/ and
                            vault/ (the saved logins, sealed)
-      podcasts/            the podcasts' state and audio; podcasts/models/, Whisper's
       research/runs/       the deep-research run log and live runs' markers
       agents/runs/         the delegations' run log and live runs' markers
       relay/               the Nilson relay's database

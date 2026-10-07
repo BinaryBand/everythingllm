@@ -54,7 +54,6 @@ def served(tmp_path, monkeypatch):
     settings = job.Settings(
         storage=tmp_path,
         searxng_url="",
-        embed_socket=tmp_path / "embed.sock",
         env_file="",
         runlogs=tmp_path / "logs" / "deep-research",
         pages_url="https://h:8445/",
@@ -87,7 +86,6 @@ def test_a_run_starts_reports_progress_and_finishes(served):
             "start",
             question="  Bitcoin?  ",
             depth="quick",
-            workspace="career",
             sub_questions=["Price history", {"goal": "Energy use", "queries": ["btc"]}],
             title="Bitcoin",
         )

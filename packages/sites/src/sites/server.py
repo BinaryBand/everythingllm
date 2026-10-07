@@ -99,7 +99,7 @@ async def write_entry(
         bool, Field(description="Set true to replace an existing entry.")
     ] = False,
 ) -> str:
-    """Save an entry on one of the Zola sites (news, research, status) and rebuild the site,
+    """Save an entry on one of the Zola sites (news, research) and rebuild the site,
     so the entry is live when this returns. If the site doesn't build with it, nothing is
     saved and the error says why. Get the site's sections and fields from the sites tools'
     list_sites first; to edit an entry, read it with get_entry and write it again with

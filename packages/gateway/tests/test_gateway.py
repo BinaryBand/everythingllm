@@ -6,9 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
-import audit.server
 import hostrpc
-import podcasts.server
 import pytest
 import research.job
 import sandbox.runner
@@ -91,7 +89,7 @@ def test_the_public_host_is_allowed():
         assert "tools" in rpc(c, "tools/list")["result"]
 
 
-FRONTS = (sites.server, podcasts.server, audit.server)
+FRONTS = (sites.server,)
 READS = {fn.__name__ for front in FRONTS for fn in front.tool.registered}
 WRITES = {fn.__name__ for front in FRONTS for fn in front.skills}
 AGENTS = {"agents_delegate", "agents_wait", "agents_runs", "agents_cancel"}
@@ -106,8 +104,8 @@ SANDBOX = {
 
 
 def test_claude_code_has_the_fronts_tools_their_skills_and_the_gateways_own(client):
-    assert {"list_sites", "list_podcasts", "run_checks"} <= READS
-    assert {"write_entry", "delete_entry", "add_podcast", "publish_report"} <= WRITES
+    assert {"list_sites", "headlines"} <= READS
+    assert {"write_entry", "delete_entry"} <= WRITES
     names = tool_names(client)
     assert names == READS | WRITES | AGENTS | RESEARCH | SANDBOX
     # prefixed instead
@@ -119,10 +117,6 @@ def test_the_groups_are_the_fronts_reads_and_skills_and_the_gateways_own():
     assert set(groups) == {
         "sites",
         "sites:write",
-        "podcasts",
-        "podcasts:write",
-        "audit",
-        "audit:write",
         "agents",
         "research",
         "sandbox",
@@ -304,7 +298,7 @@ def test_grants_name_each_clients_groups(tmp_path):
         tmp_path,
         '[clients.laptop]\ntools = ["sites", "agents"]\n[clients.none]\ntools = []\n',
     )
-    assert grants.load(["sites", "agents", "audit"], path) == {
+    assert grants.load(["sites", "agents", "research"], path) == {
         "laptop": frozenset({"sites", "agents"}),
         "none": frozenset(),
     }
@@ -329,7 +323,7 @@ def test_host_sockets_points_the_fronts_at_the_hosts_storage(monkeypatch, tmp_pa
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
     for front in app.FRONTS:
         monkeypatch.delenv(front.skills.env, raising=False)
-    monkeypatch.setenv("AUDIT_SOCKET", "/elsewhere.sock")
+    monkeypatch.setenv("SANDBOX_SOCKET", "/elsewhere.sock")
     app.host_sockets()
     assert os.environ["SITES_SOCKET"] == str(
         tmp_path / "everythingllm/sites/runner.sock"
@@ -337,7 +331,7 @@ def test_host_sockets_points_the_fronts_at_the_hosts_storage(monkeypatch, tmp_pa
     assert os.environ["AGENTS_SOCKET"] == str(
         tmp_path / "everythingllm/agents/runner.sock"
     )
-    assert os.environ["AUDIT_SOCKET"] == "/elsewhere.sock"  # a set one wins
+    assert os.environ["SANDBOX_SOCKET"] == "/elsewhere.sock"  # a set one wins
 
 
 def test_config_names_a_client_per_token(monkeypatch):
@@ -535,7 +529,7 @@ def test_a_write_lands_in_the_clients_folder_on_the_real_runner(
     assert "other's shared folder, which is read-only" in text_of(reply)
 
 
-# --- research, without a workspace ---
+# --- research ---
 
 
 class FakeResearch(hostrpc.Service):
@@ -554,7 +548,7 @@ class FakeResearch(hostrpc.Service):
         return {"runs": [{"run_id": "dr-1", "question": "q", "done": False}]}
 
 
-def test_research_starts_a_run_with_no_workspace_to_embed_in(client, monkeypatch):
+def test_research_starts_a_run_with_the_runners_defaults(client, monkeypatch):
     fake = FakeResearch()
     with fake_runner(monkeypatch, "RESEARCH_SOCKET", fake):
         started = call_tool(
@@ -565,7 +559,7 @@ def test_research_starts_a_run_with_no_workspace_to_embed_in(client, monkeypatch
                 "depth": "quick",
                 "sub_questions": ["Field data", {"goal": "Costs", "queries": ["x"]}],
                 "title": "Heat pumps up north",
-                "workspace": "someone-elses",  # not a parameter: never sent
+                "planner": "someone-elses",  # not a parameter: never sent
             },
         )
         waited = call_tool(client, "research_wait", {"run_id": "dr-1", "since": 3})
@@ -575,7 +569,6 @@ def test_research_starts_a_run_with_no_workspace_to_embed_in(client, monkeypatch
     assert req.question == "How do heat pumps fare in Nordic winters?"
     assert (req.depth, req.title) == ("quick", "Heat pumps up north")
     assert req.sub_questions == ["Field data", {"goal": "Costs", "queries": ["x"]}]
-    assert req.workspace is None and req.workspace_name is None and not req.embed
     assert req.planner == research.job.Request.planner  # the runner's own defaults
     assert waited["events"] == ["dr-1 from 3"]
     assert runs["runs"][0]["run_id"] == "dr-1"

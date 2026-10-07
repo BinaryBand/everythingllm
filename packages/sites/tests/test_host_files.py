@@ -1,4 +1,4 @@
-"""The pages site's Caddyfile: the policies the pages and the podcasts are served under."""
+"""The pages site's Caddyfile: the policies the pages are served under."""
 
 import re
 from pathlib import Path
@@ -59,10 +59,3 @@ def test_no_workspace_runs_scripts_yet():
     assert re.findall(r"^\s*@scripts (.*)$", text, flags=re.MULTILINE) == [
         "expression false"
     ]
-
-
-def test_podcasts_send_the_pages_sites_policy():
-    """splice-web serves /podcasts on the pages site's origin."""
-    from splice.web import CSP
-
-    assert parse_csp(CSP) == caddy_policies()["8445"]["default"]

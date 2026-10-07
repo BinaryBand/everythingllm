@@ -34,9 +34,7 @@ import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
-import audit.server
 import hostrpc
-import podcasts.server
 import sites.server
 import uvicorn
 from mcp.server.mcpserver import MCPServer
@@ -53,7 +51,7 @@ log = logging.getLogger("gateway")
 
 # Each front's read tools are the group named after it (its skills' folder), its skills
 # `<that>:write`. A front declared in the gateway names its tools with its PREFIX.
-FRONTS = (sites.server, podcasts.server, audit.server, agents, research, sandbox)
+FRONTS = (sites.server, agents, research, sandbox)
 
 TOKEN_PREFIX = "GATEWAY_TOKEN_"
 # A client's name: it names the client's sandbox workspace too (gateway.sandbox), so it
@@ -182,10 +180,9 @@ def build_mcp(
     mcp = MCPServer(
         "everythingllm",
         instructions=(
-            "EverythingLLM's runners: the sites' entries and the news feeds, the "
-            "podcasts, the system audit's checks, delegations to AnythingLLM's own "
-            "agents, deep research runs and a code sandbox of the client's own. A client "
-            "has the tools it was granted."
+            "EverythingLLM's runners: the sites' entries and the news feeds, "
+            "delegations to AnythingLLM's own agents, deep research runs and a code "
+            "sandbox of the client's own. A client has the tools it was granted."
         ),
         middleware=[grants.Grants(allowed)],
     )

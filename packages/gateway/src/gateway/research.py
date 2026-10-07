@@ -1,9 +1,8 @@
 """The gateway's front for research-runner: deep research runs, for a gateway client.
 
-In AnythingLLM, deep-research is a skill that starts a run and adds its report to the
-calling workspace's documents. A gateway client has no workspace, so research_start sends
-workspace None and embed False: the report is published to the research site (and saved to
-the runner's files) and nowhere else, and a client reads it with the sites tools,
+In AnythingLLM, deep-research is a skill that starts a run. Here research_start does the
+same: the report is published to the research site (and saved to the runner's files), and a
+client reads it with the sites tools,
 get_entry(site="research", section="reports", slug). The models are the runner's defaults
 (research.job.Request), not the skill's setup args.
 
@@ -31,9 +30,6 @@ mcp = MCPServer("research")
 # The gateway serves each tool here as PREFIX + its name, apart from the fronts' tools.
 PREFIX = "research_"
 
-# What `start` sends besides the tool's arguments: no workspace, so nothing is embedded.
-UNSCOPED = {"workspace": None, "workspace_name": None, "embed": False}
-
 RunId = Annotated[
     str, Field(description="The run id research_start gave, e.g. 'dr-1a2b3c4d'.")
 ]
@@ -43,8 +39,8 @@ runner = hostrpc.caller(skills.folder, skills.env, "research runner", error=Tool
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:
-    """Send `op`; `start` without a workspace, whatever the arguments say."""
-    return await runner(op, {**args, **UNSCOPED} if op == "start" else args)
+    """Send `op` to the research runner."""
+    return await runner(op, args)
 
 
 tool = hostrpc.forwarder(call, mcp.add_tool)

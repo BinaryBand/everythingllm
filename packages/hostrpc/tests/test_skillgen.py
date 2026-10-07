@@ -23,7 +23,7 @@ FRONTS = dict(skillgen.declared(ROOT))
 
 
 def test_every_front_with_skills_is_found():
-    assert {"sites.server", "podcasts.server", "audit.server"} <= set(FRONTS)
+    assert {"sites.server"} <= set(FRONTS)
 
 
 @pytest.mark.parametrize("module", sorted(FRONTS))

@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repo is the source of truth for a local AnythingLLM instance and the tools around it:
 MCP servers, agent skills, scheduled jobs, Zola sites and the host services behind them.
-`README.md` is detailed and current; read its section on a subsystem (Podcasts, Deep
-research, Code sandbox, System audit, …) before changing it.
+`README.md` is detailed and current; read its section on a subsystem (Deep research,
+Code sandbox, Browser, Delegation, …) before changing it.
 
 ## This checkout is live
 
@@ -22,11 +22,11 @@ research, Code sandbox, System audit, …) before changing it.
   `systemctl --user restart <unit>` (a container's unit is `<x>.service` too, and a restart
   is all a code change needs, since it runs the repo mounted read-only). Code shared across
   packages (e.g. `sites.store`, `sites.build`) is loaded by several services (`sites-runner`,
-  `audit-runner`, `research-runner`). Don't restart `research-runner` or `agents-runner`
+  `research-runner`). Don't restart `research-runner` or `agents-runner`
   while a run is going (`hostctl.run_guard` asks; `guard` in the apps registry says which).
   The gateway restarts only by hand.
-- Dropped ideas (quiz, whatsapp-mcp, and the old shared browser that `packages/browser`
-  replaced) and the history before this repo went public are kept in a private archive, not
+- Dropped ideas (quiz, whatsapp-mcp, podcasts, the system audit, and the old shared
+  browser that `packages/browser` replaced) and the history before this repo went public are kept in a private archive, not
   here. Don't recreate them from memory.
 - Machine settings come from `host.env` (git-ignored; see `host.env.example`). Unit
   templates use `@KEY@` placeholders, which `hostctl.units` fills in; systemd doesn't
@@ -49,8 +49,8 @@ sources and the dev group); a member's own lists its dependencies, extras and sc
 from the repo root:
 
     uv run --all-packages --all-extras pytest -q                       # what hostctl test runs
-    uv run --package podcasts --extra host pytest packages/podcasts -q     # one member
-    uv run --package podcasts --extra host pytest packages/podcasts/tests/test_scrub.py::test_name -q
+    uv run --package sites --extra host pytest packages/sites -q           # one member
+    uv run --package sites --extra host pytest packages/sites/tests/test_feeds.py::test_name -q
     uv lock                                                            # after editing a pyproject.toml
 
 After `uv.lock` changes, run `uv run hostctl mcp-sync` (or `uv run hostctl deploy`) so the container's venv catches
@@ -68,26 +68,25 @@ is 3.13. Keep code 3.12-compatible, and check with
   `uv run --frozen --project /mcp --package <name>`. The container can't reach the
   host's loopback.
 - Heavy, long-running or host-dependent work runs in a service outside AnythingLLM:
-  `sandbox-runner`, `browser-runner`, `agents-runner` and `audit-runner` as host units, and `research-runner`,
-  `sites-runner` and `podcasts-runner` (with the podcasts' sync and transcription workers)
-  in service containers (below). The MCP server or skill in the container is a thin front that forwards each
+  `sandbox-runner`, `browser-runner` and `agents-runner` as host units, and `research-runner`
+  and `sites-runner` in service containers (below). The MCP server or skill in the container is a thin front that forwards each
   call over `storage/everythingllm/<name>/runner.sock` using `packages/hostrpc`: one request per connection,
   a line of JSON each way (`{"op","args"}` → `{"ok","result"|"error"}`).
   - A runner is `hostrpc.Service(tools.OPS, errors=…)`: its ops are the functions in the
     package's `tools.py`, which also holds `main()` (`hostrpc.run(...)`). A front's tools are
     signatures with docstrings and no body, registered by
     `hostrpc.forwarder(hostrpc.caller(folder, ENV, name, error=ToolError), mcp.add_tool)`.
-    `packages/podcasts` (`server.py`, `tools.py`) is the reference example; research and the
+    `packages/sites` (`server.py`, `tools.py`) is the reference example; research and the
     sandbox keep state, so theirs are `Service` subclasses with `op_<name>` methods.
   - Skills speak the same protocol from node, through `anythingllm/agent-skills/_lib/hostrpc.js`:
     `deep-research`, the sandbox's `run-code`, `write-file`, `publish` and `build-site`, and
-    the runners' ops that write or act (`write-entry`, `add-podcast`, `publish-report`, …).
+    the runners' ops that write or act (`write-entry`, `delete-entry`).
   - AnythingLLM drops an MCP tool call after 60 s (skills have no limit), so an op answers within 45 s. Longer work keeps
     going in the service (the caller waits on a run id) or in its own systemd unit.
   - A front's package keeps its base dependencies to what the front imports, and puts the
-    rest (Whisper, PyAV, …) in a `host` extra that the units run with.
+    rest (httpx, publicweb, …) in a `host` extra that the units run with.
   - Every app (its units, socket, tailnet mappings, guard, health checks, setup steps) is
-    declared once in `packages/apps/src/apps/apps.toml`, which hostctl and the audit read
+    declared once in `packages/apps/src/apps/apps.toml`, which hostctl reads
     through `packages/apps`; app code never does. Adding one: its code, its unit template
     and an entry there; `packages/apps/tests/test_apps.py` says what's missing (README, "The apps").
 - Service containers (README, "Service containers"): a runner that reads the web, feeds
@@ -111,13 +110,8 @@ is 3.13. Keep code 3.12-compatible, and check with
   exceptions on :3128, and public hosts only on :3129, which `publicweb.public_client`
   uses (`EGRESS_PROXY`). A template never sets `ContainerName=`; `hostctl units` retires
   the host unit a container replaces. The relay is in one too. Host processes that write
-  where a container can (the sandbox's copy into `pages/public/`, `sites.build`'s marker,
-  podcasts-web's reads) open files without following symlinks.
-- Podcasts: podcasts-runner only asks; long-running `podcasts-sync-worker` and
-  `podcasts-transcribe-worker` take requests from `podcasts/queue/` and keep their own
-  schedules (`podcasts.worker`), with no systemd calls and no timers. `podcasts-web`
-  (splice) stays a host unit.
-- MCP tools only read (or, like `refresh_podcasts`, only start background work). An op that
+  where a container can (the sandbox's copy into `pages/public/`, `sites.build`'s marker) open files without following symlinks.
+- MCP tools only read. An op that
   writes or acts is a skill (`anythingllm/agent-skills/<op>`), because a skill knows its
   workspace and refuses a delegated task (`_lib/delegated.js`); an MCP call doesn't say where
   it came from. A test holds every skill of ours to that refusal. A skill that only forwards
@@ -126,7 +120,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   declaration, never those files. `uv run hostctl diff` and `uv run hostctl deploy` refuse stale ones.
 - Every MCP server is a thin front; nothing it serves runs in the container. Not every
   member is an MCP server: `publicweb`, `llm`, `chatimage` and `hostrpc` are libraries, `hostctl` is the host's command (`uv run hostctl`),
-  `splice`, `research` and `sandbox` are services outside AnythingLLM, and `egress` is the
+  `research` and `sandbox` are services outside AnythingLLM, and `egress` is the
   service containers' proxy. `relay` is an HTTP service
   for the Nilson app, not the agent, in a service container, at `/everythingllm/` on
   AnythingLLM's tailnet :3001; it takes the client's own AnythingLLM key, and its ntfy
@@ -149,7 +143,7 @@ is 3.13. Keep code 3.12-compatible, and check with
 - Data only host services use goes in `~/.local/share/everythingllm` (`hostrpc.data_dir()`),
   not in AnythingLLM's storage, laid out by kind: `venvs/<name>` (a container's
   `venvs/<x>-ctr`), `pages/{public,entries}`,
-  `sandbox/{workspaces,public}` (a workspace's browser profile in `sandbox/workspaces/<ws>/browser/`), `browser/`, `podcasts/` (with `models/`), `research/runs`, `agents/runs`, `relay/`.
+  `sandbox/{workspaces,public}` (a workspace's browser profile in `sandbox/workspaces/<ws>/browser/`), `browser/`, `research/runs`, `agents/runs`, `relay/`.
   Put new data in the folder of its kind, not at the root. Storage keeps AnythingLLM's own data, the runners' sockets (under `everythingllm/`) and what AnythingLLM
   itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.

@@ -8,10 +8,8 @@
 #   tools = ["<group>", ...]
 #
 # The groups:
-#   sites, podcasts, audit   each front's read tools, the ones AnythingLLM's agent has
+#   sites                    the sites front's read tools, the ones AnythingLLM's agent has
 #   sites:write              write_entry, delete_entry
-#   podcasts:write           add_podcast, remove_podcast
-#   audit:write              publish_report, run_job
 #   agents                   delegations to AnythingLLM's own agents (agents_*)
 #   research                 deep research runs (research_*): not per client, so a client
 #                            granted it sees every run, AnythingLLM's too
@@ -22,10 +20,6 @@
 tools = [
   "sites",
   "sites:write",
-  "podcasts",
-  "podcasts:write",
-  "audit",
-  "audit:write",
   "agents",
   "research",
   "sandbox",

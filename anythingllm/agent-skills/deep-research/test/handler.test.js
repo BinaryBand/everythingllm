@@ -49,7 +49,7 @@ test("a run is started and the skill answers at once with its live card", async 
       sub_questions: '["Price history", {"goal": "Energy use"}]',
       title: "Bitcoin",
     });
-    assert.match(reply, /^Deep research started \(run dr-1\)\. .*adding it to this workspace's documents/);
+    assert.match(reply, /^Deep research started \(run dr-1\)\. .*publishes a cited report to the research site, even if the chat closes\./);
     assert.ok(reply.includes(`\n\nCard: ${CARD}\n\n`));
     assert.match(reply, /Put the Card line in your reply exactly as given/);
     assert.doesNotMatch(reply, /waits for/);
@@ -58,7 +58,6 @@ test("a run is started and the skill answers at once with its live card", async 
         op: "start",
         args: {
           question: "Bitcoin?", depth: "quick", planner: "glm-5.3", worker: null, planner_fallback: null, site: null,
-          embed: true, workspace: "career", workspace_name: "Career",
           sub_questions: ["Price history", { goal: "Energy use" }], title: "Bitcoin",
         },
       },
@@ -68,14 +67,13 @@ test("a run is started and the skill answers at once with its live card", async 
   }
 });
 
-test("a queued run says so, and without a card or embedding the reply says less", async () => {
+test("a queued run says so, and without a card the reply says less", async () => {
   const runner = await fakeRunner(() => ({ ok: true, result: { run_id: "dr-2", queued: 2, card: "" } }));
   try {
-    const reply = await runtime.handler.call(agent({ runtimeArgs: { EMBED_IN_WORKSPACE: "no" } }), { question: "q" });
+    const reply = await runtime.handler.call(agent(), { question: "q" });
     assert.match(reply, /It waits for 2 other research runs to finish first\./);
-    assert.doesNotMatch(reply, /Card:|workspace's documents/);
+    assert.doesNotMatch(reply, /Card:/);
     assert.match(reply, /the report will be on the research site/);
-    assert.equal(runner.requests[0].args.embed, false);
     assert.equal(runner.requests[0].args.sub_questions, null);
     assert.equal(runner.requests[0].args.title, null);
   } finally {

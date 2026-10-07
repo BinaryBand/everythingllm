@@ -8,8 +8,8 @@
   admin off
 }
 
-# The system sites (news, research, status: Zola, built from the repo's templates), the
-# podcasts' feeds and the link cards. No scripts, no inline styles.
+# The system sites (news and research: Zola, built from the repo's templates) and the link
+# cards. No scripts, no inline styles.
 :8445 {
   root * /srv/site
   # Workspace pages moved to :8447 on 2026-10-06; the front page and education's old
@@ -28,7 +28,7 @@
 # that workspace's, whatever it put there, live the moment it's written. The folder mounted
 # here holds nothing but /public folders, so a symlink in one can't reach anything private.
 # A port of its own makes these pages an origin of their own: whatever they ever run can't
-# read the podcasts' private feeds or post to /news/write on :8445.
+# post to /news/write on :8445.
 :8447 {
   root * /srv/workspaces
   # Which workspaces' pages may run scripts: none yet. To let one, match its prefix here,

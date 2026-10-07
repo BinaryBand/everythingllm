@@ -3,8 +3,8 @@ service container (host/quadlet/research-runner.container.in).
 
 The skill (anythingllm/agent-skills/deep-research) asks over its socket (hostrpc):
 
-  start(question, depth?, planner?, worker?, planner_fallback?, site?, embed?, workspace?,
-        workspace_name?, sub_questions?, title?) -> {run_id, queued, card}
+  start(question, depth?, planner?, worker?, planner_fallback?, site?, sub_questions?,
+        title?) -> {run_id, queued, card}
 
 `sub_questions` is the calling agent's own split of the question (each a goal, or {goal,
 queries}), which the planner then doesn't make; `title` is the report's title with them.
@@ -16,7 +16,7 @@ queries}), which the planner then doesn't make; `title` is the report's title wi
 this runner serves on its own port); "" without PUBLIC_HOST.
 
 A run belongs to the runner, not to the chat: if the chat closes or AnythingLLM restarts,
-it carries on, publishes and embeds as usual. At most MAX_RUNS go at once; the rest wait
+it carries on and publishes as usual. At most MAX_RUNS go at once; the rest wait
 their turn. Finished runs can be fetched for RESULT_KEEP seconds; the run log is the
 record after that. Holding runs and waiting on them is runs.service's (RunService); this
 runner adds `start`, which runs research.job.run in a thread.
@@ -27,7 +27,6 @@ Config (environment, from host.env and the unit):
   RESEARCH_LIVE_PORT    port for the live cards (default 8450; research.live), on LIVE_HOST
                         (default 127.0.0.1; runs.live)
   SEARXNG_URL           the SearXNG to search (default the host's; publicweb.pages)
-  RESEARCH_EMBED_SOCKET  audit-runner's socket that embeds a report (research.job)
   and what research.job.Settings reads.
 """
 
@@ -84,9 +83,8 @@ class Runner(RunService):
         self.execute = execute
 
     async def op_start(self, question: str, **args) -> dict:
-        """args: depth, planner, worker, planner_fallback, site, embed, workspace,
-        workspace_name, sub_questions, title (job.Request's fields); None or "" takes the
-        default."""
+        """args: depth, planner, worker, planner_fallback, site, sub_questions, title
+        (job.Request's fields); None or "" takes the default."""
         if not isinstance(question, str) or not question.strip():
             raise RunnerError("No research question was given.")
         check_split(args.get("sub_questions"), args.get("title") or None)

@@ -2,8 +2,7 @@
 
 A site's source (zola.toml, templates, section `_index.md` files) lives in the
 repo; only entries live here. A section's `[extra]` can carry `agent_readonly = true`
-(the agent may read the section but not change it) and `[extra.audit]` (checks for the
-audit server). Entries are Markdown with JSON front matter
+(the agent may read the section but not change it). Entries are Markdown with JSON front matter
 (JSON is valid YAML, which Zola reads between `---` lines), so the agent fills
 in fields and the site's templates do all the HTML. Writing or deleting an
 entry rebuilds that site (see sites.build), so it's live when the call returns;
@@ -356,8 +355,8 @@ class SiteStore:
 
 
 def _restore(file: Path, text: str, st: os.stat_result) -> None:
-    """Put back an entry a failed build undid, with its old mtime, so the audit's
-    entries-newer-than-the-build check doesn't flag the site."""
+    """Put back an entry a failed build undid, with its old mtime, so it isn't newer
+    than the last build."""
     atomic_write(file, text)
     os.utime(file, ns=(st.st_atime_ns, st.st_mtime_ns))
 

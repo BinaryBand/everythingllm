@@ -433,7 +433,7 @@ def worker(
         "goal": task["goal"],
         "notes": notes,
         "summary": summary,
-        # For the run log and the audit.
+        # For the run log.
         "detail": {
             "goal": task["goal"],
             "findings": len(notes),

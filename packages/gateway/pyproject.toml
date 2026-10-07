@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Host service that serves the runners' MCP tools over streamable HTTP to clients other than AnythingLLM (Claude Code, …), each with a bearer token of its own"
 requires-python = ">=3.12"
 # The fronts are imported for their tools, so only their base dependencies come along.
-dependencies = ["mcp>=2.2,<3", "pydantic>=2", "uvicorn>=0.30", "hostrpc", "sites", "podcasts", "audit"]
+dependencies = ["mcp>=2.2,<3", "pydantic>=2", "uvicorn>=0.30", "hostrpc", "sites"]
 
 [project.scripts]
 gateway = "gateway.app:main"

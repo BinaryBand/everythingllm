@@ -11,6 +11,11 @@ serve-setup`, `uv run hostctl apps`, and the parts of `uv run hostctl install` a
   serve              map every app's tailnet paths that aren't mapped yet (sudo tailscale serve)
   logs APP           follow the app's units and the ones it watches
   health             `name|url` for each HTTP check, for health.sh
+  units              the units health.sh checks, one per line: every app's units and watched
+                     units, and its containers' <x>.service
+  sockets            ping every app's runner on its socket in storage, all at once; prints
+                     OK/FAIL lines for health.sh and exits 1 if one didn't answer or has
+                     problems (the sandbox runner checks its image, network and proxy)
 
 Standard library only, like the rest of hostctl.
 """
@@ -18,16 +23,20 @@ Standard library only, like the rest of hostctl.
 import argparse
 import json
 import os
+import socket
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import apps  # the registry's reader, standard library only
 
 from hostctl import run_guard
+from hostctl.units import storage
 
 ROOT = Path(__file__).resolve().parents[4]
 # hostctl and the registry's reader, so a `before` step's python3 finds them whichever it is.
 PYTHONPATH = f"{ROOT}/packages/hostctl/src:{ROOT}/packages/apps/src"
+PING_SECONDS = 5  # a runner that's up answers at once
 
 
 def app_named(registry: dict[str, apps.App], name: str) -> apps.App:
@@ -94,6 +103,32 @@ def setup(app: apps.App) -> None:
         systemctl("enable", "--now", *app.timers)
 
 
+def ping(sock: Path, timeout: float = PING_SECONDS) -> str:
+    """Why the runner on `sock` isn't fine (hostrpc's protocol: a line of JSON each
+    way), or "" when it answers `ping` with no problems."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+            conn.settimeout(timeout)
+            conn.connect(str(sock))
+            with conn.makefile("rwb") as f:
+                f.write(json.dumps({"op": "ping", "args": {}}).encode() + b"\n")
+                f.flush()
+                line = f.readline()
+    except (FileNotFoundError, ConnectionRefusedError) as e:
+        return f"not running ({type(e).__name__} on {sock})"
+    except TimeoutError:
+        return f"no answer within {timeout:.0f}s"
+    except OSError as e:
+        return f"{type(e).__name__}: {e}"
+    try:
+        reply = json.loads(line)
+    except ValueError:
+        return "closed the connection without answering" if not line else "a reply that isn't JSON"
+    if not reply.get("ok"):
+        return reply.get("error") or "unknown error"
+    return "; ".join((reply.get("result") or {}).get("problems") or [])
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -104,6 +139,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("serve")
     sub.add_parser("logs").add_argument("app")
     sub.add_parser("health")
+    sub.add_parser("units")
+    sub.add_parser("sockets")
     args = parser.parse_args(argv)
     registry = apps.load()
 
@@ -131,6 +168,19 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "health":
         for name, url in apps.health_checks(registry):
             print(f"{name}|{url}")
+    elif args.cmd == "units":
+        for app in registry.values():
+            for unit in app.all_units:
+                if not unit.endswith(".timer"):
+                    print(unit)
+    elif args.cmd == "sockets":
+        runners = apps.runners(registry)
+        folder = storage() / "everythingllm"
+        with ThreadPoolExecutor(len(runners) or 1) as pool:
+            why = list(pool.map(lambda f: ping(folder / f / "runner.sock"), runners.values()))
+        for name, problem in zip(runners, why):
+            print(f"  {'FAIL' if problem else 'OK  '}  {name}" + (f": {problem}" if problem else ""))
+        raise SystemExit(1 if any(why) else 0)
 
 
 if __name__ == "__main__":

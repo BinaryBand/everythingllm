@@ -28,7 +28,7 @@ def ran(monkeypatch):
     monkeypatch.setattr(cli.units, "main", step("units"))
     monkeypatch.setattr(cli.machine, "main", step("machine"))
     monkeypatch.setattr(cli.appctl, "main", step("appctl"))
-    sync = SimpleNamespace(main=step("sync"), mcp_packages=lambda: ["sites", "podcasts"])
+    sync = SimpleNamespace(main=step("sync"), mcp_packages=lambda: ["sites", "research"])
     monkeypatch.setitem(sys.modules, "hostctl.sync", sync)
     monkeypatch.setattr("hostctl.sync", sync, raising=False)
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/storage")
@@ -38,7 +38,7 @@ def ran(monkeypatch):
 def test_every_target_is_a_command():
     for target in TARGETS:
         cli.lookup(target)
-    assert cli.lookup("podcasts-setup") == (cli.setup_app, ["podcasts"])
+    assert cli.lookup("sites-setup") == (cli.setup_app, ["sites"])
     assert cli.lookup("research-logs") == (cli.app_logs, ["research"])
     with pytest.raises(SystemExit):
         cli.lookup("nope-setup")
@@ -64,8 +64,8 @@ def test_diff_checks_the_skills_first(ran):
 
 
 def test_an_app_setup_installs_the_units_first(ran):
-    cli.main(["podcasts-setup"])
-    assert ran == ["units install podcasts", "appctl setup podcasts"]
+    cli.main(["sites-setup"])
+    assert ran == ["units install sites", "appctl setup sites"]
 
 
 def test_install_keeps_going_past_a_failed_health_check(ran, monkeypatch):

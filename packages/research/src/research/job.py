@@ -1,5 +1,5 @@
 """One research run from start to finish: research the question, save and publish the
-report, add it to the workspace, write the run log, and say what to tell the user.
+report, write the run log, and say what to tell the user.
 
 research-runner runs these for the skill; `research-run` runs one by hand:
     research-run "Why is the sky blue?" --depth quick
@@ -7,9 +7,6 @@ research-runner runs these for the skill; `research-run` runs one by hand:
 Config (environment, from host.env and the unit; Settings.from_env):
   ANYTHINGLLM_STORAGE  storage directory (hostrpc.storage)
   ANYTHINGLLM_ENV      AnythingLLM's .env, for the model keys (default <storage>/.env)
-  RESEARCH_EMBED_SOCKET  audit-runner's socket that embeds a report into a workspace and
-                       nothing else (default <storage>/everythingllm/research-embed/runner.sock;
-                       audit.embed): this holds no AnythingLLM login
   SEARXNG_URL          the SearXNG to search (default the host's; publicweb.pages)
   RESEARCH_LIVE_PORT   where the live cards listen (default 8450)
 """
@@ -45,7 +42,6 @@ OFF = re.compile(r"^(no|off|none|false|0)$", re.IGNORECASE)
 class Settings:
     storage: Path
     searxng_url: str
-    embed_socket: Path  # audit-runner's, which embeds a report (audit.embed)
     env_file: str  # AnythingLLM's .env, for the model keys
     runlogs: Path  # the run log and live runs' markers, host-only
     pages_url: str = (
@@ -60,7 +56,6 @@ class Settings:
         return cls(
             storage=storage,
             searxng_url=searxng_url(),
-            embed_socket=hostrpc.socket_path("research-embed", "RESEARCH_EMBED_SOCKET"),
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
             runlogs=hostrpc.data_dir() / "research" / "runs",
             pages_url=pages_url(Builder.from_env().source),
@@ -72,14 +67,10 @@ class Settings:
         # The built-in filesystem tools work in anythingllm-fs; reports go in a folder there.
         return self.storage / "anythingllm-fs" / "research"
 
-    @property
-    def documents_dir(self) -> Path:
-        return self.storage / "documents"
-
 
 @dataclass
 class Request:
-    """What the skill sends: its question and setup args, and the workspace it ran in."""
+    """What the skill sends: its question and setup args."""
 
     question: str
     depth: str | None = None
@@ -87,14 +78,11 @@ class Request:
     worker: str = "deepseek-flash"
     planner_fallback: str = "deepseek-flash"
     site: str = "research"
-    embed: bool = True
-    workspace: str | None = None  # slug
-    workspace_name: str | None = None
     # The calling agent's own split of the question, and the report's title then.
     sub_questions: list | None = None
     title: str | None = None
     # Set by research-runner, not the skill: the run's id and its live progress card,
-    # kept in the run log so the audit can hand the card out again.
+    # kept in the run log.
     run_id: str | None = None
     card: str = ""
 
@@ -312,27 +300,6 @@ def _run(
         report["markdown"],
     )
 
-    # A copy in the workspace. The report is already saved, so this only warns.
-    if req.embed and req.workspace:
-        meter(0.98)
-        progress(
-            f'adding the report to workspace "{req.workspace_name or req.workspace}"'
-        )
-        try:
-            docpath = publish.write_document(
-                settings.documents_dir,
-                publish.INCOMING,
-                build.slug,
-                report["title"],
-                url,
-                file_text(url),
-            )
-            copies["document"] = publish.ask_embed(
-                settings.embed_socket, req.workspace, docpath
-            )
-        except Exception as e:  # noqa: BLE001 - the report is already published; this copy only warns
-            copies["document_error"] = str(e)
-            progress(f"couldn't add the report to the workspace: {e}")
     outcome.update(url=url, published=True, build_error=None, **copies)
     return "\n\n".join(
         filter(
@@ -344,11 +311,6 @@ def _run(
                 f"Saved as {in_files(copies['file'])} in the agent's files."
                 if "file" in copies
                 else f"Couldn't save a copy to the agent's files: {copies.get('file_error')}",
-                "Added to this workspace's documents, so later chats can search it."
-                if "document" in copies
-                else f"Couldn't add it to this workspace's documents: {copies['document_error']}"
-                if "document_error" in copies
-                else "",
                 f"Key findings:\n{bullets}" if bullets else "",
                 basis,
                 "Give the user the link and the key findings in your own words. The research is finished; don't search again.",
@@ -365,14 +327,12 @@ def main() -> None:
     parser.add_argument("--depth", choices=["quick", "standard", "thorough"])
     parser.add_argument("--planner", help=f"default {Request.planner}")
     parser.add_argument("--worker", help=f"default {Request.worker}")
-    parser.add_argument("--workspace", help="slug of a workspace to add the report to")
     args = parser.parse_args()
     req = Request.of(
         args.question,
         depth=args.depth,
         planner=args.planner,
         worker=args.worker,
-        workspace=args.workspace,
     )
     result = run(
         req, Settings.from_env(), lambda m: print(m, file=sys.stderr, flush=True)

@@ -17,42 +17,6 @@
         "UV_CACHE_DIR": "/app/server/storage/everythingllm/mcp/uv-cache",
         "UV_PYTHON_DOWNLOADS": "never"
       }
-    },
-    "audit": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--frozen",
-        "--no-dev",
-        "--project",
-        "/mcp",
-        "--package",
-        "audit",
-        "audit-mcp"
-      ],
-      "env": {
-        "UV_PROJECT_ENVIRONMENT": "/app/server/storage/everythingllm/mcp/venv",
-        "UV_CACHE_DIR": "/app/server/storage/everythingllm/mcp/uv-cache",
-        "UV_PYTHON_DOWNLOADS": "never"
-      }
-    },
-    "podcasts": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--frozen",
-        "--no-dev",
-        "--project",
-        "/mcp",
-        "--package",
-        "podcasts",
-        "podcasts-mcp"
-      ],
-      "env": {
-        "UV_PROJECT_ENVIRONMENT": "/app/server/storage/everythingllm/mcp/venv",
-        "UV_CACHE_DIR": "/app/server/storage/everythingllm/mcp/uv-cache",
-        "UV_PYTHON_DOWNLOADS": "never"
-      }
     }
   }
 }

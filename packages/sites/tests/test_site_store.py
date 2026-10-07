@@ -199,86 +199,16 @@ def test_news_site_builds_with_entries(repo_store, tmp_path):
     assert "<style" not in home and "style=" not in home
 
 
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
-def test_status_site_builds_a_report(repo_store, tmp_path):
-    """The status site renders an audit report's findings by severity, without inline styles."""
-    repo_store.write(
-        "status",
-        "reports",
-        "2026-10-04",
-        "System audit — October 4, 2026",
-        "2026-10-04",
-        {
-            "status": "fail",
-            "summary": "Search is down.",
-            "findings": [
-                {
-                    "severity": "fail",
-                    "area": "search",
-                    "title": "SearXNG returns no results",
-                    "detail": "0 results",
-                    "suggestion": "Enable more engines.",
-                },
-                {
-                    "severity": "info",
-                    "area": "jobs",
-                    "title": "Daily News Page completed",
-                    "detail": "30 s",
-                },
-                {"severity": "critical", "area": "disk", "title": "Disk is full"},
-                {"area": "jobs", "title": "No severity at all"},
-            ],
-        },
-    )
-    home = (tmp_path / "site" / "status" / "index.html").read_text()
-    assert 'class="overall fail"' in home and "Search is down." in home
-    assert "Failures (1)" in home and "Information (1)" in home and "Other (2)" in home
-    assert "Warnings" not in home and "No findings." not in home
-    assert '<span class="severity">critical</span>' in home and "Disk is full" in home
-    assert '<span class="severity">no severity</span>' in home
-    assert "Enable more engines." in home
-    assert 'href="http://127.0.0.1:8445/status/reports/2026-10-04/">Permalink' in home
-    report = (
-        tmp_path / "site" / "status" / "reports" / "2026-10-04" / "index.html"
-    ).read_text()
-    assert "<h1>System Status</h1>" in report and "Permalink" not in report
-    assert "<style" not in home and "style=" not in home
-
-
 def test_every_stylesheet_a_repo_site_lists_is_there():
     for config in (REPO_ZOLA / "sites").glob("*/zola.toml"):
         for sheet in tomllib.loads(config.read_text())["extra"].get("stylesheets", []):
             assert (config.parent / "static" / sheet).is_file(), sheet
 
 
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
-def test_status_home_title_names_the_latest_reports_findings(repo_store, tmp_path):
-    """The counts are in the title, which a stylesheet can't restyle; a report with no
-    findings says so."""
-    repo_store.write(
-        "status",
-        "reports",
-        "2026-10-04",
-        "System audit — October 4, 2026 — 1 failing",
-        "2026-10-04",
-        {"status": "fail", "summary": "x", "findings": []},
-    )
-    home = (tmp_path / "site" / "status" / "index.html").read_text()
-    assert (
-        "<title>System audit — October 4, 2026 — 1 failing · System Status</title>"
-        in home
-    )
-    assert "No findings." in home and "<h2>Other" not in home
-
-
 def test_news_sections_carry_their_config(tmp_path):
     (tmp_path / "content").mkdir()
     store = SiteStore(REPO_ZOLA / "sites", tmp_path / "content")
     news = store.site("news")
-    assert news.section_extra["editions"]["audit"] == {
-        "max_age_days": 1,
-        "required": ["sections[].stories[].url"],
-    }
     assert news.readonly == ["articles"]
 
 
@@ -453,7 +383,7 @@ def test_failed_build_restores_an_overwritten_entry(store):
         )
     entry, _, body = store.get("news", "editions", "a")
     assert entry.title == "Old" and body.strip() == "old body"
-    # The old mtime too, or the audit would see an entry newer than the last build.
+    # The old mtime too, so the entry isn't newer than the last build.
     assert file.stat().st_mtime == 1_700_000_000
 
 
@@ -497,22 +427,22 @@ def test_control_characters_are_escaped(store, tmp_path):
 
 @pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
 def test_emoji_and_odd_characters_build(tmp_path):
-    """A log line in the audit's report quoted Caddy's "byeee!! 👋", and the status site
-    stopped building: Zola's YAML parser rejects JSON's surrogate-pair escapes."""
+    """A log line quoted in a report ("byeee!! 👋") once stopped a site building: Zola's
+    YAML parser rejects JSON's surrogate-pair escapes."""
     b = builder(tmp_path)
     store = SiteStore(b.source, b.content, build=b.build)
     odd = "bye 👋 é \x00\x1b\x7f\x85\u2028\u2029\ufeff\uffff\udc4b"
     store.write(
-        "status",
+        "research",
         "reports",
         "2026-10-05",
-        "Audit 👋",
+        "Notes 👋",
         "2026-10-05",
-        {"status": "warn", "summary": odd, "findings": []},
+        {"depth": "quick", "question": odd},
     )
-    _, extra, _ = store.get("status", "reports", "2026-10-05")
-    assert extra["summary"] == odd.replace("\udc4b", "\ufffd")
-    assert "Audit 👋" in (tmp_path / "site" / "status" / "index.html").read_text()
+    _, extra, _ = store.get("research", "reports", "2026-10-05")
+    assert extra["question"] == odd.replace("\udc4b", "\ufffd")
+    assert "Notes 👋" in (tmp_path / "site" / "research" / "index.html").read_text()
 
 
 @pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
@@ -548,12 +478,11 @@ def test_dated_slugs_keep_their_own_urls(repo_store, tmp_path):
 @pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
 def test_build_all_builds_the_rest_and_reports_every_failure(tmp_path):
     b = builder(tmp_path)
-    for name in ("news", "status"):
-        (tmp_path / "site" / name).mkdir()
-        (tmp_path / "site" / name / "index.html").write_text("someone's page")
+    (tmp_path / "site" / "news").mkdir()
+    (tmp_path / "site" / "news" / "index.html").write_text("someone's page")
     with pytest.raises(BuildError) as e:
         b.build()
-    assert "sites/news" in str(e.value) and "sites/status" in str(e.value)
+    assert "sites/news" in str(e.value)
     assert (tmp_path / "site" / "research" / MARKER).exists()
 
 
@@ -702,10 +631,10 @@ def test_a_build_that_runs_too_long_is_stopped(tmp_path, monkeypatch):
 
 
 def theme_from_site(tmp_path, origin):
-    """A copy of the repo's sites in which status takes its theme from `origin`."""
+    """A copy of the repo's sites in which research takes its theme from `origin`."""
     source = tmp_path / "src"
     shutil.copytree(REPO_ZOLA / "sites", source)
-    toml = source / "status" / "zola.toml"
+    toml = source / "research" / "zola.toml"
     text = toml.read_text()
     assert 'theme_from = "system"' in text
     toml.write_text(text.replace('theme_from = "system"', f'theme_from = "{origin}"'))
@@ -733,17 +662,17 @@ def test_a_theme_from_site_is_built_by_the_sandbox_and_swapped_in_here(tmp_path)
         "no-zola-needed",
         remote=remote,
     )
-    assert (b.theme_from("status"), b.theme_from("news")) == ("education", "system")
-    [dest] = b.build("status")
-    assert asked == ["status"]
+    assert (b.theme_from("research"), b.theme_from("news")) == ("education", "system")
+    [dest] = b.build("research")
+    assert asked == ["research"]
     assert (dest / "index.html").read_text() == "built in the sandbox"
     assert (dest / ".zola-site").exists()  # marked and swapped like any build
-    assert not (tmp_path / "site" / ".status.new").exists()
+    assert not (tmp_path / "site" / ".research.new").exists()
 
 
 def test_marking_a_build_follows_no_symlink(tmp_path):
     """The pages site is writable by the service containers, which could swap a symlink
-    in for the build or its marker before a host process (audit-runner) marks it."""
+    in for the build or its marker before a host process marks it."""
     source = theme_from_site(tmp_path, "system")
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -770,17 +699,17 @@ def test_marking_a_build_follows_no_symlink(tmp_path):
             remote=remote,
         )
         with pytest.raises(BuildError, match="couldn't mark"):
-            b.build("status")
+            b.build("research")
         assert sorted(p.name for p in outside.iterdir()) == ["keep"]
         assert (outside / "keep").read_text() == "host file"
-        assert not (tmp_path / "site" / "status").exists()
-        shutil.rmtree(tmp_path / "site" / ".status.new", ignore_errors=True)
-        (tmp_path / "site" / ".status.new").unlink(missing_ok=True)
+        assert not (tmp_path / "site" / "research").exists()
+        shutil.rmtree(tmp_path / "site" / ".research.new", ignore_errors=True)
+        (tmp_path / "site" / ".research.new").unlink(missing_ok=True)
 
 
 def test_a_sandbox_build_that_fails_or_lands_elsewhere_changes_nothing(tmp_path):
     source = theme_from_site(tmp_path, "system")
-    live = tmp_path / "site" / "status"
+    live = tmp_path / "site" / "research"
     live.mkdir()
     (live / ".zola-site").touch()
     (live / "index.html").write_text("the last good build")
@@ -803,7 +732,7 @@ def test_a_sandbox_build_that_fails_or_lands_elsewhere_changes_nothing(tmp_path)
             remote=remote,
         )
         with pytest.raises(BuildError, match=why):
-            b.build("status")
+            b.build("research")
         assert (live / "index.html").read_text() == "the last good build"
     assert not (tmp_path / "elsewhere").exists()
 
@@ -814,8 +743,8 @@ def test_without_the_sandbox_only_a_repo_theme_builds_here(tmp_path):
         source, REPO_ZOLA / "themes", tmp_path / "content", tmp_path / "site", "zola"
     )
     with pytest.raises(BuildError, match="only the sandbox may build it"):
-        b.build("status")
-    assert not (tmp_path / "site" / "status").exists()
+        b.build("research")
+    assert not (tmp_path / "site" / "research").exists()
 
 
 def test_from_env_builds_theme_from_sites_in_the_sandbox(monkeypatch):
@@ -829,7 +758,7 @@ def test_sandbox_only_refuses_a_site_the_sandbox_wont_build(tmp_path, monkeypatc
     """sites-runner's container has no zola and no unshare: a site without theme_from
     fails with a reason, rather than running zola there (or without its namespace)."""
     source = theme_from_site(tmp_path, "system")
-    toml = source / "status" / "zola.toml"
+    toml = source / "research" / "zola.toml"
     toml.write_text(toml.read_text().replace('theme_from = "system"', ""))
 
     def no_zola(*a, **kw):
@@ -854,9 +783,9 @@ def test_sandbox_only_refuses_a_site_the_sandbox_wont_build(tmp_path, monkeypatc
         remote=remote,
         sandbox_only=True,
     )
-    with pytest.raises(BuildError, match=r"status can't be built here.*theme_from"):
-        b.build("status")
-    assert not (tmp_path / "site" / "status").exists()
+    with pytest.raises(BuildError, match=r"research can't be built here.*theme_from"):
+        b.build("research")
+    assert not (tmp_path / "site" / "research").exists()
     [dest] = b.build("news")  # theme_from = "system": the sandbox's, as ever
     assert asked == ["news"] and (dest / ".zola-site").exists()
 
@@ -903,9 +832,9 @@ def test_the_sandbox_build_turns_runner_errors_into_build_errors(monkeypatch):
     monkeypatch.setattr(build.hostrpc, "request_sync", refuse)
     with pytest.raises(
         BuildError,
-        match="status \\(in the sandbox\\): The sandbox runner isn't running",
+        match="research \\(in the sandbox\\): The sandbox runner isn't running",
     ):
-        build.sandbox_build("status")
+        build.sandbox_build("research")
 
 
 def test_the_build_lock_never_empties_a_file_through_a_symlink(tmp_path):

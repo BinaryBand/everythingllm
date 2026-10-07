@@ -58,14 +58,14 @@ test("preloaded, it filters Buffer writes, in forked workers too", () => {
         // Like Bree's scheduled-job workers: a fork writing to the same stdout itself.
         `require("child_process").fork(__dirname + "/worker.js").on("exit", () => {});`,
       ].join("\n"),
-      "worker.js": `process.stdout.write("[EphemeralAgentHandler] MCP server: podcasts:refresh_podcasts completed successfully {\\n  text: 'Downloading'\\n}\\n");`,
+      "worker.js": `process.stdout.write("[EphemeralAgentHandler] MCP server: sites:headlines completed successfully {\\n  text: 'Downloading'\\n}\\n");`,
     },
     "main.js"
   );
   assert.equal(
     out,
     "[MCPHypervisor] a - Transport message: [15 chars omitted]\nplain\n" +
-      "[EphemeralAgentHandler] MCP server: podcasts:refresh_podcasts completed successfully [25 chars omitted]\n"
+      "[EphemeralAgentHandler] MCP server: sites:headlines completed successfully [25 chars omitted]\n"
   );
 });
 

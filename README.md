@@ -21,8 +21,7 @@ Then it does the following:
 2. waits for AnythingLLM
 3. deploys (`uv run hostctl deploy`)
 4. points web search at SearXNG
-5. runs every setup target: tailnet ports, sandbox, the podcasts'
-   runner and workers, research, sites and audit runners
+5. runs every setup target: tailnet ports, sandbox, research and sites runners
 6. runs `uv run hostctl health`
 7. ends with a checklist of what only AnythingLLM's UI can do. Each item is ticked when
    it's already done: the chat model and embedder, a DeepSeek key, the agent limits in the
@@ -63,7 +62,7 @@ the service containers (see "Service containers"), these two:
   its internals
 - `static_agent.container`: a Caddy container that mounts `host/caddy/pages.Caddyfile` from
   the repo, so its CSPs are versioned, and serves two sites:
-  - **the pages site** (:8445): the Zola sites, `/podcasts` and the link cards, from
+  - **the pages site** (:8445): the Zola sites and the link cards, from
     `pages/public/`. `default-src 'self'; script-src 'none'`: no scripts, no inline styles,
     and nothing fetched from another host, so CSS can't send anything out either.
     `form-action 'none'; base-uri 'none'` cover what `default-src` doesn't: no form posts
@@ -72,7 +71,7 @@ the service containers (see "Service containers"), these two:
   - **the workspace pages site** (:8447): every sandbox workspace's `/public`, mounted
     read-only from `sandbox/public/` and served as it is (see "Code sandbox"). The same
     policy, but inline CSS is allowed. It's a port, and so a browser origin, of its own, so
-    that whatever its pages ever run can't read the podcasts' private feeds or post to
+    that whatever its pages ever run can't post to
     `/news/write`. Scripts are off for every workspace; `@scripts` in the Caddyfile is the
     switch for letting one workspace's pages run them (`script-src 'self'
     'unsafe-inline'`, still nothing from other hosts), and matches nothing yet.
@@ -96,7 +95,7 @@ image of ours or network isn't there yet isn't started: its app's setup makes th
 "Service containers"). Nor is one whose egress proxy (its `Wants=`) isn't installed yet:
 `uv run hostctl units egress` comes first. Enabling a host unit is up to its app's `uv run hostctl <app>-setup` (see "The apps" below).
 A host unit it rendered whose template is gone is retired: stopped, disabled and moved to
-the backups. That is how the podcasts' old timers go, and how a host runner gives way to
+the backups. That is how a dropped app's units go, and how a host runner gives way to
 its container, whose Quadlet unit of the same name the old copy would hide (the container
 is started then, unless it's a guarded runner with a run going). While one of an app's
 containers can't start yet, every old host unit of that app stays as it is, so the app is
@@ -115,9 +114,9 @@ It must leave them alone now, or its next run undoes `uv run hostctl units`.
 ### The apps
 
 Every app this repo runs is declared once, in `packages/apps/src/apps/apps.toml`: its units
-and the audit's label for each, its socket, its tailnet mappings, whether its restarts wait
+and a label for each, its socket, its tailnet mappings, whether its restarts wait
 for a run (the guard), its health checks, the steps its setup runs first, and whether
-`uv run hostctl install` sets it up (and if not, why). hostctl and the audit read it through
+`uv run hostctl install` sets it up (and if not, why). hostctl reads it through
 `packages/apps` (standard library only, like `hostctl`);
 app code never does. `uv run hostctl apps` lists the apps; for each:
 
@@ -134,7 +133,9 @@ app code never does. `uv run hostctl apps` lists the apps; for each:
   `sudo tailscale serve` (by port and path, from `tailscale serve status --json`, so the
   relay's path on :3001 doesn't pass for AnythingLLM's root), and leaves other mappings on the
   machine alone, including ones an app no longer declares.
-- `uv run hostctl health` checks every app's units, health URLs and sockets.
+- `uv run hostctl health` checks every app's units, health URLs and sockets (`health.sh`,
+  which gets them from `python3 -m hostctl.appctl units`, `health` and `sockets`, pinging
+  each runner).
 
 Adding an app: its code, its unit template in `host/`, and one entry in `apps.toml`.
 `packages/apps/tests/test_apps.py` says what's missing: a template no app owns, a unit
@@ -151,11 +152,11 @@ So it gets a password (Settings > Security > Password protection; long and rando
 `.env`, beside a `JWT_SECRET` it makes.
 
 Our callers of that API log in with it: `hostctl.sync` and `hostctl.machine` through
-`units.anythingllm_headers`, the audit and research's workspace embedding through
+`units.anythingllm_headers`; a package that needs it uses
 `hostrpc.anythingllm_headers`. Each logs in once per process (a login lasts 30 days and is
 logged) and once more after a 401; with no password set they send nothing. The relay holds no
 key and doesn't log in: it checks each client's developer API key with `/api/v1/auth` and asks
-with that. `uv run hostctl health` and the audit's `security` check fail when
+with that. `uv run hostctl health` fails when
 `/api/scheduled-jobs` answers without a login.
 
 What a password doesn't close: `/api/request-token` has no rate limit, so the password has to
@@ -177,8 +178,7 @@ through its UI.
     `sandbox-runner` on the host (see "Code sandbox")
   - `browse/`, `browser-act/`, `browser-read/`, `browser-handoff/`, `browser-login/` — the
     workspace's browser and its saved logins, run by `browser-runner` on the host (see "Browser")
-  - `write-entry/`, `delete-entry/`, `add-podcast/`, `remove-podcast/`, `publish-report/`,
-    `run-job/` — the ops of the sites, podcasts and audit runners that write or act. They're
+  - `write-entry/`, `delete-entry/` — the ops of the sites runner that write. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
     to its runner (`forwardSkill` in `_lib/runner.js`). They're generated: each is declared
     in its front's `server.py` like a tool, a signature with a docstring and no body, under
@@ -204,9 +204,6 @@ through its UI.
   - `daily-news-page/` — writes the day's Daily News edition (US, Sweden, World) to the
     `news` site from the feed headlines of the `sites` server's `headlines` tool; cron is UTC inside the container (18:00 UTC = 20:00 Stockholm in summer, 19:00 in
     winter), and the prompt dates the edition by Stockholm time
-  - `system-audit/` — runs the audit checks and publishes the day's report to the `status`
-    site at 16:00 UTC (18:00 Stockholm in summer, 17:00 in winter), dated by Stockholm
-    time (see below)
 - `anythingllm/slash-commands/<name>/` — slash command presets: `/<name>` (a-z, 0-9,
   `_`, `-`), `command.json` with its description, and `prompt.md`; deployed through the
   AnythingLLM API and matched by command. Typing the command in chat swaps in the prompt, and whatever
@@ -219,8 +216,6 @@ through its UI.
     the Daily News job from the feeds in `FEEDS` (`sites/feeds.py`), each with its own link.
     The MCP server forwards to `sites-runner` on the host, which does the work. The sites'
     sources are in `packages/sites/zola/` (see below)
-  - `packages/audit/` — health checks over this setup, for the System Audit job (see below); the
-    MCP server forwards to `audit-runner` on the host, which runs them
   - `packages/sandbox/` — not an MCP server: `sandbox-runner` runs the agent's Python and bash
     in throwaway podman containers on the host, with only PyPI on the network, and
     publishes pages from them, for the `run-code`, `write-file`, `publish` and `build-site` skills (see
@@ -228,19 +223,8 @@ through its UI.
   - `packages/browser/` — not an MCP server: `browser-runner` runs a Chromium per workspace
     in a hardened container, with a live card per chat and a take-over view, for the
     browse skills (see "Browser"); `browser.driver` runs in that container
-  - `packages/podcasts/` — downloads podcast episodes, finds their ads, and serves them without
-    those as private feeds on the pages site (see "Podcasts" below); the MCP server forwards
-    to `podcasts-runner` on the host, which does the work. Its audio code is here too:
-    `podcasts.avio` (PyAV decoding, and cutting without re-encoding), `podcasts.fingerprint`
-    (finds the stretches recordings share), `podcasts.whisper` (speech to text, with the
-    transcripts' types in `podcasts.segments`). `podcasts.cli` runs them by hand as `spot
-    repeats` and `transcribe`, with the models in `~/.local/share/everythingllm/podcasts/models` as the
-    services use them
   - `packages/hostrpc/` — a library, not a server: how the MCP servers and skills talk to the
     services on the host (see "Services on the host" below)
-  - `packages/splice/` — not an MCP server: `splice-web` serves the podcasts, putting each episode
-    together from the untouched download and the stretches to leave out (see "Originals,
-    cuts and podcasts-web" below)
   - `packages/research/` — not an MCP server: `research-runner` runs the deep-research skill's
     runs, in a service container of its own, and `research-run` runs one by hand (see "Deep
     research")
@@ -248,7 +232,7 @@ through its UI.
     AnythingLLM's own agents, and `agents-run` starts one by hand (see "Delegation")
   - `packages/runs/` — a library, not a server: what research-runner and agents-runner share
     for long runs: run state with long-poll waiting and slots, the run log, live cards
-  - `packages/publicweb/` — a library, not a server: the HTTP client podcasts, sites and research use,
+  - `packages/publicweb/` — a library, not a server: the HTTP client sites and research use,
     which refuses LAN, tailnet and loopback hosts, and `publicweb.pages`, the page reader on
     it that the article writer and research share
   - `packages/chatimage/` — a library, not a server: the pictures the host draws for the chat,
@@ -270,12 +254,9 @@ through its UI.
   (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's
   laid out by kind:
 
-      venvs/<name>/        the host services' venvs (agents, audit, browser, gateway, sandbox,
-                           splice)
+      venvs/<name>/        the host services' venvs (agents, browser, gateway, sandbox)
       venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/):
-                           egress-proxy, relay, research-runner, sites-runner,
-                           podcasts-runner, podcasts-sync-worker,
-                           podcasts-transcribe-worker
+                           egress-proxy, relay, research-runner, sites-runner
       pages/public/        the pages site Caddy serves
       pages/entries/       the Zola entries
       sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
@@ -284,8 +265,6 @@ through its UI.
       browser/             browser-runner's: each running browser's sockets (sockets/<slot>/),
                            noVNC for the take-over view (novnc/) and the saved logins
                            (vault/<workspace>.vault, sealed)
-      podcasts/            the podcasts' state, audio, transcripts and manifests
-      podcasts/models/     Whisper's
       research/runs/       the deep-research run log and live runs' markers
       agents/runs/         the delegations' run log and live runs' markers
       relay/               the Nilson relay's database
@@ -325,7 +304,7 @@ through its UI.
 `uv run hostctl deploy` copies it into storage (old files go to
 `~/.local/share/everythingllm/backups/`), refreshes the MCP deps
 and restarts AnythingLLM, `uv run hostctl test` runs every test and `uv run hostctl health` checks every unit,
-port, host service and MCP server. `uv run hostctl import-skill <hubId>` (and `import-job`,
+port, host service and runner socket. `uv run hostctl import-skill <hubId>` (and `import-job`,
 `import-command`) brings something made in the UI under the repo.
 
 Skill handlers are re-required on each load, so skill changes don't need a restart, but
@@ -344,7 +323,7 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
 
     uv sync --all-packages                     # install every member + dev deps into .venv
     uv run --all-packages --all-extras pytest -q   # all tests (what `uv run hostctl test` runs)
-    uv run --package podcasts --extra host pytest packages/podcasts -q   # one member's tests
+    uv run --package sites --extra host pytest packages/sites -q   # one member's tests
 
     uv run --package sites sites-mcp           # an MCP server over stdio (waits on stdin)
 
@@ -363,10 +342,10 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
   venv to match, so it uninstalls pytest. Point `UV_PROJECT_ENVIRONMENT` at another venv
   instead, as the host units do.
 - A member whose MCP server is a front for a host service keeps its base dependencies to
-  what the front imports, and puts the rest in a `host` extra (`podcasts`, `sites`); its
+  what the front imports, and puts the rest in a `host` extra (`sites`); its
   units run with `--extra host`. AnythingLLM starts each front with `uv run --package`,
-  which installs that member's base dependencies, so Whisper and PyAV stay out of
-  the container.
+  which installs that member's base dependencies, so the runner's (the
+  llm client, the card drawing) stay out of the container.
 - After `uv.lock` changes, run `uv run hostctl mcp-sync` (or `uv run hostctl deploy`, which runs it) so the
   container's venv catches up. It installs exactly the members `mcp_servers.json` runs
   (`hostctl.sync mcp-packages`), and removes anything else.
@@ -407,8 +386,8 @@ name (its `/shared/<name>/themes/<theme>`), isn't built by the host's zola. `sit
 asks `sandbox-runner` (`build_system_site`), which builds it in a container with no
 network: the site's repo source and its entries mounted read-only, the theme put in place
 by the repo's `sitebuild.py`, and the output copied (plain files only) into
-`pages/public/.<name>.new`, which `sites.build` marks and swaps in as before. News,
-research and status are all built that way, with `theme_from = "system"`, so they look and
+`pages/public/.<name>.new`, which `sites.build` marks and swaps in as before. News and
+research are both built that way, with `theme_from = "system"`, so they look and
 build exactly as they did; pointing one at a workspace's theme is a one-line change to its
 `zola.toml`, after which that workspace's theme edits restyle the site at its next build.
 Their entries stay on the host and are written exactly as below; no host service reads or
@@ -424,7 +403,7 @@ into it. With `sandbox-runner` down, those sites can't build, so their writes fa
 undone.
 
 The sites MCP server's builds are started on the host, in `sites-runner` (in a service
-container of its own; see "Service containers"), and the audit's report in `audit-runner`,
+container of its own; see "Service containers"),
 as every other writer's are; nothing in AnythingLLM's container builds. Other writers use the
 `sites-write` command (entry as JSON on stdin; it saves, builds and prints the URL, or
 exits 1 with `{"error"}` and keeps nothing when the site doesn't build), so the
@@ -441,9 +420,7 @@ only on page or section content), on top of the CSP and the network-free build.
 
 A site adds its own stylesheets from `static/`, listed in `stylesheets` in its `zola.toml`
 and loaded after the theme's `agent-site.css`. Zola copies `static/` as is
-(`compile_sass = false`). The status site puts each report's findings in its title
-("System audit — October 3, 2026 — 1 failing, 2 warnings"), which shows in the browser tab
-and the feed whatever the stylesheet does.
+(`compile_sass = false`).
 
 The sites:
 
@@ -452,16 +429,10 @@ The sites:
   Headlines open articles the bot writes on the first click, kept at
   `/news/articles/<desk>-<n>-<day>/` (see "News articles").
 - `research` — reports from the deep-research skill at `/research/reports/<title-slug>/`.
-- `status` — the System Audit's daily report: the home page (`/status/`) shows the newest,
-  each stays at `/status/reports/YYYY-MM-DD/`.
 
-A section can set two things under `[extra]` in its `content/<section>/_index.md`:
+A section can set this under `[extra]` in its `content/<section>/_index.md`:
 - `agent_readonly = true`: the `sites` server (and `sites-write`) can read the section
-  but refuses to write or delete there. The news `articles` are only written by the article writer,
-  the status `reports` only by the audit server.
-- `[extra.audit]`, checks for the audit: `max_age_days` (warn when the section's newest
-  entry is older), and `required`, paths every entry's fields must have, e.g.
-  `"sections[].stories[].url"` for the news `editions`.
+  but refuses to write or delete there. The news `articles` are only written by the article writer.
 
 A new site: add `packages/sites/zola/sites/<name>/` with `theme = "agent-site"`,
 `[extra.build] theme_from = "system"`, its sections and an `agent_help`, run `uv run hostctl
@@ -480,8 +451,8 @@ clients get the same tools over HTTP from the gateway (see "MCP gateway").
 
 Work that is heavy, long or needs the host goes to a service outside AnythingLLM instead,
 with the MCP server or skill in the container as a thin front: `sandbox-runner` (the code
-sandbox), `browser-runner` (the workspaces' browsers), `agents-runner` (delegation) and
-`audit-runner` (the audit's checks) as host units, and `research-runner` (deep research), `podcasts-runner` (the podcasts tools) and
+sandbox), `browser-runner` (the workspaces' browsers) and `agents-runner` (delegation)
+as host units, and `research-runner` (deep research) and
 `sites-runner` (the sites tools and their builds) in service containers of their own (see
 "Service containers"). Each listens
 on a Unix socket in storage, `storage/everythingllm/<name>/runner.sock` (mode 0660), which the container
@@ -494,7 +465,7 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
   sandbox), running one that isn't a coroutine in a thread; a `hostrpc.RunnerError` becomes
   the error the caller sees, as does that of the service's own `errors` (sites-runner's
   `SiteError`); anything else is logged and reported as `runner error: …`. Every service answers `ping`, which
-  `uv run hostctl health` and the audit ask. `hostrpc.serve` serves one on its socket and removes the
+  `uv run hostctl health` asks. `hostrpc.serve` serves one on its socket and removes the
   socket on SIGTERM, or when a `stop` event is set; `hostrpc.run` is a runner's `main()`
   around it, and `hostrpc.serving` serves one for the length of a test.
 - `hostrpc.request(socket, op, args, timeout, name=…)` asks one, raising `RunnerError`
@@ -510,7 +481,7 @@ connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "resu
 - The container maps the host user (`UserNS=keep-id`), so what a service writes in storage
   is the container's to read and the other way round, and file locks work across both.
 - A new one: an `OPS` tuple and a `main()` that calls `hostrpc.run` in the package's
-  `tools.py` (`packages/podcasts` is the example), a `<name>-runner` console script, a unit
+  `tools.py` (`packages/sites` is the example), a `<name>-runner` console script, a unit
   `host/systemd/<name>-runner.service` with its own venv in `~/.local/share/everythingllm/`, and
   an app `<name>` in `apps.toml` with `runner` naming that unit (see "The apps"). Its socket
   is `storage/everythingllm/<name>/runner.sock`, where `hostrpc.caller` looks. A runner may
@@ -534,9 +505,8 @@ on its own: its template goes from `host/systemd/<x>.service` to
 stops and disables it and moves its installed copy to the backups (systemd prefers
 `~/.config/systemd/user/<x>.service` to the unit Quadlet generates under the same name),
 then starts the container; a guarded runner with a run going is left for a later run.
-`uv run hostctl diff` lists what it would retire. So far the relay, research-runner,
-sites-runner and the podcasts' runner and workers have moved (podcasts-web, splice's, stays
-a host unit); the old venvs in `venvs/<name>/` can go once their containers work.
+`uv run hostctl diff` lists what it would retire. So far the relay, research-runner
+and sites-runner have moved; the old venvs in `venvs/<name>/` can go once their containers work.
 
 **The image.** Every service container runs `localhost/everythingllm-service`
 (`host/containers/service/Containerfile`): `python:3.12-slim`, the host's uv copied from its
@@ -596,7 +566,7 @@ proxy is guarded by research's runs, since its restart cuts their requests.
 Quadlet in podman 5.4 has no `Memory=` or `Umask=`; `PodmanArgs` carries them, and
 `hostctl`'s tests convert every template with `/usr/libexec/podman/quadlet -dryrun`, which
 refuses a key it doesn't know. A template never sets `ContainerName=`: Quadlet's
-`systemd-<x>` is the name the audit and `<app>-logs` find its journal by. Inside, the
+`systemd-<x>` is the name `<app>-logs` finds its journal by. Inside, the
 `anythingllm` group shows as `nogroup` (65534): access through it works, but code can't
 chgrp to it or look it up by name; storage's setgid folders give new files the group
 anyway.
@@ -641,9 +611,8 @@ port asked for:
   | profile  | containers (address)                                        | public | allow                         |
   |----------|-------------------------------------------------------------|--------|-------------------------------|
   | relay    | relay (.10)                                                 | no     | `PUBLIC_HOST:3001`, ntfy :443 |
-  | research | research-runner (.11)                                       | yes    | `PUBLIC_HOST:3001`, `:8888`   |
+  | research | research-runner (.11)                                       | yes    | `PUBLIC_HOST:8888`            |
   | sites    | sites-runner (.12)                                          | yes    | `PUBLIC_HOST:8888`            |
-  | podcasts | podcasts-runner, -sync-worker, -transcribe-worker (.13–.15) | yes    | —                             |
 
 - A public host must resolve to public addresses only, all of them: the rule is
   `publicweb.public_address`, the one the services use on the host, so loopback, the LAN,
@@ -835,7 +804,7 @@ and the host's own ports don't. `upload.pypi.org` stays blocked, so code can't p
 data out through a package upload either. To allow another host, add an anchored regex to
 `allowlist` and run `uv run hostctl sandbox-setup`, which rebuilds the proxy image.
 
-The `logs` and `services` audit checks cover both units and ping the runner.
+`uv run hostctl health` checks both units and pings the runner.
 
 ## Browser
 
@@ -1015,264 +984,6 @@ can't take back.
 and :8454, and starts `browser-runner` (`host/systemd/browser-runner.service`). Restarting
 the runner stops every browser (the profiles stay).
 
-## Podcasts
-
-The `podcasts` MCP server and the `add-podcast` and `remove-podcast` skills keep private
-copies of podcasts: `add-podcast(url, keep)` subscribes to a show's RSS feed, and its newest `keep` episodes (default 5, up to 100, or
-`"all"` for the whole catalog) are downloaded to `~/.local/share/everythingllm/podcasts/audio/` and listed in a
-feed of our own, `https://<PUBLIC_HOST>:8445/podcasts/<slug>/feed.xml`, which podcasts-web
-serves (range requests included, so players can seek). `/podcasts/` lists every feed. Ask the
-agent, e.g. `@agent download the last 10 episodes of Hard Fork`, then paste the feed URL
-into a podcast app. The MCP tools: `find_podcast`, `list_podcasts` (downloads, progress,
-errors), `search_podcasts`, `refresh_podcasts`; `remove-podcast` deletes the downloads.
-
-`find_podcast(query)` turns a show's name, an Apple Podcasts link, the show's website or a
-feed URL into feed URLs for `add-podcast`. Names go to Apple's podcast directory (the iTunes
-Search API, no key), Apple links are looked up by their id, and web pages are read for their
-`<link rel="alternate" type="application/rss+xml">`. Every candidate is fetched and parsed
-first, and the reply lists each working feed with its title, author, episode count and
-latest episode; the whole call, checks included, has 45 s (as does `add-podcast`'s fetch),
-inside AnythingLLM's 60 s tool limit. A page with no feed link (Spotify,
-Amazon Music, Audible and iHeart pages never have one) gets a note to search by name, since
-a show found only in such an app has no public feed.
-
-- Use an app that fetches feeds from the phone itself (AntennaPod, Podcast Addict), with
-  Tailscale on. Apps that fetch through their own servers (Pocket Casts, Overcast, Apple
-  Podcasts' sync) can't reach a tailnet address.
-- The MCP server in the container only forwards each tool call to `podcasts-runner`
-  (`packages/podcasts/src/podcasts/tools.py`, socket `storage/everythingllm/podcasts/runner.sock`;
-  the rest of its data is in `~/.local/share/everythingllm/podcasts/`; see "Services on the
-  host"), which runs the tool and sends back its text. The feeds, the model's key and the
-  audio stack never touch AnythingLLM's container: the sync and transcription run in two
-  long-running workers, `podcasts-sync-worker` and `podcasts-transcribe-worker`.
-- The runner and both workers run in service containers of their own (see "Service
-  containers"; `host/quadlet/podcasts-{runner,sync-worker,transcribe-worker}.container.in`,
-  each with its venv in `~/.local/share/everythingllm/venvs/<name>-ctr/`), at
-  `10.89.79.13`–`.15` on egress-net, all three in egress.toml's `podcasts` profile: public
-  hosts on ports 80 and 443 (feeds and episodes, Apple's directory, DeepSeek, and Hugging
-  Face for Whisper's model), nothing of ours. A feed or an episode on a private address is
-  refused by the proxy rather than by `publicweb`, so its error reads `403 Forbidden`; one
-  on another port is refused too. Each mounts only what it uses, at its host path: the
-  state folder (`~/.local/share/everythingllm/podcasts/`, with the queue and `models/`) and
-  the served folder (`pages/public/podcasts/`), plus the runner's socket folder (the only
-  one that writes in storage, so the only one with `GroupAdd=keep-groups`) or its share
-  of AnythingLLM's `.env`, read-only (the workers': the DeepSeek key and model); the repo, read-only, gives the
-  transcription worker `host.env`. Locks (`sync.lock`, `transcribe.lock`, `feeds.lock`)
-  work across them, as they're all on the host's filesystem. `podcasts-web` stays a host
-  unit: it only reads what they write. Each first start syncs its venv (the `host` extra:
-  Whisper, PyAV, onnxruntime, about 500 MB installed) through the proxy, which took about
-  10 minutes here; until then the runner's socket isn't there and the tools say the
-  service isn't running.
-- MCP tool calls time out after 60 s, so the runner only asks for the sync and returns. It
-  leaves a request in `~/.local/share/everythingllm/podcasts/queue/`
-  (`sync-<slug>.json`, or `sync-_all.json` for every feed), and the sync worker
-  (`podcasts.sync`) takes them from there, one sync at a time, looking every couple of
-  seconds; so restarting the runner, AnythingLLM or the container stops none. A sync of
-  every feed takes the single feeds' requests waiting with it, and what is asked for
-  during a sync waits for the next. The worker touches `queue/sync-worker.alive` every few
-  seconds; when it's older than a minute, `refresh_podcasts` says the worker isn't running
-  (and `add-podcast` that nothing downloads until it is), and the request waits for it.
-  `podcasts-sync [slug]` asks by hand (`uv run --package podcasts --extra host
-  podcasts-sync hard-fork`). Each sync takes `~/.local/share/everythingllm/podcasts/sync.lock`;
-  one that finds it held (a transcript being saved, an old sync) is asked for again, said
-  once, and the worker looks at the lock every 30 seconds until it's free. It takes
-  one feed and one episode at a time, rewrites `feed.xml` after every download, deletes
-  episodes that fall out of the newest `keep`, and picks up feeds added while it runs. Its
-  output goes to `~/.local/share/everythingllm/podcasts/sync.log` (the worker's own lines,
-  which sync it starts and how it ended, to the journal); what each show has is in
-  `~/.local/share/everythingllm/podcasts/shows/<slug>.json`, subscriptions in `~/.local/share/everythingllm/podcasts/feeds.json`, and
-  when the last sync started and finished (and its traceback, if it crashed) in
-  `~/.local/share/everythingllm/podcasts/last_sync.json`, which `list_podcasts` reports on.
-- A feed that fails to load, or crashes the sync, gets the error in its record and keeps
-  its downloads; the other feeds still sync. A feed that comes back with no episodes keeps
-  what it has too ("the feed lists no episodes right now"), rather than being pruned to
-  nothing. Downloads pause for the rest of a sync when the disk has under 20 GB free.
-- New episodes are downloaded newest first, at most 30 a day per show (`DAILY_DOWNLOADS`,
-  counted in `~/.local/share/everythingllm/podcasts/downloads.json` by the day in `PODCASTS_TZ`). A show's
-  regular episodes never come near that; a catalog (`keep="all"`) comes down over days
-  instead of filling one sync for hours, and the other shows' new episodes still get
-  through. Its record says how many more wait.
-- `add-podcast(rules="...")` says in plain words which episodes to download: "skip the
-  spin-off It Could Happen Here", "skip weekend episodes", "only the nightly episodes Jon
-  Stewart hosts; skip compilations, recaps and archive episodes". AnythingLLM's default
-  model (DeepSeek) reads each episode's title, description, length, and weekday and date
-  in `PODCASTS_TZ` (default Europe/Stockholm; worked out by the code, since models get
-  weekdays wrong) and answers keep or skip with a reason (`rules.py`), 20 episodes a
-  request and only as far back as `keep` needs. Skipped episodes aren't downloaded and
-  don't count toward `keep`, and ones already downloaded are deleted at the next sync;
-  `list_podcasts` lists the skipped ones with the model's reasons, and `sync.log` every
-  verdict. `rules=""` downloads everything.
-  - Each verdict is asked for once and kept in `~/.local/share/everythingllm/podcasts/verdicts/<slug>.json`
-    until the rules change, since a model asked twice may answer differently, and an
-    episode that flipped to skipped would be deleted.
-  - When the model can't answer (no DeepSeek key, an error, an answer that doesn't cover
-    every episode), the feed's record says so, downloaded episodes stay, and new ones wait
-    for the next sync, along with anything older: an old episode fetched in the meantime
-    would only be pruned once the newer one is judged.
-- The sync worker asks for every feed's sync itself every 6 hours, at 00:00, 06:00, 12:00
-  and 18:00 local time (`queue/sync-worker.last` says when it last did, so a slot missed
-  while it was down comes at once when it starts, as `Persistent=true` did for the timer it
-  replaced, which in turn replaced a scheduled job that only called `refresh_podcasts`; no
-  agent is involved). Stopping it (a reboot, `uv run hostctl podcasts-setup`, or `uv run
-  hostctl units` changing its unit) stops a sync at its next feed or scrub, or partway
-  through a download, and asks for it again, so the next start finishes it;
-  `list_podcasts` says so meanwhile. A sync it has taken is held in
-  `queue/running-sync.json` until it's done, so one the worker didn't live through (killed
-  after the 60 s stop timeout, out of memory, a crash) is asked for again when it next
-  starts, twice in a row at most: one that kills the worker every time waits for the next
-  scheduled sync instead of looping. Episodes downloaded but not yet looked at for ads stay out of the feed and are
-  downloaded again then, as is one whose download was cut off, and a day later that cleans
-  up what was left.
-- Our feed is built from scratch from the show's title, art and episode details, not
-  copied, so `itunes:new-feed-url` and the like can't send the app back to the public feed.
-- When a show moves its feed, the sync follows: after a permanent redirect (301/308), or to
-  the feed's `itunes:new-feed-url` if that feed loads and has episodes (one move per sync,
-  so feeds pointing at each other can't loop), it saves the new URL in `feeds.json` and
-  logs the move to `sync.log`. Our private feed URL stays the same.
-- Feed and episode URLs must be http(s) and resolve to public addresses (checked on every
-  redirect too), so a feed can't make the server fetch the LAN, the tailnet or AnythingLLM's
-  API onto the pages site. Only known audio and video types are kept (a `text/*` reply is
-  refused), at most 2 GB per episode.
-
-### Originals, cuts and podcasts-web
-
-A downloaded episode is never changed. What to leave out of it is a list beside it, and what
-an app downloads is put together from the two each time it's fetched, so a cut can be
-changed or undone, and nothing is stored twice.
-
-- `~/.local/share/everythingllm/podcasts/audio/<sha256>.<ext>`: each episode as downloaded, named by its hash.
-  The fingerprints (`prints/<slug>/<sha256>.npy`) and transcripts
-  (`transcripts/<slug>/<sha256>.json`, in the original's times) are keyed by the same
-  hash, so they stay right whatever is cut.
-- `~/.local/share/everythingllm/podcasts/cuts/<sha256>.json`, the sidecar: `{audio, cuts: [{start, end, source,
-  reason, active}], legacy_cut}`, in seconds of the original. `source` is `repeat` (the ad
-  scrubber), `ad-read` (the transcript's ad reads) or `agent`. Inactive cuts stay in the
-  list but aren't left out; that's how `ad_words="report"` keeps its reads.
-- `~/.local/share/everythingllm/podcasts/manifests/<slug>/<name>.json`: what podcasts-web serves at
-  `/podcasts/<slug>/<name>`. For an MP3, it's byte ranges of the original with the frames
-  (26 ms each) that start inside a cut left out, plus a new Info/Xing frame with the new
-  frame count and seek table, so apps show the right length and seek right. Nothing is
-  re-encoded, and with no cuts it's the original byte for byte. Chapters in the ID3 tag
-  are dropped when there are cuts, since their times would be wrong. Anything that isn't an
-  MP3, or an MP3 `splice` can't read, is cut once with PyAV into
-  `audio/<sha256>.<cutid>.<ext>` instead.
-- The served name is `<stem>.<ext>` with no cuts and `<stem>.<cutid>.<ext>` with some,
-  `cutid` being a hash of the active cuts. So a podcast app sees a new file whenever the
-  cuts change, and the `.vtt` beside it is renamed and shifted to match. Whatever changes a
-  sidecar calls `Library.render`. The sync also renders every episode, so a sidecar edited
-  by hand takes effect at the next sync. A replaced manifest is kept for a day, for apps
-  that fetched the feed before the change.
-- At the end of each sync, originals, sidecars and manifests that no feed's record refers
-  to are deleted. Originals wait a day, in case a download isn't in a record yet.
-  `remove-podcast` deletes the show's at once.
-- `splice-web` (`packages/splice`, standard library only, `host/systemd/podcasts-web.service`,
-  its own venv in `~/.local/share/everythingllm/venvs/splice`) is mapped to `:8445/podcasts` by
-  `tailscale serve`, ahead of the pages site's Caddy. It serves manifests with range
-  requests, `HEAD`, `ETag`/`If-Range` and `sendfile`. Anything else under
-  `~/.local/share/everythingllm/pages/public/podcasts/` (feeds, transcripts, the index) it serves as a file, with the
-  pages site's CSP and `nosniff`, never following a symlink or leaving that folder.
-  `uv run hostctl health` checks it, and the audit reads its journal.
-- Episodes downloaded before this kept only their cut file. The first sync after the change
-  moves each into `audio/` as its original, with the time already cut noted as `legacy_cut`,
-  and keeps its served name, so podcast apps see no change.
-
-### Ad scrubbing
-
-Each sync finds the ads in new episodes before they join the private feed. Ads, and the
-bumpers around ad breaks, play in many episodes of a show and the talk in only one, so the
-sync leaves out every stretch of at least 4 s that an episode shares with another episode of
-the same show (`podcasts.fingerprint`, a spectral-peak fingerprint matcher, finds them). They become the
-episode's `repeat` cuts (see above). `list_podcasts` shows how much was cut from each
-episode and by what, and the sync logs each episode's cuts to `sync.log`.
-
-- It's on for every podcast unless turned off: `add-podcast(url, scrub_ads=false)`, or ask
-  the agent to stop cutting ads from a show. Episodes already cut stay cut.
-- What goes: repeated ads (dynamic ads differ between episodes, so an ad is only caught once
-  it has run in two of them), ad-break bumpers, and the show's theme where it plays alone.
-  Theme music with talk over it stays. A repeat longer than 8 minutes is kept, since that
-  is a rerun or a replayed segment.
-- Each episode's fingerprint, taken from its original, is kept in
-  `~/.local/share/everythingllm/podcasts/prints/<slug>/` (about 2 MB an hour; the newest 10 per show), so a
-  new episode is compared with the earlier ones without decoding them again, including
-  ones pruned. With `keep` 1, the first episode has nothing to compare with and goes out
-  as it is.
-- A new episode joins `feed.xml` only once its ads have been looked for, so a podcast app
-  never fetches it with its ads. Episodes already in the feed when scrubbing is turned on
-  stay in it while they are. One that can't be read goes out as it is, with the error in its
-  record.
-- Reading an episode takes about 15 s an hour of audio and about 450 MB of memory an hour
-  of audio, in the sync worker (which has 6 GB, and slows down past 5). An episode over
-  8 hours isn't looked at, so it can't run the worker out of memory at the same place on
-  every sync: it goes out as it is, with that in its record. Video episodes aren't cut.
-
-### Transcripts
-
-The transcription worker (`podcasts-transcribe-worker.service`, `podcasts.transcripts`)
-transcribes every downloaded episode with Whisper's `base` model, newest first, in a pass
-every 6 hours, half an hour after each scheduled sync (00:30, 06:30, …; a slot missed while
-it was down comes at once when it starts, from `queue/transcribe-worker.last`). It makes one
-when asked too (`uv run --package podcasts --extra host podcasts-transcribe`, which leaves
-`queue/transcribe.json`), and as it starts after dying in one. It transcribes the original, and keeps the
-segments in its times in `~/.local/share/everythingllm/podcasts/transcripts/<slug>/`. Each transcript is published
-as `<episode>.vtt`, named and shifted to match what's served (cut lines left out), and linked
-from `feed.xml` (`<podcast:transcript>`), so apps such as AntennaPod show it. The
-`search_podcasts(query)` tool searches the kept segments, shifted the same way. It returns
-the show, episode and time of each mention: the exact phrase, or else every word within a
-few lines of each other.
-
-- It runs apart from the sync, at nice 19, on as many threads as
-  `PODCASTS_TRANSCRIBE_THREADS` in `host.env` gives for the time of day: a number, or
-  entries like `08:00=4,22:00=1` (all 4 cores by day, fans audible; 1 at night, quiet,
-  since on 2 they spin up). Unset, it is 1. The worker reads it from `host.env` again at
-  every pass, so a change needs no restart. A pass checks between episodes and loads
-  Whisper again when the period changes; 0 threads pauses it until the next entry (the
-  pass stops, and a later one starts again). Whisper is slow on this CPU: about 8
-  minutes an hour of audio on every core. After each episode it takes the newest one
-  waiting, so a show's new episode goes ahead of a catalog's backlog. It holds no lock while transcribing or looking for ad reads, then takes the sync lock briefly to save the
-  result, but only if the episode's original and served file are still the ones it
-  transcribed. A second pass
-  gives way at once while one is going (`~/.local/share/everythingllm/podcasts/transcribe.lock`); its output is in
-  the journal (`uv run hostctl podcasts-logs`).
-- **Quiet hours.** `PODCASTS_QUIET_HOURS` in `host.env` (e.g. `22:00-06:00`, in
-  `PODCASTS_TZ`; unset, none) are the hours neither worker does its loud work, so the fans
-  stay quiet at night. A sync still downloads then, but neither reads episodes for their
-  ads nor cuts them: those episodes wait, unpublished, for the first sync after (06:00's),
-  and a scrub already going finishes first. The transcription worker starts no episode,
-  as with 0 threads. Both read it from `host.env` each time, so a change needs no restart.
-- Its container caps it at 6 GB (`--memory=6g`; its unit slows it down past 5 GB,
-  `MemoryHigh`). Past that the kernel kills the worker, not the rest of the host; it
-  starts again, and its first
-  pass marks the episode it died on failed (`transcribing.json` names it) and goes on with
-  the rest. A stop, by contrast, removes `transcribing.json`, so it isn't held against the
-  episode, and the worker exits 143, which the unit counts as success.
-- The model (about 150 MB) is downloaded on first use to `~/.local/share/everythingllm/podcasts/models/whisper/base`,
-  from Hugging Face through the egress proxy (`HF_HOME` is in the container's `/tmp`).
-- **Ad reads.** Audio fingerprints miss an ad heard for the first time, or one the host
-  reads in their own words, so AnythingLLM's default model (DeepSeek, key and model from
-  AnythingLLM's `.env`, through the shared `llm` package) reads each new transcript, half an hour at a time, and names
-  the lines each ad runs over: sponsor reads, promos for other shows, ad-free tiers, and
-  the show's own Patreon and merch plugs, but not content warnings or credits. A read must
-  last 5 s to 6 min; anything else it names is ignored. Without a key, or when its answer
-  can't be used, a phrase list does it instead ("brought to you by", "use code",
-  "x.com/show" and the like, two within a minute). Per show, `add-podcast(ad_words=...)`
-  picks what happens to them. `cut` (the default) makes them active `ad-read` cuts, left out
-  of what's served and of the transcript. `report` keeps them as inactive cuts, which
-  `list_podcasts` lists as possible sponsor reads. `off` ignores them. Every read
-  found is logged with its opening words (`uv run hostctl podcasts-logs`), to check what was cut.
-- `add-podcast(transcribe=false)` turns transcripts off for a show. An episode that can't be
-  transcribed gets the error in its record and isn't tried again.
-
-To look at what would be cut without cutting it:
-
-    uv run --package podcasts --extra host spot repeats ep1.mp3 ep2.mp3 ep3.mp3
-
-Ask the workers for a sync (every feed, or one, logging to
-`~/.local/share/everythingllm/podcasts/sync.log`) or a transcription pass by hand:
-
-    uv run --package podcasts --extra host podcasts-sync
-    uv run --package podcasts --extra host podcasts-sync hard-fork
-    uv run --package podcasts --extra host podcasts-transcribe
-
 ## News articles
 
 A Daily News headline doesn't link to the outside source. It opens an article the bot
@@ -1334,8 +1045,7 @@ Someone watching the card counts as following the run, as the skill's wait used 
 link opens the report once it's published, and until then a page of the run's latest
 progress lines that reloads itself. Each run's line in the run log keeps its `run_id` and
 `card`, so a run the runner no longer holds (an hour after it ended, or after a restart)
-gets one frame of how it ended from the log, the audit's `research_run` hands the card out
-again, and an old chat's card still opens the report.
+gets one frame of how it ended from the log, and an old chat's card still opens the report.
 
 A run, step by step:
 
@@ -1361,18 +1071,9 @@ A run, step by step:
    read it, then saved and built in `~/.local/share/everythingllm/pages/entries/research/reports/` through `SiteStore`,
    as the `sites` server does; the live card turns green and links to it. If publishing
    fails (the site doesn't keep an entry it couldn't build), the card says so and the run
-   log has the saved file and the error.
-7. **Keep a copy** — unless the `EMBED_IN_WORKSPACE` setup
-   arg is `no`, it's also stored as an AnythingLLM document and embedded into the
-   workspace that ran it, so later chats can search it. research-runner reads the web, so
-   it holds no AnythingLLM login: it writes the document to
-   `storage/documents/deep-research-incoming/` and asks audit-runner, on a socket that does
-   nothing else (`storage/everythingllm/research-embed/`, `audit.embed`), which moves it to
-   `storage/documents/deep-research/`, out of the container's reach and never through a
-   symlink, and embeds it through AnythingLLM's API as the UI's document picker does
-   (`POST /api/workspace/<slug>/update-embeddings`, then a look at the workspace's
-   documents, since the native embedder doesn't say what it embedded). Scheduled jobs have no workspace, so they only save the file. A failure here
-   only warns: the reply and the run log (`file_error`, `document_error`) say so.
+   log has the saved file and the error. A file that couldn't be saved only warns: the
+   reply and the run log (`file_error`) say so. That's all a run keeps: the report isn't
+   added to a workspace's documents, and the agent finds it with `sites list_entries`.
 
 Depth (`quick` / `standard` / `thorough`, default standard) sets workers, steps per worker,
 gap rounds and a search budget (15 / 40 / 80); see `packages/research/src/research/config.py`. Models are setup args:
@@ -1418,9 +1119,9 @@ DuckDuckGo, and SearXNG returned nothing until they recovered. Since then:
 More engines in SearXNG's settings (Ansible) keep search working when one blocks us.
 
 A run doesn't stop when its chat closes, or when AnythingLLM restarts: it belongs to the
-runner, which publishes and embeds the report as usual. A run nobody was watching (its
+runner, which publishes the report as usual. A run nobody was watching (its
 card, or a `wait`) when it finished gets `chat_closed: true` in the run log. To
-find the report, ask in that workspace or open the research site. A run can't be
+find the report, ask the agent (it looks with `sites list_entries`) or open the research site. A run can't be
 cancelled from the chat: `FORCE=1 uv run hostctl research-setup` restarts the runner, which kills
 every run in it. Runs are bounded by their search budget either way. At most 2 run at once;
 another waits its turn, and its progress says so.
@@ -1429,9 +1130,8 @@ Only a restart of `research-runner` kills a run without a result, so while a run
 it has a marker in `~/.local/share/everythingllm/research/runs/running/<id>.json` (its question and when it
 started), touched every minute. When the runner starts, it moves every marker into the
 log as status `interrupted`, since none of them can be its own; until then, a marker quiet
-for its `stale_ms` (3 minutes) reads as interrupted to the audit, and a fresh one as
-`running`. The audit's `research_run(question=...)` finds a run by words from its question,
-so the agent can tell the user what happened instead of finding no such run.
+for its `stale_ms` (3 minutes) belongs to a run that's gone too (`hostctl.run_guard` reads
+it so), and a fresh one to a run that's going.
 `uv run hostctl research-setup` and `uv run hostctl units` (when the unit changed) list the live runs and ask
 before restarting the runner; with no terminal to ask they stop, unless `FORCE=1`
 (`hostctl.run_guard`). `uv run hostctl restart` and `uv run hostctl deploy` restart AnythingLLM only,
@@ -1445,7 +1145,7 @@ chat closed before it finished (`chat_closed`), the report URL and whether it
 published, its stats (including `tokens`, with `cached` the input the provider served from
 its prefix cache, `fact_check` and per-worker `workers_detail` with why
 each stopped: `done`, `budget`, `wasted`, `search-down`, `notes-full`) and every progress
-line. AnythingLLM keeps only a chat's final reply, so this is the record the audit reads.
+line. AnythingLLM keeps only a chat's final reply, so this is the run's record.
 
 **Its container.** research-runner runs in `localhost/everythingllm-service`, hardened as
 every service container is (see "Service containers"), with 2 GB, 2 CPUs and 256 PIDs (two
@@ -1462,8 +1162,7 @@ host path:
   mount (the link cards go in its `_cards/`)
 - in storage: its socket folder; the sandbox's build socket's (`sandbox-build/`, which
   serves only `build_system_site`), read-only (connecting needs no more): the research site has `theme_from = "system"`, so no zola runs in the
-  container; audit-runner's embed socket's (`research-embed/`, which only embeds a report),
-  read-only; `anythingllm-fs/research/` and `documents/deep-research-incoming/`
+  container; `anythingllm-fs/research/`
 - its share of AnythingLLM's `.env` (`~/.config/everythingllm/ctr/research-runner.env`),
   read-only: the DeepSeek and Z.AI keys and DeepSeek's model, never AnythingLLM's password
 
@@ -1527,7 +1226,7 @@ unused).
   progress, and every task's reply once the delegation is done, escaped and under a CSP
   that allows nothing but the page's own CSS (`runs.live`).
 - **The run log** is `~/.local/share/everythingllm/agents/runs/` (`runs.runlog`, as
-  research's). The audit doesn't read it yet.
+  research's).
 - **The daily budget.** AnythingLLM's agent sends every page a task has read again with
   each step, so a task that reads a lot uses a lot of tokens (millions, for one that read
   eight pages), and a running task can't be stopped. On DeepSeek that was $0.20-0.60 a
@@ -1551,13 +1250,12 @@ kept out of git). It's one more front on the host, over the same runner sockets.
 come in groups, and a client gets the groups it's granted. Two tools of the same name stop
 it from starting.
 
-- **The fronts' read tools** (groups `sites`, `podcasts`, `audit`). It imports
-  `sites.server`, `podcasts.server` and `audit.server` and serves each one's
+- **The fronts' read tools** (group `sites`). It imports
+  `sites.server` and serves its
   `tool.registered` (what `hostrpc.forwarder` registered), so the schemas and docstrings are
   the ones AnythingLLM sees.
-- **The fronts' skills as tools** (`sites:write`, `podcasts:write`, `audit:write`):
-  `write_entry`, `delete_entry`, `add_podcast`, `remove_podcast`, `publish_report` and
-  `run_job`. The gateway wraps each front's `skills` (signatures, as its tools are) with
+- **The fronts' skills as tools** (`sites:write`):
+  `write_entry` and `delete_entry`. The gateway wraps each front's `skills` (signatures, as its tools are) with
   `hostrpc.forwarder` itself, so each call goes to the front's runner under the op's name,
   as the generated skill's does.
 - **Fronts declared in the gateway** (`agents`, `research`, `sandbox`): `gateway/agents.py`,
@@ -1571,10 +1269,9 @@ it from starting.
   these delegations too.
 - **Deep research** (`research`): `research_start(question, depth, sub_questions, title)`,
   `research_wait(run_id, since)` and `research_runs()` over research-runner. A run started
-  here has no workspace (`workspace` None, `embed` false, whatever the arguments say), so
-  its report is published to the research site and saved to the runner's files, and added to
-  no workspace's documents; the models are the runner's defaults, not the deep-research
-  skill's setup args. `research_start` answers at once with `{run_id, queued, card}`; a
+  here takes the runner's defaults: its report is published to the research site and saved
+  to the runner's files, and the models are the runner's, not the deep-research skill's
+  setup args. `research_start` answers at once with `{run_id, queued, card}`; a
   client follows the run with `research_wait` as with `agents_wait`, and once it's done
   the result's `url` ends in the report's slug, which it reads with
   `get_entry(site="research", section="reports", slug)` (the `sites` group).
@@ -1742,59 +1439,6 @@ connection to AnythingLLM that breaks mid-answer, or ten silent minutes, fails t
 ("The connection to AnythingLLM broke during the answer.") rather than completing it with
 what came; and a `clientId` is remembered as long as its run is kept, so reusing it later
 returns that old run.
-
-## System audit
-
-The "System Audit" scheduled job checks this setup every day and publishes what it finds
-to the `status` site. The checks and the report are fixed code in the `audit` MCP server,
-which forwards each tool call to `audit-runner` on the host (`packages/audit/src/audit/tools.py`,
-`host/systemd/audit-runner.service`, socket `storage/everythingllm/audit/runner.sock`), where the checks
-can read the journal and every service's socket; the model only writes a summary and
-suggests a fix per finding. Its tools:
-
-- `run_checks(since_hours)` — every check, numbered findings grouped as fail / warn / info.
-  Fail and warn come in full; info is trimmed to the 5 a report keeps (taken an area, then
-  a title, at a time), one line each:
-  - logs: error-like lines from AnythingLLM, SearXNG, the pages Caddy,
-    and the host services (the apps' units, `WATCHED` in `audit/services.py`) in the host journal, grouped with counts (SearXNG's per-engine errors become
-    counts per engine; known noise is skipped, see `NOISE` in `checks.py`);
-  - search: a test query to SearXNG, and which engines refuse it;
-  - services: every app's runner (`RUNNERS` in `audit/services.py`) answers `ping` on its
-    socket, and the sandbox runner with no problems (its image, network and proxy are up);
-  - llm: when `LLM_PROVIDER` is openrouter, what's left on the key's limit and the account
-    (OpenRouter's `/api/v1/key` and `/api/v1/credits`, with `OPENROUTER_API_KEY` from
-    AnythingLLM's `.env`): warn under $2, fail under $0.25 (`AUDIT_CREDIT_WARN_USD`,
-    `AUDIT_CREDIT_FAIL_USD`), since out of credit every chat fails with 402;
-  - jobs: scheduled-job runs from AnythingLLM's API, judged by what they did rather than
-    what they said: failed or timed-out runs (AnythingLLM keeps nothing of a timed-out run,
-    so the finding gives only how long it ran), tool calls that returned errors, runs with no
-    successful tool call, replies that end in raw tool-call markup (the model stopped mid
-    call), and enabled jobs that missed a run (no run started at or after their
-    `nextRunAt`, which AnythingLLM leaves at the time a job last ran);
-  - research: deep-research runs from their run logs: failures, unpublished reports, failed
-    searches, a failed fact-check, workers that found nothing or hit dead search;
-  - sites: every site's home page and each section's newest entry answer 200, no entry file
-    is newer than the site's last build (its `.zola-site` marker; a write that saved but
-    didn't rebuild), plus each section's `[extra.audit]`, with ages in Stockholm days.
-- the `publish-report` skill (`publish_report(summary, suggestions, status?)` on the
-  runner) — writes the day's report to
-  `status/reports/YYYY-MM-DD` (the Stockholm date) through the sites store and build: the
-  findings from this run's `run_checks` (or a fresh run when there's none from the last
-  hour), the model's summary, and its
-  suggestions keyed by finding number. The `reports` section is `agent_readonly`, so only
-  this op writes it.
-- `journal_lines`, `job_run`, `research_run` — the raw material behind a finding
-  (`research_run` gives the run's last 30 progress lines).
-- the `run-job` skill (`run_job(name)`) — runs an existing scheduled job now (AnythingLLM's
-  `POST /scheduled-jobs/:id/trigger`) and returns the run id. It's for chat ("redo today's
-  news"), so the agent doesn't make one-off cron jobs; the audit job never calls it.
-
-The checks all run in one tool call, which AnythingLLM gives up on after 60 s, so
-journalctl and each ping stop after 20 s (`COMMAND_SECONDS`, `PING_SECONDS`).
-
-Run the checks by hand on the host, as audit-runner does:
-
-    uv run --package audit python -c 'from audit.tools import run_checks; print(run_checks(24))'
 
 ## SearXNG
 

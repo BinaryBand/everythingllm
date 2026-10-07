@@ -24,14 +24,14 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
         "anythingllm.container",
         "static_agent.container",
         "log-filter.conf",
-        "podcasts-web.service",
-        "podcasts-sync-worker.container",
+        "browser-runner.service",
+        "research-runner.container",
     } <= set(planned)
     for unit in planned.values():
         assert not units.PLACEHOLDER.search(unit.text), unit.source
         assert "dev/everythingllm" not in unit.source.read_text(), unit.source
     assert "Volume=/repo:/mcp:ro" in planned["anythingllm.container"].text
-    assert "EnvironmentFile=/repo/host.env" in planned["podcasts-web.service"].text
+    assert "EnvironmentFile=/repo/host.env" in planned["browser-runner.service"].text
     assert (
         planned["log-filter.conf"].dest
         == tmp_path / "containers" / "anythingllm.container.d" / "log-filter.conf"
@@ -41,9 +41,9 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
         True,
     )
     assert (
-        planned["podcasts-web.service"].service,
-        planned["podcasts-web.service"].always,
-    ) == ("podcasts-web.service", False)
+        planned["browser-runner.service"].service,
+        planned["browser-runner.service"].always,
+    ) == ("browser-runner.service", False)
 
 
 def test_rendering_refuses_a_missing_setting():
@@ -298,7 +298,7 @@ def test_hold_back_leaves_a_guarded_runner_with_a_run_going(
 
 
 def test_a_container_waits_for_the_proxy_it_wants(tmp_path, monkeypatch, capsys):
-    """`units podcasts` before `units egress` would start containers whose first uv sync
+    """`units sites` before `units egress` would start containers whose first uv sync
     can't reach PyPI, and they'd crash-loop: a container held to the egress proxy waits
     until the proxy's unit is installed."""
     monkeypatch.setattr(units, "podman_has", lambda kind, name: True)
@@ -348,8 +348,8 @@ RENDERED = (
 
 
 def test_a_rendered_unit_with_no_template_is_retired(tmp_path, monkeypatch, capsys):
-    """The podcasts' timers went when their workers came, and a runner's host unit goes
-    when its container comes: the installed copies would keep firing, or hide Quadlet's
+    """A timer goes when its app's workers come, and a runner's host unit goes when its
+    container comes: the installed copies would keep firing, or hide Quadlet's
     unit of the same name. Only units this rendered (or linked the old way) count."""
     ran = []
     monkeypatch.setattr(
@@ -425,16 +425,16 @@ def test_an_apps_host_units_stay_while_its_containers_cant_start(
     planned = plan(tmp_path)
     user = tmp_path / "user"
     user.mkdir()
-    for name in ("research-runner.service", "podcasts-sync.timer"):
+    for name in ("research-runner.service", "research-old.timer"):
         (user / name).write_text(RENDERED)
     old = units.retired(planned, user)
     start, left = units.retire(old, planned, tmp_path / "backup")
     assert (start, sorted(left)) == (
         [],
-        ["podcasts-sync.timer", "research-runner.service"],
+        ["research-old.timer", "research-runner.service"],
     )
     assert sorted(p.name for p in user.iterdir()) == [
-        "podcasts-sync.timer",
+        "research-old.timer",
         "research-runner.service",
     ]
     out = capsys.readouterr().out
@@ -446,37 +446,21 @@ def test_an_apps_host_units_stay_while_its_containers_cant_start(
     )
 
 
-def test_the_podcasts_host_units_are_retired_and_their_containers_started(
-    tmp_path, monkeypatch
-):
-    """From timers to workers to containers: on a machine with any of the podcasts' host
-    units installed, each goes, the containers take over the runner's and the workers'
-    names, and podcasts-web stays."""
+def test_an_archived_apps_host_units_are_all_retired(tmp_path, monkeypatch):
+    """An app taken out of the repo (podcasts, the audit) leaves its installed host units
+    behind: each goes, and no container takes its name."""
     monkeypatch.setattr(units.subprocess, "run", lambda *a, **kw: None)
     monkeypatch.setattr(units, "missing", lambda unit, plan=(): [])
     planned = plan(tmp_path)
     user = tmp_path / "user"
     user.mkdir()
-    old = [
-        "podcasts-runner.service",
-        "podcasts-sync-worker.service",
-        "podcasts-sync.timer",
-        "podcasts-sync@.service",
-        "podcasts-transcribe-worker.service",
-        "podcasts-transcribe.service",
-        "podcasts-transcribe.timer",
-    ]
-    for name in [*old, "podcasts-web.service"]:
+    old = ["audit-runner.service", "podcasts-sync.timer", "podcasts-web.service"]
+    for name in [*old, "browser-runner.service"]:
         (user / name).write_text(RENDERED)
     retired = units.retired(planned, user)
     assert [p.name for p in retired] == old
-    start, left = units.retire(retired, planned, tmp_path / "backup")
-    assert start == [
-        "podcasts-runner.service",
-        "podcasts-sync-worker.service",
-        "podcasts-transcribe-worker.service",
-    ]
-    assert left == [] and [p.name for p in user.iterdir()] == ["podcasts-web.service"]
+    assert units.retire(retired, planned, tmp_path / "backup") == ([], [])
+    assert [p.name for p in user.iterdir()] == ["browser-runner.service"]
 
 
 def test_units_retires_the_old_host_unit_then_starts_its_container(
@@ -520,12 +504,12 @@ def test_units_retires_the_old_host_unit_then_starts_its_container(
 
 def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, capsys):
     """`uv run hostctl units relay` switches the relay alone; sites-runner's old host unit
-    and the podcasts' old timer wait for their own runs."""
+    and research's old timer wait for their own runs."""
     import subprocess
 
     user, containers = tmp_path / "user", tmp_path / "containers"
     user.mkdir()
-    for name in ("relay.service", "sites-runner.service", "podcasts-sync.timer"):
+    for name in ("relay.service", "sites-runner.service", "research-old.timer"):
         (user / name).write_text(RENDERED + "[Service]\nExecStart=old\n")
     planned = plan(tmp_path)
     for u in planned:  # installed as the repo has them, but the two containers
@@ -556,12 +540,12 @@ def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, ca
     assert (containers / "relay.container").exists()
     assert not (containers / "sites-runner.container").exists()
     assert not (user / "relay.service").exists()
-    assert (user / "podcasts-sync.timer").exists()
+    assert (user / "research-old.timer").exists()
     assert (user / "sites-runner.service").exists()
     calls.clear()
-    units.main(["install", "podcasts"])  # a timer the registry no longer has
-    assert ["systemctl", "--user", "disable", "--now", "podcasts-sync.timer"] in calls
-    assert not (user / "podcasts-sync.timer").exists()
+    units.main(["install", "research"])  # a timer the registry no longer has
+    assert ["systemctl", "--user", "disable", "--now", "research-old.timer"] in calls
+    assert not (user / "research-old.timer").exists()
     assert (user / "sites-runner.service").exists()
     with pytest.raises(SystemExit, match="no app nope"):
         units.main(["install", "nope"])

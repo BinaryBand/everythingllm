@@ -75,9 +75,9 @@ def test_requests_get_results_and_errors(sock):
 
 def test_a_service_that_isnt_there_is_down(sock):
     with pytest.raises(
-        RunnerError, match="The podcasts runner isn.t running on the host"
+        RunnerError, match="The sites runner isn.t running on the host"
     ):
-        asyncio.run(hostrpc.request(sock, "ping", {}, 5, name="podcasts runner"))
+        asyncio.run(hostrpc.request(sock, "ping", {}, 5, name="sites runner"))
 
 
 def test_a_slow_answer_times_out(sock):

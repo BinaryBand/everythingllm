@@ -1,14 +1,14 @@
 """A service's run log: one JSON line per run in <dir>/YYYY-MM.jsonl, with what it was for,
 how it ended, its stats and every progress line. AnythingLLM keeps only a chat's final
-reply, so this is the record the audit reads (deep research's, research/runs).
+reply, so this is the record of each run (deep research's, research/runs).
 
 The line is written when the run ends, so while it runs it has a marker in
 <dir>/running/<id>.json instead: its subject, when it started and `stale_ms`. A thread
 touches the marker every minute while the run is alive. A restart of the service kills
 its runs without letting them write their lines, so the service, when it starts, moves
 every marker into the log as an "interrupted" line (none of them can be its own). A marker
-quiet for stale_ms belongs to a run that's gone too; the audit (checks.py) and
-hostctl.run_guard read it so, taking stale_ms from the marker.
+quiet for stale_ms belongs to a run that's gone too; hostctl.run_guard reads it so, taking
+stale_ms from the marker.
 """
 
 import json

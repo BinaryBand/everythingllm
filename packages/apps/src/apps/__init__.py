@@ -1,12 +1,12 @@
 """The registry of the apps this repo runs (apps.toml, next to this file), read into records.
 
 Each app's units, socket, tailnet mappings, restart guard, health checks and setup steps are
-declared there once; hostctl and the audit ask this module rather than keep copies or work
+declared there once; hostctl asks this module rather than keep copies or work
 them out from unit names. App code doesn't read it. Standard library only, like hostctl, so
 any python3 with packages/apps/src on PYTHONPATH can import it (health.sh, the `before` steps).
 
     apps = load()                 # name -> App, in the file's order
-    watched(), runners(), guarded(), app_of(unit), serve_mappings(), health_checks()
+    runners(), guarded(), app_of(unit), serve_mappings(), health_checks()
 """
 
 from dataclasses import dataclass, field
@@ -69,14 +69,6 @@ class App:
     why_not_installed: str = ""
 
     @property
-    def journal(self) -> dict[str, tuple[str, str]]:
-        """What the audit reads its logs by: journal key -> (field, label)."""
-        out = {c: ("CONTAINER_NAME", label) for c, label in self.container.items()}
-        for unit, label in {**self.units, **self.watch}.items():
-            out[unit] = ("_SYSTEMD_USER_UNIT", label)
-        return out
-
-    @property
     def container_units(self) -> list[str]:
         """The units Quadlet generates for its containers: <x>.service for systemd-<x>."""
         return [f"{c.removeprefix('systemd-')}.service" for c in self.container]
@@ -115,14 +107,6 @@ def load(path: Path = REGISTRY) -> dict[str, App]:
     """Every app, by name, in the file's order; ValueError for a field it doesn't know."""
     with path.open("rb") as f:
         return {name: _app(name, raw) for name, raw in tomllib.load(f).items()}
-
-
-def watched(apps: dict[str, App] | None = None) -> dict[str, tuple[str, str]]:
-    """The audit's services: journal key (unit, or systemd-<x> for a container) -> (field, label)."""
-    out: dict[str, tuple[str, str]] = {}
-    for app in (apps or load()).values():
-        out.update(app.journal)
-    return out
 
 
 def runners(apps: dict[str, App] | None = None) -> dict[str, str]:

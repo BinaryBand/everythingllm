@@ -32,9 +32,6 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
         "relay": "10.89.79.10",
         "research-runner": "10.89.79.11",
         "sites-runner": "10.89.79.12",
-        "podcasts-runner": "10.89.79.13",
-        "podcasts-sync-worker": "10.89.79.14",
-        "podcasts-transcribe-worker": "10.89.79.15",
         "browser-1": "10.89.79.32",
         "browser-2": "10.89.79.33",
         "browser-3": "10.89.79.34",
@@ -46,7 +43,7 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
     assert not relay.public and research.public
     assert {(TAILNET, 3001), ("ntfy.sh", 443)} <= relay.allow
     assert (TAILNET, 8888) in research.allow
-    assert (TAILNET, 3001) not in research.allow  # audit-runner embeds its reports
+    assert (TAILNET, 3001) not in research.allow
     assert (TAILNET, 8888) in config.profiles["sites"].allow
     assert (TAILNET, 3001) not in config.profiles["sites"].allow
     for p in config.profiles.values():  # uv's first sync, for every container
@@ -99,7 +96,7 @@ def test_a_connection_is_known_by_its_address():
     config = loaded()
     assert config.profile_for("10.89.79.11").name == "research"
     assert config.profile_for("::ffff:10.89.79.10").name == "relay"
-    assert config.profile_for("10.89.79.15").name == "podcasts"
+    assert config.profile_for("10.89.79.12").name == "sites"
     assert config.profile_for("10.89.79.2") is None  # the proxy itself
     assert config.profile_for("10.88.0.5") is None
     assert config.profile_for("not an address") is None

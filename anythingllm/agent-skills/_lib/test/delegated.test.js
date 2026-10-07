@@ -5,7 +5,7 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 
-const { asObject, asFlag, asInteger } = require("../runner");
+const { asObject, asFlag, asInteger, forwardSkill } = require("../runner");
 
 const SKILLS = path.join(__dirname, "..", "..");
 // Skills that only read, and so may run in a delegated task. None yet: every skill of ours
@@ -37,7 +37,7 @@ function agent(workspace) {
 
 test("every skill that writes, acts or delegates refuses a delegated task, before reaching any service", async () => {
   const service = await fakeService(() => ({ ok: true, result: "done" }));
-  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "SITES_SOCKET", "PODCASTS_SOCKET", "AUDIT_SOCKET", "AGENTS_SOCKET", "BROWSER_SOCKET"];
+  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "SITES_SOCKET", "AGENTS_SOCKET", "BROWSER_SOCKET"];
   for (const env of envs) process.env[env] = service.socket;
   try {
     const skills = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, "plugin.json")));
@@ -80,30 +80,32 @@ test("forward sends the op and its args to the service and gives back its text",
     delete process.env.SITES_SOCKET;
     await service.close();
   }
-  process.env.PODCASTS_SOCKET = "/nonexistent/podcasts.sock";
+  process.env.SITES_SOCKET = "/nonexistent/sites.sock";
   try {
-    const addPodcast = require("../../add-podcast/handler").runtime;
-    assert.match(await addPodcast.handler.call(agent("career"), { url: "https://x/feed" }), /podcasts service isn't running.*uv run hostctl podcasts-setup/);
+    const writeEntry = require("../../write-entry/handler").runtime;
+    assert.match(await writeEntry.handler.call(agent("career"), { site: "news", section: "editions", slug: "x" }), /sites service isn't running.*uv run hostctl sites-setup/);
   } finally {
-    delete process.env.PODCASTS_SOCKET;
+    delete process.env.SITES_SOCKET;
   }
 });
 
 test("a generated skill sends what's set, coerced, and leaves the rest to the op's defaults", async () => {
   const service = await fakeService(() => ({ ok: true, result: "added" }));
-  process.env.PODCASTS_SOCKET = service.socket;
+  process.env.SITES_SOCKET = service.socket;
+  // Every kind hostrpc.skillgen writes, as a generated handler's SPEC declares them.
+  const spec = { service: "sites", env: "SITES_SOCKET", op: "add", params: { url: "string", keep: "integer", scrub_ads: "boolean", transcribe: "boolean", ad_words: "enum", rules: "string" } };
+  const skill = (params) => forwardSkill(agent("career"), spec, params);
   try {
-    const addPodcast = require("../../add-podcast/handler").runtime;
-    await addPodcast.handler.call(agent("career"), { url: "u", keep: "12" });
-    await addPodcast.handler.call(agent("career"), { url: "u", keep: "all", scrub_ads: false, transcribe: "true" });
-    await addPodcast.handler.call(agent("career"), { url: "u", keep: null, ad_words: "", rules: "", other: 1 });
+    await skill({ url: "u", keep: "12" });
+    await skill({ url: "u", keep: "all", scrub_ads: false, transcribe: "true" });
+    await skill({ url: "u", keep: null, ad_words: "", rules: "", other: 1 });
     assert.deepEqual(service.requests.map((r) => r.args), [
       { url: "u", keep: 12 },
       { url: "u", keep: "all", scrub_ads: false, transcribe: true },
       { url: "u", rules: "" }, // "" is a setting (every episode); an enum's "" isn't
     ]);
   } finally {
-    delete process.env.PODCASTS_SOCKET;
+    delete process.env.SITES_SOCKET;
     await service.close();
   }
 });

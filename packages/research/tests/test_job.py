@@ -3,7 +3,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from research import job, publish
+from research import job
 from research.llm import LLM
 from sites.build import Builder
 from sites.store import Entry
@@ -14,7 +14,6 @@ def settings(tmp_path) -> job.Settings:
     return job.Settings(
         storage=tmp_path / "storage",
         searxng_url="http://searx/search",
-        embed_socket=tmp_path / "embed.sock",
         env_file=str(tmp_path / ".env"),
         runlogs=tmp_path / "logs" / "deep-research",
     )
@@ -96,24 +95,12 @@ def test_a_run_that_fails_before_it_starts_is_logged(tmp_path):
     assert list((s.runlogs / "running").iterdir()) == []  # its marker is gone
 
 
-def test_a_finished_run_is_published_embedded_logged_and_told(
-    tmp_path, published, monkeypatch
-):
+def test_a_finished_run_is_published_logged_and_told(tmp_path, published):
     s = settings(tmp_path)
-    embedded = []
-    monkeypatch.setattr(
-        publish,
-        "ask_embed",
-        lambda socket, workspace, docpath: (
-            embedded.append((socket, workspace, docpath)) or docpath
-        ),
-    )
     progress, meter = [], []
     req = job.Request(
         "Tell me about Alpha and Beta",
         "quick",
-        workspace="career",
-        workspace_name="Career",
         run_id="dr-0123abcd",
         card="[![live](https://h/x.png)](https://h/x)",
     )
@@ -143,7 +130,6 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
         reply,
     )
     assert "Saved as research/alpha-and-beta.md in the agent's files." in reply
-    assert "Added to this workspace's documents" in reply
     assert (
         "- Alpha earned EUR 12M in 2025." in reply
         and "[1]" not in reply.split("Key findings:")[1]
@@ -158,23 +144,15 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
         "reports",
         "quick",
     )
-    socket, workspace, docpath = embedded[0]
-    assert (socket, workspace) == (s.embed_socket, "career")
-    folder, name = docpath.split("/")
-    assert folder == publish.INCOMING and publish.NAME_RE.fullmatch(name)
-    doc = json.loads((s.documents_dir / docpath).read_text())
-    assert doc["title"] == "Alpha and Beta"
     assert (
         "Published at https://h/research/reports/alpha-and-beta/"
         in (s.reports_dir / "alpha-and-beta.md").read_text()
     )
-    assert 'adding the report to workspace "Career"' in progress
     line = the_line(s)
-    assert (line["status"], line["url"], line["published"], line["document"]) == (
+    assert (line["status"], line["url"], line["published"]) == (
         "ok",
         "https://h/research/reports/alpha-and-beta/",
         True,
-        docpath,
     )
     assert line["stats"]["findings"] == 2 and "chat_closed" not in line
     assert (line["run_id"], line["card"]) == ("dr-0123abcd", req.card)
@@ -183,7 +161,7 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
 
 def test_a_run_nobody_followed_to_the_end_notes_the_chat_closed(tmp_path, published):
     s = settings(tmp_path)
-    req = job.Request("q", "quick", embed=False, workspace="career")
+    req = job.Request("q", "quick")
     result = job.run(
         req,
         s,
@@ -194,7 +172,7 @@ def test_a_run_nobody_followed_to_the_end_notes_the_chat_closed(tmp_path, publis
         search=search,
         read=PAGES.get,
     )
-    assert result["status"] == "ok" and "document" not in the_line(s)
+    assert result["status"] == "ok"
     assert the_line(s)["chat_closed"] is True
 
 
@@ -230,16 +208,15 @@ def test_a_report_the_site_couldnt_take_is_kept_in_the_agents_files(
 
 def test_requests_take_defaults_for_what_isnt_given():
     req = job.Request.of(
-        "  q  ", depth=None, planner="", worker="w", embed=False, workspace=None
+        "  q  ", depth=None, planner="", worker="w", site=None
     )
-    assert (
-        req.question,
-        req.depth,
-        req.planner,
-        req.worker,
-        req.embed,
-        req.workspace,
-    ) == ("q", None, "glm-5.3", "w", False, None)
+    assert (req.question, req.depth, req.planner, req.worker, req.site) == (
+        "q",
+        None,
+        "glm-5.3",
+        "w",
+        "research",
+    )
 
 
 def test_the_planner_falls_back_only_from_glm_and_only_when_asked():
@@ -281,13 +258,8 @@ def test_the_callers_split_reaches_the_pipeline(tmp_path, published):
 
 def test_settings_reach_the_hosts_loopback_unless_told_otherwise(tmp_path, monkeypatch):
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
-    for key in ("RESEARCH_EMBED_SOCKET", "SEARXNG_URL"):
-        monkeypatch.delenv(key, raising=False)
-    s = job.Settings.from_env()
-    assert (s.embed_socket, s.searxng_url) == (
-        tmp_path / "everythingllm" / "research-embed" / "runner.sock",
-        "http://127.0.0.1:8888/search",
-    )
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
+    assert job.Settings.from_env().searxng_url == "http://127.0.0.1:8888/search"
     # A container reaches SearXNG through the egress proxy, by the tailnet name.
     monkeypatch.setenv("SEARXNG_URL", "https://host.example:8888/search")
     assert job.Settings.from_env().searxng_url == "https://host.example:8888/search"

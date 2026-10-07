@@ -48,16 +48,6 @@
         "placeholder": "research",
         "hint": "Zola site the reports are published to (section 'reports')."
       }
-    },
-    "EMBED_IN_WORKSPACE": {
-      "type": "string",
-      "required": false,
-      "input": {
-        "type": "text",
-        "default": "yes",
-        "placeholder": "yes",
-        "hint": "Also add each report to the workspace's documents so later chats can search it; 'no' turns this off. Reports are always saved to the agent's files (research/)."
-      }
     }
   },
   "examples": [

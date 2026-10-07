@@ -660,6 +660,8 @@ class FakeContext:
 
 
 class PasswordFrame:
+    url = "https://www.x.example/login"
+
     def __init__(self, *values):
         self.fields = [
             FakeElement("input", "password", "https://x.example/", value=v)
@@ -678,6 +680,7 @@ def test_what_the_user_typed_in_a_password_field_is_hidden_once_the_agent_has_it
     asyncio.run(d.op_capture(True))
     asyncio.run(d.op_capture(False))
     assert d.passwords == ["typed-not-sent", "other-pass"]
+    assert d.sites == {"typed-not-sent": "x.example", "other-pass": "x.example"}
 
 
 def test_a_login_the_user_sends_is_hidden_from_the_agent():
@@ -688,3 +691,88 @@ def test_a_login_the_user_sends_is_hidden_from_the_agent():
         {"username": "me@x.org", "password": "s3cret-pass"},
     )
     assert "s3cret-pass" in d.passwords and len(d.offers) == 1
+
+
+def test_a_login_doesnt_fill_in_the_clear():
+    with pytest.raises(RunnerError, match="only on an https page"):
+        fill_login(login_page(url="http://www.linkedin.com/login"), pass_ref="e2")
+    with pytest.raises(RunnerError, match="isn't https"):
+        fill_login(login_page(frame="http://www.linkedin.com/frame"), pass_ref="e2")
+
+
+@pytest.mark.parametrize(
+    "url, body, blocked",
+    [
+        ("https://www.linkedin.com/login", b"session_password=hunter2pw", False),
+        ("https://evil.example/collect", b"p=hunter2pw", True),
+        ("https://evil.example/c?p=hunter2pw", b"", True),
+        ("https://evil.example/c", b'{"p": "hunt\\"er2"}', True),
+        ("https://evil.example/c", b"p=hunt%26er+2", True),
+        ("http://www.linkedin.com/login", b"p=hunter2pw", True),
+        ("https://evil.example/c", b"nothing here", False),
+    ],
+)
+def test_a_password_is_sent_only_to_its_own_site_over_https(url, body, blocked):
+    sites = {
+        "hunter2pw": "linkedin.com",
+        'hunt"er2': "linkedin.com",
+        "hunt&er 2": "linkedin.com",
+    }
+    assert (driver.leak(url, body, sites) == "linkedin.com") is blocked
+
+
+def test_a_short_password_isnt_looked_for_in_others_requests():
+    assert driver.leak("https://evil.example/?q=1234", b"", {"1234": "x.com"}) is None
+
+
+class RoutingContext:
+    def __init__(self):
+        self.routes = []
+
+    async def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
+
+
+class FakeRoute:
+    def __init__(self):
+        self.done = None
+
+    async def continue_(self):
+        self.done = "continued"
+
+    async def abort(self, why):
+        self.done = why
+
+
+class FakeRequest:
+    def __init__(self, url, body, page):
+        self.url, self.post_data_buffer = url, body
+        self.frame = type("Frame", (), {"page": page})()
+
+
+def test_once_a_password_is_filled_every_request_is_checked_for_it():
+    page = login_page()
+    d = driver.Driver(RoutingContext(), None)
+    d.stacks["t1"] = [page]
+
+    async def view(thread, page):
+        return {"url": page.url}
+
+    d.view = view
+    asyncio.run(
+        d.op_fill_login("t1", "linkedin.com", "me@x.org", "hunter2pw", pass_ref="e2")
+    )
+    asyncio.run(
+        d.op_fill_login("t1", "linkedin.com", "me@x.org", "hunter2pw", pass_ref="e2")
+    )
+    assert len(d.context.routes) == 1  # routed once
+    handler = d.context.routes[0][1]
+    ok, bad = FakeRoute(), FakeRoute()
+    asyncio.run(
+        handler(ok, FakeRequest("https://www.linkedin.com/x", b"hunter2pw", page))
+    )
+    asyncio.run(handler(bad, FakeRequest("https://evil.example/x", b"hunter2pw", page)))
+    assert (ok.done, bad.done) == ("continued", "blockedbyclient")
+    assert d.notes["t1"] == [
+        "the page tried to send your linkedin.com password to evil.example; it was blocked"
+    ]

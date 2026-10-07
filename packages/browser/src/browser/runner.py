@@ -36,9 +36,9 @@ comes back when the user hands it back in the view, or says in the chat that the
 
 Saved logins (browser.vault, one vault per workspace) are the agent's to use and never to
 read: it names a login and the fields, and the runner has the driver fill them on the
-login's own site. A login the user marked `ask` waits for their OK in the take-over view
-(and on the card) before each use, good for GRANT minutes. While the user has the browser,
-logins they send are offered for saving there too.
+login's own site, over https. A login the user marked `ask` waits for their OK in the
+take-over view (and on the card) before each use, good for GRANT minutes in that chat
+alone. While the user has the browser, logins they send are offered for saving there too.
 
 Without a saved login, the agent can ask for one (`ask_login`): a card in the chat links to
 a page of its own on the take-over view's origin (/login/<id>/, browser.takeover) with a
@@ -102,7 +102,7 @@ from egress import config as egress_config
 from hostrpc import RunnerError, safefs
 
 from browser import page as pagetext
-from browser.origin import host_of, normal_site, site_matches
+from browser.origin import host_of, normal_site, registrable, secure, site_matches
 from browser.vault import Vault, VaultError, totp
 
 log = logging.getLogger("browser-runner")
@@ -230,6 +230,8 @@ class Approval:
     login: str  # the login's id
     site: str
     username: str
+    thread: str  # the chat that asks: an OK is for it alone
+    url: str  # its page's address, which the view shows
     answer: bool | None = None
     answered: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -268,7 +270,8 @@ class Session:
     asked: bool = False  # whether the agent asked for it (a handoff)
     viewers: int = 0  # take-over views open
     approval: Approval | None = None  # the OK the agent waits for
-    granted: dict[str, float] = field(default_factory=dict)  # login id -> OK until
+    # (thread, login id) -> OK until: one chat's OK isn't another's
+    granted: dict[tuple[str, str], float] = field(default_factory=dict)
     answers: dict[str, bool] = field(default_factory=dict)  # approval id -> the user's
 
     @property
@@ -605,9 +608,7 @@ class Runner(hostrpc.Service):
         if not self.config.pages_url:
             return ""
         page = f"{self.config.pages_url.rstrip('/')}/_live/browser/login/{req.id}"
-        return (
-            f"[![{alt(f'Log in to {req.site}')}]({link(page + '.png')})]({link(page)})"
-        )
+        return f"[![{alt(f'Log in to {registrable(req.site)}')}]({link(page + '.png')})]({link(page)})"
 
     def login_form(self, req: LoginRequest) -> str:
         return f"{self.config.takeover_url.rstrip('/')}/login/{req.id}/"
@@ -921,19 +922,27 @@ class Runner(hostrpc.Service):
                 f"that login is for {entry['site']}, and this chat's page is on {host or 'no site'}; "
                 f"open {entry['site']}'s login page first"
             )
+        if not secure(tab.url):
+            raise RunnerError(
+                "a saved login fills only on an https page on its usual port; open "
+                f"https://{host}/ instead"
+            )
         return entry
 
     def approval(self, s: Session, tab: Tab, entry: dict[str, Any]) -> Approval | None:
         """The OK the agent must wait for before using `entry`, or None when it needs none
-        (the login doesn't ask, or the user said yes in the last GRANT seconds)."""
-        if not entry.get("ask") or s.granted.get(entry["id"], 0) > self.now():
+        (the login doesn't ask, or the user said yes to this chat in the last GRANT
+        seconds)."""
+        key = (tab.thread, entry["id"])
+        if not entry.get("ask") or s.granted.get(key, 0) > self.now():
             return None
-        if s.approval is None or s.approval.login != entry["id"]:
+        if s.approval is None or (s.approval.thread, s.approval.login) != key:
             if s.approval is not None:  # its waiter hears it's stale
                 s.approval.answered.set()
             s.approval = Approval(
-                secrets.token_hex(4), entry["id"], entry["site"], entry["username"]
-            )
+                secrets.token_hex(4), entry["id"], entry["site"], entry["username"],
+                tab.thread, tab.url,
+            )  # fmt: skip
         tab.moved(f"Waiting for your OK to use your {entry['site']} login")
         return s.approval
 
@@ -944,7 +953,7 @@ class Runner(hostrpc.Service):
             raise RunnerError("that request isn't waiting any more")
         waiting.answer = bool(yes)
         if yes:
-            s.granted[waiting.login] = self.now() + GRANT
+            s.granted[(waiting.thread, waiting.login)] = self.now() + GRANT
         s.answers[waiting.id] = waiting.answer
         while len(s.answers) > MAX_ANSWERS:
             del s.answers[next(iter(s.answers))]

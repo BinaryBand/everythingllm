@@ -65,7 +65,8 @@ async function act(doing, what, body) {
 function showApproval(a) {
   $("approval").hidden = !a;
   if (!a) return;
-  $("approval-text").textContent = `The agent wants to use your login for ${who(a)}.`;
+  $("approval-text").textContent =
+    `The agent in one of this workspace's chats wants to use your login for ${who(a)}, on ${a.url}.`;
   $("allow").onclick = () => act("allow the request", `approve/${a.id}`);
   $("deny").onclick = () => act("refuse the request", `deny/${a.id}`);
 }

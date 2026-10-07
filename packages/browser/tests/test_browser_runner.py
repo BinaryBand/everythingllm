@@ -538,7 +538,7 @@ def test_the_agent_asks_for_a_login_for_its_pages_site_and_the_user_saves_it(tmp
         asked = await r.op_ask_login(scope())
         assert asked["site"] == "accounts.google.com"
         assert asked["card"] == (
-            "[![Log in to accounts.google.com](https://host.example.ts.net:8445/_live/browser/login/"
+            "[![Log in to google.com](https://host.example.ts.net:8445/_live/browser/login/"
             f"{asked['request']}.png)](https://host.example.ts.net:8445/_live/browser/login/{asked['request']})"
         )
         req = r.asked[asked["request"]]
@@ -760,5 +760,35 @@ def test_only_the_user_taking_over_in_the_view_unlocks_the_browser(tmp_path):
         await r.op_handoff(scope(), done=True)
         await r.take(s)
         assert driver.capturing and driver.taken
+
+    test(tmp_path)
+
+
+def test_an_ok_to_use_a_login_is_for_the_chat_that_asked_alone(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        saved = r.vault.add("career", "linkedin.com", "alice", "pw", ask=True)
+        await r.op_open(scope(thread="7"), "https://linkedin.com/")
+        await r.op_open(scope(thread="8"), "https://linkedin.com/feed")
+        s = r.sessions["career"]
+        asked = await r.op_login(scope(thread="7"), saved["id"], "e1", "e2")
+        assert (s.approval.thread, s.approval.url) == ("7", "https://linkedin.com/")
+        r.answer(s, asked["approval"], True)
+        assert (await r.op_login(scope(thread="7"), saved["id"], "e1", "e2"))["page"]
+        other = await r.op_login(scope(thread="8"), saved["id"], "e1", "e2")
+        assert "approval" in other and s.approval.thread == "8"
+
+    test(tmp_path)
+
+
+def test_a_login_fills_only_on_an_https_page_on_its_usual_port(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        saved = r.vault.add("career", "linkedin.com", "alice", "pw")
+        for url in ("http://linkedin.com/login", "https://linkedin.com:8443/login"):
+            await r.op_open(scope(), url)
+            with pytest.raises(RunnerError, match="only on an https page"):
+                await r.op_login(scope(), saved["id"], "e1", "e2")
+        assert podman.drivers["everythingllm-browser-career"].filled == []
 
     test(tmp_path)

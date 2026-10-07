@@ -61,6 +61,8 @@ from chatimage import (
 )
 from PIL import Image, ImageDraw, ImageEnhance
 
+from browser.origin import registrable
+
 if TYPE_CHECKING:
     from browser.runner import LoginRequest, Runner, Tab
 
@@ -380,7 +382,7 @@ def asked_picture(req: LoginRequest, state: str) -> bytes:
     look, line = ASKED[state]
     label = f"Browser · {req.workspace} · login · {state}"
     return progress.draw(
-        f"Log in to {req.site}",
+        f"Log in to {registrable(req.site)}",  # who the site belongs to, never cut off
         label,
         None if state in ("waiting", "saving") else 1.0,
         line,

@@ -29,6 +29,9 @@ body.ask-login { display: block; max-width: 34rem; margin: 0 auto; padding: 1.5r
 .ask-login h1 { font-size: 1.4rem; margin: 0 0 1rem; }
 .ask-login .site { color: var(--user); }
 .ask-login .url { overflow-wrap: anywhere; color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.ask-login .site { overflow-wrap: anywhere; }
+.ask-login .warning { padding: 0.5rem 0.8rem; border-radius: 6px; background: #3a2f1f; color: var(--user); }
+.ask-login .warning[hidden] { display: none; }
 #ask-form { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1.2rem; }
 #ask-form[hidden] { display: none; }
 #ask-form select { font: inherit; padding: 0.3rem 0.5rem; border-radius: 6px; border: 1px solid #3a3f4b; background: #12151b; color: var(--fg); margin-left: 0.4rem; }

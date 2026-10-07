@@ -235,6 +235,7 @@ def test_the_view_answers_the_agents_request_and_saves_offers(tmp_path):
             "id": waiting["approval"],
             "site": "example.com",
             "username": "alice",
+            "url": "https://example.com/",
         }
         head, body = await post(port, f"/{s.token}/approve/{waiting['approval']}")
         assert "200 OK" in head and json.loads(body)["approval"] is None
@@ -278,7 +279,9 @@ def test_the_form_for_a_login_the_agent_asked_for(tmp_path):
         assert (
             "Referrer-Policy: no-referrer" in head and "Cache-Control: no-store" in head
         )
-        assert "<title>Log in to accounts.example.com</title>" in page
+        assert "<title>Log in to example.com</title>" in page
+        assert "a site of <strong>example.com</strong>" in page
+        assert 'class="warning">' in page  # no login for example.com yet
         assert (
             "next=&lt;b&gt;" in page and "<b>" not in page
         )  # the page's address, as text

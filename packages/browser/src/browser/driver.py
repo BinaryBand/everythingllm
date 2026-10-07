@@ -71,11 +71,11 @@ import signal
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote_plus
+from urllib.parse import quote, quote_plus, unquote_plus
 
 import hostrpc
 
-from browser.origin import host_of, normal_site, site_matches
+from browser.origin import host_of, normal_site, secure, site_matches
 from browser.page import MAX_ELEMENTS, REF_RE
 
 log = logging.getLogger("browser-driver")
@@ -218,9 +218,10 @@ class Driver(hostrpc.Service):
         self.passwords: list[str] = []
         self.codes: list[str] = []
         self.pieces: dict[int, set[str]] = {}  # theirs, as `pieces` makes them
-        self.locked = (
-            False  # the agent sent part of a secret: refused until the user takes over
-        )
+        # Whether the agent sent part of a secret: it's refused until the user takes over.
+        self.locked = False
+        self.sites: dict[str, str] = {}  # a password -> the site it may be sent to
+        self.guarding = False  # whether requests are routed through on_request
         self.typed: dict[str, str] = {}  # thread -> the last characters it pressed
 
     # --- tabs ---
@@ -482,6 +483,11 @@ class Driver(hostrpc.Service):
                 f"this chat's page is on {host or 'no site'}, not {site}: a saved login "
                 "fills only on its own site; read the page again"
             )
+        if not secure(page.url):
+            raise hostrpc.RunnerError(
+                "a saved login fills only on an https page on its usual port; open the "
+                "site's https:// login page"
+            )
         if not await page.locator(f'[data-bw-ref="{ref}"]').count():
             raise hostrpc.RunnerError(
                 f"{ref} isn't on the page any more; read it again"
@@ -499,11 +505,17 @@ class Driver(hostrpc.Service):
                 f"{ref} couldn't be checked; read the page again"
             ) from None
         if handle is not None:
-            where = host_of(frame.url if frame is not None else "")
+            frame_url = frame.url if frame is not None else ""
+            where = host_of(frame_url)
             if not site_matches(where, site):
                 raise hostrpc.RunnerError(
                     f"{ref} is on {where or 'no site'}, not {site}: a saved login fills "
                     "only on its own site"
+                )
+            if not secure(frame_url):
+                raise hostrpc.RunnerError(
+                    f"{ref} is in a frame that isn't https on its usual port, where a "
+                    "saved login doesn't fill"
                 )
         if kind_of not in kinds:
             raise hostrpc.RunnerError(
@@ -568,7 +580,8 @@ class Driver(hostrpc.Service):
             fields.append(
                 (await self.field(page, pass_ref, site, "password"), password)
             )
-            self.keep_filled(password)
+            self.keep_filled(password, site=site)
+            await self.guard_requests()
         await self.fill(page, fields, submit)
         return await self.view(thread, self.existing(thread))
 
@@ -586,15 +599,47 @@ class Driver(hostrpc.Service):
     def filled(self) -> list[str]:
         return [*self.passwords, *self.codes]
 
-    def keep_filled(self, secret: str, code: bool = False) -> None:
+    def keep_filled(self, secret: str, code: bool = False, site: str = "") -> None:
         """Remember a secret about to be filled (or that the user typed), so reads never
-        say it back and the agent can't edit a field holding it."""
+        say it back and the agent can't edit a field holding it; a password's `site`, so
+        it's sent nowhere else (guard_requests)."""
         kept = self.codes if code else self.passwords
         if secret in kept:
             kept.remove(secret)
         kept.append(secret)
         del self.codes[:-MAX_CODES]
         self.pieces = pieces(self.filled)
+        if site and not code:
+            self.sites[secret] = site
+
+    async def guard_requests(self) -> None:
+        """Have every request the browser makes checked (`leak`) from the first password
+        on: a form's action or a page's script could send one to another site, or in the
+        clear, whatever field it was typed into."""
+        if not self.guarding and self.context is not None:
+            self.guarding = True
+            await self.context.route("**/*", self.on_request)
+
+    async def on_request(self, route: Any, request: Any) -> None:
+        try:
+            body = request.post_data_buffer or b""
+        except Exception:  # noqa: BLE001 - a body that can't be read is sent as is
+            body = b""
+        if (site := leak(request.url, body, self.sites)) is None:
+            await route.continue_()
+            return
+        await route.abort("blockedbyclient")
+        log.warning("blocked a request carrying %s's password", site)
+        try:
+            page = request.frame.page
+        except Exception:  # noqa: BLE001 - a service worker's: no page to tell
+            return
+        where = host_of(request.url) or "an address"
+        clear = "" if secure(request.url) else " in the clear"
+        self.note(
+            page,
+            f"the page tried to send your {site} password to {where}{clear}; it was blocked",
+        )
 
     def check_sent(self, thread: str, *texts: str) -> None:
         """Refuse what the agent sends (an address, text to type) if it holds a piece of a
@@ -673,7 +718,7 @@ class Driver(hostrpc.Service):
             del self.offers[key]
         while len(self.offers) >= MAX_OFFERS:
             del self.offers[min(self.offers, key=lambda k: self.offers[k]["at"])]
-        self.keep_filled(password)  # never read back once the agent has the browser
+        self.keep_filled(password, site=site)  # never read back, nor sent elsewhere
         self.offers[secrets.token_hex(4)] = {
             "site": site, "username": username, "password": password, "at": time.monotonic(),
         }  # fmt: skip
@@ -704,7 +749,7 @@ class Driver(hostrpc.Service):
                     for i in range(await fields.count()):
                         value = await fields.nth(i).input_value(timeout=ACT_MS)
                         if value and len(value) <= MAX_SECRET:
-                            self.keep_filled(value)
+                            self.keep_filled(value, site=site_of(frame.url))
                 except Exception:  # noqa: BLE001, S112 - a frame gone mid-look
                     continue
 
@@ -763,6 +808,36 @@ class Driver(hostrpc.Service):
                     {"thread": thread, "title": await title_of(page), "url": page.url}
                 )
         return tabs
+
+
+def site_of(url: str) -> str:
+    """The site a login on a page at `url` would be saved for, or "" for none."""
+    try:
+        return normal_site(host_of(url))
+    except ValueError:
+        return ""
+
+
+def leak(url: str, body: bytes, sites: dict[str, str]) -> str | None:
+    """The site whose password a request to `url` with `body` carries somewhere other than
+    to that site over https (in its address or body, as typed, URL-encoded or in JSON), or
+    None. Only what can be seen: a page that encrypts or hashes one first isn't caught."""
+    if not sites:
+        return None
+    host, safe = host_of(url), secure(url)
+    raw = url.encode(errors="replace")
+    for secret, site in sites.items():
+        if len(secret) < PIECE or (safe and site_matches(host, site)):
+            continue  # a short one would turn up in others' addresses by chance
+        forms = {
+            secret,
+            quote_plus(secret),
+            quote(secret, safe=""),
+            json.dumps(secret)[1:-1],
+        }
+        if any(f.encode() in raw or f.encode() in body for f in forms):
+            return site
+    return None
 
 
 def download_name(suggested: str) -> str:

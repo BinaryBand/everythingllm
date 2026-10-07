@@ -204,3 +204,32 @@ def test_changes_at_once_are_all_kept(vault, monkeypatch):
         logins.clear()
         raise RuntimeError
     assert len(vault.logins("career")) == 8
+
+
+@pytest.mark.parametrize(
+    "site", ["2.3.4", "printer.local", "nas.lan", "x.internal", "foo.localhost"]
+)
+def test_a_name_that_only_means_something_locally_isnt_a_site(site):
+    with pytest.raises(ValueError):
+        origin.normal_site(site)
+
+
+def test_who_a_site_belongs_to_is_named_above_its_public_suffix():
+    assert (
+        origin.registrable("accounts.google.com.verify-session.evil.app") == "evil.app"
+    )
+    assert origin.registrable("www.bbc.co.uk") == "bbc.co.uk"
+    assert origin.registrable("alice.github.io") == "alice.github.io"
+    assert origin.registrable("linkedin.com") == "linkedin.com"
+
+
+def test_only_https_on_its_usual_port_is_secure():
+    assert origin.secure("https://x.com/") and origin.secure("https://x.com:443/a")
+    for url in (
+        "http://x.com/",
+        "https://x.com:8443/",
+        "https://x.com:no/",
+        "",
+        "ws://x",
+    ):
+        assert not origin.secure(url)

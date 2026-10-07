@@ -52,6 +52,7 @@ import hostrpc
 from chatimage import live
 
 from browser import websocket
+from browser.origin import registrable
 
 if TYPE_CHECKING:
     from browser.runner import Runner, Session
@@ -119,13 +120,17 @@ LOGIN_PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Log in to {site}</title>
+<title>Log in to {owner}</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="ask-login">
-<h1>Log in to <span class="site">{site}</span></h1>
-<p>The agent in <strong>{workspace}</strong> asked for your login for the page it has open:</p>
+<h1>Log in to <span class="site">{owner}</span></h1>
+<p>The agent in <strong>{workspace}</strong> asked for your login for the page it has open,
+on <span class="site">{site}</span>, a site of <strong>{owner}</strong>:</p>
 <p class="url">{url}</p>
+<p class="warning"{new_hidden}>No login in this workspace is for {owner} yet. Make sure that's
+the site you mean to log in to before you enter a password: a page can name itself after
+another.</p>
 <p class="note">It's saved in this workspace's logins. The agent can have the browser fill it
 in on the site you pick here, never anywhere else, and can never read it. Only enter the login
 you use on that site.</p>
@@ -353,8 +358,16 @@ class Takeover:
                 f'<option value="{html.escape(site)}">{html.escape(site)}</option>'
                 for site in asked.sites
             )
+            owner = registrable(asked.site)
+            try:
+                logins = await asyncio.to_thread(r.vault.logins, asked.workspace)
+            except hostrpc.RunnerError:
+                logins = []
+            known = any(registrable(x.get("site", "")) == owner for x in logins)
             body = LOGIN_PAGE.format(
                 site=html.escape(asked.site),
+                owner=html.escape(owner),
+                new_hidden=" hidden" if known else "",
                 workspace=html.escape(asked.workspace),
                 url=html.escape(asked.url),
                 options=options,
@@ -440,6 +453,7 @@ class Takeover:
                 "id": approval.id,
                 "site": approval.site,
                 "username": approval.username,
+                "url": approval.url,
             }
             if approval is not None
             else None,

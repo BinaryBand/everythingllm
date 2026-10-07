@@ -913,14 +913,21 @@ name bound in so one workspace's file can't stand in for another's.
   have your LinkedIn password typed into another site. A site is never a public suffix
   (`github.io`, `co.uk`, from the Public Suffix List kept in `browser/public_suffix_list.dat`),
   whose subdomains belong to anyone, and a login never fills across one below its site
-  (one for `windows.net` not on `anyone.blob.core.windows.net`).
+  (one for `windows.net` not on `anyone.blob.core.windows.net`), nor is a name that only
+  means something locally (`printer.local`, `nas.lan`, a dotted number). It fills only on
+  an https page and frame on the usual port, never in the clear. From the first password
+  filled, every request the browser makes is checked for the passwords it holds (as typed,
+  URL-encoded or in JSON, `driver.leak`), and one carrying a password anywhere but its own
+  site over https is blocked and said in the next read: a form whose action points
+  elsewhere, or a script, can't send it on.
 - **2FA.** A login can carry a TOTP secret (the text under the QR code, or its
   `otpauth://` address); `browser-login` with `code` fills the current code. That puts both
   factors in one vault on this machine; leave the secret out for accounts where that's too much.
 - **Asking first.** A login marked "ask me before each use" makes the agent wait for your
   OK: the card says so, and the take-over view shows "The agent wants to use your login for
-  …" with Allow and Don't allow. An OK lasts 10 minutes for that login (`GRANT`), long enough
-  for the password and the code. The skill waits up to 5 minutes, then has the agent ask.
+  …, on <the page's address>" with Allow and Don't allow. An OK lasts 10 minutes for that
+  login in that chat alone (`GRANT`), long enough for the password and the code; another
+  chat asks again. The skill waits up to 5 minutes, then has the agent ask.
 - **Adding one.** Never through the chat, where the model would see it. The take-over
   view has a Saved logins panel to add, list, mark and delete them; it can save and delete,
   never show a password. And while you have the browser (you took over, or the agent handed
@@ -928,7 +935,10 @@ name bound in so one workspace's file can't stand in for another's.
   login you just used on …?"), with the site taken from the frame it came from, whatever the
   page says (`capture.js`). Offers last 10 minutes and are only ever made while you have it.
 - **Asking for one.** When there's no login for the site, `browser-login` with `ask` gives
-  the agent a card for its reply, "Log in to <site>"
+  the agent a card for its reply, "Log in to <who the site belongs to>" (`google.com` for
+  `accounts.google.com`, `evil.app` for `accounts.google.com.verify.evil.app`, the name
+  above the public suffix, `origin.registrable`, so a long host can't push the real owner
+  out of sight)
   (`https://<PUBLIC_HOST>:8445/_live/browser/login/<id>.png`, drawn like a progress card and
   pushed again as it's answered). It links to a page of its own in the take-over view,
   `/login/<id>/` on :8454: a form with nothing else on it (no noVNC, so it works on a
@@ -936,7 +946,8 @@ name bound in so one workspace's file can't stand in for another's.
   runner names the site from the chat's page (`Runner.op_ask_login`), never the model, and
   the form lets you widen it only to a parent short of a public suffix
   (`accounts.google.com` or `google.com`); it shows the page's address too, so a page that
-  talks the agent into asking can only ask for its own site's login, in plain sight. The
+  talks the agent into asking can only ask for its own site's login, in plain sight, and
+  warns when no login in the workspace is for that owner yet. The
   request's id (`lr-` and 32 hex digits) is the page's only key, so it needs no token and
   outlives the browser; it waits 30 minutes (`ASK_SECONDS`), takes one answer, and the
   take-over view lists the waiting ones. You tell the agent in the chat once it's saved,

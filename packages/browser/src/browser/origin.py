@@ -1,7 +1,7 @@
 """Which site a saved login belongs to, and whether a page is on it. A login is saved for a
 site (a host name, like `linkedin.com`) and fills only on that host or its subdomains, as a
-password manager's does, so a page that talks the agent into it can't have a login typed
-into another site. Standard library only: the driver checks it in the browser container
+password manager's does, and only over https on its usual port (`secure`), so a page that
+talks the agent into it can't have a login typed into another site or sent in the clear. Standard library only: the driver checks it in the browser container
 too, against the frame the field is really in.
 
 A site is never a public suffix (`co.uk`, `github.io`), whose subdomains belong to anyone:
@@ -18,6 +18,8 @@ from urllib.parse import urlsplit
 
 SUFFIX_LIST = Path(__file__).with_name("public_suffix_list.dat")
 
+# Names that only mean something on a local network, never a public site's.
+LOCAL_TLDS = {"local", "localhost", "internal", "lan", "home", "corp", "intranet", "arpa", "test", "invalid"}  # fmt: skip
 HOST_RE = re.compile(
     r"(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
 )
@@ -44,7 +46,8 @@ def normal_site(text: str) -> str:
         pass
     else:
         raise ValueError(f"'{text}' is an address; save a login for a site's name")
-    if not HOST_RE.fullmatch(host):
+    last = host.rsplit(".", 1)[-1]
+    if not HOST_RE.fullmatch(host) or last.isdigit() or last in LOCAL_TLDS:
         raise ValueError(f"'{text}' isn't a site's name, like linkedin.com")
     if is_public_suffix(host):
         raise ValueError(
@@ -108,3 +111,22 @@ def is_public_suffix(host: str) -> bool:
 
 def host_of(url: str) -> str:
     return (urlsplit(url or "").hostname or "").lower()
+
+
+def secure(url: str) -> bool:
+    """Whether a page at `url` may have a login filled: https, on its usual port."""
+    try:
+        parts = urlsplit(url or "")
+        return parts.scheme == "https" and parts.port in (None, 443)
+    except ValueError:  # a port that isn't a number
+        return False
+
+
+def registrable(host: str) -> str:
+    """Who a host belongs to: its name just above its public suffix (`evil.app` for
+    `accounts.google.com.verify.evil.app`), the part to show first when asking about it."""
+    host = (host or "").lower().rstrip(".")
+    suffix = public_suffix(host)
+    if host == suffix:
+        return host
+    return host[: -len(suffix) - 1].rsplit(".", 1)[-1] + "." + suffix

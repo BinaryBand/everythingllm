@@ -43,11 +43,12 @@ function say(self, line) {
   } catch {}
 }
 
-/** Where browse is going, as its host alone: an address's path and query can hold a token. */
+/** Where browse is going, as its host alone: an address's path and query can hold a token.
+ *  Only "scheme://" is a scheme, so "example.com:8443/x" is a host and its port. */
 function hostOf(url) {
   const raw = String(url ?? "").trim();
   try {
-    return new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`).host || "";
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`).host || "";
   } catch {
     return "";
   }

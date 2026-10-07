@@ -66,6 +66,7 @@ test("each browser step says in the chat what it does, by the element's name and
   try {
     await browse.handler.call(self, { url: "https://httpbin.org/forms/post?token=s3cret" });
     await browse.handler.call(self, { url: "example.com/x" });
+    await browse.handler.call(self, { url: "localhost:3000/login" }); // a port, not a scheme
     await act.handler.call(self, { action: "fill", ref: "e2", text: "hunter2" });
     await act.handler.call(self, { action: "click", ref: "e3" }); // no name: its ref
     await act.handler.call(self, { action: "click", ref: "e4" }); // a runner without label
@@ -80,6 +81,7 @@ test("each browser step says in the chat what it does, by the element's name and
     assert.deepEqual(lines, [
       "Opening httpbin.org",
       "Opening example.com",
+      "Opening localhost:3000",
       "Filling in Customer name",
       "Clicking e3",
       "Clicking e4",

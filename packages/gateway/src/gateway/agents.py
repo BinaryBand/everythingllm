@@ -2,7 +2,10 @@
 
 AnythingLLM's agent delegates through the delegate skill, which refuses a delegated task
 (an agents-* workspace); a gateway client is named by its token, so it gets the ops as
-tools here instead. Declared like a front's tools (a signature and a docstring, no body);
+tools here instead. Each call adds the calling client as the runs' owner
+(owner: "client-<name>", from gateway.grants.client, which the middleware sets from the
+token; never from the arguments), so a client sees, waits on and cancels only the
+delegations it started (runs.service). Declared like a front's tools (a signature and a docstring, no body);
 gateway.app serves them as the `agents` group, named with PREFIX (agents_delegate, …), while
 the op each sends to the runner keeps its own name (delegate, …). Not an MCP server of its
 own, so nothing in the container runs it.
@@ -18,6 +21,9 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
+from gateway import grants
+from gateway.sandbox import KEY_RE, WORKSPACE
+
 mcp = MCPServer("agents")
 
 # The gateway serves each tool here as PREFIX + its name, apart from the fronts' tools.
@@ -29,10 +35,27 @@ RunId = Annotated[
 
 # The runner's socket; there are no skills here, only tools.
 skills = hostrpc.Skills("agents", "AGENTS_SOCKET")
-tool = hostrpc.forwarder(
-    hostrpc.caller(skills.folder, skills.env, "agents runner", error=ToolError),
-    mcp.add_tool,
-)
+runner = hostrpc.caller(skills.folder, skills.env, "agents runner", error=ToolError)
+
+
+def owner() -> str:
+    """The calling client, as the owner of its delegations."""
+    name = grants.client.get()
+    owner = f"{WORKSPACE}{name}"
+    if not name or not KEY_RE.fullmatch(owner):
+        raise ToolError(
+            f"Delegation needs a gateway client whose name is lowercase letters, digits "
+            f"and hyphens, not {name!r}."
+        )
+    return owner
+
+
+async def call(op: str, args: dict[str, Any]) -> Any:
+    """Send `op` with the client as owner, never one from the arguments."""
+    return await runner(op, {**args, "owner": owner()})
+
+
+tool = hostrpc.forwarder(call, mcp.add_tool)
 
 
 @tool
@@ -84,7 +107,8 @@ async def wait(
 
 @tool
 async def runs() -> dict:
-    """The delegations agents-runner holds: {runs: [{run_id, goal, started, done}]}."""
+    """This client's delegations that agents-runner holds: {runs: [{run_id, goal, started,
+    done}]}."""
 
 
 @tool

@@ -278,6 +278,20 @@ def test_cancel_stops_the_tasks_that_havent_started(fake, tmp_path):
     asyncio.run(main())
 
 
+def test_a_client_cancels_only_its_own_delegations(fake, tmp_path):
+    async def main():
+        r = make(fake, tmp_path)
+        task = [{"name": "a", "profile": "worker", "instructions": "x"}]
+        theirs = await r.op_delegate("g", task, owner="client-b")
+        with pytest.raises(RunnerError, match="no delegation run"):
+            await r.op_cancel(theirs["run_id"], owner="client-a")
+        assert theirs["run_id"] not in r.cancelled
+        assert r.runs[theirs["run_id"]].owner == "client-b"
+        await finish(r, theirs["run_id"])
+
+    asyncio.run(main())
+
+
 def test_what_a_delegation_refuses(fake, tmp_path):
     async def main():
         r = make(fake, tmp_path)

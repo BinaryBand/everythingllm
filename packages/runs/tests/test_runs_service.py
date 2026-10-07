@@ -120,3 +120,27 @@ def test_a_waiting_caller_counts_as_following(monkeypatch):
         assert seen == [True]
 
     asyncio.run(main())
+
+
+def test_an_owner_sees_only_its_own_runs_and_no_owner_sees_them_all():
+    async def main():
+        s = Things()
+
+        async def work(run, progress, meter):
+            return {"status": "ok"}
+
+        mine = s.new_run("mine", owner="client-a")
+        theirs = s.new_run("theirs", owner="client-b")
+        anythingllms = s.new_run("anythingllm's")
+        for run in (mine, theirs, anythingllms):
+            s.launch(run, work)
+        listed = await s.op_runs(owner="client-a")
+        assert [r["run_id"] for r in listed["runs"]] == [mine.id]
+        assert len((await s.op_runs())["runs"]) == 3
+        assert (await s.op_wait(mine.id, owner="client-a"))["done"] is not None
+        for other in (theirs, anythingllms):
+            with pytest.raises(RunnerError, match="no thing run"):
+                await s.op_wait(other.id, owner="client-a")
+            await s.op_wait(other.id)  # no owner: AnythingLLM's skills, hostctl
+
+    asyncio.run(main())

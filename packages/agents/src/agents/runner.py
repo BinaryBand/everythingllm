@@ -5,11 +5,15 @@ headless, in the workspace of its role (agents.profiles), and an optional `then`
 gets their results. Callers (the delegate skill, agents-run) ask over its socket:
 
   delegate(goal, tasks: [{name, profile, instructions, material?, tools?}],
-           then?: {profile, instructions, material?, tools?})
+           then?: {profile, instructions, material?, tools?}, owner?)
                           -> {run_id, queued, card}, at once
-  wait(run_id, since=0)   up to WAIT seconds for news: {events, done, result once done}
-  runs()                  the delegations it holds: {run_id, goal, started, done}
-  cancel(run_id)          tasks that haven't started won't; running ones finish, unused
+  wait(run_id, since=0, owner?)
+                          up to WAIT seconds for news: {events, done, result once done}
+  runs(owner?)            the delegations it holds: {run_id, goal, started, done}
+  cancel(run_id, owner?)  tasks that haven't started won't; running ones finish, unused
+
+`owner` is a gateway client's (gateway.agents adds it from the client's token): its
+delegations are its own, and it sees and cancels no others (runs.service).
   update_prompt(scope, apply=False)
                           refresh the calling workspace's EverythingLLM block (hostctl.prompt)
                           from anythingllm/system-prompt.md, keeping its own text around it;
@@ -344,7 +348,11 @@ class Runner(RunService):
             await self.internal.aclose()
 
     async def op_delegate(
-        self, goal: str, tasks: list, then: dict | None = None
+        self,
+        goal: str,
+        tasks: list,
+        then: dict | None = None,
+        owner: str | None = None,
     ) -> dict:
         goal = str(goal or "").strip()
         if not goal:
@@ -379,7 +387,7 @@ class Runner(RunService):
                 "hours). Tell the user, or do the work yourself."
             )
         client = self.anythingllm()
-        run = self.new_run(goal)
+        run = self.new_run(goal, owner)
         card = AgentsLive.card_line(self.settings.pages_url, run.id, goal)
 
         async def work(run: Run, progress: Progress, meter: Meter) -> dict[str, Any]:
@@ -389,10 +397,8 @@ class Runner(RunService):
         log.info("%s started: %s (%d tasks)", run.id, goal[:120], len(parsed))
         return {"run_id": run.id, "queued": queued, "card": card}
 
-    async def op_cancel(self, run_id: str) -> dict:
-        run = self.runs.get(run_id)
-        if run is None:
-            raise RunnerError(f"no delegation run '{run_id}' here")
+    async def op_cancel(self, run_id: str, owner: str | None = None) -> dict:
+        run = self.held(run_id, owner)
         if not run.done:
             self.cancelled.add(run_id)
         return {"run_id": run_id, "cancelled": not run.done}

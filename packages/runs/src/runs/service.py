@@ -6,9 +6,14 @@ a coroutine that gets the run, a `progress(message)` and a `meter(fraction)`, bo
 call from a worker thread, and returns the run's result (a dict; "title" and "url" in it
 are shown on the live card). The service then answers:
 
-  wait(run_id, since=0)  up to WAIT seconds for news: {events (from `since` on), done,
-                         result once done}
-  runs()                 the runs it holds: {run_id, <SUBJECT_KEY>, started, done}
+  wait(run_id, since=0, owner=None)  up to WAIT seconds for news: {events (from `since`
+                         on), done, result once done}
+  runs(owner=None)       the runs it holds: {run_id, <SUBJECT_KEY>, started, done}
+
+A run may have an owner (`new_run(subject, owner)`): a gateway client, which its front
+passes from the client's token, never from the model. An op given an owner sees only that
+owner's runs, and another's is "no run here", as a missing one is; given none (AnythingLLM's
+skills, hostctl), it sees them all.
 
 A run belongs to the service, not to a chat: it carries on when its caller goes away. At
 most MAX_RUNS go at once; the rest wait their turn. A finished run can be fetched for
@@ -51,6 +56,7 @@ class Run:
     result: dict | None = None
     finished: float = 0.0
     waiters: int = 0
+    owner: str | None = None  # the gateway client that started it; None for the rest
     last_seen: float = field(default_factory=time.monotonic)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -77,14 +83,24 @@ class RunService(hostrpc.Service):
             None  # its live cards' server, once it listens
         )
 
-    def new_run(self, subject: str) -> Run:
+    def new_run(self, subject: str, owner: str | None = None) -> Run:
         self.prune()
         return Run(
             f"{self.ID_PREFIX}{secrets.token_hex(4)}",
             subject,
             datetime.now(UTC).isoformat(timespec="seconds"),
             title=subject,
+            owner=owner,
         )
+
+    def held(self, run_id: str, owner: str | None = None) -> Run:
+        """The run `run_id`, if the caller may see it (see the module's docstring)."""
+        run = self.runs.get(run_id)
+        if run is None or (owner is not None and run.owner != owner):
+            raise RunnerError(
+                f"no {self.NOUN} run '{run_id}' here (finished over an hour ago, or the runner restarted)."
+            )
+        return run
 
     def followed(self, run: Run) -> bool:
         """Someone is waiting on the run or watching its card, or did a moment ago."""
@@ -142,12 +158,10 @@ class RunService(hostrpc.Service):
         loop.call_later(self.RESULT_KEEP + 1, self.prune)
         self.log.info("%s finished: %s", run.id, result.get("status"))
 
-    async def op_wait(self, run_id: str, since: int = 0) -> dict:
-        run = self.runs.get(run_id)
-        if run is None:
-            raise RunnerError(
-                f"no {self.NOUN} run '{run_id}' here (finished over an hour ago, or the runner restarted)."
-            )
+    async def op_wait(
+        self, run_id: str, since: int = 0, owner: str | None = None
+    ) -> dict:
+        run = self.held(run_id, owner)
         since = max(0, int(since))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.WAIT
@@ -172,7 +186,7 @@ class RunService(hostrpc.Service):
             "result": run.result if run.done else None,
         }
 
-    async def op_runs(self) -> dict:
+    async def op_runs(self, owner: str | None = None) -> dict:
         return {
             "runs": [
                 {
@@ -182,6 +196,7 @@ class RunService(hostrpc.Service):
                     "done": r.done,
                 }
                 for r in self.runs.values()
+                if owner is None or r.owner == owner
             ]
         }
 

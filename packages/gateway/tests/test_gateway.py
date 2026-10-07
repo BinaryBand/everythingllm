@@ -178,8 +178,27 @@ class FakeSites(hostrpc.Service):
 
 
 class FakeAgents(hostrpc.Service):
-    async def op_runs(self):
+    """Records each op with its args."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    async def reply(self, msg):
+        self.calls.append((msg["op"], msg["args"]))
+        return await super().reply(msg)
+
+    async def op_runs(self, owner):
         return {"runs": [{"run_id": "dg-1"}]}
+
+    async def op_delegate(self, goal, tasks, then, owner):
+        return {"run_id": "dg-2", "queued": 0, "card": ""}
+
+    async def op_wait(self, run_id, since, owner):
+        return {"events": [], "done": False, "result": None}
+
+    async def op_cancel(self, run_id, owner):
+        return {"run_id": run_id, "cancelled": True}
 
 
 @contextmanager
@@ -248,6 +267,36 @@ def test_a_prefixed_tool_sends_the_ops_own_name(client, monkeypatch):
     with fake_runner(monkeypatch, "AGENTS_SOCKET", FakeAgents()):
         reply = rpc(client, "tools/call", {"name": "agents_runs", "arguments": {}})
     assert json.loads(text_of(reply)) == {"runs": [{"run_id": "dg-1"}]}
+
+
+def test_each_agents_tool_sends_the_client_as_owner(client, monkeypatch):
+    """A client's delegations are its own: the gateway names it the owner, and the model
+    can't name another."""
+    me = "client-claude-code"
+    task = {"name": "a", "profile": "worker", "instructions": "x"}
+    fake = FakeAgents()
+    with fake_runner(monkeypatch, "AGENTS_SOCKET", fake):
+        rpc(client, "tools/call", {"name": "agents_runs", "arguments": {}})
+        rpc(
+            client,
+            "tools/call",
+            {
+                "name": "agents_delegate",
+                "arguments": {"goal": "g", "tasks": [task], "owner": "client-other"},
+            },
+        )
+        rpc(
+            client,
+            "tools/call",
+            {"name": "agents_wait", "arguments": {"run_id": "dg-2"}},
+        )
+        rpc(
+            client,
+            "tools/call",
+            {"name": "agents_cancel", "arguments": {"run_id": "dg-2", "owner": None}},
+        )
+    assert [op for op, _ in fake.calls] == ["runs", "delegate", "wait", "cancel"]
+    assert all(args["owner"] == me for _, args in fake.calls)
 
 
 async def whoami() -> str:

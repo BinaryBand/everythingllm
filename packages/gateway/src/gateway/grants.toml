@@ -10,7 +10,8 @@
 # The groups:
 #   sites                    the sites front's read tools, the ones AnythingLLM's agent has
 #   sites:write              write_entry, delete_entry
-#   agents                   delegations to AnythingLLM's own agents (agents_*)
+#   agents                   delegations to AnythingLLM's own agents (agents_*), each
+#                            client's its own
 #   research                 deep research runs (research_*): not per client, so a client
 #                            granted it sees every run, AnythingLLM's too
 #   sandbox                  the code sandbox (sandbox_*), in the client's own workspace,

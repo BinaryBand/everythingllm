@@ -1377,8 +1377,10 @@ it from starting.
   the op sent to the runner keeps its own name (`delegate`, `start`, `run`, …).
 - **Delegation** (`agents`): `agents_delegate`, `agents_wait`, `agents_runs` and
   `agents_cancel` over agents-runner. A client follows a run with `agents_wait`, advancing
-  `since` by the events it got, until `done`. The daily budget (`AGENTS_DAILY_USD`) counts
-  these delegations too.
+  `since` by the events it got, until `done`. A client's delegations are its own: the
+  gateway sends the runner the client as their owner (never from the arguments), and
+  `agents_runs`, `agents_wait` and `agents_cancel` reach only those. The daily budget
+  (`AGENTS_DAILY_USD`) counts these delegations too.
 - **Deep research** (`research`): `research_start(question, depth, sub_questions, title)`,
   `research_wait(run_id, since)` and `research_runs()` over research-runner. A run started
   here takes the runner's defaults: its report is published to the research site and saved

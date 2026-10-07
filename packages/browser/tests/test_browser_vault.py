@@ -147,13 +147,14 @@ def test_a_passkey_is_saved_for_its_site_asking_first_and_never_shown(vault):
     assert entry["private_key"] == passkey()["privateKey"] and entry["resident"]
     shown = str(vault.logins("career"))
     assert passkey()["privateKey"] not in shown and "AQID" not in shown
-    # Made again (the same credential id): replaced, still asking if it did.
-    again = vault.add_passkey("career", passkey(signCount=5), ask=False)
-    assert again["id"] == saved["id"] and again["ask"]
-    vault.update("career", saved["id"], sign_count=7)
+    # Made again (the same credential id): replaced, and asking first again.
+    vault.update("career", saved["id"], ask=False, sign_count=7)
     assert vault.get("career", saved["id"])["sign_count"] == 7
-    other = vault.add_passkey("career", passkey(credential_id="other"), ask=False)
-    assert other["id"] != saved["id"] and not other["ask"]
+    again = vault.add_passkey("career", passkey(signCount=5))
+    assert again["id"] == saved["id"] and again["ask"]
+    assert vault.get("career", saved["id"])["sign_count"] == 5
+    other = vault.add_passkey("career", passkey(credential_id="other"))
+    assert other["id"] != saved["id"]
     with pytest.raises(VaultError, match="is a passkey, not a login"):
         vault.get("career", saved["id"], "login")
 

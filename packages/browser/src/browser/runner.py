@@ -744,8 +744,8 @@ class Runner(hostrpc.Service):
         submit: bool = False,
     ) -> dict[str, Any]:
         s, tab, entry = await self.usable(scope, login, "login")
-        if (waiting := self.approval(s, tab, entry)) is not None:
-            return {"approval": waiting.id, "card": self.card(tab)}
+        if waiting := self.approval(s, tab, entry):
+            return waiting
         view = await self.call(
             s,
             "fill_login",
@@ -775,8 +775,8 @@ class Runner(hostrpc.Service):
             raise RunnerError(
                 f"the {entry['site']} login has no 2FA secret saved; hand the browser to the user for the code"
             )
-        if (waiting := self.approval(s, tab, entry)) is not None:
-            return {"approval": waiting.id, "card": self.card(tab)}
+        if waiting := self.approval(s, tab, entry):
+            return waiting
         view = await self.call(
             s,
             "fill_code",
@@ -791,8 +791,8 @@ class Runner(hostrpc.Service):
         self, scope: dict[str, Any], login: str, ref: str
     ) -> dict[str, Any]:
         s, tab, entry = await self.usable(scope, login, "passkey")
-        if (waiting := self.approval(s, tab, entry)) is not None:
-            return {"approval": waiting.id, "card": self.card(tab)}
+        if waiting := self.approval(s, tab, entry):
+            return waiting
         view = await self.call(
             s,
             "sign_in_passkey",
@@ -965,20 +965,22 @@ class Runner(hostrpc.Service):
         host = host_of(tab.url)
         if not site_matches(host, entry["site"]):
             raise RunnerError(
-                f"that login is for {entry['site']}, and this chat's page is on {host or 'no site'}; "
-                f"open {entry['site']}'s login page first"
+                f"that {kind} is for {entry['site']}, and this chat's page is on {host or 'no site'}; "
+                f"open {entry['site']}'s sign-in page first"
             )
         if not secure(tab.url):
             raise RunnerError(
-                "a saved login fills only on an https page on its usual port; open "
+                f"a saved {kind} works only on an https page on its usual port; open "
                 f"https://{host}/ instead"
             )
         return s, tab, entry
 
-    def approval(self, s: Session, tab: Tab, entry: dict[str, Any]) -> Approval | None:
-        """The OK the agent must wait for before using `entry`, or None when it needs none
-        (the login doesn't ask, or the user said yes to this chat in the last GRANT
-        seconds)."""
+    def approval(
+        self, s: Session, tab: Tab, entry: dict[str, Any]
+    ) -> dict[str, str] | None:
+        """The OK the agent must wait for before using `entry`, as the op's reply
+        ({approval, card}), or None when it needs none (the entry doesn't ask, or the user
+        said yes to this chat in the last GRANT seconds)."""
         key = (tab.thread, entry["id"])
         if not entry.get("ask") or s.granted.get(key, 0) > self.now():
             return None
@@ -990,7 +992,7 @@ class Runner(hostrpc.Service):
                 entry["username"], tab.thread, tab.url,
             )  # fmt: skip
         tab.moved(f"Waiting for your OK to use your {entry['site']} {entry['kind']}")
-        return s.approval
+        return {"approval": s.approval.id, "card": self.card(tab)}
 
     def answer(self, s: Session, approval: str, yes: bool) -> None:
         """The user's answer in the take-over view."""

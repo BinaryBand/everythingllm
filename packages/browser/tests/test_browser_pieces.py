@@ -5,6 +5,7 @@ import asyncio
 
 import pytest
 from browser import driver, page, websocket
+from browser_fakes import as_given, passkey
 from hostrpc import RunnerError
 
 VIEW = {
@@ -813,9 +814,10 @@ class FakeCDP:
         self.detached = True
 
 
-class CDPContext:
-    def __init__(self, pages: list, fail=""):
-        self.pages, self.fail = pages, fail
+class CDPContext(FakeContext):
+    def __init__(self, *pages, fail=""):
+        super().__init__(*pages)
+        self.fail = fail
         self.sessions, self.listeners = {}, {}
 
     async def new_cdp_session(self, page):
@@ -835,23 +837,15 @@ class PasskeyPage(FakePage):
     def __init__(self, url="https://github.com/login", asks=True):
         super().__init__(url, {"e1": FakeElement("button", None, url)})
         self.asks = asks
-        self.listeners = {}
-
-    def on(self, event, handler):
-        self.listeners.setdefault(event, []).append(handler)
-
-    def remove_listener(self, event, handler):
-        self.listeners[event].remove(handler)
 
 
-CREDENTIAL = {"credentialId": "cred", "privateKey": "KEY", "userHandle": "AQID",
-              "isResidentCredential": True, "signCount": 1}  # fmt: skip
+CREDENTIAL = as_given(passkey())
 
 
 def sign_in(page, fail=""):
     """What signing in on `page` came to (its result, or the RunnerError), and the CDP
     session it used, if it got one."""
-    context = CDPContext([page], fail)
+    context = CDPContext(page, fail=fail)
     d = driver.Driver(context, None)
     d.stacks["t1"] = [page]
 
@@ -907,7 +901,7 @@ def test_a_passkey_is_taken_out_whatever_goes_wrong_and_never_said_back():
 def test_pages_make_passkeys_only_while_the_user_has_it_and_until_one_is_made():
     async def main():
         page, popup = PasskeyPage(), PasskeyPage("https://github.com/popup")
-        context = CDPContext([page])
+        context = CDPContext(page)
         d = driver.Driver(context, None)
         with pytest.raises(RunnerError, match="only the user makes passkeys"):
             await d.op_make_passkeys(True)
@@ -926,7 +920,6 @@ def test_pages_make_passkeys_only_while_the_user_has_it_and_until_one_is_made():
         }
         assert d.makers == {} and "page" not in context.listeners
         assert all(cdp.detached for cdp in context.sessions.values())
-        assert page.listeners["close"] == popup.listeners["close"] == []
         # The hand-back ends it too, and nothing more is kept.
         await d.op_make_passkeys(True)
         await d.op_capture(False)
@@ -941,7 +934,7 @@ def test_pages_stop_making_passkeys_when_time_is_up(monkeypatch):
     monkeypatch.setattr(driver, "MAKING_SECONDS", 0.01)
 
     async def main():
-        d = driver.Driver(CDPContext([PasskeyPage()]), None)
+        d = driver.Driver(CDPContext(PasskeyPage()), None)
         await d.op_capture(True, user=True)
         await d.op_make_passkeys(True)
         await asyncio.sleep(0.05)

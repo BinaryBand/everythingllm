@@ -35,9 +35,9 @@ Passkeys go through Chromium's WebAuthn virtual authenticator (over CDP, which n
 the page can reach): to sign in, one holding the saved passkey is put in the thread's page,
 on the passkey's site, only while the button the agent names is clicked and the page asks
 (at most PASSKEY_SECONDS), and Chromium itself checks that the page may use it. While the
-user has the browser and asks to make one (only then: the hand-back ends it), every page
-has an empty authenticator, and a passkey a site makes in one is kept for the runner to
-save (`made`). Nothing is typed, so there's nothing for a read to hide.
+user has the browser and asks to make one, every page has an empty authenticator until one
+is made, MAKING_SECONDS pass or the hand-back, and a passkey a site makes in one is kept
+for the runner to save (`made`). Nothing is typed, so there's nothing for a read to hide.
 
 The ops that take a thread return the tab's view: {title, url, elements, text, more,
 notes}, snapshot.js's reading of the page (browser.page renders it).
@@ -806,9 +806,8 @@ class Driver(hostrpc.Service):
                 self.deadline.cancel()
             self.context.remove_listener("page", self.on_page)
             makers, self.makers = self.makers, {}
-            for page, cdp in makers.items():
-                page.remove_listener("close", self.unmake)
-                await disarm(cdp)
+            for cdp in makers.values():
+                await disarm(cdp)  # nothing, for a page that closed meanwhile
         return {}
 
     def stop_making(self) -> None:
@@ -816,9 +815,6 @@ class Driver(hostrpc.Service):
 
     def on_page(self, page: Any) -> None:
         asyncio.ensure_future(self.make_in(page))
-
-    def unmake(self, page: Any) -> None:
-        self.makers.pop(page, None)
 
     async def make_in(self, page: Any) -> None:
         if page in self.makers:
@@ -832,7 +828,6 @@ class Driver(hostrpc.Service):
             return
         self.makers[page] = cdp
         cdp.on("WebAuthn.credentialAdded", lambda event: self.on_made(page, event))
-        page.on("close", self.unmake)
 
     def on_made(self, page: Any, event: Any) -> None:
         credential = event.get("credential") if isinstance(event, dict) else None

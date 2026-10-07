@@ -198,8 +198,8 @@ class Vault:
                 f"{self.file(workspace)} doesn't open with {self.key_file} (another key, or not this workspace's)"
             ) from None
         entries = json.loads(plain)
-        for entry in entries:
-            entry.setdefault("kind", "login")
+        for saved in entries:
+            saved.setdefault("kind", "login")
         return entries
 
     def save(self, workspace: str, logins: list[dict[str, Any]]) -> None:
@@ -280,9 +280,7 @@ class Vault:
             login["ask"] = bool(ask) or bool(login.get("ask"))
         return public(login)
 
-    def add_passkey(
-        self, workspace: str, credential: dict[str, Any], ask: bool = True
-    ) -> dict[str, Any]:
+    def add_passkey(self, workspace: str, credential: dict[str, Any]) -> dict[str, Any]:
         """Save a passkey from Chromium's `Credential` (rpId, credentialId, privateKey,
         userHandle, isResidentCredential, signCount, userName), or replace the one with its
         credential id. Returns it, public."""
@@ -320,7 +318,7 @@ class Vault:
                 username=username[:MAX_FIELD],
                 resident=bool(credential.get("isResidentCredential", True)),
                 sign_count=count,
-                ask=bool(ask) or bool(login.get("ask")),
+                ask=True,  # until the user turns it off in the list
             )
         return public(login)
 

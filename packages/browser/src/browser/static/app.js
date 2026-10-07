@@ -66,7 +66,7 @@ function showApproval(a) {
   $("approval").hidden = !a;
   if (!a) return;
   $("approval-text").textContent =
-    `The agent in one of this workspace's chats wants to use your ${a.kind || "login"} for ${who(a)}, on ${a.url}.`;
+    `The agent in one of this workspace's chats wants to use your ${a.kind} for ${who(a)}, on ${a.url}.`;
   $("allow").onclick = () => act("allow the request", `approve/${a.id}`);
   $("deny").onclick = () => act("refuse the request", `deny/${a.id}`);
 }
@@ -127,7 +127,7 @@ function showLogins(logins) {
         ask.checked = !ask.checked;
       }
     };
-    const kind = l.kind === "passkey" ? "passkey" : "login";
+    const kind = l.kind;
     const remove = el("button", { textContent: "Delete", className: "quiet" });
     remove.onclick = () =>
       confirm(`Delete the ${kind} for ${who(l)}?`) && act(`delete the ${kind} for ${who(l)}`, `logins/${l.id}/delete`);

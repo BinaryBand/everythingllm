@@ -9,7 +9,7 @@ import pytest
 from browser import runner as runner_mod
 from browser.page import UNTRUSTED
 from browser.runner import Runner, check_scope
-from browser_fakes import Clock, FakePodman, config, passkey, scope
+from browser_fakes import Clock, FakePodman, as_given, config, passkey, scope
 from hostrpc import RunnerError
 
 
@@ -797,7 +797,8 @@ def test_a_login_fills_only_on_an_https_page_on_its_usual_port(tmp_path):
 def test_the_agent_signs_in_with_a_passkey_without_seeing_it(tmp_path):
     @run
     async def test(r, podman, clock):
-        saved = r.vault.add_passkey("career", passkey("github.com"), ask=False)
+        saved = r.vault.add_passkey("career", passkey("github.com"))
+        r.vault.update("career", saved["id"], ask=False)
         login = r.vault.add("career", "github.com", "alice", "pw")
         await r.op_open(scope(), "https://github.com/login")
         driver = podman.drivers["everythingllm-browser-career"]
@@ -808,9 +809,7 @@ def test_the_agent_signs_in_with_a_passkey_without_seeing_it(tmp_path):
         assert passkey()["privateKey"] not in str(done) and "Sign in" in done["page"]
         assert driver.filled[-1] == {
             "thread": "7", "site": "github.com", "ref": "e1",
-            "credential": {"credentialId": passkey()["credentialId"],
-                           "privateKey": passkey()["privateKey"], "userHandle": "AQID",
-                           "isResidentCredential": True, "signCount": 1},
+            "credential": as_given(passkey()),
         }  # fmt: skip
         assert (
             r.threads[("career", "7")].last

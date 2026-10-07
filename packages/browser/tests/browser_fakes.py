@@ -21,6 +21,11 @@ def passkey(rp_id="github.com", credential_id="q1079Y6M5OeiRR2o", **more) -> dic
             "userHandle": "AQID", "signCount": 1, "userName": "alice", **more}  # fmt: skip
 
 
+def as_given(credential: dict) -> dict:
+    """A passkey as the runner gives it to the driver: without the site or user's name."""
+    return {k: v for k, v in credential.items() if k not in ("rpId", "userName")}
+
+
 def jpeg(colour=(200, 30, 30), size=(1280, 800)) -> bytes:
     out = io.BytesIO()
     Image.new("RGB", size, colour).save(out, "JPEG")

@@ -21,8 +21,8 @@ container, so a stopped browser's old address goes nowhere.
   POST /<token>/logins/<id>/delete, logins/<id>/ask {ask}
   POST /<token>/offers/<id>/save {username, ask}, offers/<id>/drop
                                  save, or not, a login the user just sent in the browser
-  POST /<token>/passkeys/make {on}  let the browser's pages make a passkey, saved as it's
-                                 made (only while the user has the browser)
+  POST /<token>/passkeys/make {on}  let the browser's pages make a passkey (only while the
+                                 user has the browser), saved as the state is next asked for
   GET  /<token>/websockify       the WebSocket noVNC speaks, carried to the container's
                                  x11vnc socket (browser.websocket)
   GET  /login/<id>/              the form for a login the agent asked for (Runner.op_ask_login),

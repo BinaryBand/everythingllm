@@ -327,9 +327,51 @@ def test_a_screenshot_is_taken_at_most_every_so_often(tmp_path):
         assert await r.screenshot(tab, 1.0) == b"old"  # the clock hasn't moved
         clock.t += 1
         assert (await r.screenshot(tab, 1.0))[:2] == b"\xff\xd8"
-        assert r.state(tab) == "agent"
-        r.sessions["career"].control = "user"
-        assert r.state(tab) == "user"
+
+    test(tmp_path)
+
+
+def test_a_tab_says_whether_the_agent_is_at_work_in_it_or_waits_for_the_user(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        async def op(name, **args):
+            reply = await r.reply({"op": name, "args": {"scope": scope(), **args}})
+            assert reply["ok"], reply
+            return reply["result"]
+
+        await op("open", url="https://linkedin.com/")
+        tab = r.threads[("career", "7")]
+        s = r.sessions["career"]
+        assert r.state(tab) == r.activity(s) == "working"
+        clock.t += runner_mod.ACTIVE  # the agent's answer has ended
+        assert r.state(tab) == r.activity(s) == "idle"
+
+        tab.changed.clear()
+        reading = asyncio.ensure_future(op("read"))
+        await asyncio.sleep(0)
+        assert r.state(tab) == "working" and tab.changed.is_set()  # while it runs
+        await reading
+        clock.t += runner_mod.ACTIVE
+
+        saved = r.vault.add("career", "linkedin.com", "alice", "pw", ask=True)
+        approval = (await op("login", login=saved["id"]))["approval"]
+        assert r.state(tab) == "waiting"  # for the user's OK
+        r.answer(s, approval, False)
+        assert r.state(tab) == "working"
+        clock.t += runner_mod.ACTIVE
+        await op("ask_login")
+        assert r.state(tab) == r.activity(s) == "waiting"  # for a login
+        r.decline(next(iter(r.asked.values())))
+        assert r.state(tab) == "working"
+
+        await op("handoff", reason="log in")
+        assert r.state(tab) == r.activity(s) == "waiting"
+        await op("handoff", done=True)
+        await r.take(s)
+        assert r.state(tab) == r.activity(s) == "user"
+        await r.give_back(s)
+        await r.stop("career")
+        assert r.state(tab) == "closed"
 
     test(tmp_path)
 

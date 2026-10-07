@@ -34,6 +34,12 @@ its reply so the card shows). While the user has it, the agent's actions and rea
 comes back when the user hands it back in the view, or says in the chat that they're done
 (`handoff` with `done`), or when the browser is stopped.
 
+What the card and the take-over view say of a tab (`state`): `working` while one of the
+agent's ops for its chat runs and for ACTIVE seconds after (it thinks between steps),
+`idle` once the agent holds it and does nothing with it, `waiting` while the agent waits
+for the user (it handed the browser over, or waits for their OK or a login in that chat),
+`user` when the user took it, and `closed`.
+
 Saved logins (browser.vault, one vault per workspace) are the agent's to use and never to
 read: it names a login and the fields, and the runner has the driver fill them on the
 login's own site, over https. A login the user marked `ask` waits for their OK in the
@@ -142,6 +148,10 @@ LIMIT = 8 << 20  # a driver's reply: a screenshot is a few hundred KB
 LIVE_PORT = 8453
 TAKEOVER_PORT = 8454
 DOWNLOAD_BYTES = 256 << 20  # as browser.driver's: a bigger file isn't copied
+ACTIVE = 30  # seconds after the agent's last op on a tab that it still reads as working
+# The ops that are the agent at work in its chat's tab (not wait_approval, which waits).
+WORK = {"open", "act", "read", "handoff", "close", "logins", "login", "code", "passkey",
+        "ask_login"}  # fmt: skip
 
 PodmanResult = tuple[int, str, str]
 Podman = Callable[[list[str], float], Awaitable[PodmanResult]]
@@ -408,7 +418,33 @@ class Runner(hostrpc.Service):
         self.asked: dict[str, LoginRequest] = {}  # request id -> the request
         # (workspace, thread) -> what to say of its downloads in its next read
         self.downloaded: dict[tuple[str, str], list[str]] = {}
+        # (workspace, thread) -> the agent's ops running for it, and when its last ended
+        self.busy: dict[tuple[str, str], int] = {}
+        self.acted: dict[tuple[str, str], float] = {}
         self.vault = Vault(config.data / "vault", config.vault_key)
+
+    async def reply(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """An op, noted as the agent at work in its chat's tab while it runs (`state`)."""
+        try:
+            key = check_scope((msg.get("args") or {}).get("scope"))
+        except (RunnerError, AttributeError):
+            key = None
+        if key is None or msg.get("op") not in WORK:
+            return await super().reply(msg)
+        self.busy[key] = self.busy.get(key, 0) + 1
+        self.at_work(key)
+        try:
+            return await super().reply(msg)
+        finally:
+            self.busy[key] -= 1
+            if not self.busy[key]:
+                del self.busy[key]
+            self.acted[key] = self.now()
+            self.at_work(key)
+
+    def at_work(self, key: tuple[str, str]) -> None:
+        if (tab := self.threads.get(key)) is not None:
+            tab.changed.set()  # for its card to say so
 
     # --- containers ---
 
@@ -1164,10 +1200,35 @@ class Runner(hostrpc.Service):
         return tab.shot
 
     def state(self, tab: Tab) -> str:
+        """working, idle, waiting, user or closed: what's being done with the tab now (see
+        the module's docstring)."""
         s = self.sessions.get(tab.workspace)
         if not tab.open or s is None:
             return "closed"
-        return "user" if s.control == "user" else "agent"
+        if s.control == "user":
+            return "waiting" if s.asked else "user"
+        if (s.approval is not None and s.approval.thread == tab.thread) or any(
+            r.tab == tab.id and self.waiting(r) for r in self.asked.values()
+        ):
+            return "waiting"
+        key = (tab.workspace, tab.thread)
+        if key in self.busy or (
+            key in self.acted and self.now() - self.acted[key] < ACTIVE
+        ):
+            return "working"
+        return "idle"
+
+    def activity(self, s: Session) -> str:
+        """The workspace's browser's state as the take-over view says it: the user's, or
+        what's being done in the tab that's most to say about."""
+        if s.control == "user":
+            return "waiting" if s.asked else "user"
+        states = {
+            self.state(t)
+            for t in self.tabs.values()
+            if t.workspace == s.workspace and t.open
+        }
+        return next((w for w in ("waiting", "working") if w in states), "idle")
 
 
 def parent_sites(site: str) -> list[str]:

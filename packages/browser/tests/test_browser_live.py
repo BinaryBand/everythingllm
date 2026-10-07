@@ -13,7 +13,7 @@ from PIL import Image
 
 def test_a_frame_is_the_strip_over_the_screenshot_dimmed_once_closed():
     shot = jpeg((250, 250, 250), (640, 400))  # scaled to the card's width
-    for state in ("agent", "user", "closed"):
+    for state in live.STATES:
         image = Image.open(
             io.BytesIO(
                 live.picture(shot, "career", state, "T", "https://x/", "Clicked e1")
@@ -23,7 +23,7 @@ def test_a_frame_is_the_strip_over_the_screenshot_dimmed_once_closed():
         middle = image.convert("RGB").getpixel((live.WIDTH // 2, live.STRIP + 400))
         assert isinstance(middle, tuple)
         assert (middle[0] > 200) == (state != "closed")
-    blank = Image.open(io.BytesIO(live.picture(b"", "career", "agent", "", "", "")))
+    blank = Image.open(io.BytesIO(live.picture(b"", "career", "working", "", "", "")))
     assert blank.size == (live.WIDTH, live.STRIP + 360)
 
     def near(a, b):  # a JPEG's colours are only close
@@ -37,7 +37,7 @@ def test_a_frame_is_the_strip_over_the_screenshot_dimmed_once_closed():
         assert near(themed.getpixel((4, 20)), p.user)  # the strip's stripe
     assert (
         Image.open(
-            io.BytesIO(live.picture(b"not a jpeg", "w", "agent", "", "", ""))
+            io.BytesIO(live.picture(b"not a jpeg", "w", "idle", "", "", ""))
         ).size[0]
         == live.WIDTH
     )

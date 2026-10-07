@@ -24,11 +24,20 @@ function connect() {
   });
 }
 
+// What's being done with the browser now (Runner.activity).
+const STATES = {
+  working: "The agent is using the browser; you're watching.",
+  idle: "The agent has the browser but isn't using it now.",
+  waiting: "The agent is waiting for you.",
+  user: "You have the browser.",
+};
+
 function show(s) {
   control = s.control;
   if (rfb) rfb.viewOnly = control !== "user";
   const mine = control === "user";
-  $("state").textContent = mine ? "You have the browser." : "The agent has the browser; you're watching.";
+  const state = mine ? "user" : s.state;
+  $("state").textContent = STATES[state] || STATES.idle;
   $("take").hidden = mine;
   $("give").hidden = !mine;
   const why = mine && s.waiting && s.reason ? `The agent asked: ${s.reason}` : "";

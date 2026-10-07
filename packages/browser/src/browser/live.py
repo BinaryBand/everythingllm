@@ -8,8 +8,9 @@ The skills hand the agent a card line for the tab (Runner.card):
 The machine routes https://<host>:8445/_live/browser to this server's port (apps.toml),
 stripping the prefix or not, so paths are taken with or without it.
 
-- `<id>.jpg` is the card: a screenshot of the tab under a strip saying whose hands it's in
-  and what was done last, pushed again (chatimage.live, as JPEG) whenever it changes,
+- `<id>.jpg` is the card: a screenshot of the tab under a strip saying what's being done
+  with it (the agent at work or idle, waiting for you, yours, closed: Runner.state) and
+  what was done last, pushed again (chatimage.live, as JPEG) whenever it changes,
   checked every GAP seconds, until MAX_STREAM passes. A card being watched keeps the
   browser from being stopped as idle. A closed tab shows its last screenshot, dimmed, and
   the stream waits for it to open again. A tab the runner doesn't know (from before a
@@ -71,7 +72,9 @@ CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-acti
 WIDTH = 1280  # the screen's width; the chat shows it at up to 800
 STRIP = 132  # the strip above the screenshot
 STATES = {
-    "agent": "the agent is browsing",
+    "working": "the agent is browsing",
+    "idle": "the agent's, idle",
+    "waiting": "waiting for you",
     "user": "you have it",
     "closed": "closed",
 }
@@ -86,10 +89,12 @@ def picture(
     last: str,
     theme: str = THEME,
 ) -> bytes:
-    """A frame as a JPEG: the strip (who has the browser, the page's title, its address and
-    what was done last) above the screenshot, dimmed once the tab is closed."""
+    """A frame as a JPEG: the strip (what's being done with the tab, the page's title, its
+    address and what was done last) above the screenshot, dimmed once the tab is closed."""
     p = THEMES[theme]
-    accent = {"user": p.user, "closed": p.faint}.get(state, accent_for("Browser", p))
+    accent = {"user": p.user, "waiting": p.user, "closed": p.faint}.get(
+        state, accent_for("Browser", p)
+    )
     try:
         screen = Image.open(io.BytesIO(shot)).convert("RGB") if shot else None
     except OSError:

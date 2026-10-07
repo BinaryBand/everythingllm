@@ -80,6 +80,7 @@ def test_the_page_its_files_and_its_state(tmp_path):
         head, body = await answer(port, "GET", f"/{s.token}/state")
         state = json.loads(body)
         assert state["control"] == "agent" and state["tabs"][0]["id"] == tab.id
+        assert state["state"] == "idle"  # opened outside an op the agent sent
 
     test(tmp_path)
 

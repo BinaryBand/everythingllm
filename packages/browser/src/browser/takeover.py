@@ -11,9 +11,10 @@ container, so a stopped browser's old address goes nowhere.
   GET  /<token>/app.js, style.css  the page's script and style (static/ beside this file)
   GET  /<token>/novnc/<path>     noVNC's core and vendor files (copied from the browser image
                                  into <data>/novnc by hostctl browser-images)
-  GET  /<token>/state            {workspace, control, reason, waiting, tabs, approval,
-                                 asked, offers, logins, making, made}: logins (and passkeys) and
-                                 offers without their secrets
+  GET  /<token>/state            {workspace, control, state, reason, waiting, tabs, approval,
+                                 asked, offers, logins, making, made}: `state` what's being done
+                                 with it (Runner.activity), logins (and passkeys) and offers
+                                 without their secrets
   POST /<token>/take             the user takes the browser
   POST /<token>/give             the user hands it back to the agent
   POST /<token>/approve/<id>, deny/<id>   answer the agent's wish to use a saved login
@@ -457,6 +458,7 @@ class Takeover:
         return {
             "workspace": s.workspace,
             "control": s.control,
+            "state": self.runner.activity(s),
             "reason": s.reason,
             "waiting": s.asked and s.control == "user",
             "tabs": tabs,

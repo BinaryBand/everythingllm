@@ -140,7 +140,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   the ContextVar `gateway.grants.client`, from which the sandbox tools make the scope
   `{workspace: client-<name>, thread: gateway, gateway: true}` (never from the model; the
   sandbox runner keeps `client-` workspaces for such scopes). Research runs from it have no
-  workspace and aren't per client. A front's tool or skill reaches it unchanged, so a new
+  workspace and are per client (an owner on the run). A front's tool or skill reaches it unchanged, so a new
   one needs nothing there; it restarts only by hand.
 - The agent does short judgment work through thin tools. For example, the
   `daily-news-page` scheduled job calls `headlines` and then the `write-entry` skill. Code asks a

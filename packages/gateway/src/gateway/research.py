@@ -6,8 +6,11 @@ client reads it with the sites tools,
 get_entry(site="research", section="reports", slug). The models are the runner's defaults
 (research.job.Request), not the skill's setup args.
 
-Runs aren't per client: research_wait and research_runs see every run the runner holds,
-AnythingLLM's included. With one user that's documented here, not enforced.
+A client's runs are its own: each call adds the client as their owner (owner:
+"client-<name>", from gateway.grants.client through client_key; never from the
+arguments), so research_wait and research_runs reach only the runs it started
+(runs.service). The reports aren't: they're published to the research site, which any
+client granted `sites` reads.
 
 Declared like a front's tools (a signature and a docstring, no body); gateway.app serves
 them as the `research` group, named with PREFIX (research_start, …), while the op each
@@ -25,6 +28,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
+from gateway.sandbox import client_key
+
 mcp = MCPServer("research")
 
 # The gateway serves each tool here as PREFIX + its name, apart from the fronts' tools.
@@ -39,8 +44,8 @@ runner = hostrpc.caller(skills.folder, skills.env, "research runner", error=Tool
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:
-    """Send `op` to the research runner."""
-    return await runner(op, args)
+    """Send `op` with the client as owner, never one from the arguments."""
+    return await runner(op, {**args, "owner": client_key("Research")})
 
 
 tool = hostrpc.forwarder(call, mcp.add_tool)
@@ -105,5 +110,5 @@ async def wait(
 
 @tool
 async def runs() -> dict:
-    """The research runs research-runner holds, AnythingLLM's too:
+    """This client's research runs that research-runner holds:
     {runs: [{run_id, question, started, done}]}."""

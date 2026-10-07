@@ -1410,7 +1410,10 @@ it from starting.
   setup args. `research_start` answers at once with `{run_id, queued, card}`; a
   client follows the run with `research_wait` as with `agents_wait`, and once it's done
   the result's `url` ends in the report's slug, which it reads with
-  `get_entry(site="research", section="reports", slug)` (the `sites` group).
+  `get_entry(site="research", section="reports", slug)` (the `sites` group). A client's
+  runs are its own, as its delegations are: `research_wait` and `research_runs` reach only
+  the runs it started. Their reports aren't: they're on the research site, which every
+  client granted `sites` reads.
 - **The code sandbox** (`sandbox`): `sandbox_run(language, code, timeout)`,
   `sandbox_wait(run_id)`, `sandbox_write(path, content, delete)`,
   `sandbox_publish(slug, path, remove)` and `sandbox_build_site(path, slug)` over
@@ -1431,8 +1434,6 @@ it from starting.
 
 What the scopes don't do, by design (one user, so documented rather than enforced):
 
-- Research runs aren't per client. `research_wait` and `research_runs` see every run
-  research-runner holds, AnythingLLM's included, and a client can follow any of them.
 - A `client-<name>` sandbox workspace is a workspace like any other: its runs read every
   AnythingLLM workspace's `/shared/<workspace>` (read-only), and every workspace's runs
   read its `/shared/client-<name>`. Its `/project`, `/work` and `/public` are its own, and

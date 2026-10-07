@@ -4,13 +4,17 @@ service container (host/quadlet/research-runner.container.in).
 The skill (anythingllm/agent-skills/deep-research) asks over its socket (hostrpc):
 
   start(question, depth?, planner?, worker?, planner_fallback?, site?, sub_questions?,
-        title?) -> {run_id, queued, card}
+        title?, owner?) -> {run_id, queued, card}
 
 `sub_questions` is the calling agent's own split of the question (each a goal, or {goal,
 queries}), which the planner then doesn't make; `title` is the report's title with them.
-  wait(run_id, since=0)   up to WAIT seconds for news: {events (from `since` on), done,
+  wait(run_id, since=0, owner?)
+                          up to WAIT seconds for news: {events (from `since` on), done,
                           result ({status, reply, sources}) once done}
-  runs()                  the runs this runner holds: {run_id, question, started, done}
+  runs(owner?)            the runs this runner holds: {run_id, question, started, done}
+
+`owner` is a gateway client's (gateway.research adds it from the client's token): its runs
+are its own, and it sees no others (runs.service). The skill gives none and sees them all.
 
 `card` is the run's live progress card for the agent to paste (research.live, which
 this runner serves on its own port); "" without PUBLIC_HOST.
@@ -82,14 +86,14 @@ class Runner(RunService):
         self.settings = settings
         self.execute = execute
 
-    async def op_start(self, question: str, **args) -> dict:
+    async def op_start(self, question: str, owner: str | None = None, **args) -> dict:
         """args: depth, planner, worker, planner_fallback, site, sub_questions, title
-        (job.Request's fields); None or "" takes the default."""
+        (job.Request's fields); None or "" takes the default. `owner`: the module's."""
         if not isinstance(question, str) or not question.strip():
             raise RunnerError("No research question was given.")
         check_split(args.get("sub_questions"), args.get("title") or None)
         req = job.Request.of(question, **args)
-        run = self.new_run(req.question)
+        run = self.new_run(req.question, owner)
         card = live.Live.card_line(self.settings.pages_url, run.id, req.question)
         req = replace(req, run_id=run.id, card=card)
 

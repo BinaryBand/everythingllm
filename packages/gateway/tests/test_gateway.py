@@ -591,19 +591,19 @@ def test_a_write_lands_in_the_clients_folder_on_the_real_runner(
 # --- research ---
 
 
-class FakeResearch(hostrpc.Service):
+class FakeResearch(Recording):
     def __init__(self):
         super().__init__()
         self.started = []
 
-    async def op_start(self, question, **args):
+    async def op_start(self, question, owner, **args):
         self.started.append(research.job.Request.of(question, **args))
         return {"run_id": "dr-1", "queued": 0, "card": ""}
 
-    async def op_wait(self, run_id, since=0):
+    async def op_wait(self, run_id, owner, since=0):
         return {"events": [f"{run_id} from {since}"], "done": False, "result": None}
 
-    async def op_runs(self):
+    async def op_runs(self, owner):
         return {"runs": [{"run_id": "dr-1", "question": "q", "done": False}]}
 
 
@@ -619,6 +619,7 @@ def test_research_starts_a_run_with_the_runners_defaults(client, monkeypatch):
                 "sub_questions": ["Field data", {"goal": "Costs", "queries": ["x"]}],
                 "title": "Heat pumps up north",
                 "planner": "someone-elses",  # not a parameter: never sent
+                "owner": "client-other",  # nor is this: the gateway's is
             },
         )
         waited = call_tool(client, "research_wait", {"run_id": "dr-1", "since": 3})
@@ -631,6 +632,8 @@ def test_research_starts_a_run_with_the_runners_defaults(client, monkeypatch):
     assert req.planner == research.job.Request.planner  # the runner's own defaults
     assert waited["events"] == ["dr-1 from 3"]
     assert runs["runs"][0]["run_id"] == "dr-1"
+    assert [op for op, _ in fake.calls] == ["start", "wait", "runs"]
+    assert all(args["owner"] == "client-claude-code" for _, args in fake.calls)
 
 
 def test_the_research_tools_say_where_the_report_is_read():

@@ -119,6 +119,32 @@ def test_a_run_starts_reports_progress_and_finishes(served):
     ]
 
 
+def test_a_gateway_clients_runs_are_its_own(served):
+    """The gateway passes its client as owner: another client doesn't see or follow the
+    run, and the skill, which passes none, sees it."""
+    _settings, gate, socket, start = served
+
+    async def go():
+        server = await start()
+        started = await call(socket, "start", question="Heat pumps?", owner="client-a")
+        assert started["ok"], started
+        run_id = started["result"]["run_id"]
+        other = await call(socket, "wait", run_id=run_id, owner="client-b")
+        assert not other["ok"] and "no research run" in other["error"]
+        listed = await call(socket, "runs", owner="client-b")
+        assert listed["result"]["runs"] == []
+        mine = await call(socket, "runs", owner="client-a")
+        assert [r["run_id"] for r in mine["result"]["runs"]] == [run_id]
+        assert [
+            r["run_id"] for r in (await call(socket, "runs"))["result"]["runs"]
+        ] == [run_id]
+        gate.go.set()
+        server.cancel()
+
+    asyncio.run(go())
+    assert gate.reqs and gate.reqs[0].question == "Heat pumps?"
+
+
 def test_two_runs_go_at_once_and_a_third_waits_its_turn(served):
     _settings, gate, socket, start = served
 

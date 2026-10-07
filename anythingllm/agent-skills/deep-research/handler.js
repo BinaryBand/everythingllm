@@ -12,7 +12,7 @@
 const hostrpc = require("../_lib/hostrpc");
 const { delegatedRefusal } = require("../_lib/delegated");
 const { asObject } = require("../_lib/runner");
-const { scopeOf, chatOf } = require("../_lib/scope");
+const { scopeOf, chatOf, TOLD } = require("../_lib/scope");
 
 const { Down } = hostrpc;
 
@@ -76,7 +76,7 @@ module.exports.runtime = {
         ? "Put the Card line in your reply exactly as given, on its own line: it shows the run's progress live and " +
           "opens the report once it's published. Tell the user that in a sentence."
         : "Tell the user the report will be on the research site when it's done.",
-      told ? "When it ends, a notice comes back into this chat (it shows once the chat is reloaded)." : "",
+      told ? TOLD : "",
       "Don't wait for the run, search on your own or start it again. When the user asks how it went, find the " +
         "report with `sites list_entries`.",
     ]

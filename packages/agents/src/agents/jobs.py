@@ -22,7 +22,7 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -212,14 +212,23 @@ def last_run(job: dict, tz: ZoneInfo) -> str:
     return f"last run {local(last, tz)}{status}"
 
 
-class Registry:
-    """Entries kept across restarts (by default the one-offs made here): a JSON list in
-    `path`, replaced whole (hostrpc.atomic_write). Its users hold `lock` from reading it to
-    writing it."""
+async def repeat(seconds: float, step: Callable[[], Awaitable[Any]], what: str) -> None:
+    """Run `step` every `seconds`, until cancelled; a round that fails is logged."""
+    while True:
+        await asyncio.sleep(seconds)
+        try:
+            await step()
+        except Exception:
+            log.exception("%s failed a round", what)
 
-    def __init__(self, path: Path, what: str = "the one-off registry"):
+
+class Registry:
+    """Entries kept across restarts (the one-offs made here, the research runs followed):
+    a JSON list in `path`, replaced whole (hostrpc.atomic_write). Its users hold `lock`
+    from reading it to writing it."""
+
+    def __init__(self, path: Path):
         self.path = path
-        self.what = what
         self.lock = asyncio.Lock()
 
     def _read(self) -> list[dict]:
@@ -228,9 +237,9 @@ class Registry:
         except FileNotFoundError:
             return []
         except (OSError, ValueError) as e:
-            raise RunnerError(f"{self.what} {self.path} is unreadable: {e}")
+            raise RunnerError(f"{self.path} is unreadable: {e}")
         if not isinstance(entries, list):
-            raise RunnerError(f"{self.what} {self.path} isn't a list")
+            raise RunnerError(f"{self.path} isn't a list")
         return [e for e in entries if isinstance(e, dict) and "id" in e]
 
     def _write(self, entries: list[dict]) -> None:
@@ -664,9 +673,4 @@ class ScheduledJobs:
 
     async def poll(self) -> None:
         """Sweep every POLL seconds, until cancelled."""
-        while True:
-            await asyncio.sleep(POLL)
-            try:
-                await self.sweep()
-            except Exception:
-                log.exception("the one-off poller failed a round")
+        await repeat(POLL, self.sweep, "the one-off poller")

@@ -92,16 +92,10 @@ from runs import live
 from runs.runlog import RunLog, iso, since
 from runs.service import Meter, Progress, Run, RunService
 
-from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI
+from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI, tag_safe
 from agents.jobs import DEFAULT_TIMEZONE, Registry, ScheduledJobs
 from agents.memories import SavedMemories
-from agents.postback import (
-    Following,
-    check_chat,
-    delegation_notice,
-    post,
-    tag_safe,
-)
+from agents.postback import Following, chat_only, check_chat, delegation_notice, post
 from agents.profiles import PROFILES, ensure
 
 log = logging.getLogger("agents-runner")
@@ -132,7 +126,10 @@ class Settings:
     slots: int = 3
     daily_usd: float = 3.0  # 0: no cap
     timezone: str = DEFAULT_TIMEZONE
-    research_runlogs: Path | None = None  # research's run log, for the runs followed
+    # research's run log, for the runs followed (research.job.Settings's runlogs)
+    research_runlogs: Path = field(
+        default_factory=lambda: hostrpc.data_dir() / "research" / "runs"
+    )
 
     @property
     def followed(self) -> Path:
@@ -148,18 +145,7 @@ class Settings:
             slots=int(os.environ.get("AGENTS_SLOTS", "3")),
             daily_usd=float(os.environ.get("AGENTS_DAILY_USD", "3")),
             timezone=os.environ.get("USER_TIMEZONE") or DEFAULT_TIMEZONE,
-            research_runlogs=hostrpc.data_dir() / "research" / "runs",
         )
-
-
-def chat_only(scope: dict, what: str) -> None:
-    """Refuse a call from a scheduled job (no workspace) or a delegation role's workspace:
-    only a chat, where the user sees what's shown first, may `what`."""
-    slug = str((scope or {}).get("workspace") or "")
-    if not slug or slug == "_jobs":
-        raise RunnerError(f"a scheduled job can't {what}; only a chat can")
-    if slug.startswith(prompt.DELEGATED):
-        raise RunnerError(f"a delegated task can't {what}")
 
 
 def spent(runlogs: Path, now: float | None = None) -> float:
@@ -366,15 +352,10 @@ class Runner(RunService):
         return self.jobs
 
     def start_poller(self) -> None:
-        """Watch the one-offs made here, and for jobs made while a delegation runs (only
-        runner.main does, so tests don't)."""
+        """Watch the one-offs made here, for jobs made while a delegation runs, and for
+        the end of the research runs followed (only runner.main does, so tests don't)."""
         if self.poller is None:
             self.poller = asyncio.create_task(self.scheduled().poll())
-
-    def start_watching(self) -> None:
-        """Tell the chats of the research runs followed when they end (only runner.main
-        does; tests sweep by hand)."""
-        if self.watcher is None:
             self.watcher = asyncio.create_task(self.following.watch(self.tell))
 
     async def tell(self, chat: dict, text: str) -> None:
@@ -387,11 +368,10 @@ class Runner(RunService):
             log.info("told %s", chat)
 
     async def ended(self, run: Run) -> None:
-        chat = self.chats.pop(run.id, None)
-        if chat and run.result is not None:
-            card = AgentsLive.card_line(self.settings.pages_url, run.id, run.subject)
+        if chat := self.chats.pop(run.id, None):
+            link = AgentsLive.page_url(self.settings.pages_url, run.id)
             await self.tell(
-                chat, delegation_notice(run.id, run.subject, run.result, card)
+                chat, delegation_notice(run.id, run.subject, run.result, link)
             )
 
     async def aclose(self) -> None:
@@ -739,7 +719,6 @@ async def serve(
     card = AgentsLive(runner, settings.runlogs, settings.pages_url)
     if poll:
         runner.start_poller()
-        runner.start_watching()
     await runner.serve(socket, card, settings.live_port, settings.runlogs, limit=LIMIT)
 
 

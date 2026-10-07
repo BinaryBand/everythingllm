@@ -706,21 +706,14 @@ def test_a_chat_that_cant_be_told_leaves_the_delegation_as_it_was(fake, tmp_path
     asyncio.run(main())
 
 
-def test_only_a_chat_is_told(fake, tmp_path):
+def test_a_delegation_from_no_chat_is_refused(fake, tmp_path):
+    """postback.check_chat's own test has the cases; this is its use here."""
+
     async def main():
         r = make(fake, tmp_path)
         task = [{"name": "a", "profile": "worker", "instructions": "x"}]
-        for chat, why in [
-            ("career", "must be"),
-            ({"workspace": "_jobs", "thread": None}, "only a chat"),
-            ({"workspace": "", "thread": None}, "only a chat"),
-            ({"workspace": "agents-worker", "thread": None}, "delegated task"),
-            ({"workspace": "career", "thread": "7"}, "thread id"),
-            ({"workspace": "career", "thread": True}, "thread id"),
-            ({"workspace": "career", "thread": 0}, "thread id"),
-        ]:
-            with pytest.raises(RunnerError, match=why):
-                await r.op_delegate("g", task, chat=chat)
+        with pytest.raises(RunnerError, match="scheduled job"):
+            await r.op_delegate("g", task, chat={"workspace": "_jobs", "thread": None})
         assert r.runs == {}
 
     asyncio.run(main())

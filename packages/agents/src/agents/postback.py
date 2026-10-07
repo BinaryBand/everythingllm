@@ -9,9 +9,10 @@ mark means), and the workspace's model passes it on. AnythingLLM's UI doesn't re
 thread by itself, so it shows once the user reloads the thread or opens it.
 
 Only a chat in AnythingLLM's UI is told. Its skill sends `chat`: {workspace, thread}, the
-thread's numeric id from the invocation, or None for the workspace's main chat. API,
-Telegram and scheduled-job runs have no chat to post to, and send none. A notice that
-can't be posted (the thread is gone, AnythingLLM is down) is logged and dropped.
+thread's numeric id from the invocation, or None for the workspace's main chat. API and
+Telegram runs send none, since AnythingLLM leaves their thread out of the invocation it gives
+skills, and nor do scheduled jobs, which have none. A notice that can't be posted (the thread
+is gone, AnythingLLM is down) is logged and dropped.
 """
 
 import asyncio
@@ -26,8 +27,9 @@ from hostctl import prompt
 from hostrpc import RunnerError
 from runs.runlog import find
 
-from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI
-from agents.jobs import Registry
+from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI, tag_safe
+from agents.jobs import Registry, clipped, repeat
+from agents.memories import one_line
 
 log = logging.getLogger("agents-runner")
 
@@ -46,35 +48,32 @@ POLL = 30  # seconds between looks at research's run log
 Tell = Callable[[dict, str], Awaitable[None]]
 
 
+def chat_only(scope: dict, what: str) -> None:
+    """Refuse a call from a scheduled job (no workspace) or a delegation role's workspace:
+    only a chat, where the user sees what's shown first, may `what`."""
+    slug = str((scope or {}).get("workspace") or "")
+    if not slug or slug == "_jobs":
+        raise RunnerError(f"a scheduled job can't {what}; only a chat can")
+    if slug.startswith(prompt.DELEGATED):
+        raise RunnerError(f"a delegated task can't {what}")
+
+
 def check_chat(chat: Any) -> dict:
     """The chat to tell, as {workspace, thread}; RunnerError unless it's a chat's."""
-    if not isinstance(chat, dict):
+    if not isinstance(chat, dict) or not isinstance(chat.get("workspace"), str):
         raise RunnerError("chat must be {workspace, thread}")
-    slug, thread = chat.get("workspace"), chat.get("thread")
-    if not isinstance(slug, str) or not slug or slug == "_jobs":
-        raise RunnerError("only a chat in AnythingLLM is told when a job ends")
-    if slug.startswith(prompt.DELEGATED):
-        raise RunnerError("a delegated task's chat isn't told when a job ends")
+    chat_only(chat, "be told when a job ends")
+    thread = chat.get("thread")
     if thread is not None and (
         not isinstance(thread, int) or isinstance(thread, bool) or thread < 1
     ):
         raise RunnerError("chat's thread must be AnythingLLM's thread id, or null")
-    return {"workspace": slug, "thread": thread}
+    return {"workspace": chat["workspace"], "thread": thread}
 
 
-def tag_safe(text: str, tag: str) -> str:
-    """`text` for inside a <tag>…</tag>, which it can't close."""
-    return re.sub(rf"<\s*/\s*({tag})", r"<\\/\1", text, flags=re.IGNORECASE)
-
-
-def cut(text: str, limit: int) -> str:
-    text = str(text or "").strip()
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
-
-
-def line(text: str) -> str:
+def subject_line(text: str) -> str:
     """A job's subject on one line, cut to MAX_SUBJECT."""
-    return cut(" ".join(str(text or "").split()), MAX_SUBJECT)
+    return clipped(one_line(text), MAX_SUBJECT)
 
 
 def card_link(card: str) -> str:
@@ -88,7 +87,7 @@ def notice(
 ) -> str:
     parts = [
         f"{MARK}: the {what} {run_id} has ended ({status}).",
-        f"It was for: {line(subject)}",
+        f"It was for: {subject_line(subject)}",
     ]
     if results:
         parts.append(
@@ -117,13 +116,13 @@ def research_notice(entry: dict, record: dict) -> str:
         "deep research run",
         entry["id"],
         status,
-        entry.get("question") or record.get("question") or "",
-        cut(results, MAX_RESULTS),
-        url or card_link(entry.get("card") or ""),
+        entry["question"] or record.get("question") or "",
+        clipped(results, MAX_RESULTS),
+        url or entry["link"],
     )
 
 
-def delegation_notice(run_id: str, goal: str, result: dict, card: str) -> str:
+def delegation_notice(run_id: str, goal: str, result: dict, link: str) -> str:
     """A delegation's notice: `then`'s reply, or else each task's, cut to MAX_RESULTS."""
     then = result.get("then")
     tasks = [then] if then and then.get("status") == "ok" else result.get("tasks") or []
@@ -139,8 +138,8 @@ def delegation_notice(run_id: str, goal: str, result: dict, card: str) -> str:
         run_id,
         str(result.get("status") or "ended"),
         goal,
-        cut("\n\n".join(lines), MAX_RESULTS),
-        card_link(card),
+        clipped("\n\n".join(lines), MAX_RESULTS),
+        link,
     )
 
 
@@ -149,16 +148,12 @@ async def post(
 ) -> None:
     """`text` as a turn in the chat; AnythingLLMError if it can't be."""
     slug, thread = chat["workspace"], chat["thread"]
-    if thread is None:
-        await client.workspace_chat(slug, text)
-        return
-    found = next(
-        (t.get("slug") for t in await internal.threads(slug) if t.get("id") == thread),
-        None,
-    )
-    if not found:
-        raise AnythingLLMError(f"workspace {slug} has no thread {thread} any more")
-    await client.chat(slug, found, text)
+    if thread is not None:
+        threads = await internal.threads(slug)
+        thread = next((t.get("slug") for t in threads if t.get("id") == thread), None)
+        if not thread:
+            raise AnythingLLMError(f"workspace {slug} has no thread {chat['thread']}")
+    await client.chat(slug, thread, text)
 
 
 class Following:
@@ -167,23 +162,19 @@ class Following:
     `runlogs`, where a run gets its line when it ends or, cut short, when research-runner
     starts again."""
 
-    def __init__(
-        self, path: Path, runlogs: Path | None, now: Callable[[], float] = time.time
-    ):
-        self.registry = Registry(path, "the followed research runs")
+    def __init__(self, path: Path, runlogs: Path, now: Callable[[], float] = time.time):
+        self.registry = Registry(path)
         self.runlogs = runlogs
         self.now = now
 
     async def add(self, run_id: Any, chat: Any, card: Any, question: Any) -> dict:
-        if self.runlogs is None:
-            raise RunnerError("agents-runner doesn't know where research's run log is")
         if not isinstance(run_id, str) or not RESEARCH_ID.fullmatch(run_id):
             raise RunnerError("run_id must be a deep research run's id (dr-xxxxxxxx)")
         entry = {
             "id": run_id,
             "chat": check_chat(chat),
-            "card": card if isinstance(card, str) else "",
-            "question": line(question if isinstance(question, str) else ""),
+            "link": card_link(card if isinstance(card, str) else ""),
+            "question": subject_line(question if isinstance(question, str) else ""),
             "since": self.now(),
         }
         async with self.registry.lock:
@@ -196,16 +187,12 @@ class Following:
         """Tell the chats of the followed runs that have ended, and let them go."""
         async with self.registry.lock:
             entries = await self.registry.read()
-            if not entries:
-                return
             ended, keep = [], []
             for entry in entries:
-                record = await asyncio.to_thread(
-                    find, self.runlogs or Path(), entry["id"]
-                )
+                record = await asyncio.to_thread(find, self.runlogs, entry["id"])
                 if record is not None:
                     ended.append((entry, record))
-                elif self.now() - float(entry.get("since") or 0) < FOLLOW_SECONDS:
+                elif self.now() - entry["since"] < FOLLOW_SECONDS:
                     keep.append(entry)
                 else:
                     log.warning(
@@ -213,14 +200,11 @@ class Following:
                     )
             if len(keep) != len(entries):
                 await self.registry.write(keep)
-        for entry, record in ended:  # outside the lock: a chat takes a while
-            await tell(entry["chat"], research_notice(entry, record))
+        # Outside the lock, and side by side: each is a chat with the workspace's model.
+        await asyncio.gather(
+            *(tell(entry["chat"], research_notice(entry, r)) for entry, r in ended)
+        )
 
     async def watch(self, tell: Tell) -> None:
         """Sweep every POLL seconds, until cancelled."""
-        while True:
-            await asyncio.sleep(POLL)
-            try:
-                await self.sweep(tell)
-            except Exception:
-                log.exception("following research runs failed a round")
+        await repeat(POLL, lambda: self.sweep(tell), "following research runs")

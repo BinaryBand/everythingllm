@@ -1,5 +1,5 @@
 // A fake host service for the skill tests, on a socket of its own: answers each request
-// with respond(op, args) and keeps the requests. (No tests here; node --test runs it as an
+// with respond(op, args) (or what it resolves to) and keeps the requests. (No tests here; node --test runs it as an
 // empty file.)
 
 const fs = require("fs");
@@ -13,12 +13,12 @@ async function fakeService(respond) {
   const requests = [];
   const server = net.createServer((conn) => {
     let buffer = "";
-    conn.on("data", (chunk) => {
+    conn.on("data", async (chunk) => {
       buffer += chunk;
       if (!buffer.includes("\n")) return;
       const msg = JSON.parse(buffer.split("\n")[0]);
       requests.push(msg);
-      conn.end(JSON.stringify(respond(msg.op, msg.args)) + "\n");
+      conn.end(JSON.stringify(await respond(msg.op, msg.args)) + "\n");
     });
   });
   await new Promise((r) => server.listen(socket, r));

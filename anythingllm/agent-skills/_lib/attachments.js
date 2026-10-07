@@ -14,6 +14,7 @@
 // nothing. A test in the container (test/attachments.test.js) holds the image to it.
 
 const path = require("path");
+const { uiInvocation } = require("./scope");
 
 const MAX = 50; // as sandbox.runner.ATTACHMENTS_MAX
 const TITLE_MAX = 500;
@@ -28,9 +29,9 @@ const source = { load: () => require(PRISMA) };
  *  thread_id and user_id (null in the main chat and in single-user mode); API, Telegram
  *  and scheduled job runs have neither, and get no attachments. */
 function chatOf(self) {
-  const invocation = self.super?.handlerProps?.invocation || {};
-  const workspaceId = invocation.workspace?.id;
-  if (!Number.isInteger(workspaceId) || !Object.hasOwn(invocation, "thread_id")) return null;
+  const invocation = uiInvocation(self);
+  const workspaceId = invocation?.workspace?.id;
+  if (!Number.isInteger(workspaceId)) return null;
   const threadId = Number.isInteger(invocation.thread_id) ? invocation.thread_id : null;
   const userId = Number.isInteger(invocation.user_id) ? invocation.user_id : null;
   return { workspaceId, threadId, userId };

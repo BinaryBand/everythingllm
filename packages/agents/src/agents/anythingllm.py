@@ -78,6 +78,11 @@ def without_thinking(text: str) -> str:
     return THINKING.sub("", text or "").strip()
 
 
+def tag_safe(text: str, tag: str) -> str:
+    """`text` for inside a <tag>…</tag> in a prompt, which it can't close."""
+    return re.sub(rf"<\s*/\s*({tag})", r"<\\/\1", text, flags=re.IGNORECASE)
+
+
 @dataclass
 class AnythingLLM:
     base_url: str
@@ -142,19 +147,19 @@ class AnythingLLM:
     async def thread_delete(self, slug: str, thread: str) -> None:
         await self.call("DELETE", f"/workspace/{quote(slug)}/thread/{quote(thread)}")
 
-    async def chat(self, slug: str, thread: str, message: str) -> tuple[str, dict]:
-        """The agent's reply to `message` in the thread, and the run's metrics (model, cost)."""
-        return await self.chat_at(
-            f"/workspace/{quote(slug)}/thread/{quote(thread)}/chat", message
-        )
-
-    async def workspace_chat(self, slug: str, message: str) -> tuple[str, dict]:
-        """`chat`, in the workspace's main chat rather than a thread."""
-        return await self.chat_at(f"/workspace/{quote(slug)}/chat", message)
-
-    async def chat_at(self, path: str, message: str) -> tuple[str, dict]:
+    async def chat(
+        self, slug: str, thread: str | None, message: str
+    ) -> tuple[str, dict]:
+        """The agent's reply to `message` in the thread (with None, the workspace's main
+        chat), and the run's metrics (model, cost)."""
+        path = f"/workspace/{quote(slug)}"
+        if thread is not None:
+            path += f"/thread/{quote(thread)}"
         reply = await self.call(
-            "POST", path, {"message": message, "mode": "chat"}, seconds=CHAT_SECONDS
+            "POST",
+            f"{path}/chat",
+            {"message": message, "mode": "chat"},
+            seconds=CHAT_SECONDS,
         )
         if not isinstance(reply, dict):
             raise AnythingLLMError("AnythingLLM's answer wasn't JSON.")

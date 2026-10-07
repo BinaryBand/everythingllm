@@ -125,7 +125,7 @@ test("delegate starts a delegation and hands back its card", async () => {
     assert.match(reply, /a notice comes back into this chat/);
     const job = { logger: () => {}, super: { handlerProps: { invocation: { workspace: { slug: "career" } } } } };
     const unseen = await delegate.handler.call(job, { goal: "g", tasks: "[]" });
-    assert.equal(service.requests[1].args.chat, undefined);
+    assert.equal(service.requests[1].args.chat, null);
     assert.doesNotMatch(unseen, /notice/);
   } finally {
     delete process.env.AGENTS_SOCKET;

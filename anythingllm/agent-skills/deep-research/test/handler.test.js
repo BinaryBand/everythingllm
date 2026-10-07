@@ -1,7 +1,5 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("fs");
-const net = require("net");
 const os = require("os");
 const path = require("path");
 
@@ -25,25 +23,11 @@ async function fakeAgents() {
   };
 }
 
-// A fake research-runner on a socket of its own: answers each request with respond(op, args).
+// A fake research-runner: answers each request with respond(op, args).
 async function fakeRunner(respond) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dr-sock-"));
-  const socket = path.join(dir, "runner.sock");
-  const requests = [];
-  const server = net.createServer((conn) => {
-    let buffer = "";
-    conn.on("data", async (chunk) => {
-      buffer += chunk;
-      if (!buffer.includes("\n")) return;
-      const msg = JSON.parse(buffer.split("\n")[0]);
-      requests.push(msg);
-      const reply = await respond(msg.op, msg.args);
-      if (reply !== undefined) conn.end(JSON.stringify(reply) + "\n");
-    });
-  });
-  await new Promise((r) => server.listen(socket, r));
-  process.env.RESEARCH_SOCKET = socket;
-  return { requests, close: () => new Promise((r) => server.close(r)) };
+  const service = await fakeService(respond);
+  process.env.RESEARCH_SOCKET = service.socket;
+  return service;
 }
 
 // A chat in AnythingLLM's UI has thread_id (null in the main chat); an API, Telegram or job

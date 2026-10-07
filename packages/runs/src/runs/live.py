@@ -73,11 +73,16 @@ class Live:
         )
 
     @classmethod
+    def page_url(cls, pages_url: str, run_id: str) -> str:
+        """The run's page, which its card links to; "" without a public URL."""
+        return f"{pages_url.rstrip('/')}{cls.PATH}{run_id}" if pages_url else ""
+
+    @classmethod
     def card_line(cls, pages_url: str, run_id: str, subject: str) -> str:
         """The Markdown line that shows a run's live card as a link; "" without a public URL."""
         if not pages_url:
             return ""
-        page = f"{pages_url.rstrip('/')}{cls.PATH}{run_id}"
+        page = cls.page_url(pages_url, run_id)
         return f"[![{alt(f'{cls.LABEL}: {subject}')}]({link(page + '.png')})]({link(page)})"
 
     async def serve(self, port: int) -> asyncio.Server:

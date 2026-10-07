@@ -3,7 +3,7 @@ import json
 
 import pytest
 from agents import postback
-from agents.postback import Following, delegation_notice, research_notice
+from agents.postback import Following, check_chat, delegation_notice, research_notice
 from hostrpc import RunnerError
 from runs.runlog import append_line
 
@@ -40,7 +40,7 @@ def test_a_notice_is_marked_quotes_what_came_back_and_cant_be_closed():
             ],
             "then": None,
         },
-        "[![Delegation: x](https://h:8445/_live/agents/dg-0000000a.png)](https://h:8445/_live/agents/dg-0000000a)",
+        "https://h:8445/_live/agents/dg-0000000a",
     )
     assert text.startswith(
         f"{postback.MARK}: the delegation dg-0000000a has ended (partial)."
@@ -65,7 +65,11 @@ def test_a_delegation_with_then_quotes_only_then_and_a_long_reply_is_cut():
 
 
 def test_a_research_notice_says_what_the_log_says():
-    entry = {"id": "dr-0000000a", "question": "Bitcoin?", "card": CARD}
+    entry = {
+        "id": "dr-0000000a",
+        "question": "Bitcoin?",
+        "link": postback.card_link(CARD),
+    }
     published = research_notice(
         entry, {"status": "ok", "url": "https://h/research/r/", "title": "Bitcoin"}
     )
@@ -134,13 +138,31 @@ def test_what_following_refuses(tmp_path):
             ("dg-0000000a", CHAT, "deep research run's id"),
             ("dr-1", CHAT, "deep research run's id"),
             (None, CHAT, "deep research run's id"),
-            ("dr-0000000a", {"workspace": "_jobs", "thread": None}, "only a chat"),
-            ("dr-0000000a", None, "must be"),
+            ("dr-0000000a", {"workspace": "_jobs", "thread": None}, "scheduled job"),
         ]:
             with pytest.raises(RunnerError, match=why):
                 await following.add(run_id, chat, "", "q")
-        with pytest.raises(RunnerError, match="where research's run log is"):
-            await Following(tmp_path / "f.json", None).add("dr-0000000a", CHAT, "", "")
 
     asyncio.run(main())
     assert not (tmp_path / "followed.json").exists()
+
+
+def test_only_a_chat_is_told():
+    assert check_chat({"workspace": "career", "thread": 7, "x": 1}) == CHAT
+    assert check_chat({"workspace": "career"}) == {
+        "workspace": "career",
+        "thread": None,
+    }
+    for chat, why in [
+        ("career", "must be"),
+        (None, "must be"),
+        ({"thread": 7}, "must be"),
+        ({"workspace": "_jobs", "thread": None}, "scheduled job"),
+        ({"workspace": "", "thread": None}, "scheduled job"),
+        ({"workspace": "agents-worker", "thread": None}, "delegated task"),
+        ({"workspace": "career", "thread": "7"}, "thread id"),
+        ({"workspace": "career", "thread": True}, "thread id"),
+        ({"workspace": "career", "thread": 0}, "thread id"),
+    ]:
+        with pytest.raises(RunnerError, match=why):
+            check_chat(chat)

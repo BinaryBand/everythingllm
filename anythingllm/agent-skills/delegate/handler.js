@@ -5,9 +5,7 @@
 // when the delegation ends (agents.postback).
 
 const { forward, asObject } = require("../_lib/runner");
-const { chatOf } = require("../_lib/scope");
-
-const TOLD = "When it ends, a notice comes back into this chat (it shows once the chat is reloaded).";
+const { chatOf, TOLD } = require("../_lib/scope");
 
 function started({ run_id: runId, queued = 0, card = "" }, told) {
   const waits = queued ? ` It waits for ${queued} other delegation${queued === 1 ? "" : "s"} first.` : "";
@@ -31,7 +29,7 @@ module.exports.runtime = {
       service: "agents",
       env: "AGENTS_SOCKET",
       op: "delegate",
-      args: { goal: goal ?? "", tasks: asObject(tasks) ?? [], then: asObject(then), ...(chat ? { chat } : {}) },
+      args: { goal: goal ?? "", tasks: asObject(tasks) ?? [], then: asObject(then), chat },
       reply: (result) => started(result, chat !== null),
     });
   },

@@ -237,7 +237,7 @@ through its UI.
     deleted once they've run, through `agents-runner` (see "Scheduled jobs from a chat");
     each shows first and acts only with `apply`
   - `memories/` — list, save or forget AnythingLLM's saved memories, through `agents-runner`
-    (see "Saved memories"); forget shows first and deletes only with `apply`
+    (see "Saved memories"); each acts at once, and forget gives the text back
   - `write-entry/`, `delete-entry/` — the ops of the sites runner that write. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
     to its runner (`forwardSkill` in `_lib/runner.js`). They're generated: each is declared
@@ -1414,15 +1414,17 @@ closest to the chat). Its built-in `rag-memory` "store" isn't that: it embeds te
 workspace's documents. Only the UI could manage them, so the agent didn't know it had them;
 agents-runner does it over the internal API (`agents/memories.py`), logged in as for the
 jobs above, for the **`memories`** skill (`action: list | save | forget`, `text`, `scope`,
-`id`, `apply`), which refuses a delegated task and a scheduled job's call.
+`id`), which refuses a delegated task and a scheduled job's call. Each action is done at
+once, without the show-first step of the jobs: a memory is one line, and either action is
+undone by the other.
 
 - **`list`** gives the global memories and the calling workspace's, each with its id and
   when a chat last got it, and the room left under each cap.
 - **`save`** keeps one fact (at most 500 characters, no control characters) for the
-  workspace, or with `scope: global` for every workspace, at once: the user asked, and
-  `forget` undoes it. A full scope is AnythingLLM's refusal, passed on.
+  workspace, or with `scope: global` for every workspace. A full scope is AnythingLLM's
+  refusal, passed on.
 - **`forget`** takes only an id from the calling workspace's list (global or its own),
-  shows the memory, and deletes it only when called again with `apply: true`.
+  deletes it, and gives back its text and scope, so a mistake can be saved again.
 
 With Personalization off, every action says so (AnythingLLM's "Personalization is
 disabled.").

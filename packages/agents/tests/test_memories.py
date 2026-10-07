@@ -144,25 +144,26 @@ def test_save_keeps_one_short_fact_in_the_scope_asked_for(api, tmp_path):
     asyncio.run(main())
 
 
-def test_forget_shows_first_deletes_with_apply_and_only_this_workspaces(api, tmp_path):
+def test_forget_deletes_at_once_gives_the_text_back_and_only_this_workspaces(
+    api, tmp_path
+):
     mine = api.add("Is applying for backend roles.")
     theirs = api.add("Is learning Rust.", workspace="education")
 
     async def main():
         r = make(api, tmp_path)
         text = await r.op_memories(CHAT, "forget", memory_id=str(mine))
-        assert text.startswith(f"{mine} (workspace, last used never): Is applying")
-        assert "call again with apply true only if they agree" in text
-        assert mine in api.memories
-        text = await r.op_memories(CHAT, "forget", memory_id=mine, apply=True)
-        assert text == f"Forgot memory {mine}: Is applying for backend roles."
+        assert text.startswith(
+            f"Forgot memory {mine} (workspace): Is applying for backend roles.\n"
+        )
+        assert "save it again" in text
         assert mine not in api.memories
         for memory_id, error in [
             (theirs, "no saved memory 2 for this workspace or global"),
             (None, "give the id of the memory to forget"),
         ]:
             with pytest.raises(RunnerError, match=error):
-                await r.op_memories(CHAT, "forget", memory_id=memory_id, apply=True)
+                await r.op_memories(CHAT, "forget", memory_id=memory_id)
         assert theirs in api.memories
         assert ("DELETE", f"/memories/{theirs}") not in api.calls
 

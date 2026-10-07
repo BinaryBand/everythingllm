@@ -29,10 +29,9 @@ delegations are its own, and it sees and cancels no others (runs.service).
                           a one-off job at a local date-time, shown first and made only with
                           apply, and deleted by the poller once it has run (the remind-once
                           skill; agents.jobs)
-  memories(scope, action=list|save|forget, text?, memory_scope?, memory_id?, apply=False)
+  memories(scope, action=list|save|forget, text?, memory_scope?, memory_id?)
                           list the saved memories a chat in the workspace gets, save one, or
-                          forget one, shown first and deleted only with apply (the memories
-                          skill; agents.memories)
+                          forget one (the memories skill; agents.memories)
 
 A task's `material` is text for it to work on (findings to write up, a draft to check),
 longer than instructions may be (MAX_MATERIAL a task, MAX_MATERIAL_TOTAL in all); it goes
@@ -462,12 +461,11 @@ class Runner(RunService):
         text: str | None = None,
         memory_scope: str | None = None,
         memory_id: int | None = None,
-        apply: bool = False,
     ) -> str:
         chat_only(scope, "manage saved memories")
         memories = SavedMemories(self.internal_api(), self.settings.timezone)
         return await memories.act(
-            scope["workspace"], action, text, memory_scope, memory_id, apply
+            scope["workspace"], action, text, memory_scope, memory_id
         )
 
     async def op_update_prompt(self, scope: dict, apply: bool = False) -> str:

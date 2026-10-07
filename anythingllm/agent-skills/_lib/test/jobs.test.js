@@ -87,14 +87,14 @@ test("memories sends the invocation's workspace, a list by default, and its scop
     const { handler } = require("../../memories/handler").runtime;
     assert.equal(await handler.call(chat("career"), {}), "memories ok");
     await handler.call(chat("career"), { action: "Save", text: "Lives in Stockholm.", scope: "global", workspace: "x" });
-    await handler.call(chat("career"), { action: "forget", id: 12, apply: "true" });
+    await handler.call(chat("career"), { action: "forget", id: 12 });
     const scope = { workspace: "career", thread: "3" };
     assert.deepEqual(
       agents.requests.map((r) => r.args),
       [
-        { scope, action: "list", apply: false },
-        { scope, action: "save", text: "Lives in Stockholm.", memory_scope: "global", apply: false },
-        { scope, action: "forget", memory_id: 12, apply: true },
+        { scope, action: "list" },
+        { scope, action: "save", text: "Lives in Stockholm.", memory_scope: "global" },
+        { scope, action: "forget", memory_id: 12 },
       ]
     );
   } finally {

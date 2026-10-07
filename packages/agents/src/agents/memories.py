@@ -1,6 +1,7 @@
 """agents-runner's side of AnythingLLM's saved memories, for the memories skill: list a
-chat's (global and its workspace's), save one, or forget one, shown first and deleted only
-with apply. The README's "Saved memories" has the rules.
+chat's (global and its workspace's), save one, or forget one, each at once: forgetting gives
+back the text, so a mistake is undone by saving it again. The README's "Saved memories" has
+the rules.
 
 Config (environment, from host.env through the unit):
   USER_TIMEZONE  the user's time zone, for the "last used" times `list` shows
@@ -73,7 +74,7 @@ class SavedMemories:
         )
         return f"Saved memory {memory.get('id')} for {where}: {text}"
 
-    async def forget(self, slug: str, memory_id: Any, apply: bool) -> str:
+    async def forget(self, slug: str, memory_id: Any) -> str:
         try:
             memory_id = int(memory_id)
         except (TypeError, ValueError):
@@ -89,13 +90,11 @@ class SavedMemories:
                 f"no saved memory {memory_id} for this workspace or global (action list "
                 "shows them)"
             )
-        if not apply:
-            return (
-                f"{self.describe(memory, zone(self.timezone))}\n\nForgetting it deletes it for good. Show the user "
-                "this memory, and call again with apply true only if they agree to forget it."
-            )
         await self.client.memory_delete(memory_id)
-        return f"Forgot memory {memory_id}: {memory.get('content', '')}"
+        return (
+            f"Forgot memory {memory_id} ({scope_of(memory)}): {memory.get('content', '')}\n"
+            "If that was a mistake, save it again with this text and scope."
+        )
 
     async def act(
         self,
@@ -104,12 +103,11 @@ class SavedMemories:
         text: Any = None,
         scope: Any = None,
         memory_id: Any = None,
-        apply: bool = False,
     ) -> str:
         if action == "list":
             return await self.listing(slug)
         if action == "save":
             return await self.save(slug, text, scope)
         if action == "forget":
-            return await self.forget(slug, memory_id, apply)
+            return await self.forget(slug, memory_id)
         raise RunnerError("action must be list, save or forget")

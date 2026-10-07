@@ -31,6 +31,7 @@ Standard library only, like the rest of hostctl.
 """
 
 import argparse
+import http.client
 import ipaddress
 import json
 import os
@@ -80,6 +81,8 @@ def route_problem(url: str, timeout: float = ROUTE_SECONDS) -> str:
         if isinstance(reason, ssl.SSLCertVerificationError):
             return f"no valid certificate for the name ({reason.verify_message})"
         return f"{type(reason).__name__}: {reason}" if isinstance(reason, OSError) else str(reason)
+    except (http.client.HTTPException, ValueError) as e:  # a garbled answer, a bad name
+        return f"{type(e).__name__}: {e}"
 
 
 def addresses(host: str) -> list[str]:
@@ -87,7 +90,7 @@ def addresses(host: str) -> list[str]:
     network asks the host's resolver)."""
     try:
         infos = socket.getaddrinfo(host, None)
-    except OSError:
+    except (OSError, UnicodeError):  # UnicodeError: a label too long for IDNA
         return []
     return sorted({info[4][0].split("%")[0] for info in infos})
 

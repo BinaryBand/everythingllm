@@ -456,7 +456,10 @@ class Runner(hostrpc.Service):
             self.busy[key] -= 1
             if not self.busy[key]:
                 del self.busy[key]
-            self.acted[key] = self.now()
+            now = self.now()
+            # Past ACTIVE an op says nothing more (`state`): let go of every chat's so old.
+            self.acted = {k: t for k, t in self.acted.items() if now - t < ACTIVE}
+            self.acted[key] = now
             self.at_work(key)
 
     def at_work(self, key: tuple[str, str]) -> None:

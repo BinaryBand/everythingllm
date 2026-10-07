@@ -399,6 +399,9 @@ def test_a_tab_says_whether_the_agent_is_at_work_in_it_or_waits_for_the_user(tmp
         clock.t += runner_mod.ACTIVE  # the agent's answer has ended
         assert r.state(tab) == r.activity(s) == "idle"
 
+        await r.reply({"op": "read", "args": {"scope": scope(thread="8")}})  # refused
+        assert set(r.acted) == {("career", "8")}  # a chat's last op is let go once past
+
         tab.changed.clear()
         reading = asyncio.ensure_future(op("read"))
         await asyncio.sleep(0)

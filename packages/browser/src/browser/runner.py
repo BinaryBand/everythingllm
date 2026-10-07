@@ -102,6 +102,7 @@ import asyncio
 import base64
 import contextlib
 import errno
+import ipaddress
 import logging
 import os
 import re
@@ -120,7 +121,14 @@ from egress import config as egress_config
 from hostrpc import RunnerError, safefs
 
 from browser import page as pagetext
-from browser.origin import host_of, normal_site, registrable, secure, site_matches
+from browser.origin import (
+    host_of,
+    is_public_suffix,
+    normal_site,
+    registrable,
+    secure,
+    site_matches,
+)
 from browser.vault import Vault, VaultError, credential, totp
 
 log = logging.getLogger("browser-runner")
@@ -661,7 +669,11 @@ class Runner(hostrpc.Service):
         if not self.config.pages_url:
             return ""
         page = f"{self.config.pages_url.rstrip('/')}/_live/browser/{tab.id}"
-        subject = tab.title or tab.url or "a page"
+        subject = (
+            tab.title
+            if tab.title and not pagetext.challenge_title(tab.title)
+            else site_of(tab.url)
+        )
         return f"[![{alt(f'Browser: {subject}')}]({link(page + '.jpg')})]({link(page)})"
 
     def takeover(self, s: Session, tab: Tab | None = None) -> str:
@@ -1248,6 +1260,23 @@ class Runner(hostrpc.Service):
             if t.workspace == s.workspace and t.open
         }
         return next((w for w in ("waiting", "working") if w in states), "idle")
+
+
+def site_of(url: str) -> str:
+    """Who a page belongs to, for a card with no better name: the registrable name
+    (origin.registrable) or the host, never the address, whose path can hold a token."""
+    host = host_of(url).removeprefix("www.")
+    if not host:
+        return "a page"
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        pass
+    else:
+        return host
+    if "." not in host or is_public_suffix(host):
+        return host
+    return registrable(host)
 
 
 def parent_sites(site: str) -> list[str]:

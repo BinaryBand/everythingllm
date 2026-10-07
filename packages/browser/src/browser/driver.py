@@ -89,7 +89,7 @@ from urllib.parse import quote, quote_plus, unquote_plus
 import hostrpc
 
 from browser.origin import host_of, normal_site, secure, site_matches
-from browser.page import MAX_ELEMENTS, REF_RE
+from browser.page import MAX_ELEMENTS, REF_RE, challenge_title
 
 log = logging.getLogger("browser-driver")
 
@@ -108,6 +108,16 @@ MAX_WAIT = 10  # seconds the `wait` action waits at most
 SCROLL = 600  # pixels a scroll moves
 JPEG_QUALITY = 65
 SCHEMES = ("http://", "https://")
+# Whose bot check a frame from these hosts is (Turnstile is Cloudflare's), when it shows.
+CHALLENGE_HOSTS = {
+    "challenges.cloudflare.com": "Cloudflare's",
+    "hcaptcha.com": "hCaptcha's",
+}
+CHALLENGE_PX = 20  # a frame smaller than this either way is an invisible one
+BOT_CHECK = (
+    "This page is a bot check ({}), which the agent can't pass, and reloading or waiting "
+    "won't get past it. Hand the browser to the user with browser-handoff now, to pass it."
+)
 USERLIKE = {"text", "email", "tel", ""}  # input types a username goes into
 CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
 MAX_OFFERS = 5
@@ -361,12 +371,15 @@ class Driver(hostrpc.Service):
         except Exception:  # noqa: BLE001 - mid-navigation (an error page loading): once more
             await self.settle(page)
             snap = await self.snapshot(page)
+        title = await title_of(page)
         view = {
             **snap,
-            "title": await title_of(page),
+            "title": title,
             "url": page.url,
             "notes": self.notes.pop(thread, []),
         }
+        if whose := await bot_check(page, title):
+            view["notes"].append(BOT_CHECK.format(whose))
         self.downloading.pop(thread, None)
         return scrub(view, self.pieces) if self.filled else view
 
@@ -1081,6 +1094,32 @@ async def title_of(page: Any) -> str:
         return await page.title()
     except Exception:  # noqa: BLE001 - mid-navigation; the address says where it is
         return ""
+
+
+async def bot_check(page: Any, title: str) -> str:
+    """Whose bot check the page is, or shows, if it does: Cloudflare's interstitial by its
+    title, else a challenge frame (CHALLENGE_HOSTS) big enough to be seen, since sites load
+    invisible ones everywhere; "" otherwise."""
+    if challenge_title(title):
+        return "Cloudflare's"
+    main = getattr(page, "main_frame", None)
+    for frame in page.frames:
+        try:
+            if frame is main:
+                continue
+            host = host_of(frame.url)
+            whose = next(
+                (w for h, w in CHALLENGE_HOSTS.items() if host == h or host.endswith("." + h)),
+                "",
+            )  # fmt: skip
+            if not whose:
+                continue
+            box = await (await frame.frame_element()).bounding_box()
+        except Exception:  # noqa: BLE001, S112 - a frame gone mid-look
+            continue
+        if box and box["width"] >= CHALLENGE_PX and box["height"] >= CHALLENGE_PX:
+            return whose
+    return ""
 
 
 def first_line(e: Exception) -> str:

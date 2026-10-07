@@ -483,6 +483,71 @@ def test_nothing_is_read_for_secrets_until_one_was_filled():
     assert page.elements["e1"].reads == 0 and page.elements["e1"].filled == "x"
 
 
+class ChallengeFrame:
+    def __init__(self, url, box):
+        self.url, self.box = url, box
+
+    async def frame_element(self):
+        frame = self
+
+        class Element:
+            async def bounding_box(self):
+                return frame.box
+
+        return Element()
+
+
+def test_a_bot_check_is_said_in_the_view_so_the_agent_hands_over():
+    def page_with(*frames, title="Sign in"):
+        main = ChallengeFrame(
+            "https://gitlab.com/users/sign_in", {"width": 1280, "height": 800}
+        )
+
+        class Page:
+            url = main.url
+            main_frame = main
+
+            async def evaluate(self, script, limit):
+                return {"elements": [], "text": "Sign in", "more": False}
+
+            async def title(self):
+                return title
+
+        page = Page()
+        page.frames = [main, *frames]
+        return page
+
+    def view(page):
+        d = driver.Driver(None, None)
+        return asyncio.run(d.view("t1", page))
+
+    assert view(page_with())["notes"] == []
+    moment = view(page_with(title="Just a moment..."))
+    assert moment["notes"] == [driver.BOT_CHECK.format("Cloudflare's")]
+    assert "browser-handoff" in moment["notes"][0]
+    turnstile = ChallengeFrame(
+        "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/x",
+        {"width": 300, "height": 65},
+    )
+    assert "Cloudflare's" in view(page_with(turnstile))["notes"][0]
+    shown = ChallengeFrame(
+        "https://newassets.hcaptcha.com/captcha/v1/x/static/hcaptcha.html#frame=checkbox",
+        {"width": 303, "height": 78},
+    )
+    assert "hCaptcha's" in view(page_with(shown))["notes"][0]
+    # Invisible ones are everywhere, and only other hosts' frames are anyone's checks.
+    hidden = ChallengeFrame(shown.url, None)
+    tiny = ChallengeFrame(turnstile.url, {"width": 0, "height": 0})
+    elsewhere = ChallengeFrame(
+        "https://notcloudflare.com/x", {"width": 300, "height": 300}
+    )
+    gone = ChallengeFrame("https://hcaptcha.com/x", {"width": 300, "height": 300})
+    gone.frame_element = None  # detached mid-look
+    assert view(page_with(hidden, tiny, elsewhere, gone))["notes"] == []
+    assert page.challenge_title("Attention Required! | Cloudflare")
+    assert not page.challenge_title("Waiting just a moment for GitLab")
+
+
 def test_chromium_goes_through_the_proxy_alone():
     args = driver.chromium_args("http://10.89.79.2:3129", (1280, 800))
     assert "--proxy-server=http://10.89.79.2:3129" in args

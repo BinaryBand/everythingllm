@@ -178,6 +178,27 @@ def test_an_elements_label_is_its_name_in_the_last_view():
     )
 
 
+def test_a_card_without_a_title_or_with_a_bot_checks_names_the_site_not_the_address(
+    tmp_path,
+):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://gitlab.com/users/sign_in")
+        tab = r.threads[("career", "7")]
+        tab.title = "Just a moment..."
+        assert r.card(tab).startswith("[![Browser: gitlab.com](")
+        tab.title, tab.url = "", "https://email.news.example.co.uk/unsubscribe?t=s3cret"
+        assert r.card(tab).startswith("[![Browser: example.co.uk](")
+        tab.url = "http://10.1.2.3:8080/a?t=s3cret"
+        assert r.card(tab).startswith("[![Browser: 10.1.2.3](")
+        tab.url = ""
+        assert r.card(tab).startswith("[![Browser: a page](")
+        tab.title = "Sign in · GitLab"
+        assert r.card(tab).startswith("[![Browser: Sign in · GitLab](")
+
+    test(tmp_path)
+
+
 def test_without_a_public_host_there_is_no_card(tmp_path):
     @run
     async def test(r, podman, clock):

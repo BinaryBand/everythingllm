@@ -204,3 +204,11 @@ def test_the_skills_socket_list_is_the_registrys():
     test = REPO / "anythingllm" / "agent-skills" / "_lib" / "test" / "delegated.test.js"
     named = set(re.findall(r'"([A-Z]+)_SOCKET"', test.read_text()))
     assert named == {name.upper() for name in apps.runners().values()}
+
+
+def test_a_mapping_is_a_url_on_the_public_host():
+    assert apps.Mapping(8445, 8445).url("h.example") == "https://h.example:8445/"
+    m = apps.Mapping(3001, 8446, "/everythingllm")
+    assert m.describe("h.example") == (
+        "https://h.example:3001/everythingllm/ -> http://127.0.0.1:8446"
+    )

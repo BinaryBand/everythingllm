@@ -88,7 +88,6 @@ def install() -> None:
     deploy()
     machine.main(["wait-api"])
     machine.main(["search"])
-    serve_setup()
     appctl.main(["setup", "--installed"])
     machine.main(["wait-api"])
     try:
@@ -234,7 +233,7 @@ def list_apps() -> None:
 
 @command(
     "<app>-setup",
-    "set an app up: its steps, tailnet paths, units (restarted; asks first while one of its runs is going, FORCE=1 doesn't) and timers",
+    "set an app up: its steps, units (restarted; asks first while one of its runs is going, FORCE=1 doesn't) and timers, and print the routes it needs",
 )
 def setup_app(app: str) -> None:
     # Only its own units: another app's host runner gives way to its container in its
@@ -249,11 +248,11 @@ def app_logs(app: str) -> None:
 
 
 @command(
-    "serve-setup",
-    "map the apps' tailnet HTTPS paths with tailscale serve (other mappings are left alone)",
+    "routes",
+    "list the HTTPS routes this machine must provide to the apps (tailscale serve, Caddy, …), and check each answers on PUBLIC_HOST",
 )
-def serve_setup() -> None:
-    appctl.main(["serve"])
+def routes() -> None:
+    appctl.main(["routes"])
 
 
 @command(

@@ -109,7 +109,7 @@ def test_the_egress_proxy_carries_everything_and_checks_the_address(monkeypatch)
         "172.16.0.1",
         "192.168.0.29",
         "169.254.1.2",  # link-local: host.containers.internal
-        "100.89.16.22",  # CGNAT: the tailnet
+        "100.89.16.22",  # CGNAT (Tailscale's)
         "0.0.0.0",
         "::1",
         "fe80::1",

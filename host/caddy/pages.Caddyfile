@@ -1,5 +1,5 @@
 # The pages site (:8445) and the workspace pages site (:8447), both served by static_agent
-# (quadlet/static_agent.container.in) on 127.0.0.1 and mapped to the tailnet by tailscale serve.
+# (quadlet/static_agent.container.in) on 127.0.0.1 and routed over HTTPS by the machine (apps.toml).
 # default-src 'self' keeps every fetch on the page's own host, so CSS can't send anything
 # elsewhere. form-action and base-uri 'none': default-src doesn't cover them, and nothing here
 # needs a form, so markup the agent writes can't post anywhere or repoint relative links.

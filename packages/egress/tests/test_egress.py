@@ -11,13 +11,13 @@ from egress import config as egress_config
 from egress import proxy
 from egress.config import Config, Profile
 
-TAILNET = "host.example.ts.net"
-TAILNET_IP = "100.89.16.22"  # CGNAT, as the tailnet's addresses are
+HOST = "host.example.ts.net"
+HOST_IP = "100.89.16.22"  # CGNAT, as Tailscale's addresses are
 PUBLIC = "93.184.215.14"
 
 
 def loaded(**env) -> Config:
-    return egress_config.load(env={"PUBLIC_HOST": TAILNET, **env})
+    return egress_config.load(env={"PUBLIC_HOST": HOST, **env})
 
 
 def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
@@ -38,14 +38,14 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
         "browser-4": "10.89.79.35",
     }
     browser = config.profiles["browser"]  # public hosts, and only on the public port
-    assert browser.public and browser.judge(TAILNET, 3001) is None
+    assert browser.public and browser.judge(HOST, 3001) is None
     relay, research = config.profiles["relay"], config.profiles["research"]
     assert not relay.public and research.public
-    assert {(TAILNET, 3001), ("ntfy.sh", 443)} <= relay.allow
-    assert (TAILNET, 8888) in research.allow
-    assert (TAILNET, 3001) not in research.allow
-    assert (TAILNET, 8888) in config.profiles["sites"].allow
-    assert (TAILNET, 3001) not in config.profiles["sites"].allow
+    assert {(HOST, 3001), ("ntfy.sh", 443)} <= relay.allow
+    assert (HOST, 8888) in research.allow
+    assert (HOST, 3001) not in research.allow
+    assert (HOST, 8888) in config.profiles["sites"].allow
+    assert (HOST, 3001) not in config.profiles["sites"].allow
     for p in config.profiles.values():  # uv's first sync, for every container
         assert {("pypi.org", 443), ("files.pythonhosted.org", 443)} <= p.allow
     assert ("ntfy.example", 443) in loaded(NTFY_HOST="ntfy.example").profiles[
@@ -60,16 +60,16 @@ def test_a_profile_without_its_host_doesnt_load(tmp_path):
     text = egress_config.FILE.read_text()
     bad.write_text(text.replace('"10.89.79.12"', '"10.89.79.11"'))
     with pytest.raises(ValueError, match="used twice"):
-        egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})
+        egress_config.load(bad, env={"PUBLIC_HOST": HOST})
     bad.write_text(text.replace('"10.89.79.12"', '"10.89.80.12"'))
     with pytest.raises(ValueError, match="isn't in 10.89.79.0/24"):
-        egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})
+        egress_config.load(bad, env={"PUBLIC_HOST": HOST})
     bad.write_text(text.replace('"10.89.79.12"', '"10.89.79.200"'))
     with pytest.raises(ValueError, match="which podman hands out"):
-        egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})
+        egress_config.load(bad, env={"PUBLIC_HOST": HOST})
     bad.write_text(text.replace("public_port = 3129", "public_port = 3128"))
     with pytest.raises(ValueError, match="port and public_port are the same"):
-        egress_config.load(bad, env={"PUBLIC_HOST": TAILNET})
+        egress_config.load(bad, env={"PUBLIC_HOST": HOST})
 
 
 def test_judging_a_host_and_port():
@@ -79,17 +79,17 @@ def test_judging_a_host_and_port():
     assert research.judge("example.com", 80) == "public"
     assert research.judge("example.com", 22) is None
     assert research.judge("example.com", 8080) is None
-    assert research.judge(f"{TAILNET.upper()}.", 8888) == "allow"
-    assert research.judge(TAILNET, 8447) is None  # not an exception, and not public
+    assert research.judge(f"{HOST.upper()}.", 8888) == "allow"
+    assert research.judge(HOST, 8447) is None  # not an exception, and not public
     assert relay.judge("example.com", 443) is None  # relay has no public access
-    assert relay.judge(TAILNET, 3001) == "allow"
+    assert relay.judge(HOST, 3001) == "allow"
     assert relay.judge("pypi.org", 443) == "allow"
     # On the public port no exception counts, the network's included.
-    assert research.judge(TAILNET, 8888, public_only=True) is None
-    assert research.judge(TAILNET, 3001, public_only=True) is None
+    assert research.judge(HOST, 8888, public_only=True) is None
+    assert research.judge(HOST, 3001, public_only=True) is None
     assert research.judge("pypi.org", 443, public_only=True) == "public"
     assert research.judge("example.com", 443, public_only=True) == "public"
-    assert relay.judge(TAILNET, 3001, public_only=True) is None
+    assert relay.judge(HOST, 3001, public_only=True) is None
 
 
 def test_a_connection_is_known_by_its_address():
@@ -266,7 +266,7 @@ def test_connect_tunnels_both_ways(monkeypatch):
         "192.168.0.29",
         "172.17.0.1",
         "169.254.1.2",  # link-local: host.containers.internal
-        TAILNET_IP,  # CGNAT: the tailnet
+        HOST_IP,  # CGNAT (Tailscale's)
         "10.89.79.11",  # another container on egress-net
         "0.0.0.0",
         "::1",
@@ -323,45 +323,45 @@ def test_only_ports_80_and_443_are_open(monkeypatch):
         assert up.connected == []
 
 
-def test_the_profiles_exceptions_reach_the_tailnet(monkeypatch):
-    fake_dns(monkeypatch, TAILNET_IP)
+def test_the_profiles_exceptions_reach_the_public_host(monkeypatch):
+    fake_dns(monkeypatch, HOST_IP)
     up = Upstream(answer=b"tls")
-    answer = run(config_for(), up, f"CONNECT {TAILNET}:8888 HTTP/1.1\r\n\r\n".encode())
-    assert answer.endswith(b"tls") and up.connected == [(TAILNET_IP, 8888)]
+    answer = run(config_for(), up, f"CONNECT {HOST}:8888 HTTP/1.1\r\n\r\n".encode())
+    assert answer.endswith(b"tls") and up.connected == [(HOST_IP, 8888)]
     # Only on the ports named: the pages site on :8447 isn't one of research's.
-    fake_dns(monkeypatch, TAILNET_IP)
+    fake_dns(monkeypatch, HOST_IP)
     up = Upstream()
-    answer = run(config_for(), up, f"CONNECT {TAILNET}:8447 HTTP/1.1\r\n\r\n".encode())
+    answer = run(config_for(), up, f"CONNECT {HOST}:8447 HTTP/1.1\r\n\r\n".encode())
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
-    # And on 443 the tailnet name is just a name with a private address.
-    fake_dns(monkeypatch, TAILNET_IP)
+    # And on 443 PUBLIC_HOST is just a name with a private address.
+    fake_dns(monkeypatch, HOST_IP)
     up = Upstream()
-    answer = run(config_for(), up, f"CONNECT {TAILNET}:443 HTTP/1.1\r\n\r\n".encode())
+    answer = run(config_for(), up, f"CONNECT {HOST}:443 HTTP/1.1\r\n\r\n".encode())
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
 
 
 def test_the_public_port_takes_no_exceptions(monkeypatch, caplog):
     """public_client's fetches (EGRESS_PROXY) come in on the public port: a page that links
-    or redirects to the tailnet's AnythingLLM or SearXNG gets nothing, as on the host,
+    or redirects to AnythingLLM or SearXNG on PUBLIC_HOST gets nothing, as on the host,
     even from research, whose own clients may reach both on the other port."""
     caplog.set_level(logging.INFO, "egress")
     for port in (3001, 8888):
-        fake_dns(monkeypatch, TAILNET_IP)
+        fake_dns(monkeypatch, HOST_IP)
         up = Upstream()
         answer = run(
             config_for(),
             up,
-            f"CONNECT {TAILNET}:{port} HTTP/1.1\r\n\r\n".encode(),
+            f"CONNECT {HOST}:{port} HTTP/1.1\r\n\r\n".encode(),
             public_only=True,
         )
         assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
     assert "on the public port" in caplog.text
-    fake_dns(monkeypatch, TAILNET_IP)
+    fake_dns(monkeypatch, HOST_IP)
     up = Upstream()
     answer = run(
         config_for(),
         up,
-        f"GET http://{TAILNET}:8888/search HTTP/1.1\r\n\r\n".encode(),
+        f"GET http://{HOST}:8888/search HTTP/1.1\r\n\r\n".encode(),
         public_only=True,
     )
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []

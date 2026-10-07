@@ -52,7 +52,7 @@ def test_a_runs_page_escapes_what_it_said_under_a_strict_csp(tmp_path):
         for path in (
             f"/_live/things/{run.id}",
             f"/{run.id}",
-        ):  # tailscale serve strips the prefix
+        ):  # a route that strips the prefix
             head, body = await get(port, path)
             assert (
                 b"200 OK" in head

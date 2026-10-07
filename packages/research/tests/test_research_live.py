@@ -139,7 +139,7 @@ def test_a_run_the_runner_no_longer_holds_is_drawn_from_the_run_log(served):
     async def go():
         server, port = await start()
         found = await get(port, "/_live/research/dr-0123abcd.png")
-        # As tailscale serve forwards it, without the prefix.
+        # As a route that strips the prefix forwards it.
         link = await get(port, "/dr-0123abcd")
         unknown = await get(port, "/_live/research/dr-ffffffff.png")
         server.cancel()

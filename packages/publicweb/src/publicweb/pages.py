@@ -64,7 +64,7 @@ def read_html(
 
 
 Search = Callable[[str], list[dict]]
-# The host's SearXNG, on its loopback (the container goes through tailscale serve).
+# The host's SearXNG, on its loopback (a container goes through PUBLIC_HOST's route).
 SEARXNG = "http://127.0.0.1:8888/search"
 
 

@@ -4,7 +4,7 @@ script.
 
 The response is `multipart/x-mixed-replace` (server push): every part is a whole PNG, and
 the browser shows the newest part in the `<img>`. Browsers still support it for images,
-and `tailscale serve` passes each part on as it comes. When the response ends, the image
+and the machine's route must pass each part on as it comes (no buffering). When the response ends, the image
 stays on its last frame; reloading the chat asks again.
 
 These are helpers for a service's own small asyncio server (research.live is one): it
@@ -16,7 +16,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 BOUNDARY = b"frame"
-MAX_HEAD = 16 * 1024  # a request's line and headers; tailscale serve adds a few
+MAX_HEAD = 16 * 1024  # a request's line and headers; the machine's route adds a few
 
 
 class BadRequest(Exception):

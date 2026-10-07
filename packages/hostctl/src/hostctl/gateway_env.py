@@ -15,7 +15,7 @@ no tools until grants.toml grants it some and the gateway restarts, which it say
     python3 -m hostctl.gateway_env [path]   # with hostctl and apps on PYTHONPATH, as appctl does
 
 Config (environment):
-  PUBLIC_HOST  the tailnet name in the printed command (from host.env, which hostctl reads)
+  PUBLIC_HOST  the machine's HTTPS name in the printed command (from host.env, which hostctl reads)
 """
 
 import os

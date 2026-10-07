@@ -4,7 +4,7 @@ report once it's published, and until then a page of the run's progress.
 
 Config (environment, from host.env and the unit):
   RESEARCH_LIVE_PORT   port to listen on (default 8450), on LIVE_HOST (runs.live)
-  PUBLIC_HOST          the tailnet name in the card's URLs (no card without it)
+  PUBLIC_HOST          the machine's HTTPS name in the card's URLs (no card without it)
 """
 
 import html

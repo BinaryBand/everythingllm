@@ -11,7 +11,7 @@ for:
 - `CONNECT host:port` opens a tunnel (https); an absolute-form `GET http://host/...` is
   sent on, with its head rewritten to the origin form and `Connection: close`.
 - A host in the profile's `allow` exceptions is resolved and connected to whatever it is
-  (the tailnet's AnythingLLM and SearXNG, PyPI), but never on the public port. Otherwise,
+  (AnythingLLM and SearXNG on PUBLIC_HOST, PyPI), but never on the public port. Otherwise,
   for a `public` profile on port
   80 or 443, the host must resolve to public addresses only: publicweb.public_address,
   the same rule the services apply on the host. Either way the name is resolved once, here,

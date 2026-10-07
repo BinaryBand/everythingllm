@@ -1,29 +1,13 @@
-"""hostctl.appctl: what `uv run hostctl <app>-setup` and `uv run hostctl serve-setup` run, with systemctl,
-tailscale and the guard faked."""
+"""hostctl.appctl: what `uv run hostctl <app>-setup` and `uv run hostctl routes` run, with
+systemctl, the network and the guard faked."""
 
-import json
+import contextlib
+import ssl
+import urllib.error
 from types import SimpleNamespace
 
 import pytest
 from hostctl import appctl
-
-# `tailscale serve status --json`: :8445's root and one path, and only a path on :3001.
-STATUS = json.dumps(
-    {
-        "TCP": {"8445": {"HTTPS": True}, "3001": {"HTTPS": True}},
-        "Web": {
-            "host.ts.net:8445": {
-                "Handlers": {
-                    "/": {"Proxy": "http://127.0.0.1:8445"},
-                    "/_live/research": {"Proxy": "http://127.0.0.1:8450"},
-                }
-            },
-            "host.ts.net:3001": {
-                "Handlers": {"/everythingllm": {"Proxy": "http://127.0.0.1:8446"}}
-            },
-        },
-    }
-)
 
 
 @pytest.fixture
@@ -32,65 +16,143 @@ def ran(monkeypatch):
 
     def run(cmd, **kw):
         calls.append(cmd if isinstance(cmd, str) else " ".join(cmd))
-        return SimpleNamespace(returncode=0, stdout=STATUS)
+        return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(appctl.subprocess, "run", run)
     return calls
 
 
-def test_serve_maps_only_whats_missing(ran):
-    appctl.serve(
-        [
-            appctl.apps.Mapping(8445, 8445),
-            appctl.apps.Mapping(8445, 8450, "/_live/research"),
-            appctl.apps.Mapping(8445, 8451, "/_live/agents"),
-            appctl.apps.Mapping(3001, 8446, "/everythingllm"),
-            appctl.apps.Mapping(3001, 3001),  # a path on the port isn't its root
-            # nor is the same path on another port
-            appctl.apps.Mapping(8447, 8447, "/_live/research"),
-        ]
+Mapping = appctl.apps.Mapping
+PAGES = {"pages": appctl.apps.App("pages", "x", serve=(Mapping(8445, 8445),))}
+
+
+def answers(monkeypatch, by_url, found=("100.89.16.22",)):
+    """Fake urlopen, by_url mapping a URL to a status code or an exception to raise, and
+    PUBLIC_HOST resolving to `found`; returns the URLs asked for."""
+    asked = []
+
+    def urlopen(url, timeout):
+        asked.append(url)
+        got = by_url.get(url, 200)
+        if isinstance(got, Exception):
+            raise got
+        if got >= 400:
+            raise urllib.error.HTTPError(url, got, "", {}, None)
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(appctl.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(appctl, "addresses", lambda host: list(found))
+    return asked
+
+
+def test_routes_checks_each_on_the_public_host(monkeypatch, capsys):
+    asked = answers(
+        monkeypatch,
+        {
+            "https://h.example:8445/": 404,  # a root that's a 404 by design still answers
+            "https://h.example:8445/_live/agents/": 502,  # the route's there, its server isn't
+            "https://h.example:3001/everythingllm/": urllib.error.URLError(
+                ConnectionRefusedError(111, "Connection refused")
+            ),
+        },
     )
-    assert ran == [
-        "tailscale serve status --json",
-        "sudo tailscale serve --bg --https=8445 --set-path=/_live/agents http://127.0.0.1:8451",
-        "sudo tailscale serve --bg --https=3001 http://127.0.0.1:3001",
-        "sudo tailscale serve --bg --https=8447 --set-path=/_live/research http://127.0.0.1:8447",
+    registry = {
+        **PAGES,
+        "agents": appctl.apps.App("agents", "x", serve=(Mapping(8445, 8451, "/_live/agents"),)),
+        "relay": appctl.apps.App("relay", "x", serve=(Mapping(3001, 8446, "/everythingllm"),)),
+    }
+    assert appctl.routes(registry, "h.example") is False
+    assert sorted(asked) == [
+        "https://h.example:3001/everythingllm/",
+        "https://h.example:8445/",
+        "https://h.example:8445/_live/agents/",
     ]
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "  OK    https://h.example:8445/ -> http://127.0.0.1:8445 (pages)"
+    assert out[1] == (
+        "  FAIL  https://h.example:8445/_live/agents/ -> http://127.0.0.1:8451 (agents): HTTP 502"
+    )
+    assert out[2].startswith("  FAIL  https://h.example:3001/everythingllm/") and "refused" in out[2]
+    assert appctl.routes(PAGES, "h.example") is True
 
 
-def test_serve_with_nothing_mapped_maps_everything(ran, monkeypatch):
-    def run(cmd, **kw):
-        ran.append(" ".join(cmd))
-        return SimpleNamespace(returncode=0, stdout="{}\n")
-
-    monkeypatch.setattr(appctl.subprocess, "run", run)
-    appctl.serve([appctl.apps.Mapping(3001, 8446, "/everythingllm")])
-    assert ran[-1] == (
-        "sudo tailscale serve --bg --https=3001 --set-path=/everythingllm"
-        " http://127.0.0.1:8446"
+def test_a_route_without_a_valid_certificate_fails(monkeypatch):
+    bad = ssl.SSLCertVerificationError("certificate verify failed")
+    bad.verify_message = "hostname mismatch"
+    answers(monkeypatch, {"https://h.example:8445/": urllib.error.URLError(bad)})
+    assert appctl.route_problem("https://h.example:8445/") == (
+        "no valid certificate for the name (hostname mismatch)"
     )
 
 
-def test_setup_runs_its_steps_maps_and_restarts(ran, monkeypatch):
+def test_routes_without_a_public_host_fail_and_say_why(capsys):
+    assert appctl.routes(PAGES, "") is False
+    assert capsys.readouterr().out == (
+        "  FAIL  https://<PUBLIC_HOST>:8445/ -> http://127.0.0.1:8445 (pages):"
+        " PUBLIC_HOST isn't set in host.env\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "found, warned",
+    [
+        (["100.89.16.22"], False),  # CGNAT, as Tailscale's are
+        (["192.168.1.5", "fd7a:115c::1"], False),
+        (["100.89.16.22", "203.0.114.7"], True),
+    ],
+)
+def test_a_public_address_is_warned_about_not_failed(monkeypatch, capsys, found, warned):
+    answers(monkeypatch, {}, found)
+    assert appctl.routes(PAGES, "h.example") is True
+    out = capsys.readouterr().out
+    assert ("WARN  h.example resolves to a public address (203.0.114.7)" in out) is warned
+
+
+def test_a_name_on_loopback_fails_since_the_containers_cant_reach_it(monkeypatch, capsys):
+    answers(monkeypatch, {}, ["127.0.0.1", "::1"])
+    assert appctl.routes(PAGES, "h.example") is False
+    assert "FAIL  h.example resolves only to loopback" in capsys.readouterr().out
+
+
+def test_an_opt_in_app_thats_not_set_up_isnt_checked(monkeypatch, capsys):
+    asked = answers(monkeypatch, {"https://h.example:8452/": 502})
+    monkeypatch.setattr(appctl, "active", lambda unit: False)
+    gateway = appctl.apps.App(
+        "gateway",
+        "x",
+        units={"gateway.service": "MCP gateway"},
+        serve=(Mapping(8452, 8452),),
+        why_not_installed="opt-in",
+    )
+    assert appctl.routes({"gateway": gateway}, "h.example") is True
+    assert asked == []
+    assert capsys.readouterr().out == (
+        "  --    https://h.example:8452/ -> http://127.0.0.1:8452 (gateway, not set up)\n"
+    )
+    # Once one of its units runs, it counts.
+    monkeypatch.setattr(appctl, "active", lambda unit: True)
+    assert appctl.routes({"gateway": gateway}, "h.example") is False
+
+
+def test_setup_runs_its_steps_restarts_and_says_its_routes(ran, monkeypatch, capsys):
     monkeypatch.setattr(appctl.run_guard, "ok_to_restart", lambda unit: True)
+    monkeypatch.setattr(appctl, "public_host", lambda: "h.example")
     registry = appctl.apps.load()
     appctl.setup(registry["browser"])
     # browser-runner is a host unit: enabled, then restarted.
     assert ran == [
         "python3 -m hostctl browser-images",
-        "tailscale serve status --json",
-        "sudo tailscale serve --bg --https=8445 --set-path=/_live/browser http://127.0.0.1:8453",
-        "sudo tailscale serve --bg --https=8454 http://127.0.0.1:8454",
         "systemctl --user enable browser-runner.service",
         "systemctl --user restart browser-runner.service",
     ]
+    out = capsys.readouterr().out
+    assert "  https://h.example:8445/_live/browser/ -> http://127.0.0.1:8453" in out
+    assert "  https://h.example:8454/ -> http://127.0.0.1:8454" in out
     ran.clear()
     # sites-runner is a container, which Quadlet enables, so it's only restarted.
     appctl.setup(registry["sites"])
     assert ran == [
         "python3 -m hostctl service-images",
-        "tailscale serve status --json",
-        "sudo tailscale serve --bg --https=8445 --set-path=/news/write http://127.0.0.1:8448",
         "systemctl --user restart sites-runner.service",
     ]
     ran.clear()
@@ -152,9 +214,10 @@ def test_a_failing_step_stops_the_setup(monkeypatch):
 
     def run(cmd, **kw):
         calls.append(cmd)
-        return SimpleNamespace(returncode=1, stdout="")
+        return SimpleNamespace(returncode=1)
 
     monkeypatch.setattr(appctl.subprocess, "run", run)
     with pytest.raises(SystemExit) as stopped:
         appctl.setup(appctl.apps.load()["relay"])
     assert stopped.value.code == 1 and calls == ["python3 -m hostctl.relay_env"]
+

@@ -43,7 +43,7 @@ Config (environment, from host.env and agents.env through the unit):
   AGENTS_LIVE_PORT    port on 127.0.0.1 for the live cards (default 8451)
   AGENTS_SLOTS        tasks running at once, across delegations (default 3)
   AGENTS_DAILY_USD    what delegations may cost in 24 hours, in USD (default 3; 0 = no cap)
-  PUBLIC_HOST         the tailnet name in the cards' URLs (no card without it)
+  PUBLIC_HOST         the machine's HTTPS name in the cards' URLs (no card without it)
   and what agents.anythingllm reads (ANYTHINGLLM_URL, ANYTHINGLLM_API_KEY).
 """
 

@@ -18,7 +18,7 @@ proxy = "10.89.79.2"  # egress-proxy's address, where it listens
 port = 3128
 # The port publicweb.public_client goes through (EGRESS_PROXY): the fetches of URLs that
 # came from the web or the agent. Only `public` counts there, never an `allow` exception,
-# so a page or a redirect can't reach the tailnet's AnythingLLM or SearXNG, or PyPI.
+# so a page or a redirect can't reach AnythingLLM or SearXNG on PUBLIC_HOST, or PyPI.
 # HTTPS_PROXY and HTTP_PROXY (the services' own clients, and uv) use `port`.
 public_port = 3129
 # Every profile may reach these: uv syncing a container's venv from PyPI on its first start.
@@ -30,8 +30,8 @@ NTFY_HOST = "ntfy.sh"  # the ntfy server in relay's NTFY_URL
 # [profiles.<name>]
 # public  true: any host whose addresses are all public, on ports 80 and 443 (publicweb's
 #         rule, checked by the proxy, which then connects to the address it checked)
-# allow   host:port it may reach whatever the host's addresses are: the tailnet's
-#         AnythingLLM (:3001) and SearXNG (:8888) are on a CGNAT address, not a public one
+# allow   host:port it may reach whatever the host's addresses are: AnythingLLM (:3001)
+#         and SearXNG (:8888) on PUBLIC_HOST are on a private or CGNAT address, not a public one
 # ips     container (host/quadlet/<container>.container.in) -> its address on the network,
 #         by which the proxy knows which profile a connection is. Each address is one
 #         container's; a connection from any other address is refused.

@@ -1,5 +1,5 @@
 [Unit]
-Description=Sites runner: does what the sites MCP server's tools ask (socket in storage/everythingllm/sites/), has the sandbox build the sites, and writes Daily News articles (tailnet via tailscale serve :8445/news/write), in a service container
+Description=Sites runner: does what the sites MCP server's tools ask (socket in storage/everythingllm/sites/), has the sandbox build the sites, and writes Daily News articles (routed by the machine at https :8445/news/write), in a service container
 # Its first start syncs its venv from PyPI, and every feed and page goes out through the proxy.
 Wants=egress-proxy.service
 After=egress-proxy.service
@@ -21,7 +21,7 @@ PidsLimit=256
 PodmanArgs=--memory=1g --cpus=1 --umask=0002
 RunInit=true
 Timezone=local
-# Its address in egress.toml (profile sites: public hosts, and SearXNG on the tailnet).
+# Its address in egress.toml (profile sites: public hosts, and SearXNG by PUBLIC_HOST).
 Network=egress-net:ip=10.89.79.12
 Environment=HTTPS_PROXY=http://10.89.79.2:3128
 Environment=HTTP_PROXY=http://10.89.79.2:3128

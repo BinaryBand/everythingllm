@@ -1,6 +1,6 @@
 """gateway: the runners' MCP tools over streamable HTTP, for MCP clients other than
-AnythingLLM (Claude Code, …), served by uvicorn on the host and reached over the tailnet
-through `tailscale serve` (https). See the README's "MCP gateway".
+AnythingLLM (Claude Code, …), served by uvicorn on the host and reached over HTTPS
+through the machine's route (apps.toml). See the README's "MCP gateway".
 
 Its tools are the fronts' own, in groups a client is granted (gateway.grants, grants.toml):
 each front's read tools (its `tool.registered`, so the same schemas and docstrings
@@ -19,9 +19,9 @@ which holds the tokens, outside the repo and the AnythingLLM container's reach):
   GATEWAY_TOKEN_<NAME>    a client's token; the client is <name>, lowercase, _ as -
                           (at least one; its tools are in grants.toml); <NAME> is at
                           most 63 letters, digits and _ (`uv run hostctl gateway-client`)
-  PUBLIC_HOST             the tailnet name, whose Host header is allowed (from host.env)
-  GATEWAY_HOST, GATEWAY_PORT  where to listen (default 127.0.0.1:8452; tailnet https is
-                          the same port)
+  PUBLIC_HOST             the machine's HTTPS name, whose Host header is allowed (from host.env)
+  GATEWAY_HOST, GATEWAY_PORT  where to listen (default 127.0.0.1:8452; https is the
+                          same port)
   <FRONT>_SOCKET          a runner's socket (default storage/everythingllm/<front>/runner.sock,
                           storage as host.env's ANYTHINGLLM_STORAGE has it)
 """

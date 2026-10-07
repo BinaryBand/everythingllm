@@ -260,6 +260,6 @@ def test_settings_reach_the_hosts_loopback_unless_told_otherwise(tmp_path, monke
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
     monkeypatch.delenv("SEARXNG_URL", raising=False)
     assert job.Settings.from_env().searxng_url == "http://127.0.0.1:8888/search"
-    # A container reaches SearXNG through the egress proxy, by the tailnet name.
+    # A container reaches SearXNG through the egress proxy, by PUBLIC_HOST.
     monkeypatch.setenv("SEARXNG_URL", "https://host.example:8888/search")
     assert job.Settings.from_env().searxng_url == "https://host.example:8888/search"

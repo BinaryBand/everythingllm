@@ -1,6 +1,6 @@
 """relay: the Nilson relay's HTTP API, served by uvicorn in its service container and
-reached over the tailnet at `/everythingllm/` on AnythingLLM's own port, through `tailscale
-serve` (https), which strips that prefix; the routes answer with or without it. Every route
+reached at `/everythingllm/` on AnythingLLM's own HTTPS port, through the machine's route
+(apps.toml), which may strip that prefix; the routes answer with or without it. Every route
 but /health needs an AnythingLLM developer API key as a bearer token (`relay.auth`), the one
 the client gives AnythingLLM itself; see the README's "Nilson relay" for the routes. A
 request from anywhere but loopback or the relay's own address, where the container's
@@ -19,8 +19,8 @@ what host/quadlet/relay.container.in sets itself):
   RELAY_HOST, RELAY_PORT  where to listen (default 127.0.0.1:8446; the container listens
                        on 0.0.0.0, published on the host's 127.0.0.1:8446)
   FORWARDED_ALLOW_IPS  the peers whose X-Forwarded-For and X-Forwarded-Proto uvicorn
-                       believes, comma-separated (default 127.0.0.1, where tailscale serve
-                       connects from on the host). Through the container's published port
+                       believes, comma-separated (default 127.0.0.1, where the machine's
+                       route connects from on the host). Through the container's published port
                        every connection arrives from the container's own address, so its
                        template sets that address.
   HTTPS_PROXY          the egress proxy, which httpx goes out through (set in the container)
@@ -54,7 +54,7 @@ from relay.store import STATUSES, Store, public
 log = logging.getLogger("relay")
 
 DATABASE = Path("~/.local/share/everythingllm/relay/relay.db").expanduser()
-# Where the relay is mounted beside AnythingLLM on the tailnet.
+# Where the relay is mounted beside AnythingLLM on its HTTPS port.
 PREFIX = "/everythingllm"
 # What GET /health tells a client, so it knows the relay is there: AnythingLLM answers an
 # unknown path with its web app's page and a 200.
@@ -92,8 +92,8 @@ def error(status: int, message: str) -> JSONResponse:
 
 
 class StripPrefix:
-    """Takes the routes under `prefix` as they are at the root: `tailscale serve` strips its
-    mount path, and a proxy that doesn't reaches the same routes."""
+    """Takes the routes under `prefix` as they are at the root: a proxy that strips its
+    mount path and one that doesn't reach the same routes."""
 
     def __init__(self, app: ASGIApp, prefix: str) -> None:
         self.app = app
@@ -109,8 +109,8 @@ class StripPrefix:
 
 class LocalPeers:
     """Refuses a request whose connection comes from anywhere but loopback or the relay's
-    own address (hostrpc.local_peer), then has uvicorn's proxy headers believe tailscale
-    serve's X-Forwarded-For and X-Forwarded-Proto from `forwarded_allow_ips`. uvicorn's own
+    own address (hostrpc.local_peer), then has uvicorn's proxy headers believe the machine's
+    route's X-Forwarded-For and X-Forwarded-Proto from `forwarded_allow_ips`. uvicorn's own
     (`proxy_headers=True`) would go first and put the forwarded client in the place of the
     peer judged here."""
 
@@ -249,7 +249,7 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     config = Config.from_env()
     uvicorn.run(
-        # tailscale serve passes on who asked, and over https: believed only from the peer
+        # The machine's route passes on who asked, and over https: believed only from the peer
         # it reaches the relay through (FORWARDED_ALLOW_IPS above), by LocalPeers.
         LocalPeers(create_app(config), config.forwarded_allow_ips),
         host=config.host,

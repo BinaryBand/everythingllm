@@ -5,8 +5,8 @@ The skills hand the agent a card line for the tab (Runner.card):
 
     [![Browser: <title>](https://<host>:8445/_live/browser/<id>.jpg)](https://<host>:8445/_live/browser/<id>)
 
-`tailscale serve` maps https://<host>:8445/_live/browser to this server's port (apps.toml)
-and strips the prefix, so paths are taken with or without it.
+The machine routes https://<host>:8445/_live/browser to this server's port (apps.toml),
+stripping the prefix or not, so paths are taken with or without it.
 
 - `<id>.jpg` is the card: a screenshot of the tab under a strip saying whose hands it's in
   and what was done last, pushed again (chatimage.live, as JPEG) whenever it changes,

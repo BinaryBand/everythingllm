@@ -1,16 +1,16 @@
 """The link behind every Daily News headline, served by sites-runner on its own port.
 
-`tailscale serve` maps https://<host>:8445/news/write/ (`article_writer` in the site's
+The machine routes https://<host>:8445/news/write/ (`article_writer` in the site's
 zola.toml) to this server, so it shares the news site's origin. A request for
 `<day>/<desk>/<n>`, the n-th story of the edition's desk-th section (e.g. `2026-10-03/2/1`),
 redirects to the story's article on the news site once it's written. Until then it
 starts writing it and answers a page that reloads itself every few seconds; there's no
 script, so it works under any CSP.
 
-It listens on 127.0.0.1:8448 (PORT; tailscale serve maps :8445/news/write to it) and
+It listens on 127.0.0.1:8448 (PORT; the machine routes :8445/news/write to it) and
 searches the host's SearXNG. In sites-runner's container it listens on 0.0.0.0:8448, which
-the container publishes on the host's 127.0.0.1:8448, and reaches SearXNG by its tailnet
-name through the egress proxy (host/quadlet/sites-runner.container.in). A request from
+the container publishes on the host's 127.0.0.1:8448, and reaches SearXNG by PUBLIC_HOST
+through the egress proxy (host/quadlet/sites-runner.container.in). A request from
 anywhere but loopback or the server's own address, where the published port delivers from
 (hostrpc.local_peer), is refused with a 403: in the container, that's another container on
 egress-net, which mustn't have articles written or the news site rebuilt.
@@ -79,13 +79,13 @@ def story_body(story: Story, message: str) -> str:
 class Handler(BaseHTTPRequestHandler):
     newsroom: Newsroom
     site_url: str  # e.g. /news/
-    prefix: str  # where tailscale serve mounts this server, e.g. /news/write
+    prefix: str  # where the machine's route mounts this server, e.g. /news/write
     route: re.Pattern
 
     @classmethod
     def configure(cls, newsroom: Newsroom, site_url: str, prefix: str) -> None:
         cls.newsroom, cls.site_url, cls.prefix = newsroom, site_url, prefix.rstrip("/")
-        # With or without the prefix, whether or not tailscale serve strips it.
+        # With or without the prefix, whether or not the machine's route strips it.
         cls.route = re.compile(
             rf"(?:{re.escape(cls.prefix)})?/(\d{{4}}-\d{{2}}-\d{{2}})/(\d{{1,2}})/(\d{{1,2}})/?"
         )
@@ -170,7 +170,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def log_message(self, format: str, *args) -> None:
-        pass  # tailscale serve and Caddy see the requests; the writer logs what it does
+        pass  # the machine's route and Caddy see the requests; the writer logs what it does
 
 
 def server() -> ThreadingHTTPServer:

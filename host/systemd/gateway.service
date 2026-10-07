@@ -1,5 +1,5 @@
 [Unit]
-Description=MCP gateway: the runners' MCP tools over streamable HTTP for clients other than AnythingLLM (127.0.0.1:8452, tailnet via tailscale serve https :8452)
+Description=MCP gateway: the runners' MCP tools over streamable HTTP for clients other than AnythingLLM (127.0.0.1:8452, routed by the machine at https :8452)
 After=network.target
 # Keep retrying after a crash loop instead of giving up for good.
 StartLimitIntervalSec=0

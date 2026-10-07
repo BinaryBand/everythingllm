@@ -1,7 +1,7 @@
 [project]
 name = "apps"
 version = "0.1.0"
-description = "The registry of the apps this repo runs: their units, sockets, tailnet mappings, restart guards, health checks and setup steps (standard library only)"
+description = "The registry of the apps this repo runs: their units, sockets, HTTPS routes, restart guards, health checks and setup steps (standard library only)"
 requires-python = ">=3.12"
 dependencies = []
 

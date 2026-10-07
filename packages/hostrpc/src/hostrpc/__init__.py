@@ -127,8 +127,8 @@ def local_peer(peer: Sequence[Any] | None, local: Sequence[Any] | None) -> bool:
     and sockname (`(host, port, ...)`, None when unknown).
 
     A host unit's server listens on 127.0.0.1. One in a service container listens on
-    0.0.0.0, and podman's published port (on the host's 127.0.0.1, where tailscale serve and
-    the health checks reach it) delivers every connection from the container's own address.
+    0.0.0.0, and podman's published port (on the host's 127.0.0.1, where the machine's HTTPS
+    routes and the health checks reach it) delivers every connection from the container's own address.
     Another container on egress-net connects from an address of its own, and is refused: the
     port is meant to be reached only through the host's loopback."""
 

@@ -1,6 +1,6 @@
 """browser-runner: one Chromium per AnythingLLM workspace, for the browse skills
 (anythingllm/agent-skills/browse, browser-act, browser-read, browser-handoff,
-browser-login), with a live card in the chat and a take-over view on the tailnet.
+browser-login), with a live card in the chat and a take-over view on its own HTTPS port.
 
 A workspace's browser is a podman container (host/containers/browser) started on its first
 call and stopped when nobody has used or watched it for IDLE seconds. Its profile (cookies,
@@ -21,7 +21,7 @@ from the skill's invocation, never the model. Gateway clients' `client-` workspa
 browser. The container is hardened like a service container (read-only root, every
 capability dropped, keep-id, limits) and sits on egress-net at one of the browser profile's
 addresses (egress.toml), so its only way out is the egress proxy's public port: public
-hosts on 80 and 443, never the tailnet, the LAN or this machine. Chromium's own sandbox is
+hosts on 80 and 443, never the LAN, CGNAT (Tailscale's) or this machine. Chromium's own sandbox is
 off (it needs namespaces the container doesn't give), so the container is the boundary.
 
 The runner reaches the container through two Unix sockets in <data>/sockets/<slot>/: the
@@ -162,7 +162,7 @@ class Config:
     ips: dict[str, str]  # slot -> address on the network
     network: str
     proxy: str  # the egress proxy's public port, as Chromium's --proxy-server
-    pages_url: str = ""  # where the live cards are (tailnet :8445), "" for no cards
+    pages_url: str = ""  # where the live cards are (https :8445), "" for no cards
     takeover_url: str = f"http://127.0.0.1:{TAKEOVER_PORT}/"
     live_port: int = LIVE_PORT
     takeover_port: int = TAKEOVER_PORT

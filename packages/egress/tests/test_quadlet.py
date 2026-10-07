@@ -94,7 +94,7 @@ def test_a_service_container_goes_out_only_through_the_proxy(template, egress):
     for key in ("HTTPS_PROXY", "HTTP_PROXY"):
         assert env.get(key) == egress.url, (name, key)
     # publicweb.public_client's fetches, of URLs from the web, take the public port, where
-    # none of the container's exceptions (the tailnet's AnythingLLM, SearXNG) apply.
+    # none of the container's exceptions (AnythingLLM and SearXNG on PUBLIC_HOST) apply.
     assert env.get("EGRESS_PROXY") == egress.public_url, name
 
 
@@ -132,11 +132,11 @@ def test_relay_mounts_only_its_database_and_venv(egress):
     assert env["UV_PROJECT_ENVIRONMENT"] == f"{data}/venvs/relay-ctr/venv"
     assert env["UV_CACHE_DIR"] == f"{data}/venvs/relay-ctr/uv-cache"
     # It listens on every address, since the published port arrives from its own, and
-    # believes X-Forwarded-* only from that address, tailscale serve's way in.
+    # believes X-Forwarded-* only from that address, the machine's route's way in.
     assert env["RELAY_HOST"] == "0.0.0.0"
     assert env["FORWARDED_ALLOW_IPS"] == egress.ips()["relay"]
     assert keys["PublishPort"] == ["127.0.0.1:8446:8446"]
-    # AnythingLLM by the tailnet name its profile lets it reach; nothing public.
+    # AnythingLLM by PUBLIC_HOST, which its profile lets it reach; nothing public.
     relay = egress.profiles["relay"]
     assert env["ANYTHINGLLM_URL"] == "https://@PUBLIC_HOST@:3001"
     assert ("host.example.ts.net", 3001) in relay.allow and not relay.public
@@ -361,7 +361,7 @@ def test_sites_runner_mounts_only_what_it_uses():
     assert keys["GroupAdd"] == ["keep-groups"]
     env = dict(e.partition("=")[::2] for e in keys["Environment"])
     # The article writer listens where the published port arrives, and reaches SearXNG by
-    # the tailnet name the sites profile allows; there's no zola here, so only the sandbox
+    # PUBLIC_HOST, which the sites profile allows; there's no zola here, so only the sandbox
     # builds.
     assert keys["PublishPort"] == ["127.0.0.1:8448:8448"]
     assert env["ARTICLES_HOST"] == "0.0.0.0"
@@ -375,7 +375,7 @@ def test_sites_runner_mounts_only_what_it_uses():
 
 
 def test_the_sites_profile_lets_through_what_sites_runner_reaches(egress):
-    """Feeds, story pages and DeepSeek are public hosts; SearXNG is on the tailnet."""
+    """Feeds, story pages and DeepSeek are public hosts; SearXNG is on PUBLIC_HOST."""
     sites = egress.profile_for(egress.ips()["sites-runner"])
     assert sites is not None and sites.name == "sites"
     assert sites.judge("api.deepseek.com", 443) == "public"

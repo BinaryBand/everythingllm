@@ -1,7 +1,7 @@
 """The take-over view: a workspace's browser on your screen, to watch, or to take from the
 agent (to log in, get past a CAPTCHA, or steer) and hand back.
 
-It's a page on its own tailnet port (https://<host>:8454, apps.toml), so its scripts run
+It's a page on its own HTTPS port (https://<host>:8454, apps.toml), so its scripts run
 on an origin of their own, not the pages site's. A live card links to it through
 browser.live, which knows the address: /<token>/, where the token is new with each
 container, so a stopped browser's old address goes nowhere.
@@ -35,7 +35,7 @@ other page can drive the browser. A login request's form needs no token: its id,
 known only to its card, is its key, and it can only add a login for the site the agent's
 page was on. Nothing here ever sends a password or 2FA secret back:
 the page can save and delete logins, not read them. Connections are taken only from loopback or the
-server's own address (hostrpc.local_peer), where tailscale serve delivers them.
+server's own address (hostrpc.local_peer), where the machine's HTTPS routes deliver them.
 """
 
 from __future__ import annotations

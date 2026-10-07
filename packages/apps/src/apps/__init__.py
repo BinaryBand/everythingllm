@@ -1,6 +1,6 @@
 """The registry of the apps this repo runs (apps.toml, next to this file), read into records.
 
-Each app's units, socket, tailnet mappings, restart guard, health checks and setup steps are
+Each app's units, socket, HTTPS routes, restart guard, health checks and setup steps are
 declared there once; hostctl asks this module rather than keep copies or work
 them out from unit names. App code doesn't read it. Standard library only, like hostctl, so
 any python3 with packages/apps/src on PYTHONPATH can import it (health.sh, the `before` steps).
@@ -34,7 +34,8 @@ FIELDS = {
 
 @dataclass(frozen=True)
 class Mapping:
-    """A tailnet HTTPS mapping (tailscale serve): https://<host>:<https><path> -> 127.0.0.1:<port>."""
+    """An HTTPS route the machine provides (tailscale serve, Caddy, …), from the host:
+    https://<PUBLIC_HOST>:<https><path> -> http://127.0.0.1:<port>."""
 
     https: int
     port: int
@@ -43,6 +44,12 @@ class Mapping:
     @property
     def target(self) -> str:
         return f"http://127.0.0.1:{self.port}"
+
+    def url(self, host: str) -> str:
+        return f"https://{host}:{self.https}{self.path}/"
+
+    def describe(self, host: str) -> str:
+        return f"{self.url(host)} -> {self.target}"
 
 
 @dataclass(frozen=True)

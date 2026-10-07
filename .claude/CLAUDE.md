@@ -28,6 +28,10 @@ Code sandbox, Browser, Delegation, …) before changing it.
 - Dropped ideas (quiz, whatsapp-mcp, podcasts, the system audit, and the old shared
   browser that `packages/browser` replaced) and the history before this repo went public are kept in a private archive, not
   here. Don't recreate them from memory.
+- The network is the machine's, not the repo's: it routes each app's `serve` ports and paths
+  (`apps.toml`) from `https://<PUBLIC_HOST>` to `127.0.0.1` (tailscale serve, Caddy, …),
+  and keeps them to the user's devices. `uv run hostctl routes` lists and checks them; no
+  code here sets them up.
 - Machine settings come from `host.env` (git-ignored; see `host.env.example`). Unit
   templates use `@KEY@` placeholders, which `hostctl.units` fills in; systemd doesn't
   expand `${VAR}` in `Environment=`.
@@ -85,7 +89,7 @@ is 3.13. Keep code 3.12-compatible, and check with
     going in the service (the caller waits on a run id) or in its own systemd unit.
   - A front's package keeps its base dependencies to what the front imports, and puts the
     rest (httpx, publicweb, …) in a `host` extra that the units run with.
-  - Every app (its units, socket, tailnet mappings, guard, health checks, setup steps) is
+  - Every app (its units, socket, HTTPS routes, guard, health checks, setup steps) is
     declared once in `packages/apps/src/apps/apps.toml`, which hostctl reads
     through `packages/apps`; app code never does. Adding one: its code, its unit template
     and an entry there; `packages/apps/tests/test_apps.py` says what's missing (README, "The apps").
@@ -104,7 +108,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   (`LIVE_HOST`, `ARTICLES_HOST`, `RELAY_HOST`), published on the host's `127.0.0.1`, and
   answers only loopback and its own address, where the published port delivers from
   (`hostrpc.local_peer`), never another container on egress-net. It
-  reaches AnythingLLM and SearXNG by the tailnet name. Its only way out is the egress proxy
+  reaches AnythingLLM and SearXNG by `PUBLIC_HOST`. Its only way out is the egress proxy
   (`packages/egress`, the `egress` app): it knows a container by its address in
   `egress.toml` and lets it reach public hosts (publicweb's rule) and its profile's
   exceptions on :3128, and public hosts only on :3129, which `publicweb.public_client`
@@ -123,7 +127,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   `research` and `sandbox` are services outside AnythingLLM, and `egress` is the
   service containers' proxy. `relay` is an HTTP service
   for the Nilson app, not the agent, in a service container, at `/everythingllm/` on
-  AnythingLLM's tailnet :3001; it takes the client's own AnythingLLM key, and its ntfy
+  AnythingLLM's https :3001; it takes the client's own AnythingLLM key, and its ntfy
   secrets are in `~/.config/everythingllm/relay.env`, never in the repo. `gateway` is the one MCP server on the host: it serves the fronts' own
   tools (each front's `tool.registered`), their skills (wrapped with `hostrpc.forwarder`
   there) and its own fronts' tools (`agents_*`, `research_*`, `sandbox_*`) over HTTP to

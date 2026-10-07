@@ -13,19 +13,19 @@ On a new machine, or to bring this one up to date:
     uv run hostctl install
 
 `uv run hostctl install` first checks the machine and stops with a list of what's missing. It checks
-`host.env`, the tools the units run (podman, uv and zola at fixed paths), lingering,
-tailscale, and the storage folder, creating the folders the containers mount inside it.
+`host.env`, the tools the units run (podman, uv and zola at fixed paths), lingering
+and the storage folder, creating the folders the containers mount inside it.
 Then it does the following:
 
 1. renders and starts the units (`uv run hostctl units`)
 2. waits for AnythingLLM
 3. deploys (`uv run hostctl deploy`)
 4. points web search at SearXNG
-5. runs every setup target: tailnet ports, sandbox, research and sites runners
-6. runs `uv run hostctl health`
+5. runs every setup target: sandbox, research and sites runners
+6. runs `uv run hostctl health`, which checks the machine's routes (see "The machine's routes")
 7. ends with a checklist of what only AnythingLLM's UI can do. Each item is ticked when
    it's already done: the chat model and embedder, a DeepSeek key, the agent limits in the
-   `.env`, SearXNG answering, a workspace, the built-in skills to turn off, Gmail.
+   `.env`, the machine's routes answering, SearXNG answering, a workspace, the built-in skills to turn off, Gmail.
 
 Every step only changes what's out of date, so running it again is safe.
 
@@ -34,8 +34,9 @@ Every step only changes what's out of date, so running it again is safe.
 This machine's settings live in `host.env` at the repo root, which git ignores. To set it
 up, copy `host.env.example` and fill it in:
 
-- `PUBLIC_HOST`: the tailnet name. The pages site (:8445) and SearXNG (:8888) are served
-  on it through `tailscale serve`, and every link the setup hands out uses it.
+- `PUBLIC_HOST`: the name this machine is reached by over HTTPS. The machine routes the
+  apps' ports on it (see "The machine's routes"), the service containers reach AnythingLLM
+  and SearXNG by it, and every link the setup hands out uses it.
 - `ANYTHINGLLM_STORAGE`: AnythingLLM's storage directory on the host.
 
 These read it:
@@ -53,7 +54,52 @@ Code running on the host derives its storage paths from `ANYTHINGLLM_STORAGE`. I
 container that variable isn't set, and storage is `/app/server/storage`. Tests ignore
 `host.env`, so they run the same on any machine.
 
-### Containers and tailnet ports
+### The machine's routes
+
+The network is the machine's, not the repo's. Nothing here runs `tailscale serve` or
+configures a proxy; the machine provides, by whatever it likes (tailscale serve, Caddy,
+nginx, …), an HTTPS route for each app's `serve` entry in `apps.toml`:
+`https://<PUBLIC_HOST>:<https><path>` to `http://127.0.0.1:<port>`.
+`uv run hostctl routes` lists them and checks each answers, and `uv run hostctl health` and
+the install checklist do too; an app `install` leaves out (agents, the relay, the gateway)
+counts once one of its units runs. Today they are:
+
+| Port  | Path              | To      | App                                       |
+| ----- | ----------------- | ------- | ----------------------------------------- |
+| 3001  | `/`               | :3001   | AnythingLLM                               |
+| 3001  | `/everythingllm`  | :8446   | the Nilson relay (when set up)            |
+| 8445  | `/`               | :8445   | the pages site (Caddy)                    |
+| 8445  | `/_live/browser`  | :8453   | browser live cards                        |
+| 8445  | `/_live/research` | :8450   | research live cards                       |
+| 8445  | `/_live/agents`   | :8451   | delegation live cards (when set up)       |
+| 8445  | `/news/write`     | :8448   | the article writer                        |
+| 8447  | `/`               | :8447   | the workspace pages (Caddy)               |
+| 8452  | `/`               | :8452   | the MCP gateway (when set up)             |
+| 8454  | `/`               | :8454   | the browser take-over view                |
+| 8888  | `/`               | :8888   | SearXNG                                   |
+
+What the code counts on from them:
+
+- **They connect from the host's 127.0.0.1.** The relay, the article writer, the live cards
+  and the take-over view answer only loopback and their container's own address
+  (`hostrpc.local_peer`), and believe `X-Forwarded-For` and `X-Forwarded-Proto` only from
+  there. A proxy on the host works; one in a container on a bridge network doesn't.
+- **A path's prefix may be stripped or not.** Every server under a path takes its routes
+  with or without it.
+- **Responses aren't buffered.** The live cards are `multipart/x-mixed-replace` streams,
+  and the relay streams chat answers; each part has to go on as it comes (nginx:
+  `proxy_buffering off`).
+- **A valid certificate for `PUBLIC_HOST`.** Every link is https, and the service
+  containers check it when they reach AnythingLLM and SearXNG through the egress proxy.
+- **`PUBLIC_HOST` resolves to an address of this machine where the routes listen, not
+  loopback.** The egress proxy resolves it through podman's network, as the host does, and
+  connects there; on 127.0.0.1 it would reach its own container. `routes` fails on that.
+- **Only your own devices reach them.** This is the repo's one assumption about who's
+  calling: the pages sites and the live cards ask no one, AnythingLLM asks for its password,
+  the take-over view for its token and the gateway for its clients'. `routes` warns when
+  `PUBLIC_HOST` resolves to a public address. A tailnet, a LAN or a VPN all do.
+
+### Containers
 
 This repo owns the containers the setup runs, as templates in `host/quadlet/`; besides
 the service containers (see "Service containers"), these two:
@@ -114,7 +160,7 @@ It must leave them alone now, or its next run undoes `uv run hostctl units`.
 ### The apps
 
 Every app this repo runs is declared once, in `packages/apps/src/apps/apps.toml`: its units
-and a label for each, its socket, its tailnet mappings, whether its restarts wait
+and a label for each, its socket, the HTTPS routes it needs from the machine, whether its restarts wait
 for a run (the guard), its health checks, the steps its setup runs first, and whether
 `uv run hostctl install` sets it up (and if not, why). hostctl reads it through
 `packages/apps` (standard library only, like `hostctl`);
@@ -124,17 +170,15 @@ app code never does. `uv run hostctl apps` lists the apps; for each:
   another app's runner never moves into its container on the side), runs its `before`
   steps (the sandbox's and the service
   containers' image builds, the agents and gateway key files, the relay's settings file),
-  maps its tailnet paths, enables and (re)starts its units and (re)starts its containers,
-  asking first while a guarded one has a run going (`FORCE=1` doesn't ask), and starts its
-  timers
+  enables and (re)starts its units and (re)starts its containers,
+  asking first while a guarded one has a run going (`FORCE=1` doesn't ask), starts its
+  timers, and prints the routes it needs from the machine
   (`hostctl.appctl`).
 - `uv run hostctl <app>-logs` follows its units and the ones it watches.
-- `uv run hostctl serve-setup` maps every app's tailnet paths that aren't mapped yet with
-  `sudo tailscale serve` (by port and path, from `tailscale serve status --json`, so the
-  relay's path on :3001 doesn't pass for AnythingLLM's root), and leaves other mappings on the
-  machine alone, including ones an app no longer declares.
-- `uv run hostctl health` checks every app's units, health URLs and sockets (`health.sh`,
-  which gets them from `python3 -m hostctl.appctl units`, `health` and `sockets`, pinging
+- `uv run hostctl routes` lists every app's routes on `PUBLIC_HOST` and checks each answers
+  (see "The machine's routes"); it sets nothing up.
+- `uv run hostctl health` checks every app's units, health URLs, routes and sockets (`health.sh`,
+  which gets them from `python3 -m hostctl.appctl units`, `health`, `routes` and `sockets`, pinging
   each runner).
 
 Adding an app: its code, its unit template in `host/`, and one entry in `apps.toml`.
@@ -145,7 +189,7 @@ unit uses.
 ### AnythingLLM's password
 
 AnythingLLM's own API (`/api/...`, which its UI uses; not the developer API's `/api/v1/`) answers
-anyone who reaches it until it has a password, and tailnet :3001 reaches it. That includes
+anyone who reaches it until it has a password, and the machine's :3001 route reaches it. That includes
 scheduled jobs, which run the agent with every tool approved, `.env` changes and new API keys.
 So it gets a password (Settings > Security > Password protection; long and random, from
 `[a-zA-Z0-9_-!@$%^&*();]`), which AnythingLLM keeps in plain text as `AUTH_TOKEN` in storage's
@@ -164,7 +208,7 @@ be long; a developer API key (any client's, Nilson's included) still has full `/
 included; the agent's websocket needs only an invocation's id.
 
 Not in this repo, so a new machine needs them first: rootless podman with Quadlet, systemd
-lingering for the user, tailscale, uv, zola in `/usr/local/bin`, SearXNG (deployed by Ansible,
+lingering for the user, HTTPS routes to the apps (see "The machine's routes"), uv, zola in `/usr/local/bin`, SearXNG (deployed by Ansible,
 see SearXNG below) and Ollama if it's the embedding provider. AnythingLLM's own settings
 (providers and keys in its `.env`, workspaces, which built-in skills are off) are set
 through its UI.
@@ -214,7 +258,7 @@ through its UI.
     winter), and the prompt dates the edition by Stockholm time
 - `packages/` — MCP servers we write: members of the uv workspace at the repo root
   (`pyproject.toml`, `uv.lock`), one per subdirectory
-  - `packages/sites/` — the Zola sites on the tailnet pages site (:8445): list/write/get/delete
+  - `packages/sites/` — the Zola sites on the pages site (https :8445): list/write/get/delete
     their entries and build them; and `headlines(section)`, the last 30 hours' stories for
     the Daily News job from the feeds in `FEEDS` (`sites/feeds.py`), each with its own link.
     The MCP server forwards to `sites-runner` on the host, which does the work. The sites'
@@ -236,7 +280,7 @@ through its UI.
   - `packages/runs/` — a library, not a server: what research-runner and agents-runner share
     for long runs: run state with long-poll waiting and slots, the run log, live cards
   - `packages/publicweb/` — a library, not a server: the HTTP client sites and research use,
-    which refuses LAN, tailnet and loopback hosts, and `publicweb.pages`, the page reader on
+    which refuses LAN, CGNAT (Tailscale's) and loopback hosts, and `publicweb.pages`, the page reader on
     it that the article writer and research share
   - `packages/chatimage/` — a library, not a server: the pictures the host draws for the chat,
     which the agent shows as Markdown images: link cards for published pages (see "Code
@@ -292,7 +336,7 @@ through its UI.
   - `units` — renders and installs `host/quadlet/` and `host/systemd/` (`uv run hostctl units`)
   - `machine` — `uv run hostctl install`'s checks, its wait for AnythingLLM, the web search setting
     and the closing checklist
-  - `appctl` — the apps' setup, logs and tailnet mappings, from the registry
+  - `appctl` — the apps' setup, logs and routes, from the registry
   - `run_guard` — asks before a runner with a live run restarts
   - `agents_env`, `relay_env`, `gateway_env` — the agents, relay and gateway setups' key
     file checks; `gateway_env` also adds a gateway client (`uv run hostctl gateway-client`)
@@ -495,8 +539,8 @@ Code edits go live the next time AnythingLLM starts the server (restart it from 
 Agent Skills > MCP Servers page, `uv run hostctl restart`, or `uv run hostctl deploy`, which restarts). Note
 that this runs whatever is in the working tree, committed or not. Requires `mcp` 2.x (`MCPServer`, not `FastMCP`).
 
-`tailscale serve` maps tailnet HTTPS :8445 to the pages site and :8447 to the workspace pages
-site.
+The machine routes HTTPS :8445 to the pages site and :8447 to the workspace pages site
+(see "The machine's routes").
 
 ### Service containers
 
@@ -579,7 +623,7 @@ anyway.
 container's own address, not its loopback, so a server in a container listens on `0.0.0.0`:
 `LIVE_HOST` (the live cards, `runs.live`), `ARTICLES_HOST` (the article writer) and
 `RELAY_HOST` (the relay) say so in its template, and default to `127.0.0.1` on the host.
-For the same reason a server that believes `tailscale serve`'s `X-Forwarded-For` and
+For the same reason a server that believes the machine's route's `X-Forwarded-For` and
 `X-Forwarded-Proto` believes them from its container's own address, not `127.0.0.1`: the
 relay's template sets uvicorn's `FORWARDED_ALLOW_IPS` to it. Listening on `0.0.0.0` would
 also let every other container on egress-net reach that port (podman's bridge doesn't keep
@@ -590,7 +634,7 @@ loopback or its own address, the socket's local one (`hostrpc.local_peer`; the r
 in the peer's place), and refuses any other with a 403: it works unchanged as a host unit
 on `127.0.0.1` and behind the published port, and another container, coming from an
 address of its own, gets nothing. A container can't reach the
-host's loopback either, so it reaches AnythingLLM and SearXNG by their tailnet names
+host's loopback either, so it reaches AnythingLLM and SearXNG by `PUBLIC_HOST`
 through the proxy: `ANYTHINGLLM_URL=https://<PUBLIC_HOST>:3001` (the relay) and
 `SEARXNG_URL=https://<PUBLIC_HOST>:8888/search` (research, the article writer). All default
 to the host's loopback.
@@ -619,7 +663,7 @@ port asked for:
 
 - A public host must resolve to public addresses only, all of them: the rule is
   `publicweb.public_address`, the one the services use on the host, so loopback, the LAN,
-  link-local, the tailnet's CGNAT range and IPv4-mapped forms of them are all refused. The
+  link-local, the CGNAT range (Tailscale's) and IPv4-mapped forms of them are all refused. The
   proxy resolves each name once and connects to the address it checked, so a name that
   answers differently the second time (DNS rebinding) gets nowhere.
 - Anything else is refused with a 403 that says why, as is a connection from an address no
@@ -630,7 +674,7 @@ In a container, `EGRESS_PROXY` puts `publicweb.public_client` in proxy mode: eve
 goes to the proxy, which makes the address check, and the client checks only the scheme.
 It names the proxy's public port, `:3129` (`public_port` in egress.toml), where only
 `public` counts and no `allow` exception does, PyPI's included: `public_client` fetches
-URLs that came from the web or the agent, and on the host it refuses the tailnet, so a page
+URLs that came from the web or the agent, and on the host it refuses CGNAT and the LAN, so a page
 or a redirect mustn't reach AnythingLLM or SearXNG through the container's exceptions
 either. Other clients (the services' own httpx clients for AnythingLLM, SearXNG, DeepSeek
 and ntfy, and uv) follow `HTTPS_PROXY` and `HTTP_PROXY`, on `:3128`. On the host none of
@@ -802,7 +846,7 @@ folders.
 only way out is `sandbox-proxy` (tinyproxy, `host/systemd/sandbox-proxy.service`), which is
 also on the default network and lets through only the hosts in
 `host/containers/sandbox/allowlist`: `pypi.org` and `files.pythonhosted.org`. So `pip
-install` works, and the internet, the LAN, the tailnet (AnythingLLM's API, Ollama, …)
+install` works, and the internet, the LAN, CGNAT (a tailnet's AnythingLLM API, Ollama, …)
 and the host's own ports don't. `upload.pypi.org` stays blocked, so code can't push
 data out through a package upload either. To allow another host, add an anchored regex to
 `allowlist` and run `uv run hostctl sandbox-setup`, which rebuilds the proxy image.
@@ -840,7 +884,7 @@ browser.
 
 **The card.** A tab's card is a live picture of it in the chat:
 `https://<PUBLIC_HOST>:8445/_live/browser/<id>.jpg`, served by browser-runner on :8453
-(`browser.live`, tailscale-mapped like the research cards). It's the tab's screenshot under
+(`browser.live`, routed by the machine like the research cards). It's the tab's screenshot under
 a strip saying who has the browser (the agent, you, or closed), the page's title and
 address, and what was done last ("Clicked e12"; what's typed is never shown). It's pushed
 again (`multipart/x-mixed-replace`, as JPEG) whenever the tab looks different, checked once a
@@ -851,7 +895,7 @@ the same chat keeps the same tab and card from one container to the next. The ta
 
 **The take-over view.** The card links to `https://<PUBLIC_HOST>:8454/<token>/` (through a
 redirect from :8445, since the token changes with each container), a page of its own on its
-own tailnet port (`browser.takeover`, :8454), so its scripts run on an origin of their own
+own HTTPS port (`browser.takeover`, :8454), so its scripts run on an origin of their own
 and not the pages site's. It shows the browser's whole screen through noVNC (`static/app.js`),
 view-only while the agent has it. "Take over" makes it yours: the agent's actions and reads
 are refused (so it can't watch what you type) until you press "Hand back to the agent". When
@@ -970,8 +1014,8 @@ container is the boundary.
 of the `browser` profile in `egress.toml` (`10.89.79.32`–`.35`: the slot it holds while it
 runs, so at most four browsers run at once; when a fifth is needed, the one unused longest is
 stopped, unless it's watched or yours). Chromium sends everything, loopback included,
-through the egress proxy's public port (`:3129`): public hosts on 80 and 443, never the
-tailnet, the LAN or this machine, and not even PyPI. A renderer taken over by a page could
+through the egress proxy's public port (`:3129`): public hosts on 80 and 443, never
+CGNAT, the LAN or this machine, and not even PyPI. A renderer taken over by a page could
 reach other containers on egress-net directly, as any service container could; their
 servers answer only loopback and their own address (`hostrpc.local_peer`). The proxy loads
 `egress.toml` when it starts, so a new profile or address needs `uv run hostctl
@@ -992,7 +1036,7 @@ the runner stops every browser (the profiles stay).
 A Daily News headline doesn't link to the outside source. It opens an article the bot
 writes the first time someone clicks it. The edition links each story to
 `/news/write/<day>/<desk>/<n>` (the n-th story of the edition's desk-th section), which
-`tailscale serve` maps to the article writer (`sites.articles_web`, served by `sites-runner`
+the machine routes to the article writer (`sites.articles_web`, served by `sites-runner`
 on 127.0.0.1:8448, its container's published port), so the writer shares the news site's origin while Caddy stays static
 and read-only. Without a DeepSeek key, `sites-runner` logs that and serves the tools without it.
 
@@ -1035,8 +1079,8 @@ progress lines and the result, `runs` lists what the runner holds.
 **The live card.** `start`'s `card` is a Markdown image in a link,
 `[![Deep research: <question>](…/_live/research/<id>.png)](…/_live/research/<id>)`, which the
 agent pastes as it does a link card. research-runner serves both on 127.0.0.1:8450
-(`RESEARCH_LIVE_PORT`, `research.live`; its container publishes the port there), which `uv run hostctl serve-setup` maps to
-`https://<PUBLIC_HOST>:8445/_live/research/` with `tailscale serve`. The image is
+(`RESEARCH_LIVE_PORT`, `research.live`; its container publishes the port there), which the machine routes
+`https://<PUBLIC_HOST>:8445/_live/research/` to. The image is
 `multipart/x-mixed-replace` (server push, `chatimage.live`): the browser keeps showing the
 newest frame of the connection, so the card's bar, its minutes and its latest progress line
 move with the run, with no script and with "Render HTML in chat" off. A frame goes out at
@@ -1170,9 +1214,9 @@ host path:
   read-only: the DeepSeek and Z.AI keys and DeepSeek's model, never AnythingLLM's password
 
 It goes out only through the egress proxy, with the `research` profile: any public host
-(the pages it reads, DeepSeek and Z.AI), and SearXNG by the tailnet name (`SEARXNG_URL`),
+(the pages it reads, DeepSeek and Z.AI), and SearXNG by `PUBLIC_HOST` (`SEARXNG_URL`),
 never AnythingLLM. A page the proxy refuses
-(a LAN or tailnet address) is skipped as any unreadable page is. Only the research site's
+(a LAN or CGNAT address) is skipped as any unreadable page is. Only the research site's
 entries are mounted, so a `SITE` setup arg naming another site can't publish there: the
 report is still saved to the agent's files, and the reply says why. Its share of `.env` is
 written when it starts, so a model key changed in AnythingLLM reaches it at its next
@@ -1224,8 +1268,8 @@ unused).
 - **Containment.** Every tool loads in a headless run, so every skill of ours that writes,
   acts or delegates refuses a call from an `agents-*` workspace (`_lib/delegated.js`, held
   by a test). A task can read and report; it can't write, run code or delegate again.
-- **The live card** is served on 127.0.0.1:8451 (`AGENTS_LIVE_PORT`) and mapped to
-  `https://<PUBLIC_HOST>:8445/_live/agents/` by `uv run hostctl serve-setup`. Its page shows the
+- **The live card** is served on 127.0.0.1:8451 (`AGENTS_LIVE_PORT`) and routed by the machine from
+  `https://<PUBLIC_HOST>:8445/_live/agents/`. Its page shows the
   progress, and every task's reply once the delegation is done, escaped and under a CSP
   that allows nothing but the page's own CSS (`runs.live`).
 - **The run log** is `~/.local/share/everythingllm/agents/runs/` (`runs.runlog`, as
@@ -1246,9 +1290,9 @@ unused).
 
 ## MCP gateway
 
-The gateway (`packages/gateway`, `gateway.service`, 127.0.0.1:8452, tailnet https :8452)
+The gateway (`packages/gateway`, `gateway.service`, 127.0.0.1:8452, routed by the machine at https :8452)
 serves the runners' tools over MCP's streamable HTTP to clients other than AnythingLLM,
-such as Claude Code on another machine on the tailnet (`docs/.proposals/gateway-and-containers.md`,
+such as Claude Code on another of your machines (`docs/.proposals/gateway-and-containers.md`,
 kept out of git). It's one more front on the host, over the same runner sockets. Its tools
 come in groups, and a client gets the groups it's granted. Two tools of the same name stop
 it from starting.
@@ -1373,11 +1417,10 @@ call for Nilson and owns the answer. Each run streams from AnythingLLM to the en
 task, which no follower owns; the relay never closes the upstream connection because a
 follower left, only when the run ends or is cancelled.
 
-It sits beside AnythingLLM on AnythingLLM's own tailnet origin: `tailscale serve` maps
+It sits beside AnythingLLM on AnythingLLM's own origin: the machine routes
 `https://<PUBLIC_HOST>:3001/` to AnythingLLM as before and `/everythingllm/` on the same port
-to the relay (`uv run hostctl relay-setup`), stripping that prefix; the relay answers with or
-without it, so a proxy that doesn't strip it can map `/everythingllm/` to `127.0.0.1:8446` as
-well. Everything else on :3001 (the web UI, both APIs, the websockets) is AnythingLLM's, so a
+to the relay at `127.0.0.1:8446`; the relay answers with or without that prefix, so the
+route may strip it or not. Everything else on :3001 (the web UI, both APIs, the websockets) is AnythingLLM's, so a
 native AnythingLLM client notices nothing, and Nilson needs one address and one key for both:
 
 - Every route but `/health` takes the AnythingLLM developer API key the client gives
@@ -1427,9 +1470,9 @@ on the host, not as a file. Its only way out is the egress proxy's `relay` profi
 AnythingLLM at `https://<PUBLIC_HOST>:3001` (`ANYTHINGLLM_URL`, since the container can't
 reach the host's loopback), the ntfy host on :443 (`NTFY_HOST` in `host.env`, if it isn't
 `ntfy.sh`), and PyPI for its first sync; nothing else, public or not. So the key check
-and stream-chat go through `tailscale serve`'s :3001 rather than straight to AnythingLLM.
+and stream-chat go through the machine's :3001 route rather than straight to AnythingLLM.
 It listens on `0.0.0.0:8446` inside (`RELAY_HOST`), published on the host's
-`127.0.0.1:8446`, where `tailscale serve` and the health check reach it. Through that port
+`127.0.0.1:8446`, where the machine's route and the health check reach it. Through that port
 every connection arrives from the container's own address (`10.89.79.10`), so that is the
 one peer whose `X-Forwarded-For` and `X-Forwarded-Proto` uvicorn believes
 (`FORWARDED_ALLOW_IPS`), and with loopback the only one it answers (`LocalPeers`):
@@ -1451,7 +1494,7 @@ Nothing is indexed locally and no API keys are needed.
 
 SearXNG is deployed by Ansible, not from this repo: the Quadlet unit
 `searxng.container` and its config in `/srv/searxng/settings.yml` (JSON output on,
-limiter off). It listens on 127.0.0.1:8888, and `tailscale serve` maps tailnet HTTPS :8888
+limiter off). It listens on 127.0.0.1:8888, and the machine routes HTTPS :8888
 to it, since the AnythingLLM container can't reach the host's loopback.
 
 AnythingLLM uses it as the search provider (Agent Skills > Web Search > SearXNG), with

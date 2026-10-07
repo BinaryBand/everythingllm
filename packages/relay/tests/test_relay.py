@@ -601,7 +601,7 @@ def test_a_database_from_before_version_2_loses_its_runs(tmp_path):
 def test_uvicorn_believes_forwarded_headers_only_from_the_configured_peer(
     tmp_path, monkeypatch
 ):
-    # On the host tailscale serve connects from 127.0.0.1; in the container everything
+    # On the host the machine's route connects from 127.0.0.1; in the container everything
     # through the published port comes from the container's own address, which its
     # template sets.
     from relay import app as relay_app
@@ -651,8 +651,8 @@ async def who_asked(scope, receive, send):
 
 async def asked(app, local, peer, forwarded_for=None):
     """`app`'s status and body for a request from `peer` (the connection's own peer, as
-    uvicorn gives it) to `local` (the address it was accepted on), sent on by tailscale
-    serve for `forwarded_for`."""
+    uvicorn gives it) to `local` (the address it was accepted on), sent on by the
+    machine's route for `forwarded_for`."""
     headers = (
         {"X-Forwarded-For": forwarded_for, "X-Forwarded-Proto": "https"}
         if forwarded_for

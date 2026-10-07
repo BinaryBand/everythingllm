@@ -16,7 +16,7 @@ PodmanArgs=--memory=512m --cpus=1 --umask=0002
 RunInit=true
 Timezone=local
 # It listens on egress-net, at the address egress.toml gives it, and goes out over
-# podman's default network, which resolves the tailnet's names too.
+# podman's default network, which resolves names as the host does (PUBLIC_HOST included).
 Network=egress-net:ip=10.89.79.2
 Network=podman
 # The repo at its host path, read-only; its venv and uv's cache in one folder of the data

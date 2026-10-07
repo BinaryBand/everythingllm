@@ -12,7 +12,7 @@ feed_filenames = ["atom.xml"]
 stylesheets = ["news.css"]
 nav = [{ name = "Archive", path = "@/editions/_index.md" }]
 footer = "Compiled automatically from news feeds."
-# Where headlines link: the article writer (sites.articles_web, in sites-runner), mapped here by tailscale serve.
+# Where headlines link: the article writer (sites.articles_web, in sites-runner), routed here by the machine (apps.toml).
 article_writer = "/news/write"
 
 # Shown to the agent by the sites MCP server's list_sites.

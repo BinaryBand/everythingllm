@@ -63,7 +63,7 @@ must not have it.
 
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
-                    this machine's storage directory and tailnet name, from host.env
+                    this machine's storage directory and HTTPS name, from host.env
                     (default /srv/anythingllm/storage, and no name: links use 127.0.0.1)
   SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/everythingllm/sandbox/runner.sock)
   SANDBOX_BUILD_SOCKET  the socket serving only build_system_site (default

@@ -58,7 +58,7 @@ def test_the_card_streams_the_tab_and_links_to_the_take_over_view(tmp_path):
             for path in (
                 f"/_live/browser/{tab.id}.jpg",
                 f"/{tab.id}.jpg",
-            ):  # tailscale strips the prefix
+            ):  # a route that strips the prefix
                 reader, writer = await get(port, path)
                 head, part, frame = await first_frame(reader)
                 assert b"multipart/x-mixed-replace" in head and b"image/jpeg" in part

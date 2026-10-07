@@ -10,7 +10,7 @@ import pytest
 from hostctl import cli
 
 # The commands that aren't per app.
-TARGETS = ["install", "units", "diff", "deploy", "skills", "skills-check", "restart", "logs", "status", "health", "test", "test-skills", "mcp-sync", "apps", "serve-setup", "gateway-client", "sandbox-images", "service-images", "browser-images", "browser-reset", "sites-build"]
+TARGETS = ["install", "units", "diff", "deploy", "skills", "skills-check", "restart", "logs", "status", "health", "test", "test-skills", "mcp-sync", "apps", "routes", "gateway-client", "sandbox-images", "service-images", "browser-images", "browser-reset", "sites-build"]
 
 
 @pytest.fixture

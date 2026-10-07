@@ -36,11 +36,15 @@ while IFS='|' read -r name url; do
   # Any answer below 500 means the server is up; some roots are a 404 by design.
   if [ "$code" != 000 ] && [ "$code" -lt 500 ]; then ok "$name ($code)"; else fail "$name ($url: ${code/000/no answer})"; fi
 done < <(appctl health)
-# Without a password, AnythingLLM's internal API answers anyone who reaches :3001 (the tailnet).
+# Without a password, AnythingLLM's internal API answers anyone who reaches :3001.
 case "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/api/scheduled-jobs)" in
   401) ok "AnythingLLM asks for a login" ;;
   *) fail "AnythingLLM answers without a login: set a password (Settings → Security)" ;;
 esac
+
+echo "Routes"
+# What the machine routes to the apps on PUBLIC_HOST over HTTPS (the apps' `serve`).
+appctl routes || failed=1
 
 echo "Sockets"
 # The host services the container talks to over sockets in storage.

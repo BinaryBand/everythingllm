@@ -1,4 +1,4 @@
-"""An httpx client that refuses hosts on the LAN, the tailnet, loopback and the like, and a
+"""An httpx client that refuses hosts on the LAN, CGNAT (Tailscale's), loopback and the like, and a
 download capped in size and time to use it with.
 
 The servers that use it fetch whatever URLs the agent or the web handed them, and they

@@ -1,7 +1,7 @@
 """Setting up a machine from this repo; the steps `uv run hostctl install` runs around the others.
 
-  check      before anything changes: host.env, the tools the units run, linger, tailscale,
-             and the storage folder (creating what the containers mount inside it)
+  check      before anything changes: host.env, the tools the units run, linger and the
+             storage folder (creating what the containers mount inside it)
   wait-api   wait for AnythingLLM's API to answer after its container (re)starts
   search     point AnythingLLM's web search at this machine's SearXNG
   checklist  what's left to do by hand in AnythingLLM's UI, ticking what's already done
@@ -20,10 +20,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import apps  # the registry's reader, standard library only
+
+from hostctl import appctl
 from hostctl.units import ROOT, anythingllm_headers, env_file, host_settings
 
 API = "http://127.0.0.1:3001/api"
-EXAMPLE_HOST = "machine.tailnet-name.ts.net"
+EXAMPLE_HOST = "machine.example.net"
 # Paths the systemd units run these from (host/systemd/, host/quadlet/).
 TOOLS = {
     "podman": "/usr/bin/podman",
@@ -51,8 +54,10 @@ def check() -> list[str]:
     host, storage = values.get("PUBLIC_HOST", ""), values.get("ANYTHINGLLM_STORAGE", "")
     if not host or host == EXAMPLE_HOST:
         problems.append(
-            "PUBLIC_HOST in host.env isn't set to this machine's tailnet name (`tailscale status --self`)."
+            "PUBLIC_HOST in host.env isn't set to the name this machine is reached by over HTTPS."
         )
+    elif fail := appctl.host_problems(host)[0]:
+        problems.append(f"PUBLIC_HOST: {fail}.")
     for tool, path in TOOLS.items():
         if not Path(path).is_file():
             problems.append(
@@ -79,8 +84,6 @@ def check() -> list[str]:
         problems.append(
             "lingering is off, so user units won't start at boot: `sudo loginctl enable-linger $USER`."
         )
-    if not shutil.which("tailscale") or run("tailscale", "status").returncode:
-        problems.append("tailscale isn't installed or isn't up (`tailscale status`).")
     SITE_DIR.mkdir(parents=True, exist_ok=True)
     if storage:
         root = Path(storage)
@@ -155,6 +158,11 @@ def searxng_answers() -> bool:
         return False
 
 
+def routed(host: str) -> bool:
+    """Whether `uv run hostctl routes` passes on `host`."""
+    return bool(host) and appctl.route_report(apps.load(), host)[1]
+
+
 def checklist() -> list[tuple[bool | None, str]]:
     """(done, item): done is None for what can't be checked from here."""
     values = settings()
@@ -166,7 +174,7 @@ def checklist() -> list[tuple[bool | None, str]]:
     return [
         (
             keys.get("AUTH_TOKEN", False) and keys.get("JWT_SECRET", False),
-            "Set a password (Settings > Security > Password protection): without one, anyone who reaches :3001 on the tailnet can use AnythingLLM's own API, scheduled jobs included. Use a long random one; our tools log in with it from the .env.",
+            "Set a password (Settings > Security > Password protection): without one, anyone who reaches :3001 can use AnythingLLM's own API, scheduled jobs included. Use a long random one; our tools log in with it from the .env.",
         ),
         (
             keys.get("LLM_PROVIDER", False),
@@ -189,6 +197,10 @@ def checklist() -> list[tuple[bool | None, str]]:
             keys.get("AGENT_SKILL_RERANKER_TOP_N", False)
             and keys.get("AGENT_MAX_TOOL_CALLS", False),
             "Add AGENT_SKILL_RERANKER_TOP_N and AGENT_MAX_TOOL_CALLS to the .env (see anythingllm/env.example for why), then `uv run hostctl restart`.",
+        ),
+        (
+            routed(values.get("PUBLIC_HOST", "")),
+            "Route the apps' HTTPS ports on PUBLIC_HOST to their servers on 127.0.0.1, from this machine (tailscale serve, Caddy, …), keeping them to your own devices: `uv run hostctl routes` lists them and checks each.",
         ),
         (
             searxng_answers(),

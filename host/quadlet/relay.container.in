@@ -1,5 +1,5 @@
 [Unit]
-Description=Nilson relay: owns the Nilson app's chat answers, streaming each from AnythingLLM to the end even when the app goes away (127.0.0.1:8446, tailnet via tailscale serve at https :3001/everythingllm/)
+Description=Nilson relay: owns the Nilson app's chat answers, streaming each from AnythingLLM to the end even when the app goes away (127.0.0.1:8446, routed by the machine at https :3001/everythingllm/)
 # Its only way out, to AnythingLLM and ntfy; also what uv syncs its venv through.
 Wants=egress-proxy.service
 After=egress-proxy.service
@@ -21,8 +21,8 @@ PodmanArgs=--memory=512m --cpus=1 --umask=0002
 RunInit=true
 Timezone=local
 # egress-net only, at its address in egress.toml (profile relay: AnythingLLM and ntfy,
-# nothing public), and its port on the host's loopback, where tailscale serve and the
-# health check reach it.
+# nothing public), and its port on the host's loopback, where the machine's route and
+# the health check reach it.
 Network=egress-net:ip=10.89.79.10
 PublishPort=127.0.0.1:8446:8446
 # The repo at its host path, read-only; its venv and uv's cache in one folder of the data
@@ -36,11 +36,11 @@ Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/relay-ctr/uv-cache
 Environment=HTTPS_PROXY=http://10.89.79.2:3128
 Environment=HTTP_PROXY=http://10.89.79.2:3128
 Environment=EGRESS_PROXY=http://10.89.79.2:3129
-# The host's loopback isn't the container's: AnythingLLM by its tailnet name, which the
+# The host's loopback isn't the container's: AnythingLLM by PUBLIC_HOST, which the
 # proxy lets the relay reach.
 Environment=ANYTHINGLLM_URL=https://@PUBLIC_HOST@:3001
 # What comes through the published port arrives from the container's own address, so it
-# listens on all of them, and believes tailscale serve's X-Forwarded-* only from that one
+# listens on all of them, and believes the machine's route's X-Forwarded-* only from that one
 # (its address above). Another container on egress-net reaching the port is refused
 # (relay.app.LocalPeers).
 Environment=RELAY_HOST=0.0.0.0

@@ -684,7 +684,10 @@ def test_a_sandbox_runner_without_its_build_socket_builds_through_its_own(
     monkeypatch.delenv("SANDBOX_SOCKET", raising=False)
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
     socks = tmp_path / "everythingllm"
-    new, old = socks / "sandbox-build" / "runner.sock", socks / "sandbox" / "runner.sock"
+    new, old = (
+        socks / "sandbox-build" / "runner.sock",
+        socks / "sandbox" / "runner.sock",
+    )
     old.parent.mkdir(parents=True)
     old.touch()
     assert build.build_socket() == old

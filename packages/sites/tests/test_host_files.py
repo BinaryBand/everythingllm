@@ -66,6 +66,16 @@ def test_workspace_pages_run_scripts_only_in_a_sandbox():
     }
 
 
+def test_link_cards_alone_may_be_read_by_any_origin():
+    """A client's web build fetches the cards to draw them (chatimage.live does the same for
+    the live ones); the pages themselves stay unreadable from other origins."""
+    pages = caddy_sites()["8445"]
+    assert re.findall(r"^\s*@cards path (\S+)$", pages, re.MULTILINE) == ["/_cards/*"]
+    found = re.findall(r"header (\S+ )?Access-Control-Allow-Origin \"([^\"]*)\"", pages)
+    assert found == [("@cards ", "*")]
+    assert "Access-Control" not in caddy_sites()["8447"]
+
+
 def test_light_link_cards_are_the_files_the_cards_are_saved_as(tmp_path):
     """The pages site serves a link card's light file for ?theme=light: its rule has to
     match the names chatimage.card saves, or every light request would get the dark card."""

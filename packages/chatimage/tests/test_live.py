@@ -52,6 +52,7 @@ def test_frames_are_pushed_in_order_and_the_stream_ends():
     assert head.startswith(b"HTTP/1.1 200 OK")
     assert b"Content-Type: multipart/x-mixed-replace; boundary=frame" in head
     assert b"Cache-Control: no-store" in head
+    assert b"Access-Control-Allow-Origin: *" in head  # a web client may draw it
     assert parts(body) == [b"png0", b"png1", b"png2"]
     assert seen == [("GET", "/x.png", "v=1"), True]
 
@@ -163,6 +164,20 @@ def test_a_plain_response_and_a_bad_request():
     )
     assert b"Content-Length: 0\r\n" in ok and b"Connection: close\r\n" in ok
     assert bad.startswith(b"HTTP/1.1 400 Bad Request")
+    assert b"Access-Control" not in ok + bad  # only images are anyone's to read
+
+
+def test_a_single_frame_may_be_read_by_any_origin():
+    async def handler(reader, writer):
+        await live.read_request(reader)
+        await live.send(writer, "200 OK", b"png", "image/png")
+
+    async def go():
+        server, port = await serve(handler)
+        async with server:
+            return await get(port)
+
+    assert b"Access-Control-Allow-Origin: *\r\n" in asyncio.run(go())
 
 
 def test_a_query_asks_for_a_theme():

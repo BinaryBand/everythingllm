@@ -16,7 +16,9 @@ Every part stays a whole image with its Content-Length, for readers that go by i
 These are helpers for a service's own small asyncio server (research.live is one): it
 reads the request line, then either pushes frames or sends one plain response. An image's
 address may ask for the light theme with `?theme=light` (`theme`); else it's dark. There's
-no framework: GET only, no keep-alive, every response closes its connection.
+no framework: GET only, no keep-alive, every response closes its connection. An image may
+be read by a page of any origin (CORS): a client's web build fetches the cards to draw them,
+and a card shows nothing that isn't in the picture. Pages and redirects get no such header.
 """
 
 import asyncio
@@ -29,6 +31,7 @@ from chatimage import THEME, THEMES
 BOUNDARY = b"frame"
 SETTLE = 0.2  # seconds a frame waits for a newer one before it's sent again to be shown
 MAX_HEAD = 16 * 1024  # a request's line and headers; the machine's route adds a few
+CORS = {"Access-Control-Allow-Origin": "*"}  # on images alone
 
 
 class BadRequest(Exception):
@@ -87,6 +90,7 @@ async def send(
                     "Content-Type": content_type,
                     "Content-Length": str(len(body)),
                     "Cache-Control": "no-store",
+                    **(CORS if content_type.startswith("image/") else {}),
                     **(headers or {}),
                 },
             )
@@ -127,6 +131,7 @@ async def push(
                     "Content-Type": f"multipart/x-mixed-replace; boundary={BOUNDARY.decode()}",
                     "Cache-Control": "no-store",
                     "X-Accel-Buffering": "no",
+                    **CORS,
                 },
             )
         )

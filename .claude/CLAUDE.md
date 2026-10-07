@@ -172,16 +172,17 @@ is 3.13. Keep code 3.12-compatible, and check with
 - The pages site is served by Caddy (`host/caddy/pages.Caddyfile`) under a strict CSP: no
   scripts, nothing from other hosts, no forms. Templates must work without scripts or
   inline styles, and pass `sites.lint`; a test holds every repo template to it.
-- zola always builds without a network (`unshare --net`), with a 40 s limit (`sites.build`). A
-  site whose `zola.toml` has `[extra.build] theme_from` (every repo site has) is
-  built in a sandbox container instead (`build_system_site`), and only there may a theme
-  from a workspace's `/shared` be used. Every repo site names one (a test holds them to
-  it): `sites-runner`'s container has no zola (`SITES_SANDBOX_ONLY`).
+- zola is only in the sandbox image: every site is built in a sandbox container with no
+  network and a 40 s limit (`build_system_site`, which `sites.build` asks), and only there
+  may a theme from a workspace's `/shared` be used. A site's `zola.toml` must name
+  `[extra.build] theme_from` (a test holds every repo site to it), or `sites.build` refuses
+  it. Tests that build real sites run zola in that image through podman (the
+  `sandbox_zola` fixture in `packages/conftest.py`).
 - Templates, stylesheets, `zola.toml` and sections change only in the repo; the agent has
   no tool for them, and `uv run hostctl deploy` rebuilds the sites. The exception is the lab site, an
   experiment the agent owns whole in education's sandbox folder (`/shared/education/sites/lab/`)
   and builds with `build-site`. Agent-written sites and themes are only ever built in a
-  sandbox container (`sandbox/sitebuild.py`), never by the host's zola.
+  sandbox container (`sandbox/sitebuild.py`).
 
 ## Conventions
 

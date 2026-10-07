@@ -361,12 +361,10 @@ def test_sites_runner_mounts_only_what_it_uses():
     assert keys["GroupAdd"] == ["keep-groups"]
     env = dict(e.partition("=")[::2] for e in keys["Environment"])
     # The article writer listens where the published port arrives, and reaches SearXNG by
-    # PUBLIC_HOST, which the sites profile allows; there's no zola here, so only the sandbox
-    # builds.
+    # PUBLIC_HOST, which the sites profile allows.
     assert keys["PublishPort"] == ["127.0.0.1:8448:8448"]
     assert env["ARTICLES_HOST"] == "0.0.0.0"
     assert env["SEARXNG_URL"] == "https://@PUBLIC_HOST@:8888/search"
-    assert env["SITES_SANDBOX_ONLY"] == "1"
     assert env["UV_PROJECT_ENVIRONMENT"] == f"{data}/venvs/sites-runner-ctr/venv"
     assert env["UV_CACHE_DIR"] == f"{data}/venvs/sites-runner-ctr/uv-cache"
     assert keys["Exec"] == [

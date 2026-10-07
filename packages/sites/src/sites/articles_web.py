@@ -20,7 +20,7 @@ Config (environment, from host.env and sites-runner's unit):
                    its port is published on the host's 127.0.0.1, and what comes through
                    arrives from the container's own address
   SEARXNG_URL      the SearXNG to search (default the host's; publicweb.pages)
-  SITES_SOURCE, ZOLA, ANYTHINGLLM_STORAGE   as for sites-build, with host paths
+  SITES_SOURCE, ANYTHINGLLM_STORAGE   as for sites-build, with host paths
   DEEPSEEK_API_KEY or else read from ANYTHINGLLM_ENV (default .env in ANYTHINGLLM_STORAGE,
                    from host.env), as is the model that writes (DEEPSEEK_MODEL_PREF)
 """

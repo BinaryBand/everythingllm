@@ -126,7 +126,7 @@ class SandboxError(hostrpc.RunnerError):
 # Also named in hostctl's sandbox-images (cli.py).
 IMAGE = "localhost/everythingllm-sandbox"
 PROFILE = "sandbox"  # egress.toml's profile, whose addresses the runs take
-PROXY_CONTAINER = "systemd-egress-proxy"  # the egress proxy's container (Quadlet's name)
+PROXY_CONTAINER = "systemd-egress-proxy"  # the egress proxy, as Quadlet names it
 LABEL = "everythingllm-sandbox=1"
 
 LANGUAGES = {"python": ("main.py", "python"), "bash": ("main.sh", "bash")}

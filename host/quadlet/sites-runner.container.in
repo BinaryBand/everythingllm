@@ -33,8 +33,6 @@ Environment=EGRESS_PROXY=http://10.89.79.2:3129
 PublishPort=127.0.0.1:8448:8448
 Environment=ARTICLES_HOST=0.0.0.0
 Environment=SEARXNG_URL=https://@PUBLIC_HOST@:8888/search
-# No zola here and no unshare: the sandbox runner builds every site (sites.build).
-Environment=SITES_SANDBOX_ONLY=1
 # Each at its host path (README, "Service containers"): the repo read-only (code, the
 # sites' sources, host.env); the entries and the pages site, which it writes and builds
 # into (the sandbox hands back pages/public/.<site>.new to swap in); its socket's folder;

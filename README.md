@@ -13,7 +13,7 @@ On a new machine, or to bring this one up to date:
     uv run hostctl install
 
 `uv run hostctl install` first checks the machine and stops with a list of what's missing. It checks
-`host.env`, the tools the units run (podman, uv and zola at fixed paths), lingering
+`host.env`, the tools the units run (podman and uv at fixed paths), lingering
 and the storage folder, creating the folders the containers mount inside it.
 Then it does the following:
 
@@ -44,8 +44,8 @@ These read it:
 - hostctl, which passes both on to what it runs
 - `hostctl.sync`, for `ANYTHINGLLM_STORAGE`
 - the host's systemd units, through `EnvironmentFile=@REPO@/host.env` (filled in by `uv run hostctl units`)
-- the site builds, which read `PUBLIC_HOST` from it and pass zola
-  `--base-url https://<PUBLIC_HOST>:8445/<site>`, so `zola.toml` doesn't name the host.
+- the site builds, whose URLs come from `PUBLIC_HOST` (the sandbox runner passes zola
+  `--base-url https://<PUBLIC_HOST>:8445/<site>`), so `zola.toml` doesn't name the host.
   They find the file at the root of the repo the sites are in, and the container sees it at
   `/mcp/host.env`, so builds that get none of our environment, like a script's
   `sites-write`, use it too.
@@ -208,7 +208,7 @@ be long; a developer API key (any client's, Nilson's included) still has full `/
 included; the agent's websocket needs only an invocation's id.
 
 Not in this repo, so a new machine needs them first: rootless podman with Quadlet, systemd
-lingering for the user, HTTPS routes to the apps (see "The machine's routes"), uv, zola in `/usr/local/bin`, SearXNG (deployed by Ansible,
+lingering for the user, HTTPS routes to the apps (see "The machine's routes"), uv, SearXNG (deployed by Ansible,
 see SearXNG below) and Ollama if it's the embedding provider. AnythingLLM's own settings
 (providers and keys in its `.env`, workspaces, which built-in skills are off) are set
 through its UI.
@@ -370,6 +370,8 @@ venv is `.venv` there, which is the interpreter `.vscode/settings.json` points a
     uv sync --all-packages                     # install every member + dev deps into .venv
     uv run --all-packages --all-extras pytest -q   # all tests (what `uv run hostctl test` runs)
     uv run --package sites --extra host pytest packages/sites -q   # one member's tests
+    # The tests that build real sites run zola in the sandbox image (the only zola there
+    # is), through podman; they skip without it (uv run hostctl sandbox-images).
 
     uv run --package sites sites-mcp           # an MCP server over stdio (waits on stdin)
 
@@ -410,17 +412,14 @@ are) writes entries to `~/.local/share/everythingllm/pages/entries/<name>/<secti
 (JSON front matter, fields under `extra`) and then rebuilds that site itself, so an entry
 is live when `write-entry` returns; if the site doesn't build, the write or delete is
 undone ("not saved: the site didn't build: …"). Bodies can't use Zola shortcodes or Tera:
-`{{`, `{%` and `{#` get a zero-width space between the characters, and zola runs with only
-`PATH` in its environment, so nothing an entry says can read secrets or files. It also
-runs without a network, in a user and network namespace of its own (`unshare`), so a
-template's `load_data` can't fetch anything, not even from the host's loopback, and a build
-is stopped after 40 s. A machine without unprivileged user namespaces builds without the
-namespace and logs a warning. Every repo site is built in the sandbox, though (below), and
-`sites-runner` has neither zola nor `unshare` in its container: there `SITES_SANDBOX_ONLY=1`
-refuses a site whose `zola.toml` names no `theme_from`, with an error that says so, and a
-test holds every repo site to naming one. The
+`{{`, `{%` and `{#` get a zero-width space between the characters. zola itself runs only in
+the sandbox (below): in a container with no network, so a template's `load_data` can't
+fetch anything, with nothing of the host's environment or files but the site's, and
+stopped after 40 s. No host and no service container has a zola; `sites.build` refuses a
+site whose `zola.toml` names no `theme_from`, with an error that says so, and a test holds
+every repo site to naming one. The
 front matter names the slug, so a file like `2026-10-01-notes.md` keeps its date in the URL. The build (`sites.build`, also the `sites-build`
-command) assembles the site from the repo plus its entries in a temp dir, builds it next
+command) has the sandbox build the site from the repo plus its entries next
 to `~/.local/share/everythingllm/pages/public/<name>/` and swaps it in, holding a lock on `.build.lock` in the entries folder. Entries live outside storage because
 only host services read or write them; the AnythingLLM container never needs them.
 Built sites carry a `.zola-site` marker; the build won't replace a directory without one,
@@ -428,7 +427,7 @@ and the sandbox won't publish over a directory that isn't its own page.
 
 **Built in the sandbox.** A site whose repo `zola.toml` names its theme's origin,
 `[extra.build] theme_from = "system"` (the repo's `packages/sites/zola/themes`) or a sandbox workspace's
-name (its `/shared/<name>/themes/<theme>`), isn't built by the host's zola. `sites.build`
+name (its `/shared/<name>/themes/<theme>`), is built by the sandbox: `sites.build`
 asks `sandbox-runner` (`build_system_site`), which builds it in a container with no
 network: the site's repo source and its entries mounted read-only, the theme put in place
 by the repo's `sitebuild.py`, and the output copied (plain files only) into
@@ -696,9 +695,8 @@ its own venv folder (`venvs/sites-runner-ctr/`), it mounts, each at its host pat
 - its share of AnythingLLM's `.env` (`~/.config/everythingllm/ctr/sites-runner.env`),
   read-only: the article writer's DeepSeek key and model, nothing else
 
-Nothing else of storage or the data dir; no podman socket. There's no zola in the image and
-no `unshare` in a cap-dropped container, so `SITES_SANDBOX_ONLY=1` has the sandbox build
-every site and refuses one without `theme_from` (see "Zola sites"). The article writer
+Nothing else of storage or the data dir; no podman socket. There's no zola in the image:
+the sandbox builds every site (see "Zola sites"). The article writer
 listens on `0.0.0.0:8448` (`ARTICLES_HOST`), published on the host's `127.0.0.1:8448`, and
 searches `SEARXNG_URL=https://<PUBLIC_HOST>:8888/search`; the feeds, the story pages and
 DeepSeek are public hosts, which its profile (`sites`) lets through. A feed or page the

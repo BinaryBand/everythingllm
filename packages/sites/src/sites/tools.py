@@ -3,21 +3,19 @@
 AnythingLLM's container (server.py) forwards each tool call here over hostrpc and shows the
 agent the text returned. Each function in OPS is the tool of the same name; server.py describes them. A
 SiteError's or FeedError's text is the tool's error. The entries, the zola builds and the
-news feeds all happen here, like every other site writer's (research-runner, the article
+news feeds all happen here (the builds through the sandbox runner), like every other site writer's (research-runner, the article
 writer, `uv run hostctl sites-build`); the build lock keeps them from overlapping. The runner also
 serves the article writer behind the Daily News headlines (sites.articles_web). In its
-container the sandbox runner builds every site (SITES_SANDBOX_ONLY; sites.build), and the
-feeds and the writer's pages are fetched through the egress proxy (EGRESS_PROXY;
-publicweb).
+container the feeds and the writer's pages are fetched through the egress proxy
+(EGRESS_PROXY; publicweb).
 
 Config (environment, from host.env and the unit):
   SITES_SOCKET   socket to listen on (default <storage>/everythingllm/sites/runner.sock)
   ARTICLES_HOST, SEARXNG_URL, ...  the article writer's; see sites.articles_web
   SITES_SOURCE   repo directory holding one Zola site per subdirectory
-  ANYTHINGLLM_STORAGE, SITES_CONTENT, SITES_OUTPUT, ZOLA, SITES_SANDBOX_ONLY,
-  SANDBOX_BUILD_SOCKET
-                 where entries, themes and built sites are, the zola binary, and whether
-                 only the sandbox builds; see sites.build for the defaults
+  ANYTHINGLLM_STORAGE, SITES_CONTENT, SITES_OUTPUT, SANDBOX_BUILD_SOCKET
+                 where entries and built sites are, and the sandbox runner's build
+                 socket; see sites.build for the defaults
   EGRESS_PROXY, HTTPS_PROXY, HTTP_PROXY   the container's way out (README, "Service
                  containers"); unset on the host
 """

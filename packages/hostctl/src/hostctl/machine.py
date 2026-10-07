@@ -29,7 +29,6 @@ EXAMPLE_HOST = "machine.example.net"
 TOOLS = {
     "podman": "/usr/bin/podman",
     "uv": "/usr/local/bin/uv",
-    "zola": "/usr/local/bin/zola",
 }
 # The pages site's folder, which the static_agent container mounts, so it must exist first.
 SITE_DIR = Path.home() / ".local" / "share" / "everythingllm" / "pages" / "public"

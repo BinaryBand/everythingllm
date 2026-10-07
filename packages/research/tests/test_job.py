@@ -80,10 +80,9 @@ def test_a_run_that_fails_before_it_starts_is_logged(tmp_path):
         lambda m: None,
         builder=Builder(
             source=tmp_path / "no-sites",
-            themes=tmp_path / "themes",
             content=tmp_path / "zola",
             output=tmp_path / "site",
-            zola="zola",
+            remote=lambda name: tmp_path / "site" / f".{name}.new",
         ),
     )
     assert result["status"] == "failed"

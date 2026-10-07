@@ -1,17 +1,14 @@
-import http.server
 import json
 import os
 import shutil
-import subprocess
-import threading
 from pathlib import Path
 
 import hostrpc
 import pytest
 import tomllib
 from sites import build
-from sites.build import BUILD_SECONDS, MARKER, Builder, BuildError, sandboxed
-from sites.store import SiteError, SiteStore, _split
+from sites.build import MARKER, Builder, BuildError
+from sites.store import SiteError, SiteStore, _split, site_url
 
 REPO_ZOLA = Path(__file__).resolve().parents[1] / "zola"
 
@@ -130,22 +127,50 @@ def test_delete(store):
         store.delete("news", "editions", "a")
 
 
-def builder(tmp_path, zola="zola"):
+def fake_remote(tmp_path):
+    """Stands in for the sandbox: a build of `name` is a page in output/.<name>.new."""
+
+    def remote(name):
+        new = tmp_path / "site" / f".{name}.new"
+        new.mkdir()
+        (new / "index.html").write_text(f"{name}, built")
+        return new
+
+    return remote
+
+
+def real_remote(sandbox_zola, tmp_path, source=REPO_ZOLA / "sites"):
+    """The sandbox's build, for real (sandbox_zola), with the base URL the runner gives."""
+
+    def remote(name):
+        new = tmp_path / "site" / f".{name}.new"
+        base = site_url(source, name) or f"http://127.0.0.1:8445/{name}/"
+        done = sandbox_zola(
+            source / name, new, base.rstrip("/"), tmp_path / "content" / name
+        )
+        if done.returncode != 0:
+            raise BuildError(f"zola build failed for {name}:\n{done.stderr.strip()}")
+        return new
+
+    return remote
+
+
+def builder(tmp_path, remote=None):
+    """The repo's sites, building into tmp_path through `remote` (default fake_remote)."""
     (tmp_path / "content").mkdir(exist_ok=True)
     (tmp_path / "site").mkdir(exist_ok=True)
     return Builder(
         REPO_ZOLA / "sites",
-        REPO_ZOLA / "themes",
         tmp_path / "content",
         tmp_path / "site",
-        zola,
+        remote or fake_remote(tmp_path),
     )
 
 
 @pytest.fixture
-def repo_store(tmp_path):
-    """The repo's real sites, writing and building into tmp_path."""
-    b = builder(tmp_path)
+def repo_store(tmp_path, sandbox_zola):
+    """The repo's real sites, writing and building into tmp_path, in the sandbox image."""
+    b = builder(tmp_path, real_remote(sandbox_zola, tmp_path))
     return SiteStore(REPO_ZOLA / "sites", tmp_path / "content", build=b.build)
 
 
@@ -158,14 +183,11 @@ def test_build_never_replaces_a_published_page(tmp_path):
     assert (tmp_path / "site" / "news" / "index.html").read_text() == "someone's page"
 
 
-def test_build_reports_a_missing_zola_or_site(tmp_path):
-    with pytest.raises(BuildError, match="can't run zola"):
-        builder(tmp_path, zola=str(tmp_path / "no-zola")).build("news")
+def test_build_reports_a_missing_site(tmp_path):
     with pytest.raises(BuildError, match="no Zola site 'nope'"):
         builder(tmp_path).build("nope")
 
 
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
 def test_news_site_builds_with_entries(repo_store, tmp_path):
     """The real news site and theme build through the store, with the home page showing the newest edition."""
     for day, headline in [("2026-10-02", "Older"), ("2026-10-03", "Newer & <i>")]:
@@ -212,22 +234,20 @@ def test_news_sections_carry_their_config(tmp_path):
     assert news.readonly == ["articles"]
 
 
-def run_sites_write(monkeypatch, capsys, tmp_path, request, zola="zola"):
-    """Run sites-write with the repo's sites and tmp_path storage; returns (exit code, output)."""
+def run_sites_write(monkeypatch, capsys, tmp_path, request, remote):
+    """Run sites-write with the repo's sites and tmp_path storage, the sandbox's builds
+    done by `remote`; returns (exit code, output)."""
     import io
 
     from sites import write
 
-    # Built here with the host's zola, as a Builder without the sandbox builds a site
-    # whose theme is the repo's.
-    monkeypatch.setattr(build, "sandbox_build", None)
+    monkeypatch.setattr(build, "sandbox_build", remote)
     (tmp_path / "content").mkdir(exist_ok=True)
     (tmp_path / "site").mkdir(exist_ok=True)
     for name, value in {
         "SITES_SOURCE": REPO_ZOLA / "sites",
         "SITES_CONTENT": tmp_path / "content",
         "SITES_OUTPUT": tmp_path / "site",
-        "ZOLA": zola,
     }.items():
         monkeypatch.setenv(name, str(value))
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(request)))
@@ -249,9 +269,11 @@ REPORT = {
 }
 
 
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
-def test_sites_write_saves_builds_and_picks_a_free_slug(monkeypatch, capsys, tmp_path):
-    code, out = run_sites_write(monkeypatch, capsys, tmp_path, REPORT)
+def test_sites_write_saves_builds_and_picks_a_free_slug(
+    monkeypatch, capsys, tmp_path, sandbox_zola
+):
+    remote = real_remote(sandbox_zola, tmp_path)
+    code, out = run_sites_write(monkeypatch, capsys, tmp_path, REPORT, remote)
     assert code == 0
     assert out == {
         "url": "http://127.0.0.1:8445/research/reports/varme-pumpar/",
@@ -262,27 +284,30 @@ def test_sites_write_saves_builds_and_picks_a_free_slug(monkeypatch, capsys, tmp
     assert (
         tmp_path / "site" / "research" / "reports" / "varme-pumpar" / "index.html"
     ).exists()
-    _, again = run_sites_write(monkeypatch, capsys, tmp_path, REPORT)
+    _, again = run_sites_write(monkeypatch, capsys, tmp_path, REPORT, remote)
     assert again["slug"] == "varme-pumpar-2"
 
 
 def test_sites_write_reports_a_failed_build_and_bad_requests(
     monkeypatch, capsys, tmp_path
 ):
-    code, out = run_sites_write(
-        monkeypatch, capsys, tmp_path, REPORT, zola=str(tmp_path / "no-zola")
-    )
+    def failing(name):
+        raise BuildError(f"zola build failed for {name} (in the sandbox): boom")
+
+    code, out = run_sites_write(monkeypatch, capsys, tmp_path, REPORT, failing)
     assert code == 1 and out["error"].startswith(
-        "not saved: the site didn't build: can't run zola"
+        "not saved: the site didn't build: zola build failed for research"
     )
     assert not (
         tmp_path / "content" / "research" / "reports" / "varme-pumpar.md"
     ).exists()
     code, out = run_sites_write(
-        monkeypatch, capsys, tmp_path, {**REPORT, "site": "nope"}
+        monkeypatch, capsys, tmp_path, {**REPORT, "site": "nope"}, failing
     )
     assert code == 1 and "no site named 'nope'" in out["error"]
-    code, out = run_sites_write(monkeypatch, capsys, tmp_path, {"site": "research"})
+    code, out = run_sites_write(
+        monkeypatch, capsys, tmp_path, {"site": "research"}, failing
+    )
     assert code == 1 and out["error"].startswith("bad request")
 
 
@@ -303,7 +328,6 @@ def test_tera_syntax_in_bodies_is_broken_up(store, tmp_path):
     assert '{\u200b{ get_env(name="X") }}' in text
 
 
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
 def test_tera_syntax_in_a_body_builds_as_literal_text(
     repo_store, tmp_path, monkeypatch
 ):
@@ -325,26 +349,6 @@ def test_tera_syntax_in_a_body_builds_as_literal_text(
     shown = html.replace("\u200b", "")
     assert "get_env(name=&quot;X&quot;) }}" in shown or 'get_env(name="X") }}' in shown
     assert "${{ secrets.T }}" in shown
-
-
-def fake_zola(cmd, **kw):
-    """Stands in for subprocess.run of zola: makes an empty output directory."""
-    Path(cmd[cmd.index("--output-dir") + 1]).mkdir()
-    return subprocess.CompletedProcess(cmd, 0, "", "")
-
-
-def test_zola_gets_no_environment_but_path(tmp_path, monkeypatch):
-    """Even a template calling get_env finds nothing: zola runs with PATH and HOME only."""
-    monkeypatch.setenv("X", "secret")
-    seen = {}
-
-    def run(cmd, **kw):
-        seen.update(kw["env"])
-        return fake_zola(cmd)
-
-    monkeypatch.setattr("sites.build.subprocess.run", run)
-    builder(tmp_path).build("news")
-    assert set(seen) == {"PATH", "HOME"} and seen["HOME"] != str(Path.home())
 
 
 # --- a change only stays when the site builds -----------------------------------------
@@ -425,11 +429,10 @@ def test_control_characters_are_escaped(store, tmp_path):
     assert extra == {"note": "x\x00\x1b\x85y Å\u2028👋"}
 
 
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
-def test_emoji_and_odd_characters_build(tmp_path):
+def test_emoji_and_odd_characters_build(tmp_path, sandbox_zola):
     """A log line quoted in a report ("byeee!! 👋") once stopped a site building: Zola's
     YAML parser rejects JSON's surrogate-pair escapes."""
-    b = builder(tmp_path)
+    b = builder(tmp_path, real_remote(sandbox_zola, tmp_path))
     store = SiteStore(b.source, b.content, build=b.build)
     odd = "bye 👋 é \x00\x1b\x7f\x85\u2028\u2029\ufeff\uffff\udc4b"
     store.write(
@@ -445,7 +448,6 @@ def test_emoji_and_odd_characters_build(tmp_path):
     assert "Notes 👋" in (tmp_path / "site" / "research" / "index.html").read_text()
 
 
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
 def test_dated_slugs_keep_their_own_urls(repo_store, tmp_path):
     """Zola strips a leading date from file names unless the front matter names the slug."""
     a = repo_store.write(
@@ -475,7 +477,6 @@ def test_dated_slugs_keep_their_own_urls(repo_store, tmp_path):
     ]
 
 
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
 def test_build_all_builds_the_rest_and_reports_every_failure(tmp_path):
     b = builder(tmp_path)
     (tmp_path / "site" / "news").mkdir()
@@ -499,7 +500,6 @@ def test_failed_swap_puts_the_last_build_back(tmp_path, monkeypatch):
             raise OSError("disk trouble")
         real_rename(src, dst)
 
-    monkeypatch.setattr("sites.build.subprocess.run", fake_zola)
     monkeypatch.setattr("sites.build.os.rename", rename)
     with pytest.raises(BuildError, match="disk trouble"):
         b.build("news")
@@ -533,20 +533,6 @@ def test_host_env_is_found_at_the_repo_root(monkeypatch):
     )
 
 
-def test_build_passes_the_public_url_to_zola(tmp_path, monkeypatch):
-    seen = []
-    monkeypatch.setattr(
-        "sites.build.subprocess.run",
-        lambda cmd, **kw: seen.append(cmd) or fake_zola(cmd),
-    )
-    builder(tmp_path).build("news")
-    assert "--base-url" not in seen[-1]
-    monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
-    builder(tmp_path).build("news")
-    assert seen[-1][-2:] == ["--base-url", "https://box.tail.ts.net:8445/news"]
-
-
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
 def test_built_links_use_the_public_host(repo_store, tmp_path, monkeypatch):
     monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
     entry = repo_store.write("research", "reports", "heat", "Heat", "2026-10-03")
@@ -556,78 +542,23 @@ def test_built_links_use_the_public_host(repo_store, tmp_path, monkeypatch):
     assert "127.0.0.1" not in home
 
 
-def test_from_env_puts_entries_and_sites_on_the_host(monkeypatch):
-    for var in ("SITES_SOURCE", "SITES_CONTENT", "SITES_OUTPUT", "ZOLA"):
+def test_from_env_puts_entries_and_sites_on_the_host_and_builds_in_the_sandbox(
+    monkeypatch,
+):
+    for var in ("SITES_SOURCE", "SITES_CONTENT", "SITES_OUTPUT"):
         monkeypatch.delenv(var, raising=False)
     b = Builder.from_env()
     assert b.source == REPO_ZOLA / "sites"
-    assert (b.content, b.output, b.zola) == (
+    assert (b.content, b.output, b.remote) == (
         Path("~/.local/share/everythingllm/pages/entries").expanduser(),
         Path("~/.local/share/everythingllm/pages/public").expanduser(),
-        "/usr/local/bin/zola",
+        build.sandbox_build,
     )
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")
     assert Builder.from_env().output == b.output  # storage doesn't move the site
 
 
-# --- zola runs without a network, and not for long -------------------------------------
-
-
-@pytest.mark.skipif(shutil.which("zola") is None, reason="zola not installed")
-@pytest.mark.skipif(not sandboxed(), reason="no unprivileged user namespaces here")
-def test_a_template_cant_fetch_anything_while_the_site_builds(tmp_path):
-    """load_data takes URLs; even the host's own loopback is out of reach of a build."""
-    asked = []
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            asked.append(self.path)
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"secret")
-
-        def log_message(self, format, *args):
-            pass
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        site = tmp_path / "src" / "leak"
-        (site / "templates").mkdir(parents=True)
-        (site / "zola.toml").write_text('base_url = "https://pages.example/leak"\n')
-        (site / "templates" / "index.html").write_text(
-            f'{{{{ load_data(url="http://127.0.0.1:{server.server_port}/x", format="plain") }}}}'
-        )
-        (tmp_path / "themes").mkdir()
-        b = Builder(
-            tmp_path / "src",
-            tmp_path / "themes",
-            tmp_path / "content",
-            tmp_path / "site",
-            "zola",
-        )
-        (tmp_path / "content").mkdir()
-        (tmp_path / "site").mkdir()
-        with pytest.raises(BuildError, match="zola build failed for leak"):
-            b.build("leak")
-    finally:
-        server.shutdown()
-    assert asked == [] and not (tmp_path / "site" / "leak").exists()
-
-
-def test_a_build_that_runs_too_long_is_stopped(tmp_path, monkeypatch):
-    def run(cmd, **kw):
-        assert kw["timeout"] == BUILD_SECONDS
-        Path(cmd[cmd.index("--output-dir") + 1]).mkdir()
-        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
-
-    monkeypatch.setattr("sites.build.subprocess.run", run)
-    with pytest.raises(BuildError, match=f"took longer than {BUILD_SECONDS} s"):
-        builder(tmp_path).build("news")
-    assert list((tmp_path / "site").iterdir()) == []
-
-
-# --- sites whose theme comes from elsewhere are built in the sandbox ---
+# --- the sandbox builds every site; this swaps them in ---
 
 
 def theme_from_site(tmp_path, origin):
@@ -654,14 +585,7 @@ def test_a_theme_from_site_is_built_by_the_sandbox_and_swapped_in_here(tmp_path)
         (new / "index.html").write_text("built in the sandbox")
         return new
 
-    b = Builder(
-        source,
-        REPO_ZOLA / "themes",
-        tmp_path / "content",
-        tmp_path / "site",
-        "no-zola-needed",
-        remote=remote,
-    )
+    b = Builder(source, tmp_path / "content", tmp_path / "site", remote)
     assert (b.theme_from("research"), b.theme_from("news")) == ("education", "system")
     [dest] = b.build("research")
     assert asked == ["research"]
@@ -690,14 +614,7 @@ def test_marking_a_build_follows_no_symlink(tmp_path):
         return new
 
     for remote in (as_link, marker_as_link):
-        b = Builder(
-            source,
-            REPO_ZOLA / "themes",
-            tmp_path / "content",
-            tmp_path / "site",
-            "zola",
-            remote=remote,
-        )
+        b = Builder(source, tmp_path / "content", tmp_path / "site", remote)
         with pytest.raises(BuildError, match="couldn't mark"):
             b.build("research")
         assert sorted(p.name for p in outside.iterdir()) == ["keep"]
@@ -723,76 +640,34 @@ def test_a_sandbox_build_that_fails_or_lands_elsewhere_changes_nothing(tmp_path)
         return other
 
     for remote, why in ((failing, "boom"), (elsewhere, "SANDBOX_SITE_DIR differ")):
-        b = Builder(
-            source,
-            REPO_ZOLA / "themes",
-            tmp_path / "content",
-            tmp_path / "site",
-            "zola",
-            remote=remote,
-        )
+        b = Builder(source, tmp_path / "content", tmp_path / "site", remote)
         with pytest.raises(BuildError, match=why):
             b.build("research")
         assert (live / "index.html").read_text() == "the last good build"
     assert not (tmp_path / "elsewhere").exists()
 
 
-def test_without_the_sandbox_only_a_repo_theme_builds_here(tmp_path):
-    source = theme_from_site(tmp_path, "education")
-    b = Builder(
-        source, REPO_ZOLA / "themes", tmp_path / "content", tmp_path / "site", "zola"
-    )
-    with pytest.raises(BuildError, match="only the sandbox may build it"):
-        b.build("research")
-    assert not (tmp_path / "site" / "research").exists()
-
-
-def test_from_env_builds_theme_from_sites_in_the_sandbox(monkeypatch):
-    b = build.Builder.from_env()
-    assert b.remote is build.sandbox_build and not b.sandbox_only
-    monkeypatch.setenv("SITES_SANDBOX_ONLY", "1")  # as in sites-runner's container
-    assert build.Builder.from_env().sandbox_only
-
-
-def test_sandbox_only_refuses_a_site_the_sandbox_wont_build(tmp_path, monkeypatch):
-    """sites-runner's container has no zola and no unshare: a site without theme_from
-    fails with a reason, rather than running zola there (or without its namespace)."""
+def test_a_site_without_theme_from_is_refused_and_never_sent_to_the_sandbox(tmp_path):
     source = theme_from_site(tmp_path, "system")
     toml = source / "research" / "zola.toml"
     toml.write_text(toml.read_text().replace('theme_from = "system"', ""))
-
-    def no_zola(*a, **kw):
-        raise AssertionError("zola ran")
-
-    monkeypatch.setattr("sites.build.subprocess.run", no_zola)
-    monkeypatch.setattr("sites.build.subprocess.call", no_zola)
     asked = []
 
     def remote(name):
         asked.append(name)
-        new = tmp_path / "site" / f".{name}.new"
-        new.mkdir()
-        return new
+        return fake_remote(tmp_path)(name)
 
-    b = Builder(
-        source,
-        REPO_ZOLA / "themes",
-        tmp_path / "content",
-        tmp_path / "site",
-        "zola",
-        remote=remote,
-        sandbox_only=True,
-    )
-    with pytest.raises(BuildError, match=r"research can't be built here.*theme_from"):
+    b = Builder(source, tmp_path / "content", tmp_path / "site", remote)
+    with pytest.raises(BuildError, match=r"research can't be built.*theme_from"):
         b.build("research")
     assert not (tmp_path / "site" / "research").exists()
     [dest] = b.build("news")  # theme_from = "system": the sandbox's, as ever
-    assert asked == ["news"] and (dest / ".zola-site").exists()
+    assert asked == ["news"] and (dest / MARKER).exists()
 
 
 def test_every_repo_site_is_built_in_the_sandbox():
-    """sites-runner runs in a container without zola (SITES_SANDBOX_ONLY), so a repo site
-    without [extra.build] theme_from couldn't be written to. Add theme_from = "system"."""
+    """Only the sandbox has a zola, so a repo site without [extra.build] theme_from
+    couldn't be written to. Add theme_from = "system"."""
     b = Builder.from_env()
     assert b.site_names()
     for name in b.site_names():

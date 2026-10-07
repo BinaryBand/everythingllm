@@ -1,46 +1,28 @@
-"""Build the Zola sites into the pages site.
+"""Build the Zola sites into the pages site, through the sandbox.
 
-Each site is assembled in a temporary directory from its source in the repo
-(SITES_SOURCE/<name>/), the shared themes beside it (../themes) and the entries in
-SITES_CONTENT/<name>/ (default ~/.local/share/everythingllm/pages/entries, out of the AnythingLLM
-container's reach, since only host services read or write entries). It's built straight next to its destination and swapped in at
-SITES_OUTPUT/<name>/, so readers never see a half-built site. The output carries a marker
-file; a directory without one (the link cards) is never
-replaced. Builds hold a lock on SITES_CONTENT/.build.lock, so sites-runner and a deploy on
-the host never overlap.
+Every site is built by the sandbox runner in a container with no network (its op
+build_system_site, through `remote`), from its source in the repo
+(SITES_SOURCE/<name>/), the repo's themes and its entries in SITES_CONTENT/<name>/
+(default ~/.local/share/everythingllm/pages/entries, out of the AnythingLLM container's
+reach, since only host services read or write entries). The sandbox writes the result
+next to its destination, SITES_OUTPUT/.<name>.new, and it's swapped in here at
+SITES_OUTPUT/<name>/, so readers never see a half-built site. The output carries a
+marker file; a directory without one (the link cards) is never replaced. Builds hold a
+lock on SITES_CONTENT/.build.lock, so sites-runner and a deploy on the host never overlap.
 
-zola runs with no network (in a user and network namespace of its own, through `unshare`),
-so a template can't fetch anything while the site builds (load_data takes URLs), and with
-nothing in its environment but PATH and HOME. A build that takes longer than BUILD_SECONDS
-is stopped, so it fails before the MCP tool call that asked for it gives up. A machine
-without unprivileged user namespaces builds without the namespace; `sandboxed()` says which,
-and a Builder's `sandbox` asks it (tests give their own).
-
-A site whose zola.toml names its theme with `[extra.build] theme_from` ("system" for the
-repo's themes, or a sandbox workspace's name for one it shares) isn't built here: the
-sandbox runner builds it in a container (its op build_system_site, through `remote`), and
-it's swapped in here as any other. That's how a theme the agent wrote can style a system
-site without the host's zola ever running its templates, whose load_data could read local
-files. A Builder without `remote` (tests, which make their own) builds a theme_from="system"
-site here, since the repo's themes are no more than the repo's templates, and refuses any
-other.
+So zola runs only in the sandbox image; no host and no service container has one. A site
+names its theme's origin in its zola.toml (`[extra.build] theme_from`, "system" for the
+repo's themes); one that names none is refused with a BuildError that says so. Every repo
+site names one; a test holds them to it.
 
 sites-runner builds a site after every write or delete; `uv run hostctl deploy` builds
 them all through the `sites-build` command, with host paths in the environment.
-
-sites-runner runs in a container (README, "Service containers") that has neither zola nor
-`unshare`, so there the sandbox builds every site. With SITES_SANDBOX_ONLY=1, a site whose
-zola.toml names no theme_from is refused with a BuildError that says so, rather than built
-without a zola or without its namespace. Every repo site names one; a test holds them to it.
 
 Config (environment):
   SITES_SOURCE        repo directory holding one Zola site per subdirectory (default this
                       repo's packages/sites/zola/sites)
   SITES_CONTENT       the entries (default <data dir>/pages/entries)
   SITES_OUTPUT        the pages site's root (default <data dir>/pages/public)
-  ZOLA                the zola binary (default /usr/local/bin/zola)
-  SITES_SANDBOX_ONLY  1: build nothing here, only through the sandbox (sites-runner's
-                      container sets it)
   SANDBOX_BUILD_SOCKET  the sandbox runner's socket for system site builds, which serves
                       nothing else (default <storage>/everythingllm/sandbox-build/runner.sock;
                       on the host, unset and missing, the runner's own socket)
@@ -50,13 +32,10 @@ Config (environment):
 
 import argparse
 import fcntl
-import functools
 import logging
 import os
 import shutil
-import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,12 +43,9 @@ from pathlib import Path
 import hostrpc
 import tomllib
 
-from sites.store import site_url
-
 LOCK = ".build.lock"
 MARKER = ".zola-site"  # in every built site; the sandbox won't publish over it
-BUILD_SECONDS = 40  # per site; hostrpc's caller gives up after 55
-SANDBOX = ("unshare", "--user", "--map-root-user", "--net")
+BUILD_SECONDS = 40  # per site, the sandbox's limit; hostrpc's caller gives up after 55
 
 log = logging.getLogger(__name__)
 REPO_SITES = (
@@ -79,27 +55,6 @@ REPO_SITES = (
 
 class BuildError(RuntimeError):
     """A site didn't build; the message says why."""
-
-
-@functools.cache
-def sandboxed() -> bool:
-    """Whether zola can run without a network here (unprivileged user namespaces work)."""
-    try:
-        # subprocess.call, not run: tests stand in for subprocess.run to fake zola.
-        ok = (
-            subprocess.call(
-                [*SANDBOX, "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            == 0
-        )
-    except OSError:
-        ok = False
-    if not ok:
-        log.warning(
-            "can't run zola without a network here (%s failed); building without that",
-            " ".join(SANDBOX),
-        )
-    return ok
 
 
 def build_socket() -> Path:
@@ -135,32 +90,25 @@ def sandbox_build(name: str) -> Path:
 @dataclass(frozen=True)
 class Builder:
     source: Path
-    themes: Path
     content: Path
     output: Path
-    zola: str
-    sandbox: Callable[[], bool] = sandboxed  # whether zola runs without a network
-    remote: Callable[[str], Path] | None = (
-        None  # builds theme_from sites; see the docstring
-    )
-    sandbox_only: bool = False  # no zola here: refuse what `remote` can't build
+    remote: Callable[
+        [str], Path
+    ]  # builds a site into output/.<name>.new; where it went
 
     @classmethod
     def from_env(cls) -> "Builder":
-        """Paths from the environment, with the host's defaults: builds run on the host, from
-        entries in hostrpc.data_dir()/pages/entries into the pages site (hostrpc.site_dir()), with its zola (hostctl.machine checks it's there),
-        from the sites in the repo this package is in."""
+        """Paths from the environment, with the host's defaults: entries in
+        hostrpc.data_dir()/pages/entries, built by the sandbox into the pages site
+        (hostrpc.site_dir()), from the sites in the repo this package is in."""
         get = os.environ.get
-        source = Path(get("SITES_SOURCE", REPO_SITES))
-        content = Path(get("SITES_CONTENT", hostrpc.data_dir() / "pages" / "entries"))
         return cls(
-            source=source,
-            themes=source.parent / "themes",
-            content=content,
+            source=Path(get("SITES_SOURCE", REPO_SITES)),
+            content=Path(
+                get("SITES_CONTENT", hostrpc.data_dir() / "pages" / "entries")
+            ),
             output=Path(get("SITES_OUTPUT", hostrpc.site_dir())),
-            zola=get("ZOLA", "/usr/local/bin/zola"),
             remote=sandbox_build,
-            sandbox_only=get("SITES_SANDBOX_ONLY") == "1",
         )
 
     def theme_from(self, name: str) -> str | None:
@@ -200,67 +148,6 @@ class Builder:
             raise BuildError("\n".join(errors))
         return built
 
-    def _assemble(self, name: str, tmp: Path) -> Path:
-        """The site's source, ready for zola, in `tmp`."""
-        src = tmp / name
-        shutil.copytree(self.source / name, src)
-        shutil.copytree(self.themes, src / "themes", dirs_exist_ok=True)
-        entries = self.content / name
-        if entries.is_dir():
-            # Only entries; section _index.md files come from the repo.
-            shutil.copytree(
-                entries,
-                src / "content",
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("_index.md", ".*"),
-            )
-        return src
-
-    def _zola(self, name: str, src: Path, out: Path) -> None:
-        """Build `src` into `out`; nothing is left in `out` if it fails."""
-        try:
-            # No environment beyond PATH: templates (and anything that slips into
-            # content) can call get_env, so there must be nothing in it to leak.
-            # No network either, for load_data (see the module docstring).
-            # The public URL comes from host.env, so zola.toml doesn't name the host.
-            base = site_url(self.source, name)
-            # Looked up here: under unshare, a missing zola would only be unshare failing.
-            zola = shutil.which(self.zola)
-            if zola is None:
-                raise OSError("not found")
-            result = subprocess.run(
-                [
-                    *(SANDBOX if self.sandbox() else ()),
-                    zola,
-                    "--root",
-                    str(src),
-                    "build",
-                    "--output-dir",
-                    str(out),
-                    *(["--base-url", base.rstrip("/")] if base else []),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,  # a failed build is reported below, with zola's output
-                timeout=BUILD_SECONDS,
-                env={
-                    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                    "HOME": str(src.parent),
-                },
-            )
-        except subprocess.TimeoutExpired:
-            shutil.rmtree(out, ignore_errors=True)
-            raise BuildError(
-                f"zola build for {name} took longer than {BUILD_SECONDS} s; stopped"
-            ) from None
-        except OSError as e:
-            raise BuildError(f"can't run zola ({self.zola}): {e}") from None
-        if result.returncode != 0:
-            shutil.rmtree(out, ignore_errors=True)
-            raise BuildError(
-                f"zola build failed for {name}:\n{(result.stderr or result.stdout).strip()}"
-            )
-
     def _build_one(self, name: str) -> Path:
         if not (self.source / name / "zola.toml").is_file():
             raise BuildError(f"no Zola site '{name}' in {self.source}")
@@ -273,28 +160,17 @@ class Builder:
         for stale in (new, old):
             shutil.rmtree(stale, ignore_errors=True)
 
-        origin = self.theme_from(name)
-        if origin and self.remote is not None:
-            if (went := self.remote(name)) != new:
-                shutil.rmtree(went, ignore_errors=True)
-                raise BuildError(
-                    f"the sandbox built {name} into {went}, not {new}: SITES_OUTPUT and "
-                    "the sandbox runner's SANDBOX_SITE_DIR differ"
-                )
-        elif origin and origin != "system":
+        if not self.theme_from(name):
             raise BuildError(
-                f"{name} takes its theme from {origin}'s shared folder, so only the "
-                "sandbox may build it"
+                f"{name} can't be built: only the sandbox builds sites, and its zola.toml "
+                'names no theme for it; add [extra.build] theme_from = "system"'
             )
-        elif self.sandbox_only:
+        if (went := self.remote(name)) != new:
+            shutil.rmtree(went, ignore_errors=True)
             raise BuildError(
-                f"{name} can't be built here: its zola.toml names no [extra.build] "
-                "theme_from, and this builder has no zola of its own, only the sandbox "
-                '(SITES_SANDBOX_ONLY, as in sites-runner\'s container); add theme_from = "system"'
+                f"the sandbox built {name} into {went}, not {new}: SITES_OUTPUT and "
+                "the sandbox runner's SANDBOX_SITE_DIR differ"
             )
-        else:
-            with tempfile.TemporaryDirectory(prefix=f"zola-{name}-") as tmp:
-                self._zola(name, self._assemble(name, Path(tmp)), new)
         mark(new)
 
         if dest.exists():

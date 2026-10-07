@@ -1,8 +1,4 @@
-import shutil
-import subprocess
-
 import pytest
-from sandbox import sitebuild
 from sandbox.sitebuild import BuildError, assemble, theme_source
 
 
@@ -80,9 +76,8 @@ def test_assemble_copies_the_site_with_its_theme_but_not_git_or_old_output(
         assemble(tmp_path / "bad", tmp_path / "w3", *roots)
 
 
-@pytest.mark.skipif(not shutil.which("zola"), reason="zola isn't installed here")
-def test_a_site_builds_with_the_repos_theme(tmp_path):
-    system = sitebuild.Path(__file__).resolve().parents[2] / "sites" / "zola" / "themes"
+def test_a_site_builds_with_the_repos_theme(tmp_path, sandbox_zola):
+    """sitebuild.py for real, in the sandbox image (the only zola there is)."""
     site = tmp_path / "site"
     (site / "content").mkdir(parents=True)
     (site / "zola.toml").write_text(
@@ -91,23 +86,9 @@ def test_a_site_builds_with_the_repos_theme(tmp_path):
         '[extra.build]\ntheme_from = "system"\n'
     )
     (site / "content" / "_index.md").write_text('+++\ntitle = "S"\n+++\n')
-    work = tmp_path / "work"
-    assemble(site, work, system, tmp_path / "shared")
     out = tmp_path / "out"
-    subprocess.run(
-        [
-            "zola",
-            "--root",
-            str(work),
-            "build",
-            "--base-url",
-            "https://pages.example/s",
-            "--output-dir",
-            str(out),
-        ],
-        check=True,
-        capture_output=True,
-    )
+    done = sandbox_zola(site, out, "https://pages.example/s")
+    assert done.returncode == 0, done.stderr
     assert "https://pages.example/s" in (out / "index.html").read_text()
 
 

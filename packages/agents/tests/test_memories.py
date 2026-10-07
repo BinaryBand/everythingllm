@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 from agents import runner
-from agents.anythingllm import AnythingLLMError, InternalAPI
+from agents.anythingllm import AnythingLLMError, InternalAPI, internal_error
 from agents.memories import LIMITS
 from hostrpc import RunnerError
 
@@ -108,6 +108,7 @@ def test_list_shows_the_global_ones_and_only_this_workspaces_with_room_left(
         )
         api.memories.clear()
         assert (await r.op_memories(CHAT)).startswith("No saved memories")
+        assert (await r.op_memories(CHAT, "")).startswith("No saved memories")
 
     asyncio.run(main())
 
@@ -129,6 +130,7 @@ def test_save_keeps_one_short_fact_in_the_scope_asked_for(api, tmp_path):
             ("", None, "give the text to remember"),
             ("x" * 501, None, "at most 500 characters"),
             ("a\x00b", None, "control characters"),
+            (["Lives in Stockholm.", "Likes tea."], None, "as text"),
             ("fine", "thread", "scope must be workspace"),
         ]:
             with pytest.raises(RunnerError, match=error):
@@ -161,6 +163,8 @@ def test_forget_deletes_at_once_gives_the_text_back_and_only_this_workspaces(
         for memory_id, error in [
             (theirs, "no saved memory 2 for this workspace or global"),
             (None, "give the id of the memory to forget"),
+            (True, "give the id of the memory to forget"),
+            (theirs + 0.5, "give the id of the memory to forget"),
         ]:
             with pytest.raises(RunnerError, match=error):
                 await r.op_memories(CHAT, "forget", memory_id=memory_id)
@@ -184,3 +188,13 @@ def test_memories_are_a_chats_and_say_when_theyre_turned_off(api, tmp_path):
             await r.op_memories(CHAT)
 
     asyncio.run(main())
+
+
+def test_a_server_error_reads_as_one_even_when_anythingllm_says_why():
+    assert internal_error(500, {"error": "db locked"}) == (
+        "AnythingLLM hit an error (500): db locked"
+    )
+    assert internal_error(400, {"error": "too long"}) == (
+        "AnythingLLM turned it down: too long"
+    )
+    assert internal_error(500, None) == "AnythingLLM hit an error (500)."

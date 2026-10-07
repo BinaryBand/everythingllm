@@ -53,7 +53,9 @@ class SavedMemories:
         return "\n".join(lines)
 
     async def save(self, slug: str, text: Any, scope: Any) -> str:
-        text = " ".join(str(text or "").split())
+        if text is not None and not isinstance(text, str):
+            raise RunnerError("give the text to remember as text: one short fact")
+        text = " ".join((text or "").split())
         scope = str(scope or "workspace").strip().lower()
         if scope not in LIMITS:
             raise RunnerError("scope must be workspace (the default) or global")
@@ -75,6 +77,10 @@ class SavedMemories:
         return f"Saved memory {memory.get('id')} for {where}: {text}"
 
     async def forget(self, slug: str, memory_id: Any) -> str:
+        if isinstance(memory_id, bool) or (
+            isinstance(memory_id, float) and not memory_id.is_integer()
+        ):
+            memory_id = None  # int() would make true memory 1, and 12.7 memory 12
         try:
             memory_id = int(memory_id)
         except (TypeError, ValueError):
@@ -104,6 +110,7 @@ class SavedMemories:
         scope: Any = None,
         memory_id: Any = None,
     ) -> str:
+        action = action or "list"
         if action == "list":
             return await self.listing(slug)
         if action == "save":

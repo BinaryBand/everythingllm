@@ -36,7 +36,7 @@ class AnythingLLMError(Exception):
 
 
 class NotFound(AnythingLLMError):
-    """The internal API's 404: no such job."""
+    """The internal API's 404: no such job, memory or workspace."""
 
 
 def status_error(status: int) -> str:
@@ -160,11 +160,13 @@ class AnythingLLM:
 
 def internal_error(status: int, reply: Any) -> str:
     """A plain-language message for a non-2xx answer from the internal API: AnythingLLM's
-    own reason when it gave one (a 400's, or "Personalization is disabled."), else what
-    the status means."""
+    own reason when it gave one (a 400's, or "Personalization is disabled."; a 5xx's as
+    its error, not a refusal), else what the status means."""
     said = reply.get("error") if isinstance(reply, dict) else None
     if status == 401 or (status == 403 and not said):
         return "AnythingLLM refused agents-runner's login (the password in its .env)."
+    if said and status >= 500:
+        return f"AnythingLLM hit an error ({status}): {said}"
     if said:
         return f"AnythingLLM turned it down: {said}"
     if status == 404:

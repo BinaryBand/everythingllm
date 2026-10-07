@@ -227,6 +227,7 @@ def test_remind_once_refuses_a_name_in_use_a_tool_it_lacks_and_the_wrong_callers
                 await r.op_remind_once(CHAT, **base, **args, apply=True)
         for scope, error in [
             ({"workspace": "_jobs"}, "a scheduled job can't"),
+            ({}, "a scheduled job can't"),
             ({"workspace": "agents-worker"}, "a delegated task can't"),
         ]:
             with pytest.raises(RunnerError, match=error):

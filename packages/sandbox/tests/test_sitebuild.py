@@ -145,3 +145,34 @@ def test_a_workspaces_theme_reached_through_a_symlink_is_refused(tmp_path, roots
     conf = {"theme": "minimal2", "extra": {"build": {"theme_from": "career"}}}
     with pytest.raises(BuildError, match="is a symlink"):
         theme_source(conf, system, shared)
+
+
+def test_a_workspaces_theme_swapped_for_a_symlink_after_the_check_isnt_followed(
+    tmp_path, roots, monkeypatch
+):
+    """The workspace the theme is from can write its /shared while this build runs: a
+    folder swapped for a symlink between theme_source's check and the copy is refused."""
+    import sandbox.sitebuild as sitebuild
+
+    system, shared = roots
+    private = tmp_path / "project"
+    private.mkdir()
+    (private / "secret.txt").write_text("private")
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "zola.toml").write_text(
+        'theme = "minimal"\n[extra.build]\ntheme_from = "career"\n'
+    )
+    themes = shared / "career" / "themes"
+    checked = sitebuild.theme_source
+
+    def then_swap(*args):
+        found = checked(*args)
+        (themes / "minimal").rename(themes / "old")
+        (themes / "minimal").symlink_to(private)
+        return found
+
+    monkeypatch.setattr(sitebuild, "theme_source", then_swap)
+    with pytest.raises(BuildError, match="is a symlink"):
+        assemble(site, tmp_path / "work", system, shared)
+    assert not (tmp_path / "work" / "themes" / "minimal" / "secret.txt").exists()

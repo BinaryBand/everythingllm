@@ -30,6 +30,7 @@ come from the repo).
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -78,9 +79,55 @@ def theme_source(
     return root / theme
 
 
-def no_symlinks(folder: str, names: list[str]) -> list[str]:
-    """copytree's ignore: leave out every symlink."""
-    return [n for n in names if os.path.islink(os.path.join(folder, n))]
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def copy_tree(src: int, dest: Path) -> None:
+    """Copy the plain files and folders under the open folder `src` into `dest`, leaving
+    out symlinks and anything else that isn't a file or folder. Each step is opened
+    relative to the one before with O_NOFOLLOW and checked on the fd it holds, so the
+    workspace the theme is from can't swap a symlink in while it's copied (hostrpc.safefs
+    does the same on the host; this runs with the image's standard library)."""
+    dest.mkdir(parents=True, exist_ok=True)
+    with os.scandir(src) as entries:
+        names = sorted(e.name for e in entries)
+    for name in names:
+        try:
+            fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=src,
+            )
+        except OSError:  # a symlink (ELOOP), or gone meanwhile
+            continue
+        try:
+            mode = os.fstat(fd).st_mode
+            if stat.S_ISDIR(mode):
+                copy_tree(fd, dest / name)
+            elif stat.S_ISREG(mode):
+                with open(dest / name, "xb") as out, os.fdopen(os.dup(fd), "rb") as f:
+                    shutil.copyfileobj(f, out)
+        finally:
+            os.close(fd)
+
+
+def copy_shared_theme(shared: Path, origin: str, theme: str, dest: Path) -> None:
+    """Copy /shared/<origin>/themes/<theme> to `dest`, no step of it a symlink."""
+    fd = os.open(shared, DIR_FLAGS)
+    try:
+        for name in (origin, "themes", theme):
+            try:
+                inner = os.open(name, DIR_FLAGS, dir_fd=fd)
+            except OSError:
+                raise BuildError(
+                    f"the theme '{theme}' in {shared / origin / 'themes'} is a symlink; a "
+                    "theme from a workspace must be a folder in its /shared"
+                ) from None
+            os.close(fd)
+            fd = inner
+        copy_tree(fd, dest)
+    finally:
+        os.close(fd)
 
 
 def assemble(
@@ -105,7 +152,11 @@ def assemble(
     if theme is not None:
         dest = work / "themes" / theme.name
         shutil.rmtree(dest, ignore_errors=True)
-        shutil.copytree(theme, dest, symlinks=True, ignore=no_symlinks)
+        origin = conf["extra"]["build"]["theme_from"]
+        if origin == "system":
+            shutil.copytree(theme, dest, symlinks=True)
+        else:
+            copy_shared_theme(shared, origin, theme.name, dest)
     if entries is not None and entries.is_dir():
         shutil.copytree(
             entries,

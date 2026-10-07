@@ -11,7 +11,7 @@ Code sandbox, Browser, Delegation, …) before changing it.
 
 - The AnythingLLM container mounts this directory read-only at `/mcp`, and the host
   services run its code with uv. Whatever is in the working tree, committed or not, is what
-  runs. Don't switch branches here; use a worktree for other-branch work.
+  runs. Switch branches here for other-branch work; don't use a worktree.
 - Units in `host/quadlet/` and `host/systemd/` are templates. Editing them changes nothing
   until `uv run hostctl units` renders them (it refuses to run in a worktree). Never edit the installed
   copies; `uv run hostctl diff` shows where they differ.

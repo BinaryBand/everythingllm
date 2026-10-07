@@ -5,8 +5,8 @@ declares are the ones the apps' code and units use."""
 import re
 from pathlib import Path
 
-import apps
 import pytest
+from hostctl import apps
 
 REPO = Path(__file__).resolve().parents[3]
 HOST = REPO / "host"

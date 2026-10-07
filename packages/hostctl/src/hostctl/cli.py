@@ -23,10 +23,9 @@ import subprocess
 import sys
 from collections.abc import Callable
 
-import apps  # the registry's reader, standard library only
 import tomllib
 
-from hostctl import appctl, gateway_env, machine, run_guard, units
+from hostctl import appctl, apps, gateway_env, machine, run_guard, units
 
 ROOT = units.ROOT
 SERVICE = "anythingllm.service"

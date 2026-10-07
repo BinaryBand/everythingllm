@@ -1,7 +1,7 @@
 # The apps this repo runs, and everything hostctl needs to know to deploy, restart, map,
 # check and follow them. hostctl's units, run_guard and appctl (uv run hostctl <app>-setup,
 # <app>-logs, routes, install, health) read it through
-# apps.load(); app code never does. Test: packages/apps/tests/test_apps.py.
+# apps.load(); app code never does. Test: packages/hostctl/tests/test_apps.py.
 #
 # [<app>]                 the app's name: also its socket folder (storage/everythingllm/<app>/)
 #                         and its hostctl commands (uv run hostctl <app>-setup, <app>-logs)

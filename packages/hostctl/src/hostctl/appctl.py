@@ -1,5 +1,5 @@
 """The hostctl commands that depend on which apps there are, from the apps registry
-(packages/apps/src/apps/apps.toml): `uv run hostctl <app>-setup`, `uv run hostctl <app>-logs`,
+(apps.toml, next to this file): `uv run hostctl <app>-setup`, `uv run hostctl <app>-logs`,
 `uv run hostctl routes`, `uv run hostctl apps`, and the parts of `uv run hostctl install` and `uv run hostctl health` that list apps.
 
   list               the apps: what each is, and whether `uv run hostctl install` sets it up (or why not)
@@ -42,14 +42,12 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import apps  # the registry's reader, standard library only
-
-from hostctl import run_guard
+from hostctl import apps, run_guard
 from hostctl.units import active, host_settings, storage
 
 ROOT = Path(__file__).resolve().parents[4]
-# hostctl and the registry's reader, so a `before` step's python3 finds them whichever it is.
-PYTHONPATH = f"{ROOT}/packages/hostctl/src:{ROOT}/packages/apps/src"
+# hostctl, so a `before` step's python3 finds it whichever it is.
+PYTHONPATH = f"{ROOT}/packages/hostctl/src"
 PING_SECONDS = 5  # a runner that's up answers at once
 ROUTE_SECONDS = 5
 

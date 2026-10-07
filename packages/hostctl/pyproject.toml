@@ -1,9 +1,9 @@
 [project]
 name = "hostctl"
 version = "0.1.0"
-description = "uv run hostctl <command>: set up, sync and check this machine (units, deploys, app setup, the restart guard; standard library only, skills is the exception)"
+description = "uv run hostctl <command>: set up, sync and check this machine (the apps registry, units, deploys, app setup, the restart guard; standard library only, skills is the exception)"
 requires-python = ">=3.12"
-dependencies = ["apps"]
+dependencies = []
 
 [project.scripts]
 hostctl = "hostctl.cli:main"

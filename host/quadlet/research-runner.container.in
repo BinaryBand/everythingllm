@@ -70,7 +70,7 @@ EnvironmentFile=@REPO@/host.env
 # Its share of AnythingLLM's .env (the model keys), never the file, which holds every key
 # and secret AnythingLLM has: written on the host before each start (hostctl.ctr_env), so a
 # restart takes up a changed key.
-ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src:@REPO@/packages/apps/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/research-runner.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF GENERIC_OPEN_AI_BASE_PATH GENERIC_OPEN_AI_API_KEY ZAI_API_KEY
+ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/research-runner.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF GENERIC_OPEN_AI_BASE_PATH GENERIC_OPEN_AI_API_KEY ZAI_API_KEY
 # podman won't bind-mount what isn't there.
 ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research %h/.local/share/everythingllm/pages/entries/research %h/.local/share/everythingllm/pages/public @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build @ANYTHINGLLM_STORAGE@/anythingllm-fs/research
 ExecStartPre=/usr/bin/touch %h/.local/share/everythingllm/pages/entries/.build.lock

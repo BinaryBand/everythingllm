@@ -20,9 +20,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-import apps  # the registry's reader, standard library only
-
-from hostctl import appctl
+from hostctl import appctl, apps
 from hostctl.units import ROOT, anythingllm_headers, env_file, host_settings
 
 API = "http://127.0.0.1:3001/api"

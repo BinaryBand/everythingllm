@@ -159,11 +159,11 @@ It must leave them alone now, or its next run undoes `uv run hostctl units`.
 
 ### The apps
 
-Every app this repo runs is declared once, in `packages/apps/src/apps/apps.toml`: its units
+Every app this repo runs is declared once, in `packages/hostctl/src/hostctl/apps.toml`: its units
 and a label for each, its socket, the HTTPS routes it needs from the machine, whether its restarts wait
 for a run (the guard), its health checks, the steps its setup runs first, and whether
 `uv run hostctl install` sets it up (and if not, why). hostctl reads it through
-`packages/apps` (standard library only, like `hostctl`);
+`hostctl.apps` (standard library only, like the rest of hostctl);
 app code never does. `uv run hostctl apps` lists the apps; for each:
 
 - `uv run hostctl <app>-setup` installs its own units (`uv run hostctl units <app>`, so
@@ -182,7 +182,7 @@ app code never does. `uv run hostctl apps` lists the apps; for each:
   each runner).
 
 Adding an app: its code, its unit template in `host/`, and one entry in `apps.toml`.
-`packages/apps/tests/test_apps.py` says what's missing: a template no app owns, a unit
+`packages/hostctl/tests/test_apps.py` says what's missing: a template no app owns, a unit
 without a template, two mappings on one port, or a port that isn't the one the code or the
 unit uses.
 

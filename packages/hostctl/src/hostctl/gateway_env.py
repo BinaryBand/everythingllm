@@ -25,9 +25,9 @@ import shlex
 import sys
 from pathlib import Path
 
-import apps
 import tomllib
 
+from hostctl import apps
 from hostctl.units import ROOT, env_file
 
 DEFAULT = Path("~/.config/everythingllm/gateway.env").expanduser()

@@ -90,9 +90,9 @@ is 3.13. Keep code 3.12-compatible, and check with
   - A front's package keeps its base dependencies to what the front imports, and puts the
     rest (httpx, publicweb, …) in a `host` extra that the units run with.
   - Every app (its units, socket, HTTPS routes, guard, health checks, setup steps) is
-    declared once in `packages/apps/src/apps/apps.toml`, which hostctl reads
-    through `packages/apps`; app code never does. Adding one: its code, its unit template
-    and an entry there; `packages/apps/tests/test_apps.py` says what's missing (README, "The apps").
+    declared once in `packages/hostctl/src/hostctl/apps.toml`, which hostctl reads
+    through `hostctl.apps`; app code never does. Adding one: its code, its unit template
+    and an entry there; `packages/hostctl/tests/test_apps.py` says what's missing (README, "The apps").
 - Service containers (README, "Service containers"): a runner that reads the web, feeds
   or audio runs in a Quadlet container (`host/quadlet/<x>.container.in`, the app's
   `container` in `apps.toml`) of one image, `localhost/everythingllm-service`

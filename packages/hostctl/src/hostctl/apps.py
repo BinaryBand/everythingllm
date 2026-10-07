@@ -3,7 +3,7 @@
 Each app's units, socket, HTTPS routes, restart guard, health checks and setup steps are
 declared there once; hostctl asks this module rather than keep copies or work
 them out from unit names. App code doesn't read it. Standard library only, like hostctl, so
-any python3 with packages/apps/src on PYTHONPATH can import it (health.sh, the `before` steps).
+any python3 with packages/hostctl/src on PYTHONPATH can import it (health.sh, the `before` steps).
 
     apps = load()                 # name -> App, in the file's order
     runners(), guarded(), app_of(unit), serve_mappings(), health_checks()

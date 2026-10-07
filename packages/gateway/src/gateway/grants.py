@@ -1,7 +1,7 @@
 """Which of the gateway's tools each client may see and call, and who is calling.
 
 grants.toml, next to this file, gives each client the groups of tools it gets, read with
-`load` like packages/apps reads apps.toml. A client is named as its token is in gateway.env;
+`load` like hostctl.apps reads apps.toml. A client is named as its token is in gateway.env;
 the tokens stay there, never in the repo. A group is a front's read tools (`sites`), its
 skills (`sites:write`), or a front declared in the gateway (`agents`, `research`,
 `sandbox`); gateway.app says which groups there are. A client with a token but no grant gets no tools, and a key or group the

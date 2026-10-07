@@ -39,9 +39,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-import apps  # the registry's reader, standard library only
-
-from hostctl import run_guard
+from hostctl import apps, run_guard
 
 ROOT = Path(__file__).resolve().parents[4]
 

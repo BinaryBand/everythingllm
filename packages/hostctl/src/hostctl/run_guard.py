@@ -4,15 +4,14 @@ and asks.
 
   python3 -m hostctl.run_guard <service>   exit 0 to go ahead, 1 to stop
 
-The apps registry (packages/apps, `guard`) says which services hold runs and where their
+The apps registry (hostctl.apps, `guard`) says which services hold runs and where their
 run logs are; GUARDED is that, by unit. A run is live while
 its marker in <run log>/running/ has been touched within the marker's stale_ms (see
 packages/runs/src/runs/runlog.py). With no terminal to ask, it stops unless FORCE=1. Used
 by appctl.py (`uv run hostctl <app>-setup`) and units.py. AnythingLLM's own restarts
 don't need it: the runs live in the services, not in AnythingLLM.
 
-Standard library only, like the rest of hostctl; the registry's reader
-is too.
+Standard library only, like the rest of hostctl.
 """
 
 import json
@@ -21,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-import apps  # the registry's reader, standard library only
+from hostctl import apps
 
 DATA = Path.home() / ".local" / "share" / "everythingllm"  # hostrpc.data_dir()
 # service: (its run log in DATA, what its runs are called)

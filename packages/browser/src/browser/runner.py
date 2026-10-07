@@ -43,9 +43,10 @@ alone. While the user has the browser, logins they send are offered for saving t
 A passkey (`passkey`) is a saved entry too, asking first unless the user turns that off: the
 driver puts it in the thread's page for the click that signs in with it. Only the user makes
 one: while they have the browser, "Make a passkey" in the take-over view (make_passkeys)
-lets every page make one, until one is made or MAKING seconds pass, and the runner saves
-each as it's made (save_made), and once more as the browser goes back to the agent or
-stops, as a passkey made and not kept is one the site has and nobody can use.
+lets every page make one, until one is made, browser.driver's MAKING_SECONDS pass or the
+agent has it again. The runner saves what was made (save_made) as the view asks how things
+stand, and as the browser goes back to the agent or stops, as a passkey made and not kept
+is one the site has and nobody can use.
 
 Without a saved login, the agent can ask for one (`ask_login`): a card in the chat links to
 a page of its own on the take-over view's origin (/login/<id>/, browser.takeover) with a
@@ -112,7 +113,7 @@ from hostrpc import RunnerError, safefs
 
 from browser import page as pagetext
 from browser.origin import host_of, normal_site, registrable, secure, site_matches
-from browser.vault import Vault, VaultError, totp
+from browser.vault import Vault, VaultError, credential, totp
 
 log = logging.getLogger("browser-runner")
 
@@ -141,8 +142,6 @@ LIMIT = 8 << 20  # a driver's reply: a screenshot is a few hundred KB
 LIVE_PORT = 8453
 TAKEOVER_PORT = 8454
 DOWNLOAD_BYTES = 256 << 20  # as browser.driver's: a bigger file isn't copied
-MAKING = 5 * 60  # how long the browser waits for a site to make a passkey
-MADE_EVERY = 2  # seconds between looks for one
 
 PodmanResult = tuple[int, str, str]
 Podman = Callable[[list[str], float], Awaitable[PodmanResult]]
@@ -235,10 +234,11 @@ class Tab:
 
 @dataclass(eq=False)
 class Approval:
-    """The agent waiting for the user's OK to use a saved login."""
+    """The agent waiting for the user's OK to use a saved login or passkey."""
 
     id: str
     login: str  # the login's id
+    kind: str  # "login" or "passkey"
     site: str
     username: str
     thread: str  # the chat that asks: an OK is for it alone
@@ -284,7 +284,8 @@ class Session:
     # (thread, login id) -> OK until: one chat's OK isn't another's
     granted: dict[tuple[str, str], float] = field(default_factory=dict)
     answers: dict[str, bool] = field(default_factory=dict)  # approval id -> the user's
-    making: asyncio.Task | None = None  # waiting for a site to make a passkey
+    # Whether its pages can make a passkey, as the driver last said.
+    making: bool = False
     made: str = ""  # what became of the last passkey made, for the take-over view
 
     @property
@@ -298,6 +299,10 @@ class Session:
     @property
     def vnc(self) -> Path:
         return self.folder / "vnc.sock"
+
+
+def as_who(username: str) -> str:
+    return f" as {username}" if username else ""
 
 
 class Gone(RunnerError):
@@ -514,8 +519,8 @@ class Runner(hostrpc.Service):
             return
         if s.approval is not None:  # its waiter hears it's stale
             s.approval.answered.set()
-        if s.making is not None:
-            await self.stop_making(s)
+        if s.making:
+            await self.save_made(s)
         await self.podman(["stop", "-t", "5", s.name], 30)
         await self.collect(workspace)
         self.forget(workspace)
@@ -738,17 +743,14 @@ class Runner(hostrpc.Service):
         pass_ref: str = "",
         submit: bool = False,
     ) -> dict[str, Any]:
-        workspace, thread = check_scope(scope)
-        s, tab = await self.running(workspace, thread)
-        self.agent_may_act(s)
-        entry = await self.usable(workspace, login, tab, "login")
+        s, tab, entry = await self.usable(scope, login, "login")
         if (waiting := self.approval(s, tab, entry)) is not None:
             return {"approval": waiting.id, "card": self.card(tab)}
         view = await self.call(
             s,
             "fill_login",
             {
-                "thread": thread,
+                "thread": tab.thread,
                 "site": entry["site"],
                 "username": entry["username"],
                 "password": entry.get("password", ""),
@@ -757,10 +759,10 @@ class Runner(hostrpc.Service):
                 "submit": bool(submit),
             },
         )
-        await self.used(workspace, entry)
-        who = f" as {entry['username']}" if entry["username"] else ""
+        await self.used(s.workspace, entry)
         tab.moved(
-            f"{'Logged in' if submit else 'Filled in the login'} for {entry['site']}{who}",
+            f"{'Logged in' if submit else 'Filled in the login'} for {entry['site']}"
+            + as_who(entry["username"]),
             view,
         )
         return {"page": pagetext.render(view)}
@@ -768,10 +770,7 @@ class Runner(hostrpc.Service):
     async def op_code(
         self, scope: dict[str, Any], login: str, ref: str, submit: bool = False
     ) -> dict[str, Any]:
-        workspace, thread = check_scope(scope)
-        s, tab = await self.running(workspace, thread)
-        self.agent_may_act(s)
-        entry = await self.usable(workspace, login, tab, "login")
+        s, tab, entry = await self.usable(scope, login, "login")
         if not entry.get("totp"):
             raise RunnerError(
                 f"the {entry['site']} login has no 2FA secret saved; hand the browser to the user for the code"
@@ -781,42 +780,35 @@ class Runner(hostrpc.Service):
         view = await self.call(
             s,
             "fill_code",
-            {"thread": thread, "site": entry["site"], "code": totp(entry["totp"]),
+            {"thread": tab.thread, "site": entry["site"], "code": totp(entry["totp"]),
              "ref": ref or "", "submit": bool(submit)},
         )  # fmt: skip
-        await self.used(workspace, entry)
+        await self.used(s.workspace, entry)
         tab.moved(f"Filled in the 2FA code for {entry['site']}", view)
         return {"page": pagetext.render(view)}
 
     async def op_passkey(
         self, scope: dict[str, Any], login: str, ref: str
     ) -> dict[str, Any]:
-        workspace, thread = check_scope(scope)
-        s, tab = await self.running(workspace, thread)
-        self.agent_may_act(s)
-        entry = await self.usable(workspace, login, tab, "passkey")
+        s, tab, entry = await self.usable(scope, login, "passkey")
         if (waiting := self.approval(s, tab, entry)) is not None:
             return {"approval": waiting.id, "card": self.card(tab)}
-        credential = {
-            "credentialId": entry["credential_id"],
-            "privateKey": entry["private_key"],
-            "userHandle": entry["user_handle"],
-            "isResidentCredential": entry["resident"],
-            "signCount": entry["sign_count"],
-        }
         view = await self.call(
             s,
             "sign_in_passkey",
-            {"thread": thread, "site": entry["rp_id"], "credential": credential,
-             "ref": ref or ""},
+            {"thread": tab.thread, "site": entry["rp_id"],
+             "credential": credential(entry), "ref": ref or ""},
         )  # fmt: skip
         count = view.pop("sign_count", None)
-        who = f" as {entry['username']}" if entry["username"] else ""
         if count is None:
             tab.moved(f"The page didn't ask for the {entry['site']} passkey", view)
         else:
-            await self.used(workspace, entry, sign_count=count)
-            tab.moved(f"Signed in with a passkey for {entry['site']}{who}", view)
+            await self.used(s.workspace, entry, sign_count=count)
+            tab.moved(
+                f"Signed in with a passkey for {entry['site']}"
+                + as_who(entry["username"]),
+                view,
+            )
         return {"page": pagetext.render(view)}
 
     async def op_wait_approval(
@@ -960,9 +952,13 @@ class Runner(hostrpc.Service):
             tab.moved(last)
 
     async def usable(
-        self, workspace: str, login: str, tab: Tab, kind: str
-    ) -> dict[str, Any]:
-        """The saved entry of `kind`, if the tab's page is on its site."""
+        self, scope: dict[str, Any], login: str, kind: str
+    ) -> tuple[Session, Tab, dict[str, Any]]:
+        """The thread's browser and tab, and the saved entry of `kind` it names, if the
+        agent may act and the tab's page is on the entry's site."""
+        workspace, thread = check_scope(scope)
+        s, tab = await self.running(workspace, thread)
+        self.agent_may_act(s)
         entry = await asyncio.to_thread(
             self.vault.get, workspace, str(login or ""), kind
         )
@@ -977,7 +973,7 @@ class Runner(hostrpc.Service):
                 "a saved login fills only on an https page on its usual port; open "
                 f"https://{host}/ instead"
             )
-        return entry
+        return s, tab, entry
 
     def approval(self, s: Session, tab: Tab, entry: dict[str, Any]) -> Approval | None:
         """The OK the agent must wait for before using `entry`, or None when it needs none
@@ -990,10 +986,10 @@ class Runner(hostrpc.Service):
             if s.approval is not None:  # its waiter hears it's stale
                 s.approval.answered.set()
             s.approval = Approval(
-                secrets.token_hex(4), entry["id"], entry["site"], entry["username"],
-                tab.thread, tab.url,
+                secrets.token_hex(4), entry["id"], entry["kind"], entry["site"],
+                entry["username"], tab.thread, tab.url,
             )  # fmt: skip
-        tab.moved(f"Waiting for your OK to use your {entry['site']} login")
+        tab.moved(f"Waiting for your OK to use your {entry['site']} {entry['kind']}")
         return s.approval
 
     def answer(self, s: Session, approval: str, yes: bool) -> None:
@@ -1009,11 +1005,10 @@ class Runner(hostrpc.Service):
             del s.answers[next(iter(s.answers))]
         s.approval = None
         waiting.answered.set()
-        for tab in self.tabs.values():
-            if tab.workspace == s.workspace and tab.open:
-                tab.moved(
-                    f"You {'allowed' if yes else 'refused'} the {waiting.site} login"
-                )
+        self.tell(
+            s,
+            f"You {'allowed' if yes else 'refused'} the {waiting.site} {waiting.kind}",
+        )
 
     async def used(self, workspace: str, entry: dict[str, Any], **fields: Any) -> None:
         """Note the day a login was used (and a passkey's new sign count). The fill is done
@@ -1064,66 +1059,41 @@ class Runner(hostrpc.Service):
         return saved
 
     async def make_passkeys(self, s: Session, on: bool) -> None:
-        """Let the browser's pages make passkeys (`on`), while the user has it: each is
-        saved as it's made, until one is, MAKING seconds pass or the agent has it again."""
-        if not on:
-            await self.stop_making(s)
-            return
-        if s.control != "user":
+        """Let the browser's pages make a passkey (`on`), while the user has it, or stop
+        them; the driver stops them itself once one is made or time is up."""
+        if on and s.control != "user":
             raise RunnerError("take over the browser first: only you make passkeys")
-        if s.making is None:
-            await self.call(s, "make_passkeys", {"on": True})
-            s.making = asyncio.create_task(self.wait_made(s))
+        await self.call(s, "make_passkeys", {"on": on})
+        s.making = on
+        if on:
             self.tell(s, "Waiting for a site to make a passkey")
+        else:
+            await self.save_made(s)
 
-    async def wait_made(self, s: Session) -> None:
-        for _ in range(int(MAKING / MADE_EVERY)):
-            await asyncio.sleep(MADE_EVERY)
-            if self.sessions.get(s.workspace) is not s:
-                break
-            # Shielded: once the driver has handed a passkey over, it's saved even if the
-            # hand-back cancels this meanwhile.
-            if await asyncio.shield(self.save_made(s)):
-                break
-        if s.making is asyncio.current_task():
-            s.making = None
-            await self.stop_making(s)
-
-    async def stop_making(self, s: Session) -> None:
-        """Stop pages making passkeys, and save any made meanwhile."""
-        task, s.making = s.making, None
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
+    async def save_made(self, s: Session) -> None:
+        """Save the passkeys the browser's pages made, and note whether they still can."""
         try:
-            await self.call(s, "make_passkeys", {"on": False})
+            got = await self.call(s, "made", {})
         except RunnerError:
-            return  # a browser that's gone makes nothing more
-        await self.save_made(s)
-
-    async def save_made(self, s: Session) -> int:
-        """Save the passkeys the browser's pages made: how many."""
-        try:
-            made = await self.call(s, "made", {})
-        except RunnerError:
-            return 0
-        for one in made:
+            s.making = False  # a browser that's gone makes nothing more
+            return
+        s.making = got["making"]
+        for one in got["made"]:
             try:
                 saved = await asyncio.to_thread(
                     self.vault.add_passkey, s.workspace, one.get("credential")
                 )
             except VaultError as e:
                 log.warning("couldn't save a passkey %s made: %s", one.get("url"), e)
-                self.tell(s, f"The passkey a site made couldn't be saved: {e}", True)
+                s.made = f"The passkey a site made couldn't be saved: {e}"
             else:
-                who = f" as {saved['username']}" if saved["username"] else ""
-                self.tell(
-                    s, f"Saved the passkey you made for {saved['site']}{who}", True
+                s.made = f"Saved the passkey you made for {saved['site']}" + as_who(
+                    saved["username"]
                 )
-        return len(made)
+            self.tell(s, s.made)
 
-    def tell(self, s: Session, last: str, made: bool = False) -> None:
-        if made:
-            s.made = last
+    def tell(self, s: Session, last: str) -> None:
+        """Say `last` on the cards of the workspace's open tabs."""
         for tab in self.tabs.values():
             if tab.workspace == s.workspace and tab.open:
                 tab.moved(last)
@@ -1151,21 +1121,17 @@ class Runner(hostrpc.Service):
     async def give_back(self, s: Session) -> None:
         """The agent has the browser again."""
         s.control, s.reason, s.asked = "agent", "", False
-        if s.making is not None:
-            await self.stop_making(s)
-        await self.capture(s, False)
-        for tab in self.tabs.values():
-            if tab.workspace == s.workspace and tab.open:
-                tab.moved("The agent has the browser again")
+        await self.capture(s, False)  # which ends making passkeys
+        if s.making:
+            await self.save_made(s)
+        self.tell(s, "The agent has the browser again")
 
     async def take(self, s: Session) -> None:
         """The user takes the browser from the take-over view."""
         if s.control != "user":
-            s.control, s.reason, s.asked = "user", "you took over", False
+            s.control, s.reason, s.asked, s.made = "user", "you took over", False, ""
             await self.capture(s, True, user=True)
-            for tab in self.tabs.values():
-                if tab.workspace == s.workspace and tab.open:
-                    tab.moved("You took over the browser")
+            self.tell(s, "You took over the browser")
 
     def by_token(self, token: str) -> Session | None:
         return next(

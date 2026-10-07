@@ -835,9 +835,13 @@ class PasskeyPage(FakePage):
     def __init__(self, url="https://github.com/login", asks=True):
         super().__init__(url, {"e1": FakeElement("button", None, url)})
         self.asks = asks
+        self.listeners = {}
 
     def on(self, event, handler):
-        pass
+        self.listeners.setdefault(event, []).append(handler)
+
+    def remove_listener(self, event, handler):
+        self.listeners[event].remove(handler)
 
 
 CREDENTIAL = {"credentialId": "cred", "privateKey": "KEY", "userHandle": "AQID",
@@ -872,7 +876,7 @@ def test_a_passkey_signs_in_from_an_authenticator_there_only_for_the_click():
                            "WebAuthn.addCredential"]  # fmt: skip
     assert cdp.sent[2][1] == {"authenticatorId": "a1",
                               "credential": {**CREDENTIAL, "rpId": "github.com"}}  # fmt: skip
-    assert methods[-2:] == ["WebAuthn.removeVirtualAuthenticator", "WebAuthn.disable"]
+    assert methods[-1] == "WebAuthn.disable"  # which takes the authenticator out
 
 
 def test_a_page_that_never_asks_for_the_passkey_is_said_so(monkeypatch):
@@ -900,11 +904,14 @@ def test_a_passkey_is_taken_out_whatever_goes_wrong_and_never_said_back():
     assert cdp is not None and cdp.detached and ("WebAuthn.disable", None) in cdp.sent
 
 
-def test_pages_make_passkeys_only_while_asked_and_the_runner_takes_them():
+def test_pages_make_passkeys_only_while_the_user_has_it_and_until_one_is_made():
     async def main():
         page, popup = PasskeyPage(), PasskeyPage("https://github.com/popup")
         context = CDPContext([page])
         d = driver.Driver(context, None)
+        with pytest.raises(RunnerError, match="only the user makes passkeys"):
+            await d.op_make_passkeys(True)
+        await d.op_capture(True, user=True)
         await d.op_make_passkeys(True)
         context.pages.append(popup)
         context.listeners["page"](popup)
@@ -912,14 +919,32 @@ def test_pages_make_passkeys_only_while_asked_and_the_runner_takes_them():
         assert set(d.makers) == {page, popup}
         made = {"credential": {"rpId": "github.com", "privateKey": "KEY"}}
         context.sessions[popup].handlers["WebAuthn.credentialAdded"](made)
-        assert await d.op_made() == [{**made, "url": popup.url}]
-        assert await d.op_made() == []
-        # The hand-back takes them out, and nothing more is kept.
-        await d.op_capture(True, user=True)
-        await d.op_capture(False)
-        assert not d.making and d.makers == {} and "page" not in context.listeners
+        await asyncio.sleep(0)  # one made: the pages stop making
+        assert await d.op_made() == {
+            "making": False,
+            "made": [{**made, "url": popup.url}],
+        }
+        assert d.makers == {} and "page" not in context.listeners
         assert all(cdp.detached for cdp in context.sessions.values())
+        assert page.listeners["close"] == popup.listeners["close"] == []
+        # The hand-back ends it too, and nothing more is kept.
+        await d.op_make_passkeys(True)
+        await d.op_capture(False)
+        assert not d.making and d.makers == {}
         context.sessions[page].handlers["WebAuthn.credentialAdded"](made)
-        assert await d.op_made() == []
+        assert await d.op_made() == {"making": False, "made": []}
+
+    asyncio.run(main())
+
+
+def test_pages_stop_making_passkeys_when_time_is_up(monkeypatch):
+    monkeypatch.setattr(driver, "MAKING_SECONDS", 0.01)
+
+    async def main():
+        d = driver.Driver(CDPContext([PasskeyPage()]), None)
+        await d.op_capture(True, user=True)
+        await d.op_make_passkeys(True)
+        await asyncio.sleep(0.05)
+        assert await d.op_made() == {"making": False, "made": []}
 
     asyncio.run(main())

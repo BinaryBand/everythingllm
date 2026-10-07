@@ -37,9 +37,8 @@ class FakeDriver(hostrpc.Service):
         self.offers: dict[str, dict] = {}
         self.making = False
         self.made: list[dict] = []  # what a site makes while making
-        self.asked_for_passkey = (
-            True  # whether the page asks for the passkey on the click
-        )
+        # Whether the page asks for the passkey on the click.
+        self.asked_for_passkey = True
 
     def view(self, thread):
         url = self.pages[thread]
@@ -116,13 +115,18 @@ class FakeDriver(hostrpc.Service):
         return {**self.view(thread), "sign_count": count}
 
     async def op_make_passkeys(self, on):
-        self.calls.append(("make_passkeys", {"on": on}))
+        if on and not self.capturing:
+            raise hostrpc.RunnerError(
+                "only the user makes passkeys, while they have it"
+            )
         self.making = on
         return {}
 
     async def op_made(self):
         made, self.made = self.made, []
-        return made
+        if made:  # one is what the user asked for
+            self.making = False
+        return {"making": self.making, "made": made}
 
     async def op_offers(self):
         return [

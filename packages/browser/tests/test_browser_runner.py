@@ -857,9 +857,7 @@ def test_a_passkey_asks_first_unless_the_user_turned_it_off(tmp_path):
     test(tmp_path)
 
 
-def test_only_the_user_makes_passkeys_and_each_made_is_saved(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_mod, "MADE_EVERY", 0.01)
-
+def test_only_the_user_makes_passkeys_and_each_made_is_saved(tmp_path):
     @run
     async def test(r, podman, clock):
         await r.op_open(scope(), "https://github.com/settings/security")
@@ -870,20 +868,14 @@ def test_only_the_user_makes_passkeys_and_each_made_is_saved(tmp_path, monkeypat
         assert not driver.making
         await r.take(s)
         await r.make_passkeys(s, True)
-        assert driver.making and s.making is not None
+        assert driver.making and s.making
+        # Saved when the view next asks, asking first; the driver stops after one.
         driver.made.append({"credential": passkey(), "url": "https://github.com/"})
-        for _ in range(100):
-            if s.making is None:
-                break
-            await asyncio.sleep(0.01)
-        # Saved as it's made, asking first, and making stops after one.
-        assert s.making is None and not driver.making
+        await r.save_made(s)
+        assert not s.making and not driver.making
         [saved] = r.vault.logins("career")
-        assert (
-            saved["kind"] == "passkey"
-            and saved["site"] == "github.com"
-            and saved["ask"]
-        )
+        assert saved["kind"] == "passkey" and saved["site"] == "github.com"
+        assert saved["ask"]
         assert (
             r.threads[("career", "7")].last
             == s.made
@@ -894,11 +886,12 @@ def test_only_the_user_makes_passkeys_and_each_made_is_saved(tmp_path, monkeypat
         driver.made.append({"credential": passkey(credential_id="second"), "url": ""})
         driver.made.append({"credential": passkey("github.io"), "url": ""})
         await r.give_back(s)
-        assert s.making is None and not driver.making
+        assert not s.making and not driver.making
         assert len(r.vault.logins("career")) == 2
         assert s.made.startswith("The passkey a site made couldn't be saved")
-        # And just before the browser stops.
+        # Taking over again starts afresh, and what's made is saved as the browser stops.
         await r.take(s)
+        assert s.made == ""
         await r.make_passkeys(s, True)
         driver.made.append({"credential": passkey(credential_id="third"), "url": ""})
         await r.stop("career")

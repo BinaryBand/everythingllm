@@ -54,6 +54,9 @@ MAX_LOGINS = 200
 MAX_FIELD = 1000  # characters in a username or password
 MAX_KEY = 4000  # characters of a passkey's base64 fields
 B64_RE = re.compile(r"[A-Za-z0-9+/_-]*={0,2}")
+# A passkey's base64 fields, as saved and as Chromium's Credential names them.
+KEY_FIELDS = {"credential_id": "credentialId", "private_key": "privateKey",
+              "user_handle": "userHandle"}  # fmt: skip
 
 
 class VaultError(hostrpc.RunnerError):
@@ -98,11 +101,39 @@ def totp(secret: str, now: float | None = None) -> str:
     ).zfill(6)
 
 
+def entry(logins: list[dict[str, Any]], kind: str, **match: str) -> dict[str, Any]:
+    """The entry of `kind` whose fields are `match`, or a new one with them, added to
+    `logins` (at most MAX_LOGINS)."""
+    found = next(
+        (x for x in logins
+         if x["kind"] == kind and all(x.get(k) == v for k, v in match.items())),
+        None,
+    )  # fmt: skip
+    if found is not None:
+        return found
+    if len(logins) >= MAX_LOGINS:
+        raise VaultError(f"a workspace keeps at most {MAX_LOGINS} logins")
+    new = {"id": secrets.token_hex(4), "kind": kind, **match,
+           "added": time.strftime("%Y-%m-%d"), "used": ""}  # fmt: skip
+    logins.append(new)
+    return new
+
+
+def credential(passkey: dict[str, Any]) -> dict[str, Any]:
+    """A saved passkey as Chromium's virtual authenticator takes it (without its rpId,
+    which the driver sets to the site it checked)."""
+    return {
+        **{key: passkey[name] for name, key in KEY_FIELDS.items()},
+        "isResidentCredential": passkey["resident"],
+        "signCount": passkey["sign_count"],
+    }
+
+
 def public(login: dict[str, Any]) -> dict[str, Any]:
     """What may be shown of a login: never its password or 2FA secret."""
     return {
         "id": login["id"],
-        "kind": login.get("kind", "login"),
+        "kind": login["kind"],
         "site": login["site"],
         "username": login["username"],
         "totp": bool(login.get("totp")),
@@ -241,23 +272,7 @@ class Vault:
             raise VaultError("that's too long for a login")
         secret = totp_secret(totp) if totp else ""
         with self.changing(workspace) as logins:
-            login = next(
-                (
-                    x
-                    for x in logins
-                    if x["kind"] == "login"
-                    and x["site"] == site
-                    and x["username"] == username
-                ),
-                None,
-            )
-            if login is None:
-                if len(logins) >= MAX_LOGINS:
-                    raise VaultError(f"a workspace keeps at most {MAX_LOGINS} logins")
-                login = {"id": secrets.token_hex(4), "kind": "login", "site": site,
-                         "username": username, "added": time.strftime("%Y-%m-%d"),
-                         "used": ""}  # fmt: skip
-                logins.append(login)
+            login = entry(logins, "login", site=site, username=username)
             if password:
                 login["password"] = password
             if secret:
@@ -281,8 +296,7 @@ class Vault:
         if rp_id.removeprefix("www.") != site:  # an address, or a name with more to it
             raise VaultError(f"'{rp_id}' isn't a site's name")
         fields = {}
-        for key, name in (("credentialId", "credential_id"), ("privateKey", "private_key"),
-                          ("userHandle", "user_handle")):  # fmt: skip
+        for name, key in KEY_FIELDS.items():
             value = credential.get(key)
             if (
                 not isinstance(value, str)
@@ -298,17 +312,7 @@ class Vault:
         if not isinstance(username, str) or not isinstance(count, int):
             raise VaultError("that isn't a passkey")
         with self.changing(workspace) as logins:
-            login = next(
-                (x for x in logins if x["kind"] == "passkey"
-                 and x["credential_id"] == fields["credential_id"]),
-                None,
-            )  # fmt: skip
-            if login is None:
-                if len(logins) >= MAX_LOGINS:
-                    raise VaultError(f"a workspace keeps at most {MAX_LOGINS} logins")
-                login = {"id": secrets.token_hex(4), "kind": "passkey",
-                         "added": time.strftime("%Y-%m-%d"), "used": ""}  # fmt: skip
-                logins.append(login)
+            login = entry(logins, "passkey", credential_id=fields["credential_id"])
             login.update(fields)
             login.update(
                 site=site,

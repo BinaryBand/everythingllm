@@ -233,6 +233,7 @@ def test_the_view_answers_the_agents_request_and_saves_offers(tmp_path):
         state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
         assert state["approval"] == {
             "id": waiting["approval"],
+            "kind": "login",
             "site": "example.com",
             "username": "alice",
             "url": "https://example.com/",

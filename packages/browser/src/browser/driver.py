@@ -35,7 +35,7 @@ Passkeys go through Chromium's WebAuthn virtual authenticator (over CDP, which n
 the page can reach): to sign in, one holding the saved passkey is put in the thread's page,
 on the passkey's site, only while the button the agent names is clicked and the page asks
 (at most PASSKEY_SECONDS), and Chromium itself checks that the page may use it. While the
-user has the browser and asks to make one (the runner allows that only then), every page
+user has the browser and asks to make one (only then: the hand-back ends it), every page
 has an empty authenticator, and a passkey a site makes in one is kept for the runner to
 save (`made`). Nothing is typed, so there's nothing for a read to hide.
 
@@ -60,8 +60,8 @@ notes}, snapshot.js's reading of the page (browser.page renders it).
   sign_in_passkey(thread, site, credential, ref)
                                     click `ref` with the passkey in the page -> the view
                                     and `sign_count` (None if the page never asked for it)
-  make_passkeys(on)                 whether pages can make passkeys (the user's alone)
-  made()                            [{credential, url}] of those made since the last call
+  make_passkeys(on)                 whether pages can make a passkey (the user's alone)
+  made()                            {making, made: [{credential, url}]} since the last call
 
 Config (environment):
   BROWSER_PROXY      where Chromium sends every request: the egress proxy's public port (required)
@@ -115,6 +115,7 @@ OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
 MAX_SECRET = 1000
 PASSKEY_SECONDS = 15  # how long a sign-in waits for the page to ask for its passkey
 MAX_MADE = 5  # passkeys made and not yet taken by the runner
+MAKING_SECONDS = 5 * 60  # how long pages wait for a site to make a passkey
 # A platform authenticator that answers with no prompt, and says the user was checked.
 AUTHENTICATOR = {
     "protocol": "ctap2", "transport": "internal", "hasResidentKey": True,
@@ -245,6 +246,7 @@ class Driver(hostrpc.Service):
         self.typed: dict[str, str] = {}  # thread -> the last characters it pressed
         # While the user makes passkeys: each page's CDP session, and what was made.
         self.making = False
+        self.deadline: asyncio.TimerHandle | None = None
         self.makers: dict[Any, Any] = {}
         self.made: list[dict[str, Any]] = []
 
@@ -489,6 +491,33 @@ class Driver(hostrpc.Service):
 
     # --- saved logins ---
 
+    async def on_site(
+        self, page: Any, ref: str, site: str, what: str, does: str
+    ) -> Any:
+        """The element `ref` (`what`, for errors) as a locator, once the page is on `site`
+        over https: where a saved login or passkey may go (`does`, for errors)."""
+        if not REF_RE.fullmatch(ref or ""):
+            raise hostrpc.RunnerError(
+                f"{what} needs a ref from the last read, like e12"
+            )
+        host = host_of(page.url)
+        if not site_matches(host, site):
+            raise hostrpc.RunnerError(
+                f"this chat's page is on {host or 'no site'}, not {site}: {does} only on "
+                "its own site; read the page again"
+            )
+        if not secure(page.url):
+            raise hostrpc.RunnerError(
+                f"{does} only on an https page on its usual port; open the site's "
+                "https:// page"
+            )
+        target = page.locator(f'[data-bw-ref="{ref}"]').first
+        if not await target.count():
+            raise hostrpc.RunnerError(
+                f"{ref} isn't on the page any more; read it again"
+            )
+        return target
+
     async def field(self, page: Any, ref: str, site: str, kind: str) -> Any:
         """The input `ref` (its element handle, which is what gets filled, not whatever
         the ref finds later), once it's sure to be of `kind` on `site`. Where it is comes
@@ -497,25 +526,7 @@ class Driver(hostrpc.Service):
         can rewrite what its own scripts see (`ownerDocument`, `getAttribute`), and the
         runner's idea of the page can be stale (a popup on the site, closed by the page
         that opened it, leaves that page behind)."""
-        if not REF_RE.fullmatch(ref or ""):
-            raise hostrpc.RunnerError(
-                f"the {kind} field needs a ref from the last read, like e12"
-            )
-        host = host_of(page.url)
-        if not site_matches(host, site):
-            raise hostrpc.RunnerError(
-                f"this chat's page is on {host or 'no site'}, not {site}: a saved login "
-                "fills only on its own site; read the page again"
-            )
-        if not secure(page.url):
-            raise hostrpc.RunnerError(
-                "a saved login fills only on an https page on its usual port; open the "
-                "site's https:// login page"
-            )
-        if not await page.locator(f'[data-bw-ref="{ref}"]').count():
-            raise hostrpc.RunnerError(
-                f"{ref} isn't on the page any more; read it again"
-            )
+        await self.on_site(page, ref, site, f"the {kind} field", "a saved login fills")
         kinds = {"password": {"password"}, "username": USERLIKE, "code": CODELIKE}[kind]
         target = page.locator(f'input[data-bw-ref="{ref}"]').first
         handle, kind_of = None, None
@@ -715,7 +726,8 @@ class Driver(hostrpc.Service):
     # --- passkeys ---
 
     async def authenticator(self, page: Any) -> tuple[Any, str]:
-        """A CDP session on `page` with a virtual authenticator in it, and its id."""
+        """A CDP session on `page` with a virtual authenticator in it, and its id. `disarm`
+        takes it out (WebAuthn.disable removes the page's authenticators)."""
         cdp = await self.context.new_cdp_session(page)
         try:
             await cdp.send("WebAuthn.enable", {"enableUI": False})
@@ -732,27 +744,14 @@ class Driver(hostrpc.Service):
     ) -> dict[str, Any]:
         self.check_sent(thread)
         page = self.existing(thread)
-        if not REF_RE.fullmatch(ref or ""):
-            raise hostrpc.RunnerError(
-                "give the ref of the button that signs in with a passkey, like e12"
-            )
-        host = host_of(page.url)
-        if not site_matches(host, site):
-            raise hostrpc.RunnerError(
-                f"this chat's page is on {host or 'no site'}, not {site}: a passkey signs "
-                "in only on its own site; read the page again"
-            )
-        if not secure(page.url):
-            raise hostrpc.RunnerError(
-                "a passkey signs in only on an https page on its usual port"
-            )
-        target = page.locator(f'[data-bw-ref="{ref}"]').first
-        if not await target.count():
-            raise hostrpc.RunnerError(
-                f"{ref} isn't on the page any more; read it again"
-            )
+        target = await self.on_site(
+            page,
+            ref,
+            site,
+            "the button that signs in with a passkey",
+            "a passkey signs in",
+        )
         before = int(credential.get("signCount") or 0)
-        count = None
         try:
             cdp, authenticator = await self.authenticator(page)
         except Exception:  # noqa: BLE001 - the page went away
@@ -775,7 +774,7 @@ class Driver(hostrpc.Service):
         except Exception:  # noqa: BLE001 - CDP's errors could hold the credential
             raise hostrpc.RunnerError("the passkey couldn't be used") from None
         finally:
-            await disarm(cdp, authenticator)
+            await disarm(cdp)
         await self.settle(page)
         if count is None:
             self.notes.setdefault(thread, []).append(
@@ -787,22 +786,39 @@ class Driver(hostrpc.Service):
 
     async def op_make_passkeys(self, on: bool) -> dict[str, Any]:
         """Give every page (and each new one) an empty authenticator that keeps what a site
-        makes in it (`on`), or take them out."""
+        makes in it (`on`), while the user has the browser, until a passkey is made or
+        MAKING_SECONDS pass; or take them out, as the hand-back does."""
+        if on and not self.capturing:
+            raise hostrpc.RunnerError(
+                "only the user makes passkeys, while they have it"
+            )
         if on and not self.making:
             self.making = True
+            self.deadline = asyncio.get_running_loop().call_later(
+                MAKING_SECONDS, self.stop_making
+            )
             self.context.on("page", self.on_page)
             for page in list(self.context.pages):
                 await self.make_in(page)
         elif not on and self.making:
             self.making = False
+            if self.deadline is not None:
+                self.deadline.cancel()
             self.context.remove_listener("page", self.on_page)
-            makers, self.makers = list(self.makers.values()), {}
-            for cdp in makers:
+            makers, self.makers = self.makers, {}
+            for page, cdp in makers.items():
+                page.remove_listener("close", self.unmake)
                 await disarm(cdp)
         return {}
 
+    def stop_making(self) -> None:
+        asyncio.ensure_future(self.op_make_passkeys(False))
+
     def on_page(self, page: Any) -> None:
         asyncio.ensure_future(self.make_in(page))
+
+    def unmake(self, page: Any) -> None:
+        self.makers.pop(page, None)
 
     async def make_in(self, page: Any) -> None:
         if page in self.makers:
@@ -816,7 +832,7 @@ class Driver(hostrpc.Service):
             return
         self.makers[page] = cdp
         cdp.on("WebAuthn.credentialAdded", lambda event: self.on_made(page, event))
-        page.on("close", lambda _: self.makers.pop(page, None))
+        page.on("close", self.unmake)
 
     def on_made(self, page: Any, event: Any) -> None:
         credential = event.get("credential") if isinstance(event, dict) else None
@@ -824,10 +840,13 @@ class Driver(hostrpc.Service):
             return
         del self.made[: -(MAX_MADE - 1)]
         self.made.append({"credential": credential, "url": page.url})
+        self.stop_making()  # one is what the user asked for
 
-    async def op_made(self) -> list[dict[str, Any]]:
+    async def op_made(self) -> dict[str, Any]:
+        """The passkeys made since the last call (private keys and all, for the runner to
+        save), and whether pages can still make one."""
         made, self.made = self.made, []
-        return made
+        return {"making": self.making, "made": made}
 
     # --- offering what the user logs in with ---
 
@@ -1124,14 +1143,9 @@ async def signed(cdp: Any, authenticator: str, before: int) -> int | None:
     return None
 
 
-async def disarm(cdp: Any, authenticator: str = "") -> None:
-    """Take the authenticator out and leave the page to Chromium's own WebAuthn."""
+async def disarm(cdp: Any) -> None:
+    """Take the page's authenticators out and leave it to Chromium's own WebAuthn."""
     try:
-        if authenticator:
-            await cdp.send(
-                "WebAuthn.removeVirtualAuthenticator",
-                {"authenticatorId": authenticator},
-            )
         await cdp.send("WebAuthn.disable")
         await cdp.detach()
     except Exception:  # noqa: BLE001, S110 - the page is gone, and its authenticator with it

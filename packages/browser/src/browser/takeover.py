@@ -442,6 +442,8 @@ class Takeover:
             for t in self.runner.tabs.values()
             if t.workspace == s.workspace and t.open
         ]
+        if s.making:  # save what was made, and see whether they still can
+            await self.runner.save_made(s)
         approval = s.approval
         asked = [
             {"id": a.id, "site": a.site, "link": f"/login/{a.id}/"}
@@ -460,6 +462,7 @@ class Takeover:
             "tabs": tabs,
             "approval": {
                 "id": approval.id,
+                "kind": approval.kind,
                 "site": approval.site,
                 "username": approval.username,
                 "url": approval.url,
@@ -469,7 +472,7 @@ class Takeover:
             "asked": asked,
             "offers": await self.runner.offers(s),
             "logins": logins,
-            "making": s.making is not None,
+            "making": s.making,
             "made": s.made,
         }
 

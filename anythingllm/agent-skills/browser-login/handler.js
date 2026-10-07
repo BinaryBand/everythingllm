@@ -40,12 +40,10 @@ module.exports.runtime = {
         ].filter(Boolean).join("\n");
       }
       if (!["login", "code", "passkey"].includes(what)) return `Error: action is list, ask, login, code or passkey, not '${what}'.`;
-      const args =
-        what === "login"
-          ? { login: String(login ?? ""), user_ref: String(user_ref ?? ""), pass_ref: String(pass_ref ?? ""), submit: asFlag(submit) === true }
-          : what === "code"
-            ? { login: String(login ?? ""), ref: String(ref ?? ""), submit: asFlag(submit) === true }
-            : { login: String(login ?? ""), ref: String(ref ?? "") };
+      const args = { login: String(login ?? "") };
+      if (what === "login") Object.assign(args, { user_ref: String(user_ref ?? ""), pass_ref: String(pass_ref ?? "") });
+      else args.ref = String(ref ?? "");
+      if (what !== "passkey") args.submit = asFlag(submit) === true;
       let r = await request(what, args);
       if (r === null) return null;
       if (r.approval) {

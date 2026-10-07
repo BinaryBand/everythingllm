@@ -66,7 +66,7 @@ function showApproval(a) {
   $("approval").hidden = !a;
   if (!a) return;
   $("approval-text").textContent =
-    `The agent in one of this workspace's chats wants to use your login for ${who(a)}, on ${a.url}.`;
+    `The agent in one of this workspace's chats wants to use your ${a.kind || "login"} for ${who(a)}, on ${a.url}.`;
   $("allow").onclick = () => act("allow the request", `approve/${a.id}`);
   $("deny").onclick = () => act("refuse the request", `deny/${a.id}`);
 }
@@ -152,7 +152,7 @@ function showMaking(s) {
   $("make").textContent = s.making ? "Stop waiting" : "Make a passkey";
   $("make").onclick = () => act("make a passkey", "passkeys/make", { on: !s.making });
   $("make-note").textContent = !mine
-    ? "Take over the browser to make a passkey for a site."
+    ? s.made || "Take over the browser to make a passkey for a site."
     : s.making
       ? "Waiting for the site to make one: add a passkey on its page now. It's saved here, asking first."
       : s.made || "Press this, then add a passkey on the site's page. It's kept here, on this machine alone.";

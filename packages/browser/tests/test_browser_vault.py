@@ -105,6 +105,7 @@ def test_public_never_has_the_secrets():
     shown = public(
         {
             "id": "1",
+            "kind": "login",
             "site": "x.com",
             "username": "a",
             "password": "p",

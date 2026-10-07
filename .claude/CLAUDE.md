@@ -123,8 +123,9 @@ is 3.13. Keep code 3.12-compatible, and check with
   `uv run hostctl skills` generates its `plugin.json` and `handler.js` (`hostrpc.skillgen`); edit the
   declaration, never those files. `uv run hostctl diff` and `uv run hostctl deploy` refuse stale ones.
 - Every MCP server is a thin front; nothing it serves runs in the container. Not every
-  member is an MCP server: `publicweb`, `llm`, `chatimage` and `hostrpc` are libraries, `hostctl` is the host's command (`uv run hostctl`),
-  `research` and `sandbox` are services outside AnythingLLM, and `egress` is the
+  member is an MCP server: `publicweb`, `llm`, `chatimage`, `hostrpc` and `runs` (run state,
+  slots, run logs and live cards for the runners) are libraries, `hostctl` is the host's command (`uv run hostctl`),
+  `research`, `sandbox`, `agents` and `browser` are services outside AnythingLLM, and `egress` is the
   service containers' proxy. `relay` is an HTTP service
   for the Nilson app, not the agent, in a service container, at `/everythingllm/` on
   AnythingLLM's https :3001; it takes the client's own AnythingLLM key, and its ntfy
@@ -152,7 +153,7 @@ is 3.13. Keep code 3.12-compatible, and check with
   itself reads (`anythingllm-fs/`, `documents/`).
 - Uses `mcp` 2.x: `MCPServer`, not `FastMCP`.
 - AnythingLLM's internal API (`/api/...`, not `/api/v1/`) needs its password: call it with
-  `hostrpc.anythingllm_headers` (packages) or `units.anythingllm_headers` (tools), never
+  `hostrpc.anythingllm_headers` (packages) or `hostctl.units.anythingllm_headers` (hostctl), never
   without. The developer API (`/api/v1/`) takes the API key instead.
 
 ## Sites and pages

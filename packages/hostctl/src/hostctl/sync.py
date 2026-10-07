@@ -129,8 +129,6 @@ def planned(
 
 def planned_default() -> str | None:
     """The live default prompt for new workspaces if deploy would change it, else None."""
-    if not prompt.REPO_PROMPT.exists():
-        return None
     live = api("GET", "/system/default-system-prompt")["defaultSystemPrompt"] or ""
     return live if live.strip() != repo_block() else None
 
@@ -142,8 +140,6 @@ def repo_block() -> str:
 def planned_variable() -> tuple[dict | None, str] | None:
     """(the live everythingllm_version variable or None, the repo's version) if deploy
     would set it, else None."""
-    if not prompt.REPO_PROMPT.exists():
-        return None
     value = prompt.version(prompt.REPO_PROMPT.read_text())
     live = next(
         (

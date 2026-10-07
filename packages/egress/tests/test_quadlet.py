@@ -238,7 +238,7 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     ):
         read_only(path)  # mounted; read-only will do
     # The research site is built in the sandbox, so the container needs no zola.
-    assert builder.theme_from(site) == "system" and builder.remote is not None
+    assert builder.theme_from(site) == "system"
 
 
 def test_research_reaches_searxng_through_the_proxy_and_never_anythingllm(egress):

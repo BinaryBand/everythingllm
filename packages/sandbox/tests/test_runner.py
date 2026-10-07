@@ -1111,7 +1111,7 @@ def test_what_a_system_site_build_refuses(cfg, tmp_path):
     cfg = system_cfg(cfg, tmp_path)
     r = make(cfg)
     for site, why in [
-        ("news", "names no \\[extra.build\\] theme_from; it builds on the host"),
+        ("news", "names no \\[extra.build\\] theme_from, which every site needs"),
         ("nope", "no system site 'nope'"),
         ("../status", "bad site"),
         ("Status", "bad site"),

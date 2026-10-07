@@ -50,8 +50,8 @@ own folders, puts the theme it names in place (the repo's from /system/themes, o
 workspace's from /shared/<it>/themes), and builds it. The runner copies the output into
 /public/<slug> (plain files only), so a site goes live like any page.
 
-The system sites (news, research, status) are built the same way when their repo zola.toml
-names a theme with [extra.build] theme_from (op_build_system_site, which sites.build calls):
+The system sites (news, research, status) are built the same way, with the theme their
+repo zola.toml names in [extra.build] theme_from (op_build_system_site, which sites.build calls):
 their repo source and the repo's themes come in read-only, with a copy of their entries
 made without following a symlink (the sites and research containers can write
 pages/entries), and no workspace's /shared; the output goes, plain files only, into the
@@ -1079,7 +1079,7 @@ class Runner(hostrpc.Service):
         origin = conf.get("extra", {}).get("build", {}).get("theme_from")
         if not origin:
             raise SandboxError(
-                f"{site}'s zola.toml names no [extra.build] theme_from; it builds on the host"
+                f"{site}'s zola.toml names no [extra.build] theme_from, which every site needs"
             )
         if origin != "system":
             # A system site pins a workspace's theme rather than following its live folder

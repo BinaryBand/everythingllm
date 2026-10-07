@@ -59,7 +59,8 @@ from the repo root:
 
 After `uv.lock` changes, run `uv run hostctl mcp-sync` (or `uv run hostctl deploy`) so the container's venv catches
 up. Don't use `--no-dev` against `.venv`; it uninstalls pytest. `packages/conftest.py`
-clears `PUBLIC_HOST` and `ANYTHINGLLM_STORAGE`, so tests ignore `host.env`.
+clears `PUBLIC_HOST` and points `ANYTHINGLLM_STORAGE` at a tmp folder and `ANYTHINGLLM_URL`/`ANYTHINGLLM_API`
+at a port nothing listens on, so tests ignore `host.env` and never reach the live AnythingLLM.
 
 Host services run Python 3.12 (their venvs in `~/.local/share/everythingllm/`); the dev `.venv`
 is 3.13. Keep code 3.12-compatible, and check with

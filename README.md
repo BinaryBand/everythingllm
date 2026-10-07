@@ -799,7 +799,10 @@ folder read-only but an empty `/out`:
 - it puts the theme named in `zola.toml` in place: with `[extra.build] theme_from =
   "system"` the repo's from `/system/themes`, with `theme_from = "<workspace>"` that
   workspace's `/shared/<workspace>/themes/<theme>`, and without it the site's own
-  `themes/`;
+  `themes/`. Another workspace's theme comes in without its symlinks, and can't itself be
+  one: zola copies static files through a symlink, so a theme's `static/x -> /project`
+  would otherwise publish the building workspace's private files (zola already keeps
+  `load_data` inside the site);
 - it runs `zola build` with the base URL the runner passes in
   (`…:8447/<workspace>/<slug>`), so a site can't point its links at another host, within 60 s.
 

@@ -130,3 +130,37 @@ def test_a_system_sites_entries_join_its_content_but_not_their_index_or_dotfiles
     assert (work / "content" / "reports" / "_index.md").read_text() == "from the repo"
     assert (work / "content" / "reports" / "2026-10-06.md").read_text() == "a report"
     assert not (work / "content" / ".build.lock").exists()
+
+
+def test_a_workspaces_theme_comes_without_its_symlinks(tmp_path, roots):
+    """Another workspace's theme runs in this one's build, where its /project is mounted:
+    zola copies static files through symlinks, so none come along."""
+    system, shared = roots
+    theme = shared / "career" / "themes" / "minimal"
+    (theme / "static").mkdir()
+    (theme / "static" / "style.css").write_text("body{}")
+    private = tmp_path / "project"
+    private.mkdir()
+    (private / "secret.txt").write_text("private")
+    (theme / "static" / "leak").symlink_to(private)
+    (theme / "static" / "leak.txt").symlink_to(private / "secret.txt")
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "zola.toml").write_text(
+        'theme = "minimal"\n[extra.build]\ntheme_from = "career"\n'
+    )
+    work = tmp_path / "work"
+    assemble(site, work, system, shared)
+    copied = work / "themes" / "minimal" / "static"
+    assert sorted(p.name for p in copied.iterdir()) == ["style.css"]
+
+
+def test_a_workspaces_theme_reached_through_a_symlink_is_refused(tmp_path, roots):
+    system, shared = roots
+    elsewhere = tmp_path / "project" / "minimal2"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / "theme.toml").write_text("")
+    (shared / "career" / "themes" / "minimal2").symlink_to(elsewhere)
+    conf = {"theme": "minimal2", "extra": {"build": {"theme_from": "career"}}}
+    with pytest.raises(BuildError, match="is a symlink"):
+        theme_source(conf, system, shared)

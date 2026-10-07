@@ -13,6 +13,12 @@ A site picks its theme in zola.toml:
 
 Without `theme_from`, the site's own themes/ folder is used as it is.
 
+A theme from another workspace is that workspace's to change, and runs in this one's build,
+where this workspace's /project and /work are mounted: zola copies a static file through a
+symlink, so a theme's `static/x -> /project` would publish them. So a theme comes in
+without its symlinks, and must be a folder in its workspace's /shared, not one reached
+through a symlink.
+
 A system site (news, research, status: Runner.op_build_system_site) is its repo source plus
 its entries, which stay on the host and come in read-only; they're copied into its content/
 the way sites.build assembles it on the host (entries only: the sections' _index.md files
@@ -21,6 +27,7 @@ come from the repo).
   python sitebuild.py <site folder> <base url> [<entries folder>]
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -61,7 +68,19 @@ def theme_source(
         raise BuildError(
             f"there's no theme '{theme}' in {root} (no {theme}/theme.toml)"
         )
+    if origin != "system" and any(
+        p.is_symlink() for p in (root, root / theme, root / theme / "theme.toml")
+    ):
+        raise BuildError(
+            f"the theme '{theme}' in {root} is a symlink; a theme from a workspace must "
+            "be a folder in its /shared"
+        )
     return root / theme
+
+
+def no_symlinks(folder: str, names: list[str]) -> list[str]:
+    """copytree's ignore: leave out every symlink."""
+    return [n for n in names if os.path.islink(os.path.join(folder, n))]
 
 
 def assemble(
@@ -86,7 +105,7 @@ def assemble(
     if theme is not None:
         dest = work / "themes" / theme.name
         shutil.rmtree(dest, ignore_errors=True)
-        shutil.copytree(theme, dest, symlinks=True)
+        shutil.copytree(theme, dest, symlinks=True, ignore=no_symlinks)
     if entries is not None and entries.is_dir():
         shutil.copytree(
             entries,

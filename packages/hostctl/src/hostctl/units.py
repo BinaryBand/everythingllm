@@ -2,12 +2,11 @@
 repo's path and @KEY@ with KEY from host.env:
 
   host/quadlet/<name>.container.in             -> ~/.config/containers/systemd/<name>.container
-  host/systemd/<name>.container.d/*.conf       -> ~/.config/containers/systemd/<name>.container.d/
   host/systemd/*.service, host/systemd/*.timer -> ~/.config/systemd/user/
 
   diff     show how the installed units differ from the rendered ones
   install  write the changed ones and reload systemd.
-           A container whose unit or drop-in changed is (re)started; a host unit is
+           A container whose unit changed is (re)started; a host unit is
            restarted only if it's running. Enabling host units is up to each `uv run hostctl *-setup`.
            A change to comments alone restarts nothing. Either waits while it's a guarded
            runner with a run going (run_guard), and a container also while its local
@@ -153,16 +152,6 @@ def planned(
                 True,
             )
         )
-    for t in sorted((root / "host" / "systemd").glob("*.container.d/*.conf")):
-        units.append(
-            Unit(
-                t,
-                containers / t.parent.name / t.name,
-                rendered(t, values, root),
-                t.parent.name.removesuffix(".container.d") + ".service",
-                True,
-            )
-        )
     for t in sorted(
         [
             *(root / "host" / "systemd").glob("*.service"),
@@ -198,12 +187,12 @@ def installed(unit: Unit) -> str:
 
 
 def changed(units: list[Unit]) -> list[Unit]:
-    """Units whose installed copy differs from the rendered one, or that are a symlink or sit
-    in a symlinked folder (how units were installed before they were rendered)."""
+    """Units whose installed copy differs from the rendered one, or that are a symlink (how
+    units were installed before they were rendered)."""
     return [
         u
         for u in units
-        if u.dest.is_symlink() or u.dest.parent.is_symlink() or installed(u) != u.text
+        if u.dest.is_symlink() or installed(u) != u.text
     ]
 
 
@@ -213,8 +202,6 @@ def install(todo: list[Unit]) -> list[str]:
     for unit in todo:
         old = installed(unit)
         folder = unit.dest.parent
-        if folder.is_symlink():  # a drop-in folder linked into the repo, the old way
-            folder.unlink()
         folder.mkdir(parents=True, exist_ok=True)
         tmp = folder / f".{unit.dest.name}.tmp"
         tmp.write_text(unit.text)

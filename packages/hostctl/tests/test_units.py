@@ -23,7 +23,6 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
     assert {
         "anythingllm.container",
         "static_agent.container",
-        "log-filter.conf",
         "browser-runner.service",
         "research-runner.container",
     } <= set(planned)
@@ -31,15 +30,11 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
         assert not units.PLACEHOLDER.search(unit.text), unit.source
         assert "dev/everythingllm" not in unit.source.read_text(), unit.source
     assert "Volume=/repo:/mcp:ro" in planned["anythingllm.container"].text
+    assert (  # the log filter (anythingllm/log-filter.js), preloaded
+        "Environment=NODE_OPTIONS=--require=/mcp/anythingllm/log-filter.js"
+        in planned["anythingllm.container"].text
+    )
     assert "EnvironmentFile=/repo/host.env" in planned["browser-runner.service"].text
-    assert (
-        planned["log-filter.conf"].dest
-        == tmp_path / "containers" / "anythingllm.container.d" / "log-filter.conf"
-    )
-    assert (planned["log-filter.conf"].service, planned["log-filter.conf"].always) == (
-        "anythingllm.service",
-        True,
-    )
     assert (
         planned["browser-runner.service"].service,
         planned["browser-runner.service"].always,
@@ -58,13 +53,13 @@ def unit(tmp_path, dest, text, service="x.service", always=False):
 def test_install_replaces_links_without_touching_the_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(units, "active", lambda s: True)
     repo = tmp_path / "repo"
-    (repo / "x.container.d").mkdir(parents=True)
+    repo.mkdir()
     (repo / "q.service").write_text("[Service]\nExecStart=%h/run\n")
-    (repo / "x.container.d" / "a.conf").write_text("[Container]\nEnvironment=A=1\n")
+    (repo / "x.container").write_text("[Container]\nEnvironment=A=1\n")
     user, containers = tmp_path / "user", tmp_path / "containers"
     user.mkdir(), containers.mkdir()
     (user / "q.service").symlink_to(repo / "q.service")
-    (containers / "x.container.d").symlink_to(repo / "x.container.d")
+    (containers / "x.container").symlink_to(repo / "x.container")
     todo = units.changed(
         [
             unit(
@@ -75,7 +70,7 @@ def test_install_replaces_links_without_touching_the_repo(tmp_path, monkeypatch)
             ),
             unit(
                 tmp_path,
-                containers / "x.container.d" / "a.conf",
+                containers / "x.container",
                 "[Container]\nEnvironment=A=2\n",
                 "x.service",
                 True,
@@ -86,23 +81,13 @@ def test_install_replaces_links_without_touching_the_repo(tmp_path, monkeypatch)
     restart = units.install(todo)
     assert (
         not (user / "q.service").is_symlink()
-        and not (containers / "x.container.d").is_symlink()
+        and not (containers / "x.container").is_symlink()
     )
     assert (repo / "q.service").read_text() == "[Service]\nExecStart=%h/run\n"
-    assert (
-        repo / "x.container.d" / "a.conf"
-    ).read_text() == "[Container]\nEnvironment=A=1\n"
+    assert (repo / "x.container").read_text() == "[Container]\nEnvironment=A=1\n"
     # q.service only gained a comment and spelled out %h: nothing to restart.
     assert restart == ["x.service"]
     assert units.changed(todo) == []
-
-
-def test_a_unit_in_a_linked_folder_counts_as_changed_even_if_its_text_matches(tmp_path):
-    (tmp_path / "repo").mkdir()
-    (tmp_path / "repo" / "a.conf").write_text("same")
-    (tmp_path / "x.container.d").symlink_to(tmp_path / "repo")
-    u = unit(tmp_path, tmp_path / "x.container.d" / "a.conf", "same")
-    assert units.changed([u]) == [u]
 
 
 def test_a_changed_host_unit_restarts_only_if_running_and_containers_go_first(

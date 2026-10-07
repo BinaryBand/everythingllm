@@ -1,5 +1,5 @@
-// Preloaded into AnythingLLM's node processes (NODE_OPTIONS=--require, set by
-// host/systemd/anythingllm.container.d/log-filter.conf). AnythingLLM logs every MCP message
+// Preloaded into AnythingLLM's node processes (NODE_OPTIONS=--require, set in
+// host/quadlet/anythingllm.container.in). AnythingLLM logs every MCP message
 // and tool result in full at info level, with no setting to turn it off, so page text,
 // emails and files the agent read would land in the journal. Those lines keep their
 // prefix but lose their payload (a failed tool call keeps its first ERROR_KEEP

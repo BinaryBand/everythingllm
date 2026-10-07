@@ -126,16 +126,14 @@ the service containers (see "Service containers"), these two:
   blocks (scripts, stylesheets, fonts or images from other hosts), since the page would
   otherwise just render without it.
 
-The host's own units in `host/systemd/` (services, and the AnythingLLM drop-in) are
-templates too. `uv run hostctl units` renders all of them:
+The host's own units in `host/systemd/` are templates too. `uv run hostctl units` renders all of them:
 
 - `host/quadlet/*.container.in` goes to `~/.config/containers/systemd/`
-- `host/systemd/*.container.d/` goes next to it
 - `host/systemd/*.service` and `*.timer` go to `~/.config/systemd/user/`
 
 It fills in `@REPO@` (the checkout's path) and the `host.env` settings, overwrites what's
 installed (git has the templates' history), then reloads systemd and restarts what changed: a container
-whose unit or drop-in changed, or a host unit that's running. A change to comments alone
+whose unit changed, or a host unit that's running. A change to comments alone
 restarts nothing. A guarded runner with a run going is left running, and a container whose
 image of ours or network isn't there yet isn't started: its app's setup makes them (see
 "Service containers"). Nor is one whose egress proxy (its `Wants=`) isn't installed yet:
@@ -295,8 +293,6 @@ through its UI.
 - `host/systemd/` — host user units, rendered into `~/.config/systemd/user/` (`uv run hostctl units`);
   each one's `Description=` says what it does, and its app's `uv run hostctl <app>-setup` (see "The
   apps") enables it.
-  `anythingllm.container.d/` is a Quadlet drop-in that preloads `anythingllm/log-filter.js`
-  to cut MCP payloads from AnythingLLM's log.
 - What only host services read or write lives in `~/.local/share/everythingllm`
   (`hostrpc.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's
   laid out by kind:

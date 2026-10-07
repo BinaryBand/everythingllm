@@ -10,10 +10,15 @@ def parse_csp(csp: str) -> dict[str, str]:
     return dict(rule.strip().split(" ", 1) for rule in csp.split(";"))
 
 
-def caddy_policies() -> dict[str, dict[str, dict[str, str]]]:
-    """Each site's CSPs by matcher ("default" for the header with none), by its port."""
+def caddy_sites() -> dict[str, str]:
+    """Each site's block in the Caddyfile, by port."""
     text = (ROOT / "host" / "caddy" / "pages.Caddyfile").read_text()
     sites = re.split(r"^:(\d+) \{$", text, flags=re.MULTILINE)[1:]
+    return dict(zip(sites[::2], sites[1::2], strict=True))
+
+
+def caddy_policies() -> dict[str, dict[str, dict[str, str]]]:
+    """Each site's CSPs by matcher ("default" for the header with none), by its port."""
     return {
         port: {
             name or "default": parse_csp(csp)
@@ -21,7 +26,7 @@ def caddy_policies() -> dict[str, dict[str, dict[str, str]]]:
                 r'header (?:@(\w+) )?Content-Security-Policy "([^"]*)"', block
             )
         }
-        for port, block in zip(sites[::2], sites[1::2])
+        for port, block in caddy_sites().items()
     }
 
 
@@ -59,3 +64,19 @@ def test_workspace_pages_run_scripts_only_in_a_sandbox():
         "style-src": "'self' 'unsafe-inline'",
         "sandbox": "allow-scripts allow-downloads",
     }
+
+
+def test_light_link_cards_are_the_files_the_cards_are_saved_as(tmp_path):
+    """The pages site serves a link card's light file for ?theme=light: its rule has to
+    match the names chatimage.card saves, or every light request would get the dark card."""
+    from chatimage import card
+
+    pages = caddy_sites()["8445"]
+    [pattern] = re.findall(r"path_regexp lightcard (\S+)", pages)
+    [light] = re.findall(r"try_files (\S+) \{path\}", pages)
+    dark = card.card_path(tmp_path, "https://h/news/", "dark")
+    name = re.fullmatch(pattern, f"/{card.FOLDER}/{dark.name}")
+    assert name
+    assert light.replace("{re.lightcard.1}", name[1]) == (
+        f"/{card.FOLDER}/{card.card_path(tmp_path, 'https://h/news/', 'light').name}"
+    )

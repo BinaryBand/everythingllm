@@ -145,6 +145,11 @@ def env_keys(storage: Path) -> dict[str, bool]:
     return {k: bool(v) for k, v in env_file(storage / ".env").items()}
 
 
+def reranker_off(storage: Path) -> bool:
+    """Whether AnythingLLM gives the agent every tool (anythingllm/env.example says why)."""
+    return env_file(storage / ".env").get("AGENT_SKILL_RERANKER_ENABLED") == "false"
+
+
 def searxng_answers() -> bool:
     try:
         with urllib.request.urlopen(
@@ -191,9 +196,9 @@ def checklist() -> list[tuple[bool | None, str]]:
             "Enter a Z.AI key, for the deep-research planner (glm-5.3): as the Generic OpenAI provider with base URL https://api.z.ai/api/coding/paas/v4, or on the Z.AI provider's page.",
         ),
         (
-            keys.get("AGENT_SKILL_RERANKER_TOP_N", False)
+            reranker_off(Path(values["ANYTHINGLLM_STORAGE"]))
             and keys.get("AGENT_MAX_TOOL_CALLS", False),
-            "Add AGENT_SKILL_RERANKER_TOP_N and AGENT_MAX_TOOL_CALLS to the .env (see anythingllm/env.example for why), then `uv run hostctl restart`.",
+            "Add AGENT_SKILL_RERANKER_ENABLED=false and AGENT_MAX_TOOL_CALLS to the .env (see anythingllm/env.example for why), then `uv run hostctl restart`.",
         ),
         (
             routed(values.get("PUBLIC_HOST", "")),

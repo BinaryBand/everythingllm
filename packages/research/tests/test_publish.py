@@ -5,13 +5,16 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 from research.publish import (
+    NAME_RE,
     EmbedError,
-    embed_report,
+    ask_embed,
+    embed_document,
     free_file_slug,
     published_stamp,
     report_file,
     save_report_file,
     save_then_publish,
+    write_document,
 )
 from sites.store import Entry
 
@@ -128,56 +131,52 @@ def anythingllm(docs_listed=True, message=None, status=200, listed_after=0):
     return calls, httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_embed_report_stores_an_anythingllm_document_and_embeds_it_into_the_workspace(
-    tmp_path,
-):
-    calls, client = anythingllm()
-    docpath = embed_report(
-        "main",
+def test_write_document_stores_an_anythingllm_document_for_the_embedder(tmp_path):
+    docpath = write_document(
         tmp_path,
         "deep-research",
         "heat-pumps",
         "Heat pumps",
         "https://example.org/r/",
         TEXT,
-        "http://127.0.0.1:3001/api",
-        client,
     )
-    assert re.fullmatch(r"deep-research/heat-pumps-[0-9a-f-]{36}\.json", docpath)
-    assert calls[0] == (
-        "POST",
-        "/api/workspace/main/update-embeddings",
-        {"adds": [docpath], "deletes": []},
-    )
-    assert calls[1][:2] == ("GET", "/api/workspace/main")
+    assert docpath.startswith("deep-research/")
+    assert NAME_RE.fullmatch(docpath.split("/")[1])
     doc = json.loads((tmp_path / docpath).read_text())
     assert doc["pageContent"] == TEXT and doc["title"] == "Heat pumps"
     assert doc["chunkSource"] == "link://https://example.org/r/"
     assert doc["wordCount"] > 10 and doc["token_count_estimate"] > 10
 
 
-def test_embed_report_raises_when_the_document_wasnt_embedded_and_keeps_the_file(
-    tmp_path,
-):
-    args = (
-        "main",
-        tmp_path,
-        "deep-research",
-        "s",
-        "T",
-        "u",
-        TEXT,
-        "http://127.0.0.1:3001/api",
+def test_embed_document_embeds_it_into_the_workspace(tmp_path):
+    calls, client = anythingllm()
+    docpath = "deep-research/heat-pumps-x.json"
+    assert (
+        embed_document("main", docpath, "http://127.0.0.1:3001/api", client) == docpath
     )
+    assert calls[0] == (
+        "POST",
+        "/api/workspace/main/update-embeddings",
+        {"adds": [docpath], "deletes": []},
+    )
+    assert calls[1][:2] == ("GET", "/api/workspace/main")
+
+
+def test_embed_document_raises_when_the_document_wasnt_embedded():
+    args = ("main", "deep-research/s-x.json", "http://127.0.0.1:3001/api")
     with pytest.raises(EmbedError, match="1 documents failed to add"):
-        embed_report(
+        embed_document(
             *args, anythingllm(message="1 documents failed to add.\n\nembedder down")[1]
         )
     with pytest.raises(EmbedError, match="didn't embed it within 0 s"):
-        embed_report(*args, anythingllm(docs_listed=False)[1], wait=0.05, poll=0.01)
+        embed_document(*args, anythingllm(docs_listed=False)[1], wait=0.05, poll=0.01)
     with pytest.raises(EmbedError, match="answered 400 for workspace 'main'"):
-        embed_report(*args, anythingllm(status=400)[1])
-    assert len(list((tmp_path / "deep-research").iterdir())) == 3
+        embed_document(*args, anythingllm(status=400)[1])
+
+
+def test_ask_embed_says_why_the_embedder_didnt(tmp_path):
+    with pytest.raises(EmbedError, match="the embedder"):
+        ask_embed(tmp_path / "missing.sock", "main", "deep-research/s-x.json")
 
 
 def test_published_stamp_is_like_anythingllms_own():
@@ -191,25 +190,13 @@ def test_published_stamp_is_like_anythingllms_own():
     )
 
 
-def test_embed_report_waits_for_the_embedder_to_finish(tmp_path):
+def test_embed_document_waits_for_the_embedder_to_finish():
     calls, client = anythingllm(listed_after=2)
-    docpath = embed_report(
-        "main",
-        tmp_path,
-        "deep-research",
-        "s",
-        "T",
-        "u",
-        TEXT,
-        "http://api",
-        client,
-        poll=0.01,
-    )
-    assert docpath.startswith("deep-research/s-")
+    embed_document("main", "deep-research/s-x.json", "http://api", client, poll=0.01)
     assert [m for m, _, _ in calls] == ["POST", "GET", "GET", "GET"]
 
 
-def test_embed_report_logs_in_and_again_after_a_401(tmp_path):
+def test_embed_document_logs_in_and_again_after_a_401(tmp_path):
     seen, logins = [], []
 
     def handler(request):
@@ -218,21 +205,17 @@ def test_embed_report_logs_in_and_again_after_a_401(tmp_path):
             return httpx.Response(401, text="Unauthorized")
         if request.method == "POST":
             return httpx.Response(200, json={"workspace": {}, "message": None})
-        adds = [p.name for p in (tmp_path / "deep-research").iterdir()]
         return httpx.Response(
             200,
-            json={
-                "workspace": {"documents": [{"docpath": f"deep-research/{adds[0]}"}]}
-            },
+            json={"workspace": {"documents": [{"docpath": "deep-research/h-x.json"}]}},
         )
 
     def login(fresh):
         logins.append(fresh)
         return {"Authorization": f"Bearer t{len(logins)}"}
 
-    embed_report(
-        "main", tmp_path, "deep-research", "heat-pumps", "Heat pumps",
-        "https://example.org/r/", TEXT, "http://127.0.0.1:3001/api",
+    embed_document(
+        "main", "deep-research/h-x.json", "http://127.0.0.1:3001/api",
         httpx.Client(transport=httpx.MockTransport(handler)), login=login,
     )  # fmt: skip
     assert logins == [False, True]

@@ -14,7 +14,7 @@ def settings(tmp_path) -> job.Settings:
     return job.Settings(
         storage=tmp_path / "storage",
         searxng_url="http://searx/search",
-        api="http://api",
+        embed_socket=tmp_path / "embed.sock",
         env_file=str(tmp_path / ".env"),
         runlogs=tmp_path / "logs" / "deep-research",
     )
@@ -103,8 +103,10 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
     embedded = []
     monkeypatch.setattr(
         publish,
-        "embed_report",
-        lambda *a, **k: embedded.append(a) or "deep-research/alpha-x.json",
+        "ask_embed",
+        lambda socket, workspace, docpath: (
+            embedded.append((socket, workspace, docpath)) or docpath
+        ),
     )
     progress, meter = [], []
     req = job.Request(
@@ -156,7 +158,12 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
         "reports",
         "quick",
     )
-    assert embedded[0][0] == "career" and embedded[0][4] == "Alpha and Beta"
+    socket, workspace, docpath = embedded[0]
+    assert (socket, workspace) == (s.embed_socket, "career")
+    folder, name = docpath.split("/")
+    assert folder == publish.INCOMING and publish.NAME_RE.fullmatch(name)
+    doc = json.loads((s.documents_dir / docpath).read_text())
+    assert doc["title"] == "Alpha and Beta"
     assert (
         "Published at https://h/research/reports/alpha-and-beta/"
         in (s.reports_dir / "alpha-and-beta.md").read_text()
@@ -167,7 +174,7 @@ def test_a_finished_run_is_published_embedded_logged_and_told(
         "ok",
         "https://h/research/reports/alpha-and-beta/",
         True,
-        "deep-research/alpha-x.json",
+        docpath,
     )
     assert line["stats"]["findings"] == 2 and "chat_closed" not in line
     assert (line["run_id"], line["card"]) == ("dr-0123abcd", req.card)
@@ -274,18 +281,13 @@ def test_the_callers_split_reaches_the_pipeline(tmp_path, published):
 
 def test_settings_reach_the_hosts_loopback_unless_told_otherwise(tmp_path, monkeypatch):
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
-    for key in ("ANYTHINGLLM_API", "SEARXNG_URL"):
+    for key in ("RESEARCH_EMBED_SOCKET", "SEARXNG_URL"):
         monkeypatch.delenv(key, raising=False)
     s = job.Settings.from_env()
-    assert (s.api, s.searxng_url) == (
-        "http://127.0.0.1:3001/api",
+    assert (s.embed_socket, s.searxng_url) == (
+        tmp_path / "everythingllm" / "research-embed" / "runner.sock",
         "http://127.0.0.1:8888/search",
     )
-    # A container reaches both through the egress proxy, by the tailnet name.
-    monkeypatch.setenv("ANYTHINGLLM_API", "https://host.example:3001/api")
+    # A container reaches SearXNG through the egress proxy, by the tailnet name.
     monkeypatch.setenv("SEARXNG_URL", "https://host.example:8888/search")
-    s = job.Settings.from_env()
-    assert (s.api, s.searxng_url) == (
-        "https://host.example:3001/api",
-        "https://host.example:8888/search",
-    )
+    assert job.Settings.from_env().searxng_url == "https://host.example:8888/search"

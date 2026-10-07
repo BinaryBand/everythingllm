@@ -7,8 +7,9 @@ research-runner runs these for the skill; `research-run` runs one by hand:
 Config (environment, from host.env and the unit; Settings.from_env):
   ANYTHINGLLM_STORAGE  storage directory (hostrpc.storage)
   ANYTHINGLLM_ENV      AnythingLLM's .env, for the model keys (default <storage>/.env)
-  ANYTHINGLLM_API      AnythingLLM's internal API, for embedding (default ANYTHINGLLM_API,
-                       the host's loopback)
+  RESEARCH_EMBED_SOCKET  audit-runner's socket that embeds a report into a workspace and
+                       nothing else (default <storage>/everythingllm/research-embed/runner.sock;
+                       audit.embed): this holds no AnythingLLM login
   SEARXNG_URL          the SearXNG to search (default the host's; publicweb.pages)
   RESEARCH_LIVE_PORT   where the live cards listen (default 8450)
 """
@@ -37,9 +38,6 @@ from research.llm import LLM
 from research.pipeline import Context, research
 from research.web import make_reader, page_client
 
-# AnythingLLM's internal API on the host's loopback; a service container uses
-# https://<PUBLIC_HOST>:3001/api through the egress proxy instead (ANYTHINGLLM_API).
-ANYTHINGLLM_API = "http://127.0.0.1:3001/api"
 OFF = re.compile(r"^(no|off|none|false|0)$", re.IGNORECASE)
 
 
@@ -47,7 +45,7 @@ OFF = re.compile(r"^(no|off|none|false|0)$", re.IGNORECASE)
 class Settings:
     storage: Path
     searxng_url: str
-    api: str  # AnythingLLM's API, for embedding
+    embed_socket: Path  # audit-runner's, which embeds a report (audit.embed)
     env_file: str  # AnythingLLM's .env, for the model keys
     runlogs: Path  # the run log and live runs' markers, host-only
     pages_url: str = (
@@ -62,7 +60,7 @@ class Settings:
         return cls(
             storage=storage,
             searxng_url=searxng_url(),
-            api=get("ANYTHINGLLM_API") or ANYTHINGLLM_API,
+            embed_socket=hostrpc.socket_path("research-embed", "RESEARCH_EMBED_SOCKET"),
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
             runlogs=hostrpc.data_dir() / "research" / "runs",
             pages_url=pages_url(Builder.from_env().source),
@@ -321,18 +319,16 @@ def _run(
             f'adding the report to workspace "{req.workspace_name or req.workspace}"'
         )
         try:
-            copies["document"] = publish.embed_report(
-                req.workspace,
+            docpath = publish.write_document(
                 settings.documents_dir,
-                "deep-research",
+                publish.INCOMING,
                 build.slug,
                 report["title"],
                 url,
                 file_text(url),
-                settings.api,
-                login=lambda fresh: hostrpc.anythingllm_headers(
-                    settings.api, settings.env_file, fresh=fresh
-                ),
+            )
+            copies["document"] = publish.ask_embed(
+                settings.embed_socket, req.workspace, docpath
             )
         except Exception as e:  # noqa: BLE001 - the report is already published; this copy only warns
             copies["document_error"] = str(e)

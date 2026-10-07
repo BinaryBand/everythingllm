@@ -14,7 +14,7 @@ def served(tmp_path, monkeypatch):
     settings = job.Settings(
         storage=tmp_path,
         searxng_url="",
-        api="",
+        embed_socket=tmp_path / "embed.sock",
         env_file="",
         runlogs=tmp_path / "logs" / "deep-research",
         pages_url="https://h:8445/",

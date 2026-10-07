@@ -159,9 +159,10 @@ RESEARCH = {
     f"{DATA}/pages/public": False,  # one mount: a build's rename stays inside it
     f"{STORAGE}/everythingllm/research": False,  # its socket
     f"{STORAGE}/everythingllm/sandbox-build": True,  # the sandbox's build_system_site
+    f"{STORAGE}/everythingllm/research-embed": True,  # audit-runner's embedder
     f"{CTR_ENV}/research-runner.env": True,  # its share of AnythingLLM's .env
     f"{STORAGE}/anythingllm-fs/research": False,
-    f"{STORAGE}/documents/deep-research": False,
+    f"{STORAGE}/documents/deep-research-incoming": False,  # the embedder moves it on
 }
 
 
@@ -193,7 +194,7 @@ def test_research_mounts_only_what_it_uses():
 def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     """Every path research-runner's code uses outside the repo, under the mount it needs."""
     import hostrpc
-    from research import job
+    from research import job, publish
     from sites.build import LOCK, Builder
 
     home, storage = tmp_path / "home", tmp_path / "storage"
@@ -209,6 +210,7 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
         "SITES_OUTPUT",
         "RESEARCH_SOCKET",
         "SANDBOX_BUILD_SOCKET",
+        "RESEARCH_EMBED_SOCKET",
     ):
         monkeypatch.delenv(var, raising=False)
     settings, builder = job.Settings.from_env(), Builder.from_env()
@@ -224,7 +226,7 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     for path in (
         settings.runlogs,
         settings.reports_dir,
-        settings.documents_dir / "deep-research",
+        settings.documents_dir / publish.INCOMING,
         builder.content / site / "reports",
         builder.content / LOCK,
         builder.output / f".{site}.new",
@@ -236,22 +238,30 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     for path in (
         settings.env_file,
         hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET"),
+        settings.embed_socket,
     ):
         read_only(path)  # mounted; read-only will do
     # The research site is built in the sandbox, so the container needs no zola.
     assert builder.theme_from(site) == "system" and builder.remote is not None
 
 
-def test_research_reaches_anythingllm_and_searxng_through_the_proxy(egress):
-    keys = container_keys(QUADLET / "research-runner.container.in")
+def test_research_reaches_searxng_through_the_proxy_and_never_anythingllm(egress):
+    """It reads the web, so it holds no AnythingLLM login and can't reach it: audit-runner
+    embeds its reports (audit.embed)."""
+    template = QUADLET / "research-runner.container.in"
+    keys = container_keys(template)
     env = dict(e.partition("=")[::2] for e in keys["Environment"])
-    assert env["LIVE_HOST"] == "0.0.0.0"
+    assert env["LIVE_HOST"] == "0.0.0.0" and "ANYTHINGLLM_API" not in env
     profile = egress.profile_for(egress.ips()["research-runner"])
     assert profile is not None and profile.name == "research"
-    for key in ("ANYTHINGLLM_API", "SEARXNG_URL"):
-        url = urlsplit(env[key].replace("@PUBLIC_HOST@", "host.example.ts.net"))
-        assert url.scheme == "https" and url.hostname and url.port, key
-        assert profile.judge(url.hostname, url.port) == "allow", key
+    url = urlsplit(env["SEARXNG_URL"].replace("@PUBLIC_HOST@", "host.example.ts.net"))
+    assert url.scheme == "https" and url.hostname and url.port
+    assert profile.judge(url.hostname, url.port) == "allow"
+    assert profile.judge("host.example.ts.net", 3001) is None
+    shared = re.search(r"hostctl\.ctr_env \S+ \S+ (.+)$", template.read_text(), re.M)
+    assert shared and not {"AUTH_TOKEN", "JWT_SECRET", "JWT_SECRET?"} & set(
+        shared.group(1).split()
+    )
 
 
 # What a service container's PodmanArgs may say: the limits Quadlet 5.4 has no key for.

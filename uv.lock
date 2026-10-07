@@ -107,6 +107,7 @@ dependencies = [
     { name = "hostrpc" },
     { name = "mcp" },
     { name = "pydantic" },
+    { name = "research" },
     { name = "sites" },
 ]
 
@@ -116,6 +117,7 @@ requires-dist = [
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "mcp", specifier = ">=2.2,<3" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "research", editable = "packages/research" },
     { name = "sites", editable = "packages/sites" },
 ]
 

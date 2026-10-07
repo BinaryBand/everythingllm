@@ -43,7 +43,7 @@ ips = { relay = "10.89.79.10" }
 
 [profiles.research]
 public = true
-allow = ["@PUBLIC_HOST@:3001", "@PUBLIC_HOST@:8888"]
+allow = ["@PUBLIC_HOST@:8888"]
 ips = { research-runner = "10.89.79.11" }
 
 [profiles.sites]

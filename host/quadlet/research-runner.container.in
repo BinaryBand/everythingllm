@@ -23,7 +23,7 @@ PodmanArgs=--memory=2g --cpus=2 --umask=0002
 RunInit=true
 Timezone=local
 # egress-net only, at its address in egress.toml (profile research: public hosts, and
-# AnythingLLM and SearXNG by the tailnet name).
+# SearXNG by the tailnet name).
 Network=egress-net:ip=10.89.79.11
 Environment=HTTPS_PROXY=http://10.89.79.2:3128
 Environment=HTTP_PROXY=http://10.89.79.2:3128
@@ -33,9 +33,9 @@ Environment=EGRESS_PROXY=http://10.89.79.2:3129
 # one and loopback (hostrpc.local_peer), not another container on egress-net.
 PublishPort=127.0.0.1:8450:8450
 Environment=LIVE_HOST=0.0.0.0
-# The host's loopback isn't reachable from here: AnythingLLM (embedding the report) and
-# SearXNG by the tailnet name, through the proxy.
-Environment=ANYTHINGLLM_API=https://@PUBLIC_HOST@:3001/api
+# The host's loopback isn't reachable from here: SearXNG by the tailnet name, through the
+# proxy. Not AnythingLLM: audit-runner embeds a report for it (audit.embed), so it holds
+# no AnythingLLM login.
 Environment=SEARXNG_URL=https://@PUBLIC_HOST@:8888/search
 # Everything at its host path. The repo, read-only (the code, the sites' sources, host.env).
 Volume=@REPO@:@REPO@:ro
@@ -53,28 +53,31 @@ Volume=%h/.local/share/everythingllm/pages/entries/.build.lock:%h/.local/share/e
 # which is renamed into place (one mount, or the rename fails), and the link cards go in
 # _cards/.
 Volume=%h/.local/share/everythingllm/pages/public:%h/.local/share/everythingllm/pages/public
-# Its socket's folder, and the folder of the sandbox runner's build socket, which serves
+# Its socket's folder, the folder of the sandbox runner's build socket, which serves
 # build_system_site and nothing else (never its runner.sock, which takes any workspace's
-# scope); connecting needs no write access to the folder.
+# scope), and that of audit-runner's embed socket, which embeds a report and nothing else
+# (never the audit's runner.sock); connecting needs no write access to the folder.
 Volume=@ANYTHINGLLM_STORAGE@/everythingllm/research:@ANYTHINGLLM_STORAGE@/everythingllm/research
 Volume=@ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build:@ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build:ro
-# Its share of AnythingLLM's .env, read-only (ExecStartPre writes it): the model keys and
-# its password.
+Volume=@ANYTHINGLLM_STORAGE@/everythingllm/research-embed:@ANYTHINGLLM_STORAGE@/everythingllm/research-embed:ro
+# Its share of AnythingLLM's .env, read-only (ExecStartPre writes it): the model keys, never
+# AnythingLLM's password or JWT secret.
 Volume=%h/.config/everythingllm/ctr/research-runner.env:%h/.config/everythingllm/ctr/research-runner.env:ro
 Environment=ANYTHINGLLM_ENV=%h/.config/everythingllm/ctr/research-runner.env
-# Where the report is saved for the agent's files, and its copy for the workspace.
+# Where the report is saved for the agent's files, and its copy for the workspace, which the
+# embedder moves on to documents/deep-research, out of this container's reach.
 Volume=@ANYTHINGLLM_STORAGE@/anythingllm-fs/research:@ANYTHINGLLM_STORAGE@/anythingllm-fs/research
-Volume=@ANYTHINGLLM_STORAGE@/documents/deep-research:@ANYTHINGLLM_STORAGE@/documents/deep-research
+Volume=@ANYTHINGLLM_STORAGE@/documents/deep-research-incoming:@ANYTHINGLLM_STORAGE@/documents/deep-research-incoming
 # ANYTHINGLLM_STORAGE and PUBLIC_HOST.
 EnvironmentFile=@REPO@/host.env
 
 [Service]
-# Its share of AnythingLLM's .env (the model keys and AnythingLLM's password),
-# never the file, which holds every key and secret AnythingLLM has: written on the host
-# before each start (hostctl.ctr_env), so a restart takes up a changed key.
-ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src:@REPO@/packages/apps/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/research-runner.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF GENERIC_OPEN_AI_BASE_PATH GENERIC_OPEN_AI_API_KEY ZAI_API_KEY AUTH_TOKEN JWT_SECRET?
+# Its share of AnythingLLM's .env (the model keys), never the file, which holds every key
+# and secret AnythingLLM has: written on the host before each start (hostctl.ctr_env), so a
+# restart takes up a changed key.
+ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src:@REPO@/packages/apps/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/research-runner.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF GENERIC_OPEN_AI_BASE_PATH GENERIC_OPEN_AI_API_KEY ZAI_API_KEY
 # podman won't bind-mount what isn't there.
-ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research %h/.local/share/everythingllm/pages/entries/research %h/.local/share/everythingllm/pages/public @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build @ANYTHINGLLM_STORAGE@/anythingllm-fs/research @ANYTHINGLLM_STORAGE@/documents/deep-research
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research %h/.local/share/everythingllm/pages/entries/research %h/.local/share/everythingllm/pages/public @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build @ANYTHINGLLM_STORAGE@/everythingllm/research-embed @ANYTHINGLLM_STORAGE@/anythingllm-fs/research @ANYTHINGLLM_STORAGE@/documents/deep-research-incoming
 ExecStartPre=/usr/bin/touch %h/.local/share/everythingllm/pages/entries/.build.lock
 # A run is mostly waiting on the models; what CPU it takes (page parsing) can give way.
 # The container's processes inherit it from podman.

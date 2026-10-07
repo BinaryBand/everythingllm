@@ -1,8 +1,13 @@
 """Where a finished report goes: a Markdown file in the agent's filesystem folder
 (anythingllm-fs), an entry on the research site, and optionally a document embedded into
-the workspace that ran the research, so later chats can search it."""
+the workspace that ran the research, so later chats can search it.
+
+research-runner, which reads the web, holds no AnythingLLM login: it writes the document
+(`write_document`) and asks audit-runner on the host to embed it (`ask_embed`, over a
+socket that does nothing else, audit.embed), which does it with `embed_document`."""
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -10,12 +15,21 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
+import hostrpc
 import httpx
 from sites.store import Entry, unique_slug
 
 
 class EmbedError(RuntimeError):
     pass
+
+
+# research-runner writes a report's document into AnythingLLM's documents/INCOMING/, and the
+# embedder moves it to documents/FOLDER/, which no container can write, before embedding it
+# there (so it can't be swapped for a symlink to another document meanwhile).
+INCOMING = "deep-research-incoming"
+FOLDER = "deep-research"
+NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,150}-[0-9a-f-]{36}\.json")
 
 
 def report_file(
@@ -80,27 +94,17 @@ EMBED_POLL = 2
 EMBED_POLL_MAX = 10
 
 
-def embed_report(
-    workspace: str,
+def write_document(
     documents_dir: Path,
     folder: str,
     slug: str,
     title: str,
     url: str,
     text: str,
-    api: str,
-    client: httpx.Client | None = None,
     now: datetime | None = None,
-    wait: float = EMBED_WAIT,
-    poll: float = EMBED_POLL,
-    login: Callable[[bool], dict[str, str]] = lambda fresh: {},
 ) -> str:
-    """Store the report as an AnythingLLM document under <documents_dir>/<folder>/ and embed
-    it into the workspace with that slug, through AnythingLLM's API at `api` (as the UI's
-    document picker does), and wait up to `wait` seconds for the workspace to list it.
-    `login(fresh)` gives the headers for AnythingLLM's password (hostrpc.anythingllm_headers).
-    Returns the docpath. Raises EmbedError when it wasn't embedded;
-    the document file stays, so it can still be embedded from the workspace's settings."""
+    """Store the report as an AnythingLLM document under <documents_dir>/<folder>/, as the
+    UI's document picker does; its docpath, for embedding."""
     id = str(uuid.uuid4())
     docpath = f"{folder}/{slug}-{id}.json"
     doc = {
@@ -120,6 +124,41 @@ def embed_report(
     (documents_dir / docpath).write_text(
         json.dumps(doc, indent=4, ensure_ascii=False), encoding="utf-8"
     )
+    return docpath
+
+
+def ask_embed(socket: Path, workspace: str, docpath: str) -> str:
+    """Have audit-runner embed the document at `docpath` (in INCOMING) into the workspace
+    with that slug (audit.embed): where it is now, in FOLDER. EmbedError when it wasn't;
+    the document file stays either way, so it can still be embedded from the workspace's
+    settings."""
+    try:
+        done = hostrpc.request_sync(
+            socket,
+            "embed_report",
+            {"workspace": workspace, "docpath": docpath},
+            EMBED_WAIT + 30,
+            name="the embedder",
+        )
+    except hostrpc.RunnerError as e:
+        raise EmbedError(str(e)) from None
+    return done["docpath"]
+
+
+def embed_document(
+    workspace: str,
+    docpath: str,
+    api: str,
+    client: httpx.Client | None = None,
+    wait: float = EMBED_WAIT,
+    poll: float = EMBED_POLL,
+    login: Callable[[bool], dict[str, str]] = lambda fresh: {},
+) -> str:
+    """Embed the document at `docpath` into the workspace with that slug, through
+    AnythingLLM's API at `api`, and wait up to `wait` seconds for the workspace to list it.
+    `login(fresh)` gives the headers for AnythingLLM's password (hostrpc.anythingllm_headers).
+    Returns the docpath. Raises EmbedError when it wasn't embedded. On the host only
+    (audit.embed): it needs AnythingLLM's password."""
     own = client is None
     client = client or httpx.Client(timeout=300)
     base = f"{api.rstrip('/')}/workspace/{quote(workspace, safe='')}"

@@ -27,8 +27,7 @@ Config (environment, from host.env and the unit):
   RESEARCH_LIVE_PORT    port for the live cards (default 8450; research.live), on LIVE_HOST
                         (default 127.0.0.1; runs.live)
   SEARXNG_URL           the SearXNG to search (default the host's; publicweb.pages)
-  ANYTHINGLLM_API       AnythingLLM's internal API, for embedding (default
-                        http://127.0.0.1:3001/api; research.job)
+  RESEARCH_EMBED_SOCKET  audit-runner's socket that embeds a report (research.job)
   and what research.job.Settings reads.
 """
 

@@ -19,10 +19,13 @@ Config (environment, from host.env and the unit):
                      the Zola sites, as for sites-runner; the report is written to the
                      status site through the same store and build
   AUDIT_RUNLOGS      the deep-research run log (default ~/.local/share/everythingllm/research/runs)
+  AUDIT_EMBED_SOCKET the embedder's socket, for research-runner (audit.embed)
 """
 
+import asyncio
 import json
 import logging
+import signal
 from datetime import datetime, timedelta
 
 import hostrpc
@@ -30,7 +33,7 @@ from hostrpc import RunnerError
 from sites.build import Builder
 from sites.store import SiteError, SiteStore
 
-from audit import checks
+from audit import checks, embed
 from audit.services import WATCHED
 
 # The findings run_checks last numbered, so publish_report publishes the ones the model's
@@ -209,5 +212,22 @@ OPS = (run_checks, publish_report, journal_lines, job_run, run_job, research_run
 runner = hostrpc.Service(OPS, log=logging.getLogger("audit-runner"))
 
 
+async def serve() -> None:
+    """The audit's ops on AUDIT_SOCKET, and beside them the embedder (audit.embed) on a
+    socket of its own, the one research-runner's container mounts, until SIGTERM."""
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, stop.set)
+    servers = (
+        hostrpc.serve(runner, hostrpc.socket_path("audit", "AUDIT_SOCKET"), stop=stop),
+        hostrpc.serve(embed.Embedder.from_env(), embed.socket(), stop=stop),
+    )
+    try:
+        await asyncio.gather(*servers)
+    finally:
+        stop.set()  # one failed: the other stops too
+
+
 def main() -> None:
-    hostrpc.run(runner, "audit", "AUDIT_SOCKET")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    asyncio.run(serve())

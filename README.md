@@ -618,8 +618,7 @@ in the peer's place), and refuses any other with a 403: it works unchanged as a 
 on `127.0.0.1` and behind the published port, and another container, coming from an
 address of its own, gets nothing. A container can't reach the
 host's loopback either, so it reaches AnythingLLM and SearXNG by their tailnet names
-through the proxy: `ANYTHINGLLM_API=https://<PUBLIC_HOST>:3001/api` (research),
-`ANYTHINGLLM_URL=https://<PUBLIC_HOST>:3001` (the relay) and
+through the proxy: `ANYTHINGLLM_URL=https://<PUBLIC_HOST>:3001` (the relay) and
 `SEARXNG_URL=https://<PUBLIC_HOST>:8888/search` (research, the article writer). All default
 to the host's loopback.
 
@@ -1364,11 +1363,15 @@ A run, step by step:
    fails (the site doesn't keep an entry it couldn't build), the card says so and the run
    log has the saved file and the error.
 7. **Keep a copy** — unless the `EMBED_IN_WORKSPACE` setup
-   arg is `no`, it's also stored in `storage/documents/deep-research/` and embedded into
-   the workspace that ran it, through AnythingLLM's API as the UI's document picker does
+   arg is `no`, it's also stored as an AnythingLLM document and embedded into the
+   workspace that ran it, so later chats can search it. research-runner reads the web, so
+   it holds no AnythingLLM login: it writes the document to
+   `storage/documents/deep-research-incoming/` and asks audit-runner, on a socket that does
+   nothing else (`storage/everythingllm/research-embed/`, `audit.embed`), which moves it to
+   `storage/documents/deep-research/`, out of the container's reach and never through a
+   symlink, and embeds it through AnythingLLM's API as the UI's document picker does
    (`POST /api/workspace/<slug>/update-embeddings`, then a look at the workspace's
-   documents, since the native embedder doesn't say what it embedded), so later chats can
-   search it. Scheduled jobs have no workspace, so they only save the file. A failure here
+   documents, since the native embedder doesn't say what it embedded). Scheduled jobs have no workspace, so they only save the file. A failure here
    only warns: the reply and the run log (`file_error`, `document_error`) say so.
 
 Depth (`quick` / `standard` / `thorough`, default standard) sets workers, steps per worker,
@@ -1459,14 +1462,14 @@ host path:
   mount (the link cards go in its `_cards/`)
 - in storage: its socket folder; the sandbox's build socket's (`sandbox-build/`, which
   serves only `build_system_site`), read-only (connecting needs no more): the research site has `theme_from = "system"`, so no zola runs in the
-  container; `anythingllm-fs/research/` and `documents/deep-research/`
+  container; audit-runner's embed socket's (`research-embed/`, which only embeds a report),
+  read-only; `anythingllm-fs/research/` and `documents/deep-research-incoming/`
 - its share of AnythingLLM's `.env` (`~/.config/everythingllm/ctr/research-runner.env`),
-  read-only: the DeepSeek and Z.AI keys, DeepSeek's model and AnythingLLM's password, with
-  `JWT_SECRET` only as being set
+  read-only: the DeepSeek and Z.AI keys and DeepSeek's model, never AnythingLLM's password
 
 It goes out only through the egress proxy, with the `research` profile: any public host
-(the pages it reads, DeepSeek and Z.AI), and AnythingLLM and SearXNG by the tailnet name
-(`ANYTHINGLLM_API=https://<PUBLIC_HOST>:3001/api`, `SEARXNG_URL`). A page the proxy refuses
+(the pages it reads, DeepSeek and Z.AI), and SearXNG by the tailnet name (`SEARXNG_URL`),
+never AnythingLLM. A page the proxy refuses
 (a LAN or tailnet address) is skipped as any unreadable page is. Only the research site's
 entries are mounted, so a `SITE` setup arg naming another site can't publish there: the
 report is still saved to the agent's files, and the reply says why. Its share of `.env` is

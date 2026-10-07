@@ -45,7 +45,8 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
     relay, research = config.profiles["relay"], config.profiles["research"]
     assert not relay.public and research.public
     assert {(TAILNET, 3001), ("ntfy.sh", 443)} <= relay.allow
-    assert {(TAILNET, 3001), (TAILNET, 8888)} <= research.allow
+    assert (TAILNET, 8888) in research.allow
+    assert (TAILNET, 3001) not in research.allow  # audit-runner embeds its reports
     assert (TAILNET, 8888) in config.profiles["sites"].allow
     assert (TAILNET, 3001) not in config.profiles["sites"].allow
     for p in config.profiles.values():  # uv's first sync, for every container

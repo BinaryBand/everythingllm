@@ -18,6 +18,7 @@ hostrpc = { workspace = true }
 llm = { workspace = true }
 podcasts = { workspace = true }
 publicweb = { workspace = true }
+research = { workspace = true }
 runs = { workspace = true }
 sandbox = { workspace = true }
 sites = { workspace = true }

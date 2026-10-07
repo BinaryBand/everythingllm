@@ -4,50 +4,58 @@ import httpx
 from research import notify
 
 CHAT = {"workspace": "career", "thread": "7"}
+TOPIC = "https://ntfy.example/secret-topic"
 
 
 def test_the_message_names_the_run_and_its_chat_and_links_the_report():
-    headers, body = notify.message(
-        "dr-1", True, " Is   bitcoin\nworth it? " + "x" * 200, CHAT, "https://h/r/"
-    )
+    question = " Is   bitcoin\nworth it? " + "x" * 200
+    result = {"status": "ok", "url": "https://h/r/", "reply": "the report's text"}
+    headers, body = notify.message("dr-1", question, CHAT, result)
     assert headers == {
         "Title": "Research ready",
         "Tags": "run=dr-1,workspace=career,thread=7",
         "Click": "https://h/r/",
     }
     assert body == ("Is bitcoin worth it? " + "x" * 200)[:120].encode()
-    headers, _ = notify.message("dr-2", False, "q", CHAT, None)
+    headers, _ = notify.message("dr-2", "q", CHAT, {"status": "failed"})
     assert headers["Title"] == "Research failed" and "Click" not in headers
 
 
-def test_publishing_posts_to_the_topic_and_keeps_its_url_out_of_the_log(caplog):
+def published(respond, token=""):
+    """The requests a publish to TOPIC made, its transport answering with respond."""
     seen = []
 
     def handler(request):
         seen.append(request)
-        return httpx.Response(500 if len(seen) > 1 else 200)
+        return respond(request)
 
     async def go():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            publish = notify.publisher(client, "https://ntfy.example/secret-topic", "tk")
-            await publish("dr-1", True, "q", CHAT, "https://h/r/")
-            await publish("dr-2", True, "q", CHAT, None)
-
-        def refused(request):
-            raise httpx.ConnectError("no route to https://ntfy.example/secret-topic")
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(refused)) as client:
-            await notify.publisher(client, "https://ntfy.example/secret-topic")(
-                "dr-3", False, "q", CHAT, None
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            await notify.publisher(client, TOPIC, token)(
+                "dr-1", "q", CHAT, {"status": "ok"}
             )
 
     asyncio.run(go())
-    assert str(seen[0].url) == "https://ntfy.example/secret-topic"
-    assert seen[0].headers["authorization"] == "Bearer tk"
-    assert seen[0].headers["click"] == "https://h/r/"
-    assert seen[0].content == b"q"
-    assert "ntfy answered 500 for dr-2" in caplog.text
-    assert "couldn't notify ntfy about dr-3: ConnectError" in caplog.text
+    return seen
+
+
+def test_publishing_posts_to_the_topic_with_its_token():
+    [request] = published(lambda _: httpx.Response(200), token="tk")
+    assert str(request.url) == TOPIC
+    assert request.headers["authorization"] == "Bearer tk"
+    assert request.content == b"q"
+
+
+def test_a_refusal_or_a_broken_connection_is_logged_without_the_topic(caplog):
+    published(lambda _: httpx.Response(500))
+    assert "ntfy answered 500 for dr-1" in caplog.text
+
+    def refused(_):
+        raise httpx.ConnectError(f"no route to {TOPIC}")
+
+    published(refused)
+    assert "couldn't notify ntfy about dr-1: ConnectError" in caplog.text
     assert "secret-topic" not in caplog.text
 
 

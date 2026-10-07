@@ -27,11 +27,13 @@ class Gate:
         self.lock = threading.Lock()
         self.closed = []
         self.reqs = []
-        self.status = "ok"
-        self.notices = []  # what the runner told the app, through notify
+        self.status = "ok"  # "crash" raises instead
+        self.notices = []  # what the runner told, through research.notify's publish
 
-    async def notify(self, *notice):
-        self.notices.append(notice)
+    async def tell(self, run_id, question, chat, result):
+        self.notices.append(
+            (run_id, result["status"], question, chat, result.get("url"))
+        )
 
     def __call__(self, req, settings, progress, chat_closed, meter):
         with self.lock:
@@ -44,6 +46,8 @@ class Gate:
         self.closed.append(chat_closed())
         with self.lock:
             self.running -= 1
+        if self.status == "crash":
+            raise RuntimeError("boom")
         return {
             "status": self.status,
             "reply": f"done: {req.question}",
@@ -69,7 +73,9 @@ def served(tmp_path, monkeypatch):
 
     async def start():
         task = asyncio.create_task(
-            runner.serve(settings, socket, runner.Runner(settings, execute=gate, notify=gate.notify))
+            runner.serve(
+                settings, socket, runner.Runner(settings, execute=gate, tell=gate.tell)
+            )
         )
         for _ in range(100):
             if socket.exists():
@@ -151,9 +157,9 @@ def test_a_gateway_clients_runs_are_its_own(served):
 
 
 def test_a_run_from_a_chat_tells_its_app_when_it_ends(served):
-    """A run the skill started from a workspace's chat is told to notify (research.notify),
-    ok or not, with the report's URL; a gateway client's run and a scheduled job's tell no
-    one, and neither does one without a scope."""
+    """A run the skill started from a workspace's chat is told (research.notify), ok,
+    failed or crashed; a gateway client's run and a scheduled job's tell no one, and
+    neither does one without a scope."""
     _settings, gate, socket, start = served
     chat = {"workspace": "career", "thread": "7"}
 
@@ -169,17 +175,22 @@ def test_a_run_from_a_chat_tells_its_app_when_it_ends(served):
         ok = await finished(question="Bitcoin?", scope=chat)
         gate.status = "failed"
         failed = await finished(question="Gold?", scope=chat)
+        gate.status = "crash"
+        crashed = await finished(question="Oil?", scope=chat)
         await finished(question="Mine", scope=chat, owner="client-a")
-        await finished(question="Job", scope={"workspace": "_jobs", "thread": "default"})
+        await finished(
+            question="Job", scope={"workspace": "_jobs", "thread": "default"}
+        )
         await finished(question="Old skill")
-        await asyncio.sleep(0.05)  # the notices go in tasks of their own
+        await asyncio.sleep(0.05)  # a run is told after its waiters hear
         server.cancel()
-        return ok, failed
+        return ok, failed, crashed
 
-    ok, failed = asyncio.run(go())
+    ok, failed, crashed = asyncio.run(go())
     assert gate.notices == [
-        (ok, True, "Bitcoin?", chat, "https://h:8445/research/reports/Bitcoin?/"),
-        (failed, False, "Gold?", chat, "https://h:8445/research/reports/Gold?/"),
+        (ok, "ok", "Bitcoin?", chat, "https://h:8445/research/reports/Bitcoin?/"),
+        (failed, "failed", "Gold?", chat, "https://h:8445/research/reports/Gold?/"),
+        (crashed, "failed", "Oil?", chat, None),
     ]
 
 

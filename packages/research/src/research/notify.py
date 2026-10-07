@@ -20,27 +20,26 @@ QUESTION_CHARS = 120
 
 
 def message(
-    run_id: str, ok: bool, question: str, scope: dict[str, str], url: str | None
+    run_id: str, question: str, chat: dict, result: dict
 ) -> tuple[dict[str, str], bytes]:
-    """The ntfy headers and body for an ended run. `scope` is the chat's (_lib/scope.js):
-    its workspace's slug and its thread's id."""
+    """The ntfy headers and body for an ended run: `chat` is the skill's scope
+    (_lib/scope.js), its workspace's slug and its thread's id; `result` is job.run's."""
+    ok = result.get("status") == "ok"
     headers = {
         "Title": "Research ready" if ok else "Research failed",
         # Subscribers get the tags, not other request headers.
-        "Tags": f"run={run_id},workspace={scope['workspace']},thread={scope['thread']}",
+        "Tags": f"run={run_id},workspace={chat['workspace']},thread={chat.get('thread', '')}",
     }
-    if url:
-        headers["Click"] = url
+    if result.get("url"):
+        headers["Click"] = result["url"]
     return headers, " ".join(question.split())[:QUESTION_CHARS].encode()
 
 
 def publisher(client: httpx.AsyncClient, url: str, token: str = ""):
     """A notify coroutine for research.runner.Runner that posts to the topic at `url`."""
 
-    async def publish(
-        run_id: str, ok: bool, question: str, scope: dict[str, str], report: str | None
-    ) -> None:
-        headers, body = message(run_id, ok, question, scope, report)
+    async def publish(run_id: str, question: str, chat: dict, result: dict) -> None:
+        headers, body = message(run_id, question, chat, result)
         if token:
             headers["Authorization"] = f"Bearer {token}"
         try:

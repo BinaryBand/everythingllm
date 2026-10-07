@@ -1012,9 +1012,10 @@ name bound in so one workspace's file can't stand in for another's.
   it isn't a store for API keys). Only you make one: take over, press "Make a passkey" in
   the Saved logins panel, then add a passkey on the site's page. Every page then has a
   virtual authenticator (Chromium's WebAuthn over CDP, which no page can reach) until one is
-  made, 5 minutes pass or you hand back; what a site makes is saved at once, asking first,
-  since nobody touches a key when it signs in, and once more on the hand-back or as the
-  browser stops, as a passkey the site has and the vault doesn't is one nobody can use. The
+  made, 5 minutes pass or you hand back. What a site makes is saved, asking first since
+  nobody touches a key when it signs in, as the panel next refreshes (or, with it closed,
+  on the hand-back or as the browser stops), as a passkey the site has and the vault
+  doesn't is one nobody can use. The
   agent signs in with `browser-login` `passkey`, naming the passkey and the page's button
   for it: the runner and the driver check the page is on the passkey's site over https, as
   for a login, the driver puts an authenticator holding only that passkey in the page for
@@ -1272,8 +1273,7 @@ host path:
 - its share of AnythingLLM's `.env` (`~/.config/everythingllm/ctr/research-runner.env`),
   read-only: the DeepSeek and Z.AI keys and DeepSeek's model, never AnythingLLM's password
 
-The relay's `relay.env` (`NTFY_URL`, `NTFY_TOKEN`) comes in as values podman reads on the
-host (`EnvironmentFile=`), not as a file; `research-setup` makes it when it's missing.
+It gets the relay's `NTFY_URL` and `NTFY_TOKEN` as values (`EnvironmentFile=`), not the file.
 
 It goes out only through the egress proxy, with the `research` profile: any public host
 (the pages it reads, DeepSeek and Z.AI), SearXNG by `PUBLIC_HOST` (`SEARXNG_URL`) and the
@@ -1575,8 +1575,7 @@ and `run=…,workspace=…,thread=…` as its tags; never the answer. A reset is
 
 Its settings live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
 AnythingLLM container mounts: only the optional `NTFY_URL` and `NTFY_TOKEN`, which are
-secrets, and which research-runner reads too, to tell the same topic when a research run
-ends (see "Deep research"). `uv run hostctl relay-setup` makes the file, builds the service image, maps
+secrets (research-runner reads them too; see "Deep research"). `uv run hostctl relay-setup` makes the file, builds the service image, maps
 `/everythingllm` on :3001 and starts the container; `uv run hostctl relay-logs` follows it
 (any app's `<app>-logs`). `relay.app`'s docstring lists the rest of the config. A client's
 key never appears in a response or a log line, and a test holds that.

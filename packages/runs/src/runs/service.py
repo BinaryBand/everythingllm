@@ -15,7 +15,9 @@ passes from the client's token, never from the model. An op given an owner sees 
 owner's runs, and another's is "no run here", as a missing one is; given none (AnythingLLM's
 skills, hostctl), it sees them all.
 
-A run belongs to the service, not to a chat: it carries on when its caller goes away. At
+A run belongs to the service, not to a chat: it carries on when its caller goes away. Once
+it has ended (done, failed or crashed) and its waiters have the result, the service's
+`ended(run)` hears of it; by default that does nothing. At
 most MAX_RUNS go at once; the rest wait their turn. A finished run can be fetched for
 RESULT_KEEP seconds; the service's run log is the record after that. A caller waiting, or
 a live card being watched, counts as someone following the run (RunService.followed).
@@ -157,6 +159,13 @@ class RunService(hostrpc.Service):
         run.changed.set()
         loop.call_later(self.RESULT_KEEP + 1, self.prune)
         self.log.info("%s finished: %s", run.id, result.get("status"))
+        try:
+            await self.ended(run)
+        except Exception:
+            self.log.exception("%s: its end couldn't be told", run.id)
+
+    async def ended(self, run: Run) -> None:
+        """Hears of each run once it has ended, with its result, after its waiters do."""
 
     async def op_wait(
         self, run_id: str, since: int = 0, owner: str | None = None

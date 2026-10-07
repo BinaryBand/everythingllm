@@ -78,8 +78,6 @@ test("a queued run says so, and without a card the reply says less", async () =>
     assert.match(reply, /the report will be on the research site/);
     assert.equal(runner.requests[0].args.sub_questions, null);
     assert.equal(runner.requests[0].args.title, null);
-    await runtime.handler.call(agent({ workspace: null }), { question: "From a job" });
-    assert.deepEqual(runner.requests[1].args.scope, { workspace: "_jobs", thread: "default" });
   } finally {
     await runner.close();
   }

@@ -16,7 +16,8 @@ queries}), which the planner then doesn't make; `title` is the report's title wi
 `owner` is a gateway client's (gateway.research adds it from the client's token): its runs
 are its own, and it sees no others (runs.service). The skill gives none and sees them all.
 `scope` is the chat the skill was called from ({workspace, thread}, _lib/scope.js): when a
-run from a workspace's chat ends, the Nilson app hears of it through ntfy (research.notify).
+run from a workspace's chat ends, the Nilson app hears of it through ntfy (research.notify);
+a gateway client's run and a scheduled job's ("_jobs") tell no one.
 
 `card` is the run's live progress card for the agent to paste (research.live, which
 this runner serves on its own port); "" without PUBLIC_HOST.
@@ -77,17 +78,12 @@ def check_split(sub_questions: Any, title: Any) -> None:
         raise RunnerError(f"title must be text of at most {MAX_TITLE} characters.")
 
 
-def told(owner: str | None, scope: Any) -> dict[str, str] | None:
-    """The chat whose app hears that a run ended: the skill's, from a workspace's chat. A
-    gateway client's runs and a scheduled job's (workspace "_jobs") tell no one."""
-    if owner is not None or not isinstance(scope, dict):
-        return None
-    workspace, thread = scope.get("workspace"), scope.get("thread")
-    if not isinstance(workspace, str) or not isinstance(thread, str):
-        return None
-    if not workspace or workspace == "_jobs":
-        return None
-    return {"workspace": workspace, "thread": thread}
+def told(owner: str | None, scope: Any) -> dict | None:
+    """The chat told when the run ends, if any (see the module's docstring)."""
+    if owner is None and isinstance(scope, dict):
+        if scope.get("workspace") not in (None, "", "_jobs"):
+            return scope
+    return None
 
 
 class Runner(RunService):
@@ -97,12 +93,12 @@ class Runner(RunService):
     SUBJECT_KEY = "question"
     MAX_RUNS = 2
 
-    def __init__(self, settings: job.Settings, execute=job.run, notify=None):
+    def __init__(self, settings: job.Settings, execute=job.run, tell=None):
         super().__init__()
         self.settings = settings
         self.execute = execute
-        # research.notify's publish, or None: told when a run from a workspace's chat ends.
-        self.notify = notify
+        self.tell = tell  # research.notify's publish, or None
+        self.chats: dict[str, dict] = {}  # a run's id -> the chat told when it ends
 
     async def op_start(
         self,
@@ -112,20 +108,20 @@ class Runner(RunService):
         **args,
     ) -> dict:
         """args: depth, planner, worker, planner_fallback, site, sub_questions, title
-        (job.Request's fields); None or "" takes the default. `owner`: the module's.
-        `scope`: the skill's chat, whose app hears when the run ends."""
+        (job.Request's fields); None or "" takes the default. `owner`, `scope`: the
+        module's."""
         if not isinstance(question, str) or not question.strip():
             raise RunnerError("No research question was given.")
         check_split(args.get("sub_questions"), args.get("title") or None)
         req = job.Request.of(question, **args)
         run = self.new_run(req.question, owner)
+        if chat := told(owner, scope):
+            self.chats[run.id] = chat
         card = live.Live.card_line(self.settings.pages_url, run.id, req.question)
         req = replace(req, run_id=run.id, card=card)
 
-        chat = told(owner, scope)
-
         async def work(run: Run, progress: Progress, meter: Meter) -> dict[str, Any]:
-            result = await asyncio.to_thread(
+            return await asyncio.to_thread(
                 self.execute,
                 req,
                 self.settings,
@@ -133,19 +129,16 @@ class Runner(RunService):
                 lambda: not self.followed(run),
                 meter,
             )
-            if self.notify and chat:
-                # In its own task, so a slow ntfy doesn't hold up the run's end.
-                ok = result.get("status") == "ok"
-                notice = self.notify(run.id, ok, req.question, chat, result.get("url"))
-                task = asyncio.create_task(notice)
-                self.tasks.add(task)
-                task.add_done_callback(self.tasks.discard)
-            return result
 
         queued = self.launch(run, work)
         log.info("%s started: %s", run.id, req.question[:120])
         # How many runs this one waits for before it can start.
         return {"run_id": run.id, "queued": queued, "card": card}
+
+    async def ended(self, run: Run) -> None:
+        chat = self.chats.pop(run.id, None)
+        if self.tell and chat and run.result is not None:
+            await self.tell(run.id, run.subject, chat, run.result)
 
     def crashed(self, error: Exception) -> dict[str, Any]:
         # job.run doesn't raise; this is the runner's own trouble
@@ -159,7 +152,7 @@ class Runner(RunService):
 async def serve(
     settings: job.Settings, socket: Path, runner: Runner | None = None
 ) -> None:
-    runner = runner or Runner(settings, notify=notify.from_env())
+    runner = runner or Runner(settings, tell=notify.from_env())
     card = live.Live(runner, settings.runlogs, settings.pages_url)
     await runner.serve(socket, card, settings.live_port, settings.runlogs)
 

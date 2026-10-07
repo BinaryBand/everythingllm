@@ -20,7 +20,9 @@ which no run mounts and the size limit leaves out; the browser saves downloads i
 
 The shared and system folders are mounted noexec and never on PATH: they're data, and code
 in another workspace's folder isn't to be run. A workspace's folders together (its shared
-folder too) are held to WORKSPACE_MAX_BYTES. The script itself is mounted read-only from a
+folder too) are held to WORKSPACE_MAX_BYTES: no run starts past it, and one that takes the
+workspace past it and RUN_SLACK, or past MAX_FILES files, is killed (`watch`, every
+WATCH_SECONDS); no file a run writes can be over FILE_MAX_BYTES. The script itself is mounted read-only from a
 host-only folder at /sandbox.
 
 Nothing is written by more than one workspace, so the workspace's lock is all the runner
@@ -149,6 +151,14 @@ OUTPUT_BYTES = 20_000  # per stream of a run
 WRITE_BYTES = 1_000_000  # op_write
 WORKSPACE_WARN_BYTES = 4 << 30
 WORKSPACE_MAX_BYTES = 5 << 30  # no new runs or writes past this; deletes still work
+# A run is stopped if, while it runs, the workspace grows past WORKSPACE_MAX_BYTES and
+# RUN_SLACK, or holds more than MAX_FILES files: looked at every WATCH_SECONDS, and no one
+# file it writes can be over FILE_MAX_BYTES (RLIMIT_FSIZE).
+RUN_SLACK = 1 << 30
+MAX_FILES = 200_000
+WATCH_SECONDS = 3.0
+FILE_MAX_BYTES = 2 << 30
+OPEN_FILES = 4096
 PUBLISH_MAX_BYTES = 500 << 20  # what publish or a build copies into /public at once
 THREAD_MAX_AGE = 7 * 24 * 3600
 # The workspace's browser profile, in its folder beside the sandbox's (packages/browser).
@@ -789,10 +799,17 @@ class Runner(hostrpc.Service):
                 )
                 async with self._runs:
                     started = self.now()
-                    exit_code, out, err, timed_out = await self.podman(
-                        args + [interpreter, f"/sandbox/{script}"], timeout, name
-                    )
+                    watch = asyncio.create_task(self.watch(scope, name))
+                    try:
+                        exit_code, out, err, timed_out = await self.podman(
+                            args + [interpreter, f"/sandbox/{script}"], timeout, name
+                        )
+                    finally:
+                        watch.cancel()
                     took = self.now() - started
+                    (over,) = await asyncio.gather(watch, return_exceptions=True)
+                    if isinstance(over, str) and over:
+                        err = f"{err}\n[the sandbox stopped this run: {over}]".lstrip()
                     oom = False
                     if exit_code == 137 and not timed_out:
                         _, state, _, _ = await self.podman(
@@ -840,6 +857,22 @@ class Runner(hostrpc.Service):
             else None,
         }
 
+    async def watch(self, scope: Scope, name: str) -> str:
+        """While a run goes, look at the workspace's use every WATCH_SECONDS and kill the
+        run if it fills the disk; what it went over, or "" if it was stopped first."""
+        while True:
+            await asyncio.sleep(WATCH_SECONDS)
+            usage = await asyncio.to_thread(snapshot, scope)
+            if usage.total > WORKSPACE_MAX_BYTES + RUN_SLACK:
+                over = f"the workspace went over {(WORKSPACE_MAX_BYTES + RUN_SLACK) >> 20} MB"
+            elif len(usage.files) > MAX_FILES:
+                over = f"the workspace went over {MAX_FILES} files"
+            else:
+                continue
+            log.warning("killing run %s in %s: %s", name, scope.workspace, over)
+            await self.podman(["kill", name], 30, None)
+            return over
+
     def hardening(self, name: str) -> list[str]:
         """Every sandbox container's podman arguments up to its network and mounts."""
         return [
@@ -859,6 +892,10 @@ class Runner(hostrpc.Service):
             "1",
             "--pids-limit",
             "256",
+            "--ulimit",
+            f"fsize={FILE_MAX_BYTES}:{FILE_MAX_BYTES}",
+            "--ulimit",
+            f"nofile={OPEN_FILES}:{OPEN_FILES}",
             "--cap-drop",
             "ALL",
             "--security-opt",

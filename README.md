@@ -773,7 +773,9 @@ They live in `~/.local/share/everythingllm/sandbox/workspaces/<workspace>/` (`th
 (`write-file`, `publish`) only take paths in the caller's own folders, never another
 workspace's. A workspace's folders together are held to 5 GB: over that, runs and writes are
 refused until the agent deletes something with `write-file`, and the refusal names the
-biggest files and folders, since no run can look for them. A run warns past 4 GB. Runs in
+biggest files and folders, since no run can look for them. A run warns past 4 GB, and one
+that takes the workspace past 6 GB or 200,000 files while it goes is killed (the runner
+looks every 3 s), so a run can't fill the host's disk. Runs in
 one workspace take turns, since they share `/project`; while one is going, a write or
 publish from any of the workspace's chats fails at once rather than waiting. Runs in
 different workspaces overlap. `docs/.proposals/shared-sites.md` (kept out of git) has the design.
@@ -809,7 +811,8 @@ nothing changes then. A build waits like a run (`op_wait`).
 read-only from a host-only folder at `/sandbox`:
 
 - non-root (`--userns keep-id`), read-only root, `--cap-drop ALL`, `no-new-privileges`;
-- 1 CPU, 1 GB memory, 256 processes, 60 s by default (300 s max), then killed; a run
+- 1 CPU, 1 GB memory, 256 processes, 4096 open files, no file over 2 GB, 60 s by
+  default (300 s max), then killed; a run
   that hits the memory limit is reported as such (podman's `OOMKilled`);
 - output clipped to the first and last part; at most 2 runs at once;
 - containers carry the label `everythingllm-sandbox=1`; the runner removes any left over

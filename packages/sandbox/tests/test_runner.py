@@ -1130,3 +1130,38 @@ def test_publish_never_reads_through_a_symlink_a_run_left_in_public(cfg):
     (public(cfg, A) / "y.html").symlink_to(project(cfg, B) / "private.html")
     assert runner.regular_files(public(cfg, A) / "y.html") == ([], 0)
     assert runner.regular_files(public(cfg, A) / "x")[0][0][1] == "other.html"
+
+
+def test_a_run_cant_write_one_huge_file_or_too_many_open(cfg):
+    r = make(cfg)
+    go(r.op_run(A, "bash", "true"))
+    args = r.podman.runs()[0][0]
+    assert f"fsize={runner.FILE_MAX_BYTES}:{runner.FILE_MAX_BYTES}" in args
+    assert f"nofile={runner.OPEN_FILES}:{runner.OPEN_FILES}" in args
+
+
+@pytest.mark.parametrize("what", ["bytes", "files"])
+def test_a_run_that_fills_the_disk_is_stopped_while_it_runs(cfg, monkeypatch, what):
+    monkeypatch.setattr(runner, "WATCH_SECONDS", 0.01)
+    if what == "bytes":
+        monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 100)
+        monkeypatch.setattr(runner, "RUN_SLACK", 100)
+    else:
+        monkeypatch.setattr(runner, "MAX_FILES", 5)
+
+    def fill(m):
+        for i in range(10):
+            (m["/work"] / f"f{i}").write_bytes(b"x" * 50)
+
+    r = make(cfg, effect=fill, delay=0.3, result=(137, "", "", False))
+    res = go(r.op_run(A, "bash", "yes > big"))
+    assert ["kill"] == [c[0][0] for c in r.podman.calls if c[0][0] == "kill"]
+    assert "the sandbox stopped this run: the workspace went over" in res["stderr"]
+
+
+def test_a_run_within_its_limits_isnt_watched_to_death(cfg, monkeypatch):
+    monkeypatch.setattr(runner, "WATCH_SECONDS", 0.01)
+    r = make(cfg, delay=0.1)
+    res = go(r.op_run(A, "bash", "sleep 1"))
+    assert not [c for c in r.podman.calls if c[0][0] == "kill"]
+    assert "stopped" not in res["stderr"]

@@ -3,8 +3,8 @@
 `AnythingLLM` is the developer API (/api/v1), for delegation: workspaces, threads and a
 thread's chat, which runs the workspace's agent headless when the message starts with
 @agent. `InternalAPI` is the internal one (/api, which AnythingLLM's UI uses), for its
-scheduled jobs, which the developer API doesn't have; it logs in with AnythingLLM's
-password (hostrpc.anythingllm_headers), and once more after a 401.
+scheduled jobs and saved memories, which the developer API doesn't have; it logs in with
+AnythingLLM's password (hostrpc.anythingllm_headers), and once more after a 401.
 
 Config (environment, from host.env and agents.env through the unit):
   ANYTHINGLLM_URL      AnythingLLM's address (default http://127.0.0.1:3001)
@@ -162,6 +162,8 @@ def internal_error(status: int, reply: Any) -> str:
     """A plain-language message for a non-2xx answer from the internal API, with what
     AnythingLLM said when it said something (a 400's reason)."""
     said = reply.get("error") if isinstance(reply, dict) else None
+    if status == 403 and said:  # a feature that's off ("Personalization is disabled.")
+        return f"AnythingLLM refused it: {said}"
     if status in (401, 403):
         return "AnythingLLM refused agents-runner's login (the password in its .env)."
     if status == 404:
@@ -173,7 +175,7 @@ def internal_error(status: int, reply: Any) -> str:
 
 @dataclass
 class InternalAPI:
-    """AnythingLLM's internal API: its scheduled jobs. `login(fresh)` gives the headers
+    """AnythingLLM's internal API: its scheduled jobs and saved memories. `login(fresh)` gives the headers
     (by default hostrpc.anythingllm_headers, with the password in `env_file`); it runs in
     a thread, since it blocks, and once more with fresh=True after a 401."""
 
@@ -272,6 +274,27 @@ class InternalAPI:
 
     async def disable(self, job_id: int) -> None:
         await self.call("PUT", f"/scheduled-jobs/{int(job_id)}", {"enabled": False})
+
+    async def memories(self, slug: str) -> dict[str, list[dict]]:
+        """The saved memories a chat in `slug` gets: {global: [...], workspace: [...]},
+        each newest first."""
+        reply = await self.call("GET", f"/workspaces/{quote(slug)}/memories") or {}
+        found = reply.get("memories") or {}
+        return {k: found.get(k) or [] for k in ("global", "workspace")}
+
+    async def memory_new(self, slug: str, content: str, scope: str) -> dict:
+        reply = await self.call(
+            "POST",
+            f"/workspaces/{quote(slug)}/memories",
+            {"content": content, "scope": scope},
+        )
+        if not isinstance(reply, dict) or not reply.get("memory"):
+            said = reply.get("error") if isinstance(reply, dict) else None
+            raise AnythingLLMError(f"AnythingLLM didn't save it: {said or reply}")
+        return reply["memory"]
+
+    async def memory_delete(self, memory_id: int) -> None:
+        await self.call("DELETE", f"/memories/{int(memory_id)}")
 
 
 def parsed_tools(job: dict) -> dict:

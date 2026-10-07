@@ -236,6 +236,8 @@ through its UI.
     AnythingLLM's scheduled jobs, make a recurring one, and set one-off jobs that are
     deleted once they've run, through `agents-runner` (see "Scheduled jobs from a chat");
     each shows first and acts only with `apply`
+  - `memories/` — list, save or forget AnythingLLM's saved memories, through `agents-runner`
+    (see "Saved memories"); forget shows first and deletes only with `apply`
   - `write-entry/`, `delete-entry/` — the ops of the sites runner that write. They're
     skills, not MCP tools, so they can refuse a delegated task (below); each forwards one op
     to its runner (`forwardSkill` in `_lib/runner.js`). They're generated: each is declared
@@ -1311,8 +1313,8 @@ hand:
 Over its socket, `storage/everythingllm/agents/runner.sock`: `delegate(goal, tasks: [{name,
 profile, instructions, material?, tools?}], then?)` answers at once with a run id and a live
 card; `wait`, `runs` and `cancel` (tasks that haven't started won't; running ones finish,
-unused). It also serves `update_prompt` and the scheduled jobs' `scheduled_jobs` and
-`remind_once` (below), which only skills call.
+unused). It also serves `update_prompt`, the scheduled jobs' `scheduled_jobs`,
+`schedule_job` and `remind_once`, and `memories` (below), which only skills call.
 
 - **Profiles are workspaces.** A task's `profile` is its role, and each role is an
   AnythingLLM workspace with its model and a system prompt (`agents/profiles.py`,
@@ -1402,6 +1404,28 @@ again with `apply: true`, after the user agrees.
   these skills, saying so in the delegation's events and its log: with create-scheduled-job
   off nothing else should make one, so this catches the tool turned on again. A job made
   by hand in the UI meanwhile is disabled too; turn it on again there.
+
+### Saved memories
+
+AnythingLLM keeps short facts about the user (Settings > Personalization): at most 5 global
+and 20 per workspace, which it fills itself from idle chats and adds to every chat's system
+prompt as "Things I Remember About You" (the global ones, and the 5 of the workspace's
+closest to the chat). Its built-in `rag-memory` "store" isn't that: it embeds text into the
+workspace's documents. Only the UI could manage them, so the agent didn't know it had them;
+agents-runner does it over the internal API (`agents/memories.py`), logged in as for the
+jobs above, for the **`memories`** skill (`action: list | save | forget`, `text`, `scope`,
+`id`, `apply`), which refuses a delegated task and a scheduled job's call.
+
+- **`list`** gives the global memories and the calling workspace's, each with its id and
+  when a chat last got it, and the room left under each cap.
+- **`save`** keeps one fact (at most 500 characters, no control characters) for the
+  workspace, or with `scope: global` for every workspace, at once: the user asked, and
+  `forget` undoes it. A full scope is AnythingLLM's refusal, passed on.
+- **`forget`** takes only an id from the calling workspace's list (global or its own),
+  shows the memory, and deletes it only when called again with `apply: true`.
+
+With Personalization off, every action says so (AnythingLLM's "Personalization is
+disabled.").
 
 ## MCP gateway
 

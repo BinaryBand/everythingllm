@@ -29,6 +29,10 @@ delegations are its own, and it sees and cancels no others (runs.service).
                           a one-off job at a local date-time, shown first and made only with
                           apply, and deleted by the poller once it has run (the remind-once
                           skill; agents.jobs)
+  memories(scope, action=list|save|forget, text?, memory_scope?, memory_id?, apply=False)
+                          list the saved memories a chat in the workspace gets, save one, or
+                          forget one, shown first and deleted only with apply (the memories
+                          skill; agents.memories)
 
 A task's `material` is text for it to work on (findings to write up, a draft to check),
 longer than instructions may be (MAX_MATERIAL a task, MAX_MATERIAL_TOTAL in all); it goes
@@ -86,6 +90,7 @@ from runs.service import Meter, Progress, Run, RunService
 
 from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI
 from agents.jobs import DEFAULT_TIMEZONE, Registry, ScheduledJobs
+from agents.memories import SavedMemories
 from agents.profiles import PROFILES, ensure
 
 log = logging.getLogger("agents-runner")
@@ -338,6 +343,12 @@ class Runner(RunService):
             self.jobs = ScheduledJobs(self.internal, registry, self.settings.timezone)
         return self.jobs
 
+    def memories(self) -> SavedMemories:
+        """The saved memories, over the internal API."""
+        if self.internal is None:
+            self.internal = InternalAPI.from_env()
+        return SavedMemories(self.internal, self.settings.timezone)
+
     def start_poller(self) -> None:
         """Watch the one-offs made here, and for jobs made while a delegation runs (only
         runner.main does, so tests don't)."""
@@ -443,6 +454,26 @@ class Runner(RunService):
     ) -> str:
         chat_only(scope, "make scheduled jobs")
         return await self.scheduled().remind_once(name, prompt, at, tools, apply)
+
+    async def op_memories(
+        self,
+        scope: dict,
+        action: str = "list",
+        text: str | None = None,
+        memory_scope: str | None = None,
+        memory_id: int | None = None,
+        apply: bool = False,
+    ) -> str:
+        chat_only(scope, "manage saved memories")
+        slug, memories = scope["workspace"], self.memories()
+        action = action or "list"
+        if action == "list":
+            return await memories.listing(slug)
+        if action == "save":
+            return await memories.save(slug, text, memory_scope)
+        if action == "forget":
+            return await memories.forget(slug, memory_id, apply)
+        raise RunnerError("action must be list, save or forget")
 
     async def op_update_prompt(self, scope: dict, apply: bool = False) -> str:
         chat_only(scope, "update a workspace prompt")

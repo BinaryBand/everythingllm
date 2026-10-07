@@ -9,6 +9,7 @@ import time
 import pytest
 from browser import origin
 from browser.vault import Vault, VaultError, public, totp, totp_secret
+from browser_fakes import passkey
 
 RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"  # RFC 6238's "12345678901234567890"
 
@@ -134,6 +135,38 @@ def test_an_entry_is_used_only_as_its_kind(vault):
         vault.get("career", "ab12cd34", "login")
     # A login of the same site and username is another entry, not the passkey changed.
     assert vault.add("career", "x.com", "a", "p")["id"] != "ab12cd34"
+
+
+def test_a_passkey_is_saved_for_its_site_asking_first_and_never_shown(vault):
+    saved = vault.add_passkey("career", passkey("www.GitHub.com"))
+    assert saved == {"id": saved["id"], "kind": "passkey", "site": "github.com",
+                     "username": "alice", "totp": False, "ask": True, "used": ""}  # fmt: skip
+    entry = vault.get("career", saved["id"], "passkey")
+    assert entry["rp_id"] == "www.github.com" and entry["sign_count"] == 1
+    assert entry["private_key"] == passkey()["privateKey"] and entry["resident"]
+    shown = str(vault.logins("career"))
+    assert passkey()["privateKey"] not in shown and "AQID" not in shown
+    # Made again (the same credential id): replaced, still asking if it did.
+    again = vault.add_passkey("career", passkey(signCount=5), ask=False)
+    assert again["id"] == saved["id"] and again["ask"]
+    vault.update("career", saved["id"], sign_count=7)
+    assert vault.get("career", saved["id"])["sign_count"] == 7
+    other = vault.add_passkey("career", passkey(credential_id="other"), ask=False)
+    assert other["id"] != saved["id"] and not other["ask"]
+    with pytest.raises(VaultError, match="is a passkey, not a login"):
+        vault.get("career", saved["id"], "login")
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [passkey("github.io"), passkey("localhost"), passkey("10.0.0.1"), passkey(""),
+     passkey(credentialId=""), passkey(privateKey="not base64!"), passkey(userName=7),
+     passkey(privateKey="A" * 5000), "a passkey"],
+)  # fmt: skip
+def test_a_passkey_is_refused_unless_its_a_sites_and_whole(vault, credential):
+    with pytest.raises(VaultError):
+        vault.add_passkey("career", credential)
+    assert vault.logins("career") == []
 
 
 def test_2fa_codes_are_rfc_6238s():

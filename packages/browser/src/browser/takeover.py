@@ -12,7 +12,8 @@ container, so a stopped browser's old address goes nowhere.
   GET  /<token>/novnc/<path>     noVNC's core and vendor files (copied from the browser image
                                  into <data>/novnc by hostctl browser-images)
   GET  /<token>/state            {workspace, control, reason, waiting, tabs, approval,
-                                 asked, offers, logins}: logins and offers without their secrets
+                                 asked, offers, logins, making, made}: logins (and passkeys) and
+                                 offers without their secrets
   POST /<token>/take             the user takes the browser
   POST /<token>/give             the user hands it back to the agent
   POST /<token>/approve/<id>, deny/<id>   answer the agent's wish to use a saved login
@@ -20,6 +21,8 @@ container, so a stopped browser's old address goes nowhere.
   POST /<token>/logins/<id>/delete, logins/<id>/ask {ask}
   POST /<token>/offers/<id>/save {username, ask}, offers/<id>/drop
                                  save, or not, a login the user just sent in the browser
+  POST /<token>/passkeys/make {on}  let the browser's pages make a passkey, saved as it's
+                                 made (only while the user has the browser)
   GET  /<token>/websockify       the WebSocket noVNC speaks, carried to the container's
                                  x11vnc socket (browser.websocket)
   GET  /login/<id>/              the form for a login the agent asked for (Runner.op_ask_login),
@@ -109,6 +112,10 @@ PAGE = """<!doctype html>
     <button>Save login</button>
     <span id="add-error" class="error"></span>
   </form>
+  <p id="passkey">
+    <button id="make" type="button" hidden>Make a passkey</button>
+    <span id="make-note" class="note"></span>
+  </p>
 </details>
 <main id="screen"></main>
 <script type="module" src="app.js"></script>
@@ -423,6 +430,8 @@ class Takeover:
                 )
             case ["offers", offer, "drop"]:
                 await r.call(s, "drop_offer", {"id": offer})
+            case ["passkeys", "make"]:
+                await r.make_passkeys(s, body.get("on") is True)
             case _:
                 return False
         return True
@@ -460,6 +469,8 @@ class Takeover:
             "asked": asked,
             "offers": await self.runner.offers(s),
             "logins": logins,
+            "making": s.making is not None,
+            "made": s.made,
         }
 
     async def send(

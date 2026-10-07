@@ -7,7 +7,7 @@ import os
 
 from browser import takeover, websocket
 from browser.runner import Runner
-from browser_fakes import Clock, FakePodman, config, scope
+from browser_fakes import Clock, FakePodman, config, passkey, scope
 
 HOST = "host.example.ts.net:8454"
 
@@ -260,6 +260,37 @@ def test_the_view_answers_the_agents_request_and_saves_offers(tmp_path):
         )
         head, body = await post(port, f"/{s.token}/offers/0a1b2c3d/save", {})
         assert "400" in head and "isn't waiting" in json.loads(body)["error"]
+
+    test(tmp_path)
+
+
+def test_the_user_makes_a_passkey_in_the_view_and_never_sees_its_key(tmp_path):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        driver = podman.drivers[s.name]
+        head, body = await post(port, f"/{s.token}/passkeys/make", {"on": True})
+        assert "400" in head and "take over" in json.loads(body)["error"]
+        await post(port, f"/{s.token}/take")
+        head, _ = await post(
+            port,
+            f"/{s.token}/passkeys/make",
+            {"on": True},
+            origin="https://evil.example",
+        )
+        assert "403" in head and not driver.making
+        head, body = await post(port, f"/{s.token}/passkeys/make", {"on": True})
+        assert "200 OK" in head and json.loads(body)["making"] and driver.making
+        driver.made.append({"credential": passkey("example.com"), "url": ""})
+        head, body = await post(port, f"/{s.token}/passkeys/make", {"on": False})
+        state = json.loads(body)
+        assert not state["making"] and not driver.making
+        assert state["made"] == "Saved the passkey you made for example.com as alice"
+        [shown] = state["logins"]
+        assert shown["kind"] == "passkey" and shown["ask"]
+        assert passkey()["privateKey"].encode() not in body and b"AQID" not in body
+        await post(port, f"/{s.token}/logins/{shown['id']}/delete")
+        assert r.vault.logins("career") == []
 
     test(tmp_path)
 

@@ -14,9 +14,16 @@ kinds): {id, kind, site, username, password, totp, ask, added, used}. `site` is 
 current code; `ask` whether the user wants to approve each use. What leaves the vault for
 anyone but the driver is `public()`: no password, no secret.
 
+A passkey (`kind` "passkey"): {id, kind, site, rp_id, username, credential_id,
+user_handle, private_key, resident, sign_count, ask, added, used}, a WebAuthn credential
+as Chromium's virtual authenticator gives and takes it (base64). `rp_id` is the site it was
+made for, exactly (`www.` and all), and `site` that as a login's is. The user makes one in
+the take-over view, and it's saved asking first, as nobody is there to touch a key when it
+signs in.
+
 A vault keeps only secrets the runner has a way to use without the agent reading them: a
-login goes into fields on its own site, and nothing else is kept until it has a way of its
-own.
+login goes into fields on its own site, a passkey into an authenticator on its own site's
+page, and nothing else is kept until it has a way of its own.
 """
 
 from __future__ import annotations
@@ -45,6 +52,8 @@ from browser.origin import normal_site
 MAGIC = b"bwv1"
 MAX_LOGINS = 200
 MAX_FIELD = 1000  # characters in a username or password
+MAX_KEY = 4000  # characters of a passkey's base64 fields
+B64_RE = re.compile(r"[A-Za-z0-9+/_-]*={0,2}")
 
 
 class VaultError(hostrpc.RunnerError):
@@ -256,13 +265,70 @@ class Vault:
             login["ask"] = bool(ask) or bool(login.get("ask"))
         return public(login)
 
+    def add_passkey(
+        self, workspace: str, credential: dict[str, Any], ask: bool = True
+    ) -> dict[str, Any]:
+        """Save a passkey from Chromium's `Credential` (rpId, credentialId, privateKey,
+        userHandle, isResidentCredential, signCount, userName), or replace the one with its
+        credential id. Returns it, public."""
+        if not isinstance(credential, dict):
+            raise VaultError("that isn't a passkey")
+        rp_id = str(credential.get("rpId") or "").lower()
+        try:
+            site = normal_site(rp_id)
+        except ValueError as e:
+            raise VaultError(str(e)) from None
+        if rp_id.removeprefix("www.") != site:  # an address, or a name with more to it
+            raise VaultError(f"'{rp_id}' isn't a site's name")
+        fields = {}
+        for key, name in (("credentialId", "credential_id"), ("privateKey", "private_key"),
+                          ("userHandle", "user_handle")):  # fmt: skip
+            value = credential.get(key)
+            if (
+                not isinstance(value, str)
+                or len(value) > MAX_KEY
+                or not B64_RE.fullmatch(value)
+            ):
+                raise VaultError(f"that passkey's {key} isn't base64")
+            fields[name] = value
+        if not fields["credential_id"] or not fields["private_key"]:
+            raise VaultError("that passkey has no key")
+        username = credential.get("userName") or ""
+        count = credential.get("signCount") or 0
+        if not isinstance(username, str) or not isinstance(count, int):
+            raise VaultError("that isn't a passkey")
+        with self.changing(workspace) as logins:
+            login = next(
+                (x for x in logins if x["kind"] == "passkey"
+                 and x["credential_id"] == fields["credential_id"]),
+                None,
+            )  # fmt: skip
+            if login is None:
+                if len(logins) >= MAX_LOGINS:
+                    raise VaultError(f"a workspace keeps at most {MAX_LOGINS} logins")
+                login = {"id": secrets.token_hex(4), "kind": "passkey",
+                         "added": time.strftime("%Y-%m-%d"), "used": ""}  # fmt: skip
+                logins.append(login)
+            login.update(fields)
+            login.update(
+                site=site,
+                rp_id=rp_id,
+                username=username[:MAX_FIELD],
+                resident=bool(credential.get("isResidentCredential", True)),
+                sign_count=count,
+                ask=bool(ask) or bool(login.get("ask")),
+            )
+        return public(login)
+
     def update(self, workspace: str, login_id: str, **fields: Any) -> dict[str, Any]:
-        """Set `ask` or `used` on a login."""
+        """Set `ask` or `used` on a login, or a passkey's `sign_count`."""
         with self.changing(workspace) as logins:
             login = next((x for x in logins if x["id"] == login_id), None)
             if login is None:
                 raise VaultError(f"there's no saved login '{login_id}'")
-            login.update({k: v for k, v in fields.items() if k in ("ask", "used")})
+            login.update(
+                {k: v for k, v in fields.items() if k in ("ask", "used", "sign_count")}
+            )
         return public(login)
 
     def delete(self, workspace: str, login_id: str) -> None:

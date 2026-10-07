@@ -157,6 +157,9 @@ class FakeElement:
     async def press(self, key, timeout):
         self.pressed = key
 
+    async def click(self, timeout):
+        self.pressed = "click"
+
     async def press_sequentially(self, text, delay, timeout):
         self.filled = (self.filled or "") + text
 
@@ -776,3 +779,147 @@ def test_once_a_password_is_filled_every_request_is_checked_for_it():
     assert d.notes["t1"] == [
         "the page tried to send your linkedin.com password to evil.example; it was blocked"
     ]
+
+
+class FakeCDP:
+    """A page's CDP session as the WebAuthn domain answers it: an authenticator that holds
+    what's added, and a sign count that goes up when the page asks (on a click)."""
+
+    def __init__(self, page, fail=""):
+        self.page, self.fail = page, fail
+        self.sent, self.credentials, self.handlers = [], [], {}
+        self.detached = False
+
+    async def send(self, method, params=None):
+        self.sent.append((method, params))
+        params = params or {}
+        if method == self.fail:
+            raise RuntimeError(f"{method} failed with {params}")
+        if method == "WebAuthn.addVirtualAuthenticator":
+            return {"authenticatorId": "a1"}
+        if method == "WebAuthn.addCredential":
+            self.credentials.append(dict(params["credential"]))
+        if method == "WebAuthn.getCredentials":
+            if self.page.elements["e1"].pressed == "click" and self.page.asks:
+                for c in self.credentials:
+                    c["signCount"] = 2
+            return {"credentials": self.credentials}
+        return {}
+
+    def on(self, event, handler):
+        self.handlers[event] = handler
+
+    async def detach(self):
+        self.detached = True
+
+
+class CDPContext:
+    def __init__(self, pages: list, fail=""):
+        self.pages, self.fail = pages, fail
+        self.sessions, self.listeners = {}, {}
+
+    async def new_cdp_session(self, page):
+        self.sessions[page] = FakeCDP(page, self.fail)
+        return self.sessions[page]
+
+    def on(self, event, handler):
+        self.listeners[event] = handler
+
+    def remove_listener(self, event, handler):
+        assert self.listeners.pop(event) == handler
+
+
+class PasskeyPage(FakePage):
+    """A page with a button, e1, that asks for a passkey (if it `asks`)."""
+
+    def __init__(self, url="https://github.com/login", asks=True):
+        super().__init__(url, {"e1": FakeElement("button", None, url)})
+        self.asks = asks
+
+    def on(self, event, handler):
+        pass
+
+
+CREDENTIAL = {"credentialId": "cred", "privateKey": "KEY", "userHandle": "AQID",
+              "isResidentCredential": True, "signCount": 1}  # fmt: skip
+
+
+def sign_in(page, fail=""):
+    """What signing in on `page` came to (its result, or the RunnerError), and the CDP
+    session it used, if it got one."""
+    context = CDPContext([page], fail)
+    d = driver.Driver(context, None)
+    d.stacks["t1"] = [page]
+
+    async def view(thread, page):
+        return {"url": page.url, "notes": d.notes.pop(thread, [])}
+
+    d.view = view
+    try:
+        done = asyncio.run(d.op_sign_in_passkey("t1", "github.com", CREDENTIAL, "e1"))
+    except RunnerError as e:
+        done = e
+    return done, context.sessions.get(page)
+
+
+def test_a_passkey_signs_in_from_an_authenticator_there_only_for_the_click():
+    page = PasskeyPage()
+    done, cdp = sign_in(page)
+    assert done == {"url": page.url, "notes": [], "sign_count": 2}
+    assert cdp is not None and cdp.detached
+    methods = [m for m, _ in cdp.sent]
+    assert methods[:3] == ["WebAuthn.enable", "WebAuthn.addVirtualAuthenticator",
+                           "WebAuthn.addCredential"]  # fmt: skip
+    assert cdp.sent[2][1] == {"authenticatorId": "a1",
+                              "credential": {**CREDENTIAL, "rpId": "github.com"}}  # fmt: skip
+    assert methods[-2:] == ["WebAuthn.removeVirtualAuthenticator", "WebAuthn.disable"]
+
+
+def test_a_page_that_never_asks_for_the_passkey_is_said_so(monkeypatch):
+    monkeypatch.setattr(driver, "PASSKEY_SECONDS", 0.3)
+    done, cdp = sign_in(PasskeyPage(asks=False))
+    assert isinstance(done, dict) and cdp is not None and cdp.detached
+    assert done["sign_count"] is None
+    assert "didn't ask for the passkey" in done["notes"][0]
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://evil.example/", "http://github.com/login", "https://github.com:8443/"],
+)
+def test_a_passkey_is_put_only_in_a_page_on_its_site_over_https(url):
+    done, cdp = sign_in(PasskeyPage(url))
+    assert isinstance(done, RunnerError)
+    assert "not github.com" in str(done) or "only on an https page" in str(done)
+    assert cdp is None  # no authenticator was ever made
+
+
+def test_a_passkey_is_taken_out_whatever_goes_wrong_and_never_said_back():
+    done, cdp = sign_in(PasskeyPage(), fail="WebAuthn.addCredential")
+    assert str(done) == "the passkey couldn't be used"  # not CDP's text, which has it
+    assert cdp is not None and cdp.detached and ("WebAuthn.disable", None) in cdp.sent
+
+
+def test_pages_make_passkeys_only_while_asked_and_the_runner_takes_them():
+    async def main():
+        page, popup = PasskeyPage(), PasskeyPage("https://github.com/popup")
+        context = CDPContext([page])
+        d = driver.Driver(context, None)
+        await d.op_make_passkeys(True)
+        context.pages.append(popup)
+        context.listeners["page"](popup)
+        await asyncio.sleep(0)
+        assert set(d.makers) == {page, popup}
+        made = {"credential": {"rpId": "github.com", "privateKey": "KEY"}}
+        context.sessions[popup].handlers["WebAuthn.credentialAdded"](made)
+        assert await d.op_made() == [{**made, "url": popup.url}]
+        assert await d.op_made() == []
+        # The hand-back takes them out, and nothing more is kept.
+        await d.op_capture(True, user=True)
+        await d.op_capture(False)
+        assert not d.making and d.makers == {} and "page" not in context.listeners
+        assert all(cdp.detached for cdp in context.sessions.values())
+        context.sessions[page].handlers["WebAuthn.credentialAdded"](made)
+        assert await d.op_made() == []
+
+    asyncio.run(main())

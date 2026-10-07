@@ -4,7 +4,7 @@
   "name": "Browser Login",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Log in with a login saved in this workspace's vault without seeing the password; it fills only on that login's own site. list: the saved logins and which fit this page. login: fill one into user_ref and/or pass_ref from the last read. code: fill its current 2FA code into ref. ask (on the sign-in page, when none is saved): returns a card where the user saves one; put it in your reply and end the reply. Some logins wait for the user's OK first. Never ask for a password in the chat.",
+  "description": "Log in with a login or passkey saved in this workspace's vault without seeing it; it works only on its own site. list: the saved logins and passkeys and which fit this page. login: fill a login into user_ref and/or pass_ref from the last read. code: fill its current 2FA code into ref. passkey: sign in with a saved passkey by clicking ref, the page's button that signs in with a passkey. ask (on the sign-in page, when none is saved): returns a card where the user saves one; put it in your reply and end the reply. Some wait for the user's OK first. Never ask for a password in the chat.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -22,6 +22,10 @@
       "call": "{\"action\": \"login\", \"login\": \"3f2a9c1d\", \"user_ref\": \"e4\", \"pass_ref\": \"e5\", \"submit\": true}"
     },
     {
+      "prompt": "(the list shows 7c01e2aa, a passkey for github.com, and the page has a \"Sign in with a passkey\" button e7)",
+      "call": "{\"action\": \"passkey\", \"login\": \"7c01e2aa\", \"ref\": \"e7\"}"
+    },
+    {
       "prompt": "(the site asks for a 2FA code)",
       "call": "{\"action\": \"code\", \"login\": \"3f2a9c1d\", \"ref\": \"e2\", \"submit\": true}"
     }
@@ -35,13 +39,14 @@
           "list",
           "ask",
           "login",
-          "code"
+          "code",
+          "passkey"
         ],
-        "description": "list, login, code or ask."
+        "description": "list, login, code, passkey or ask."
       },
       "login": {
         "type": "string",
-        "description": "The login's id, from list."
+        "description": "The login's or passkey's id, from list."
       },
       "user_ref": {
         "type": "string",
@@ -53,7 +58,7 @@
       },
       "ref": {
         "type": "string",
-        "description": "code: the 2FA code field's ref."
+        "description": "code: the 2FA code field's ref. passkey: the button that signs in with a passkey."
       },
       "submit": {
         "type": "boolean",

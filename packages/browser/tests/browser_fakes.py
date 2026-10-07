@@ -14,6 +14,13 @@ from PIL import Image
 IPS = {"browser-1": "10.89.79.32", "browser-2": "10.89.79.33"}
 
 
+def passkey(rp_id="github.com", credential_id="q1079Y6M5OeiRR2o", **more) -> dict:
+    """A passkey as Chromium's virtual authenticator gives one (WebAuthn's Credential)."""
+    return {"credentialId": credential_id, "isResidentCredential": True, "rpId": rp_id,
+            "privateKey": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg",
+            "userHandle": "AQID", "signCount": 1, "userName": "alice", **more}  # fmt: skip
+
+
 def jpeg(colour=(200, 30, 30), size=(1280, 800)) -> bytes:
     out = io.BytesIO()
     Image.new("RGB", size, colour).save(out, "JPEG")
@@ -28,6 +35,11 @@ class FakeDriver(hostrpc.Service):
         self.filled: list[dict] = []
         self.capturing = self.taken = False
         self.offers: dict[str, dict] = {}
+        self.making = False
+        self.made: list[dict] = []  # what a site makes while making
+        self.asked_for_passkey = (
+            True  # whether the page asks for the passkey on the click
+        )
 
     def view(self, thread):
         url = self.pages[thread]
@@ -91,8 +103,26 @@ class FakeDriver(hostrpc.Service):
         return self.view(thread)
 
     async def op_capture(self, on, user=False):
+        if not on:
+            self.making = False
         self.capturing, self.taken = on, user
         return {}
+
+    async def op_sign_in_passkey(self, thread, site, credential, ref):
+        self.filled.append(
+            {"thread": thread, "site": site, "credential": credential, "ref": ref}
+        )
+        count = credential["signCount"] + 1 if self.asked_for_passkey else None
+        return {**self.view(thread), "sign_count": count}
+
+    async def op_make_passkeys(self, on):
+        self.calls.append(("make_passkeys", {"on": on}))
+        self.making = on
+        return {}
+
+    async def op_made(self):
+        made, self.made = self.made, []
+        return made
 
     async def op_offers(self):
         return [

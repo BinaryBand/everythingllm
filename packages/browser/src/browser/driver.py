@@ -31,6 +31,14 @@ secret out: an address or text (or a run of key presses) holding a piece of one 
 refused, and locks the browser to the agent until the user takes it over in the view. Chromium's own password saving is off. While the user has the browser, capture.js offers what they log in with for saving;
 the runner asks the user in the take-over view, and saves the offer before dropping it.
 
+Passkeys go through Chromium's WebAuthn virtual authenticator (over CDP, which nothing in
+the page can reach): to sign in, one holding the saved passkey is put in the thread's page,
+on the passkey's site, only while the button the agent names is clicked and the page asks
+(at most PASSKEY_SECONDS), and Chromium itself checks that the page may use it. While the
+user has the browser and asks to make one (the runner allows that only then), every page
+has an empty authenticator, and a passkey a site makes in one is kept for the runner to
+save (`made`). Nothing is typed, so there's nothing for a read to hide.
+
 The ops that take a thread return the tab's view: {title, url, elements, text, more,
 notes}, snapshot.js's reading of the page (browser.page renders it).
 
@@ -49,6 +57,11 @@ notes}, snapshot.js's reading of the page (browser.page renders it).
   offers()                          [{id, site, username}] of those, for OFFER_SECONDS
   peek_offer(id)                    {site, username, password}, kept until dropped
   drop_offer(id)                    forget it
+  sign_in_passkey(thread, site, credential, ref)
+                                    click `ref` with the passkey in the page -> the view
+                                    and `sign_count` (None if the page never asked for it)
+  make_passkeys(on)                 whether pages can make passkeys (the user's alone)
+  made()                            [{credential, url}] of those made since the last call
 
 Config (environment):
   BROWSER_PROXY      where Chromium sends every request: the egress proxy's public port (required)
@@ -100,6 +113,13 @@ CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
 MAX_OFFERS = 5
 OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
 MAX_SECRET = 1000
+PASSKEY_SECONDS = 15  # how long a sign-in waits for the page to ask for its passkey
+MAX_MADE = 5  # passkeys made and not yet taken by the runner
+# A platform authenticator that answers with no prompt, and says the user was checked.
+AUTHENTICATOR = {
+    "protocol": "ctap2", "transport": "internal", "hasResidentKey": True,
+    "hasUserVerification": True, "isUserVerified": True, "automaticPresenceSimulation": True,
+}  # fmt: skip
 MAX_DOWNLOADS = 10  # downloads a thread's pages may start between two reads
 DOWNLOAD_BYTES = 256 << 20  # the largest download kept
 MAX_CODES = 20  # the latest 2FA codes kept to hide (passwords are kept for the container's life)
@@ -223,6 +243,10 @@ class Driver(hostrpc.Service):
         self.sites: dict[str, str] = {}  # a password -> the site it may be sent to
         self.guarding = False  # whether requests are routed through on_request
         self.typed: dict[str, str] = {}  # thread -> the last characters it pressed
+        # While the user makes passkeys: each page's CDP session, and what was made.
+        self.making = False
+        self.makers: dict[Any, Any] = {}
+        self.made: list[dict[str, Any]] = []
 
     # --- tabs ---
 
@@ -688,6 +712,123 @@ class Driver(hostrpc.Service):
                     return True
         return False
 
+    # --- passkeys ---
+
+    async def authenticator(self, page: Any) -> tuple[Any, str]:
+        """A CDP session on `page` with a virtual authenticator in it, and its id."""
+        cdp = await self.context.new_cdp_session(page)
+        try:
+            await cdp.send("WebAuthn.enable", {"enableUI": False})
+            added = await cdp.send(
+                "WebAuthn.addVirtualAuthenticator", {"options": AUTHENTICATOR}
+            )
+        except Exception:
+            await disarm(cdp)
+            raise
+        return cdp, added["authenticatorId"]
+
+    async def op_sign_in_passkey(
+        self, thread: str, site: str, credential: dict[str, Any], ref: str
+    ) -> dict[str, Any]:
+        self.check_sent(thread)
+        page = self.existing(thread)
+        if not REF_RE.fullmatch(ref or ""):
+            raise hostrpc.RunnerError(
+                "give the ref of the button that signs in with a passkey, like e12"
+            )
+        host = host_of(page.url)
+        if not site_matches(host, site):
+            raise hostrpc.RunnerError(
+                f"this chat's page is on {host or 'no site'}, not {site}: a passkey signs "
+                "in only on its own site; read the page again"
+            )
+        if not secure(page.url):
+            raise hostrpc.RunnerError(
+                "a passkey signs in only on an https page on its usual port"
+            )
+        target = page.locator(f'[data-bw-ref="{ref}"]').first
+        if not await target.count():
+            raise hostrpc.RunnerError(
+                f"{ref} isn't on the page any more; read it again"
+            )
+        before = int(credential.get("signCount") or 0)
+        count = None
+        try:
+            cdp, authenticator = await self.authenticator(page)
+        except Exception:  # noqa: BLE001 - the page went away
+            raise hostrpc.RunnerError(
+                "the page couldn't take a passkey; read it again"
+            ) from None
+        try:
+            await cdp.send(
+                "WebAuthn.addCredential",
+                {"authenticatorId": authenticator,
+                 "credential": {**credential, "rpId": site}},
+            )  # fmt: skip
+            try:
+                await target.click(timeout=ACT_MS)
+            except Exception as e:  # noqa: BLE001 - Playwright's errors, for the agent
+                raise hostrpc.RunnerError(f"click failed: {first_line(e)}") from None
+            count = await signed(cdp, authenticator, before)
+        except hostrpc.RunnerError:
+            raise
+        except Exception:  # noqa: BLE001 - CDP's errors could hold the credential
+            raise hostrpc.RunnerError("the passkey couldn't be used") from None
+        finally:
+            await disarm(cdp, authenticator)
+        await self.settle(page)
+        if count is None:
+            self.notes.setdefault(thread, []).append(
+                f"the page didn't ask for the passkey within {PASSKEY_SECONDS} s of the "
+                "click; find the button that signs in with a passkey, or hand the "
+                "browser to the user"
+            )
+        return {**await self.view(thread, self.existing(thread)), "sign_count": count}
+
+    async def op_make_passkeys(self, on: bool) -> dict[str, Any]:
+        """Give every page (and each new one) an empty authenticator that keeps what a site
+        makes in it (`on`), or take them out."""
+        if on and not self.making:
+            self.making = True
+            self.context.on("page", self.on_page)
+            for page in list(self.context.pages):
+                await self.make_in(page)
+        elif not on and self.making:
+            self.making = False
+            self.context.remove_listener("page", self.on_page)
+            makers, self.makers = list(self.makers.values()), {}
+            for cdp in makers:
+                await disarm(cdp)
+        return {}
+
+    def on_page(self, page: Any) -> None:
+        asyncio.ensure_future(self.make_in(page))
+
+    async def make_in(self, page: Any) -> None:
+        if page in self.makers:
+            return
+        try:
+            cdp, _ = await self.authenticator(page)
+        except Exception:  # noqa: BLE001 - closed before it could have one
+            return
+        if not self.making or page in self.makers:  # turned off, or armed, meanwhile
+            await disarm(cdp)
+            return
+        self.makers[page] = cdp
+        cdp.on("WebAuthn.credentialAdded", lambda event: self.on_made(page, event))
+        page.on("close", lambda _: self.makers.pop(page, None))
+
+    def on_made(self, page: Any, event: Any) -> None:
+        credential = event.get("credential") if isinstance(event, dict) else None
+        if not self.making or not isinstance(credential, dict):
+            return
+        del self.made[: -(MAX_MADE - 1)]
+        self.made.append({"credential": credential, "url": page.url})
+
+    async def op_made(self) -> list[dict[str, Any]]:
+        made, self.made = self.made, []
+        return made
+
     # --- offering what the user logs in with ---
 
     def on_capture(self, source: dict[str, Any], data: Any) -> None:
@@ -736,6 +877,7 @@ class Driver(hostrpc.Service):
         themselves, which unlocks it."""
         if self.capturing and not on:
             await self.keep_typed()
+            await self.op_make_passkeys(False)
         self.capturing = bool(on)
         if on and user:
             self.locked = False
@@ -965,6 +1107,35 @@ def quiet_password_manager(profile: Path) -> None:
     data.setdefault("profile", {})["password_manager_enabled"] = False
     prefs.parent.mkdir(parents=True, exist_ok=True)
     prefs.write_text(json.dumps(data))
+
+
+async def signed(cdp: Any, authenticator: str, before: int) -> int | None:
+    """The passkey's sign count once the page has used it (it goes up with each use), or
+    None if it hasn't in PASSKEY_SECONDS."""
+    until = time.monotonic() + PASSKEY_SECONDS
+    while time.monotonic() < until:
+        found = await cdp.send(
+            "WebAuthn.getCredentials", {"authenticatorId": authenticator}
+        )
+        counts = [c.get("signCount", 0) for c in found.get("credentials", [])]
+        if counts and counts[0] > before:
+            return counts[0]
+        await asyncio.sleep(0.25)
+    return None
+
+
+async def disarm(cdp: Any, authenticator: str = "") -> None:
+    """Take the authenticator out and leave the page to Chromium's own WebAuthn."""
+    try:
+        if authenticator:
+            await cdp.send(
+                "WebAuthn.removeVirtualAuthenticator",
+                {"authenticatorId": authenticator},
+            )
+        await cdp.send("WebAuthn.disable")
+        await cdp.detach()
+    except Exception:  # noqa: BLE001, S110 - the page is gone, and its authenticator with it
+        pass
 
 
 def screen_size(value: str) -> tuple[int, int]:

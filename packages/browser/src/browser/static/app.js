@@ -1,7 +1,7 @@
 // The take-over view's page (browser.takeover): noVNC showing the workspace's browser,
 // view-only while the agent has it, and the buttons that take it and hand it back; the
 // agent's requests to use a saved login or for one it hasn't got, offers to save what you
-// logged in with, and the workspace's saved logins. Everything from the server goes in as text, never as HTML: a
+// logged in with, and the workspace's saved logins and passkeys. Everything from the server goes in as text, never as HTML: a
 // username can come from a web page.
 import RFB from "./novnc/core/rfb.js";
 
@@ -127,20 +127,35 @@ function showLogins(logins) {
         ask.checked = !ask.checked;
       }
     };
+    const kind = l.kind === "passkey" ? "passkey" : "login";
     const remove = el("button", { textContent: "Delete", className: "quiet" });
     remove.onclick = () =>
-      confirm(`Delete the login for ${who(l)}?`) && act(`delete the login for ${who(l)}`, `logins/${l.id}/delete`);
+      confirm(`Delete the ${kind} for ${who(l)}?`) && act(`delete the ${kind} for ${who(l)}`, `logins/${l.id}/delete`);
+    const extra = kind === "passkey" ? " · passkey" : l.totp ? " · 2FA" : "";
     list.append(
       el(
         "li",
         {},
         el("strong", { textContent: l.site }),
-        ` ${l.username || "(no username)"}${l.totp ? " · 2FA" : ""}${l.used ? ` · used ${l.used}` : ""} `,
+        ` ${l.username || "(no username)"}${extra}${l.used ? ` · used ${l.used}` : ""} `,
         el("label", {}, ask, " ask first"),
         remove
       )
     );
   }
+}
+
+// Making a passkey: only while you have the browser, and the site makes it on your click.
+function showMaking(s) {
+  const mine = s.control === "user";
+  $("make").hidden = !mine;
+  $("make").textContent = s.making ? "Stop waiting" : "Make a passkey";
+  $("make").onclick = () => act("make a passkey", "passkeys/make", { on: !s.making });
+  $("make-note").textContent = !mine
+    ? "Take over the browser to make a passkey for a site."
+    : s.making
+      ? "Waiting for the site to make one: add a passkey on its page now. It's saved here, asking first."
+      : s.made || "Press this, then add a passkey on the site's page. It's kept here, on this machine alone.";
 }
 
 async function refresh() {
@@ -156,6 +171,7 @@ function render(s) {
   showAsked(s.asked || []);
   showOffers(s.offers || []);
   showLogins(s.logins || []);
+  showMaking(s);
 }
 
 async function post(what, body) {

@@ -112,7 +112,28 @@ test("browser-login lists logins without secrets, fills one, and waits for the u
     assert.deepEqual(runner.requests[1].args, {
       scope: { workspace: "career", thread: "12" }, login: "3f2a9c1d", user_ref: "e1", pass_ref: "e2", submit: true,
     });
-    assert.match(await login.handler.call(agent(), { action: "steal" }), /^Error: action is list, ask, login or code/);
+    assert.match(await login.handler.call(agent(), { action: "steal" }), /^Error: action is list, ask, login, code or passkey/);
+  } finally {
+    delete process.env.BROWSER_SOCKET;
+    await runner.close();
+  }
+});
+
+test("browser-login lists a passkey and signs in with it through the user's OK", async () => {
+  let asked = 0;
+  const runner = await fakeRunner((op) => {
+    if (op === "logins")
+      return { ok: true, result: { site: "github.com", logins: [{ id: "7c01e2aa", kind: "passkey", site: "github.com", username: "alice", totp: false, ask: true, here: true }] } };
+    if (op === "passkey" && asked++ === 0) return { ok: true, result: { approval: "ap3", card: CARD } };
+    if (op === "wait_approval") return { ok: true, result: { done: true, approved: true } };
+    return { ok: true, result: { page: "Page: dashboard" } };
+  });
+  try {
+    assert.match(await login.handler.call(agent(), { action: "list" }), /- 7c01e2aa: a passkey for github\.com as alice, asks the user first \(fits this page\)/);
+    const self = { ...agent(), introspect: () => {} };
+    assert.equal(await login.handler.call(self, { action: "passkey", login: "7c01e2aa", ref: "e7", submit: true }), "Page: dashboard");
+    assert.deepEqual(runner.requests.map((r) => r.op), ["logins", "passkey", "wait_approval", "passkey"]);
+    assert.deepEqual(runner.requests[1].args, { scope: { workspace: "career", thread: "12" }, login: "7c01e2aa", ref: "e7" });
   } finally {
     delete process.env.BROWSER_SOCKET;
     await runner.close();

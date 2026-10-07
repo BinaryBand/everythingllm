@@ -908,8 +908,8 @@ watch and take over, like the browser in Meta's Muse but split by workspace: a l
   back, its actions are refused. Hand it back in the take-over view, or tell the agent you're
   done, and it calls `browser-handoff` with `done: true`.
 
-- `browser-login` logs in with a login saved in the workspace's vault, without the agent
-  ever seeing it, or asks you for one on a card (see "Saved logins" below).
+- `browser-login` logs in with a login or passkey saved in the workspace's vault, without
+  the agent ever seeing it, or asks you for a login on a card (see "Saved logins" below).
 
 They're skills, not MCP tools, because they act and must know their workspace: each call's
 scope is `{workspace, thread}` from AnythingLLM's invocation (`_lib/scope.js`, as the
@@ -1007,6 +1007,22 @@ name bound in so one workspace's file can't stand in for another's.
   outlives the browser; it waits 30 minutes (`ASK_SECONDS`), takes one answer, and the
   take-over view lists the waiting ones. You tell the agent in the chat once it's saved,
   and it logs in with it as with any other.
+- **Passkeys.** The vault keeps passkeys too, beside the logins (each entry has a `kind`;
+  the vault keeps only what the runner has a way to use without the agent reading it, so
+  it isn't a store for API keys). Only you make one: take over, press "Make a passkey" in
+  the Saved logins panel, then add a passkey on the site's page. Every page then has a
+  virtual authenticator (Chromium's WebAuthn over CDP, which no page can reach) until one is
+  made, 5 minutes pass or you hand back; what a site makes is saved at once, asking first,
+  since nobody touches a key when it signs in, and once more on the hand-back or as the
+  browser stops, as a passkey the site has and the vault doesn't is one nobody can use. The
+  agent signs in with `browser-login` `passkey`, naming the passkey and the page's button
+  for it: the runner and the driver check the page is on the passkey's site over https, as
+  for a login, the driver puts an authenticator holding only that passkey in the page for
+  the click and at most 15 s after (`PASSKEY_SECONDS`), and Chromium itself checks the page
+  may use it. It covers the chat's page, not a popup or a frame of another origin. A passkey
+  can't come from your phone or password manager (they don't give theirs out), it's this
+  machine's alone, so keep another way into the account, and a site that demands an
+  attested authenticator (some banks, work accounts) refuses it.
 - Chromium's own password saving is off in every profile, so what you type stays out of
   the profile. `browser-reset` wipes a profile but leaves the workspace's saved logins;
   delete those in the panel.

@@ -1,6 +1,7 @@
 // Browser Login: uses a login saved in this workspace's vault (browser-runner, packages/browser)
-// without ever seeing it: lists the logins (site and username only), or has the runner fill
-// one, or its current 2FA code, into fields on the login's own site. A login the user marked
+// without ever seeing it: lists the logins and passkeys (site and username only), or has the
+// runner fill one, or its current 2FA code, into fields on the login's own site, or sign in
+// with a passkey by clicking the page's button for it. A login the user marked
 // "ask me first" waits here for their OK in the take-over view, which the chat's card opens.
 // Without one, `ask` gives the agent a card for its reply that opens a form for the user's
 // login for the site of the chat's page, which goes into the vault.
@@ -15,7 +16,7 @@ function listing(r) {
     return "No logins are saved in this workspace. Ask the user for one with action ask (on the site's sign-in page), or hand the browser to them with browser-handoff.";
   const lines = r.logins.map(
     (l) =>
-      `- ${l.id}: ${l.site}${l.username ? ` as ${l.username}` : ""}${l.totp ? ", with 2FA codes" : ""}${l.ask ? ", asks the user first" : ""}${l.here ? " (fits this page)" : ""}`
+      `- ${l.id}: ${l.kind === "passkey" ? "a passkey for " : ""}${l.site}${l.username ? ` as ${l.username}` : ""}${l.totp ? ", with 2FA codes" : ""}${l.ask ? ", asks the user first" : ""}${l.here ? " (fits this page)" : ""}`
   );
   return [`Saved logins${r.site ? ` (this chat's page is on ${r.site})` : ""}:`, ...lines].join("\n");
 }
@@ -38,11 +39,13 @@ module.exports.runtime = {
             : `Ask the user to save their ${r.site} login in the browser's take-over view (Saved logins), never in the chat, and end your reply.`,
         ].filter(Boolean).join("\n");
       }
-      if (what !== "login" && what !== "code") return `Error: action is list, ask, login or code, not '${what}'.`;
+      if (!["login", "code", "passkey"].includes(what)) return `Error: action is list, ask, login, code or passkey, not '${what}'.`;
       const args =
         what === "login"
           ? { login: String(login ?? ""), user_ref: String(user_ref ?? ""), pass_ref: String(pass_ref ?? ""), submit: asFlag(submit) === true }
-          : { login: String(login ?? ""), ref: String(ref ?? ""), submit: asFlag(submit) === true };
+          : what === "code"
+            ? { login: String(login ?? ""), ref: String(ref ?? ""), submit: asFlag(submit) === true }
+            : { login: String(login ?? ""), ref: String(ref ?? "") };
       let r = await request(what, args);
       if (r === null) return null;
       if (r.approval) {

@@ -9,7 +9,7 @@ import pytest
 from browser import runner as runner_mod
 from browser.page import UNTRUSTED
 from browser.runner import Runner, check_scope
-from browser_fakes import Clock, FakePodman, config, scope
+from browser_fakes import Clock, FakePodman, config, passkey, scope
 from hostrpc import RunnerError
 
 
@@ -790,5 +790,118 @@ def test_a_login_fills_only_on_an_https_page_on_its_usual_port(tmp_path):
             with pytest.raises(RunnerError, match="only on an https page"):
                 await r.op_login(scope(), saved["id"], "e1", "e2")
         assert podman.drivers["everythingllm-browser-career"].filled == []
+
+    test(tmp_path)
+
+
+def test_the_agent_signs_in_with_a_passkey_without_seeing_it(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        saved = r.vault.add_passkey("career", passkey("github.com"), ask=False)
+        login = r.vault.add("career", "github.com", "alice", "pw")
+        await r.op_open(scope(), "https://github.com/login")
+        driver = podman.drivers["everythingllm-browser-career"]
+        listed = await r.op_logins(scope())
+        assert listed["logins"][0] == {**r.vault.logins("career")[0], "here": True}
+        assert passkey()["privateKey"] not in str(listed)
+        done = await r.op_passkey(scope(), saved["id"], "e1")
+        assert passkey()["privateKey"] not in str(done) and "Sign in" in done["page"]
+        assert driver.filled[-1] == {
+            "thread": "7", "site": "github.com", "ref": "e1",
+            "credential": {"credentialId": passkey()["credentialId"],
+                           "privateKey": passkey()["privateKey"], "userHandle": "AQID",
+                           "isResidentCredential": True, "signCount": 1},
+        }  # fmt: skip
+        assert (
+            r.threads[("career", "7")].last
+            == "Signed in with a passkey for github.com as alice"
+        )
+        entry = r.vault.get("career", saved["id"])
+        assert entry["sign_count"] == 2 and entry["used"]
+        # A page that never asks: said so, and nothing counted.
+        driver.asked_for_passkey = False
+        await r.op_passkey(scope(), saved["id"], "e1")
+        assert (
+            r.threads[("career", "7")].last
+            == "The page didn't ask for the github.com passkey"
+        )
+        assert r.vault.get("career", saved["id"])["sign_count"] == 2
+        # Each is used only as what it is.
+        with pytest.raises(RunnerError, match="is a login, not a passkey"):
+            await r.op_passkey(scope(), login["id"], "e1")
+        with pytest.raises(RunnerError, match="is a passkey, not a login"):
+            await r.op_login(scope(), saved["id"], "e1", "e2")
+        # Only on its own site, over https.
+        calls = len(driver.filled)
+        for url in ("https://evil.example/", "http://github.com/login"):
+            await r.op_open(scope(), url)
+            with pytest.raises(RunnerError, match="is for github.com|only on an https"):
+                await r.op_passkey(scope(), saved["id"], "e1")
+        assert len(driver.filled) == calls
+
+    test(tmp_path)
+
+
+def test_a_passkey_asks_first_unless_the_user_turned_it_off(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        saved = r.vault.add_passkey("career", passkey())
+        await r.op_open(scope(), "https://github.com/login")
+        driver = podman.drivers["everythingllm-browser-career"]
+        waiting = await r.op_passkey(scope(), saved["id"], "e1")
+        assert waiting["approval"] and driver.filled == []
+        r.answer(r.sessions["career"], waiting["approval"], True)
+        assert (await r.op_passkey(scope(), saved["id"], "e1"))["page"]
+        assert driver.filled[-1]["ref"] == "e1"
+
+    test(tmp_path)
+
+
+def test_only_the_user_makes_passkeys_and_each_made_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_mod, "MADE_EVERY", 0.01)
+
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://github.com/settings/security")
+        s = r.sessions["career"]
+        driver = podman.drivers[s.name]
+        with pytest.raises(RunnerError, match="take over the browser first"):
+            await r.make_passkeys(s, True)
+        assert not driver.making
+        await r.take(s)
+        await r.make_passkeys(s, True)
+        assert driver.making and s.making is not None
+        driver.made.append({"credential": passkey(), "url": "https://github.com/"})
+        for _ in range(100):
+            if s.making is None:
+                break
+            await asyncio.sleep(0.01)
+        # Saved as it's made, asking first, and making stops after one.
+        assert s.making is None and not driver.making
+        [saved] = r.vault.logins("career")
+        assert (
+            saved["kind"] == "passkey"
+            and saved["site"] == "github.com"
+            and saved["ask"]
+        )
+        assert (
+            r.threads[("career", "7")].last
+            == s.made
+            == "Saved the passkey you made for github.com as alice"
+        )
+        # One made just before the hand-back is saved then; one the vault refuses is said.
+        await r.make_passkeys(s, True)
+        driver.made.append({"credential": passkey(credential_id="second"), "url": ""})
+        driver.made.append({"credential": passkey("github.io"), "url": ""})
+        await r.give_back(s)
+        assert s.making is None and not driver.making
+        assert len(r.vault.logins("career")) == 2
+        assert s.made.startswith("The passkey a site made couldn't be saved")
+        # And just before the browser stops.
+        await r.take(s)
+        await r.make_passkeys(s, True)
+        driver.made.append({"credential": passkey(credential_id="third"), "url": ""})
+        await r.stop("career")
+        assert len(r.vault.logins("career")) == 3
 
     test(tmp_path)

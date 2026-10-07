@@ -666,7 +666,7 @@ port asked for:
   | profile  | containers (address)                                        | public | allow                         |
   |----------|-------------------------------------------------------------|--------|-------------------------------|
   | relay    | relay (.10)                                                 | no     | `PUBLIC_HOST:3001`, ntfy :443 |
-  | research | research-runner (.11)                                       | yes    | `PUBLIC_HOST:8888`            |
+  | research | research-runner (.11)                                       | yes    | `PUBLIC_HOST:8888`, ntfy :443 |
   | sites    | sites-runner (.12)                                          | yes    | `PUBLIC_HOST:8888`            |
   | browser  | the workspaces' browsers (.32–.35, one per slot)            | yes    | none                          |
   | sandbox  | the code sandbox's runs (.40–.41, one per slot)             | no     | none (PyPI, as every profile) |
@@ -1223,6 +1223,15 @@ cancelled from the chat: `FORCE=1 uv run hostctl research-setup` restarts the ru
 every run in it. Runs are bounded by their search budget either way. At most 2 run at once;
 another waits its turn, and its progress says so.
 
+**Telling the Nilson app.** The skill sends the chat it was called from (`_lib/scope.js`'s
+workspace and thread id) with `start`. When a run from a workspace's chat ends, and
+`NTFY_URL` is set in `~/.config/everythingllm/relay.env`, research-runner posts to the
+relay's ntfy topic (`research.notify`): "Research ready" or "Research failed", the
+question's first 120 characters, `run=dr-…,workspace=…,thread=…` as its tags and the
+report's URL as its `Click`; never the report. The thread is AnythingLLM's numeric thread
+id (`/api/v1` gives clients slugs only), so the app finds the chat by the run id in the card
+it drew. A gateway client's run and a scheduled job's (`_jobs`) tell no one.
+
 Only a restart of `research-runner` kills a run without a result, so while a run is going
 it has a marker in `~/.local/share/everythingllm/research/runs/running/<id>.json` (its question and when it
 started), touched every minute. When the runner starts, it moves every marker into the
@@ -1263,9 +1272,12 @@ host path:
 - its share of AnythingLLM's `.env` (`~/.config/everythingllm/ctr/research-runner.env`),
   read-only: the DeepSeek and Z.AI keys and DeepSeek's model, never AnythingLLM's password
 
+The relay's `relay.env` (`NTFY_URL`, `NTFY_TOKEN`) comes in as values podman reads on the
+host (`EnvironmentFile=`), not as a file; `research-setup` makes it when it's missing.
+
 It goes out only through the egress proxy, with the `research` profile: any public host
-(the pages it reads, DeepSeek and Z.AI), and SearXNG by `PUBLIC_HOST` (`SEARXNG_URL`),
-never AnythingLLM. A page the proxy refuses
+(the pages it reads, DeepSeek and Z.AI), SearXNG by `PUBLIC_HOST` (`SEARXNG_URL`) and the
+ntfy host on :443 (`NTFY_HOST`, for a self-hosted one), never AnythingLLM. A page the proxy refuses
 (a LAN or CGNAT address) is skipped as any unreadable page is. Only the research site's
 entries are mounted, so a `SITE` setup arg naming another site can't publish there: the
 report is still saved to the agent's files, and the reply says why. Its share of `.env` is
@@ -1563,7 +1575,8 @@ and `run=…,workspace=…,thread=…` as its tags; never the answer. A reset is
 
 Its settings live in `~/.config/everythingllm/relay.env` (mode 600), outside the repo, which the
 AnythingLLM container mounts: only the optional `NTFY_URL` and `NTFY_TOKEN`, which are
-secrets. `uv run hostctl relay-setup` makes the file, builds the service image, maps
+secrets, and which research-runner reads too, to tell the same topic when a research run
+ends (see "Deep research"). `uv run hostctl relay-setup` makes the file, builds the service image, maps
 `/everythingllm` on :3001 and starts the container; `uv run hostctl relay-logs` follows it
 (any app's `<app>-logs`). `relay.app`'s docstring lists the rest of the config. A client's
 key never appears in a response or a log line, and a test holds that.

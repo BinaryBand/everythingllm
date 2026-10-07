@@ -24,7 +24,7 @@ public_port = 3129
 allow = ["pypi.org:443", "files.pythonhosted.org:443"]
 
 [defaults]
-NTFY_HOST = "ntfy.sh"  # the ntfy server in relay's NTFY_URL
+NTFY_HOST = "ntfy.sh"  # the ntfy server in relay.env's NTFY_URL (the relay, research)
 
 # [profiles.<name>]
 # public  true: any host whose addresses are all public, on ports 80 and 443 (publicweb's
@@ -42,7 +42,7 @@ ips = { relay = "10.89.79.10" }
 
 [profiles.research]
 public = true
-allow = ["@PUBLIC_HOST@:8888"]
+allow = ["@PUBLIC_HOST@:8888", "@NTFY_HOST@:443"]
 ips = { research-runner = "10.89.79.11" }
 
 [profiles.sites]

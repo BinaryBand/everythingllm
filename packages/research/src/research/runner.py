@@ -4,7 +4,7 @@ service container (host/quadlet/research-runner.container.in).
 The skill (anythingllm/agent-skills/deep-research) asks over its socket (hostrpc):
 
   start(question, depth?, planner?, worker?, planner_fallback?, site?, sub_questions?,
-        title?, owner?) -> {run_id, queued, card}
+        title?, owner?, scope?) -> {run_id, queued, card}
 
 `sub_questions` is the calling agent's own split of the question (each a goal, or {goal,
 queries}), which the planner then doesn't make; `title` is the report's title with them.
@@ -15,6 +15,8 @@ queries}), which the planner then doesn't make; `title` is the report's title wi
 
 `owner` is a gateway client's (gateway.research adds it from the client's token): its runs
 are its own, and it sees no others (runs.service). The skill gives none and sees them all.
+`scope` is the chat the skill was called from ({workspace, thread}, _lib/scope.js): when a
+run from a workspace's chat ends, the Nilson app hears of it through ntfy (research.notify).
 
 `card` is the run's live progress card for the agent to paste (research.live, which
 this runner serves on its own port); "" without PUBLIC_HOST.
@@ -31,6 +33,7 @@ Config (environment, from host.env and the unit):
   RESEARCH_LIVE_PORT    port for the live cards (default 8450; research.live), on LIVE_HOST
                         (default 127.0.0.1; runs.live)
   SEARXNG_URL           the SearXNG to search (default the host's; publicweb.pages)
+  NTFY_URL, NTFY_TOKEN  the ntfy topic told about ended runs (research.notify)
   and what research.job.Settings reads.
 """
 
@@ -44,7 +47,7 @@ import hostrpc
 from hostrpc import RunnerError
 from runs.service import Meter, Progress, Run, RunService
 
-from research import job, live
+from research import job, live, notify
 
 log = logging.getLogger("research-runner")
 
@@ -74,6 +77,19 @@ def check_split(sub_questions: Any, title: Any) -> None:
         raise RunnerError(f"title must be text of at most {MAX_TITLE} characters.")
 
 
+def told(owner: str | None, scope: Any) -> dict[str, str] | None:
+    """The chat whose app hears that a run ended: the skill's, from a workspace's chat. A
+    gateway client's runs and a scheduled job's (workspace "_jobs") tell no one."""
+    if owner is not None or not isinstance(scope, dict):
+        return None
+    workspace, thread = scope.get("workspace"), scope.get("thread")
+    if not isinstance(workspace, str) or not isinstance(thread, str):
+        return None
+    if not workspace or workspace == "_jobs":
+        return None
+    return {"workspace": workspace, "thread": thread}
+
+
 class Runner(RunService):
     log = log
     ID_PREFIX = "dr-"
@@ -81,14 +97,23 @@ class Runner(RunService):
     SUBJECT_KEY = "question"
     MAX_RUNS = 2
 
-    def __init__(self, settings: job.Settings, execute=job.run):
+    def __init__(self, settings: job.Settings, execute=job.run, notify=None):
         super().__init__()
         self.settings = settings
         self.execute = execute
+        # research.notify's publish, or None: told when a run from a workspace's chat ends.
+        self.notify = notify
 
-    async def op_start(self, question: str, owner: str | None = None, **args) -> dict:
+    async def op_start(
+        self,
+        question: str,
+        owner: str | None = None,
+        scope: dict | None = None,
+        **args,
+    ) -> dict:
         """args: depth, planner, worker, planner_fallback, site, sub_questions, title
-        (job.Request's fields); None or "" takes the default. `owner`: the module's."""
+        (job.Request's fields); None or "" takes the default. `owner`: the module's.
+        `scope`: the skill's chat, whose app hears when the run ends."""
         if not isinstance(question, str) or not question.strip():
             raise RunnerError("No research question was given.")
         check_split(args.get("sub_questions"), args.get("title") or None)
@@ -97,8 +122,10 @@ class Runner(RunService):
         card = live.Live.card_line(self.settings.pages_url, run.id, req.question)
         req = replace(req, run_id=run.id, card=card)
 
+        chat = told(owner, scope)
+
         async def work(run: Run, progress: Progress, meter: Meter) -> dict[str, Any]:
-            return await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 self.execute,
                 req,
                 self.settings,
@@ -106,6 +133,14 @@ class Runner(RunService):
                 lambda: not self.followed(run),
                 meter,
             )
+            if self.notify and chat:
+                # In its own task, so a slow ntfy doesn't hold up the run's end.
+                ok = result.get("status") == "ok"
+                notice = self.notify(run.id, ok, req.question, chat, result.get("url"))
+                task = asyncio.create_task(notice)
+                self.tasks.add(task)
+                task.add_done_callback(self.tasks.discard)
+            return result
 
         queued = self.launch(run, work)
         log.info("%s started: %s", run.id, req.question[:120])
@@ -124,7 +159,7 @@ class Runner(RunService):
 async def serve(
     settings: job.Settings, socket: Path, runner: Runner | None = None
 ) -> None:
-    runner = runner or Runner(settings)
+    runner = runner or Runner(settings, notify=notify.from_env())
     card = live.Live(runner, settings.runlogs, settings.pages_url)
     await runner.serve(socket, card, settings.live_port, settings.runlogs)
 

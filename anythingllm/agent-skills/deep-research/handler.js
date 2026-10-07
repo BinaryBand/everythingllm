@@ -10,6 +10,7 @@
 const hostrpc = require("../_lib/hostrpc");
 const { delegatedRefusal } = require("../_lib/delegated");
 const { asObject } = require("../_lib/runner");
+const { scopeOf } = require("../_lib/scope");
 
 const { Down } = hostrpc;
 
@@ -35,6 +36,8 @@ module.exports.runtime = {
         site: args.SITE || null,
         sub_questions: asObject(sub_questions),
         title: title || null,
+        // The chat it came from, whose app the runner tells when the run ends.
+        scope: scopeOf(this),
       });
     } catch (e) {
       this.logger?.(`deep-research couldn't start a run: ${e?.message || e}`);

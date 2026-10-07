@@ -27,6 +27,11 @@ class Gate:
         self.lock = threading.Lock()
         self.closed = []
         self.reqs = []
+        self.status = "ok"
+        self.notices = []  # what the runner told the app, through notify
+
+    async def notify(self, *notice):
+        self.notices.append(notice)
 
     def __call__(self, req, settings, progress, chat_closed, meter):
         with self.lock:
@@ -40,7 +45,7 @@ class Gate:
         with self.lock:
             self.running -= 1
         return {
-            "status": "ok",
+            "status": self.status,
             "reply": f"done: {req.question}",
             "sources": [{"url": "https://a/", "title": "A"}],
             "url": f"https://h:8445/research/reports/{req.question}/",
@@ -64,7 +69,7 @@ def served(tmp_path, monkeypatch):
 
     async def start():
         task = asyncio.create_task(
-            runner.serve(settings, socket, runner.Runner(settings, execute=gate))
+            runner.serve(settings, socket, runner.Runner(settings, execute=gate, notify=gate.notify))
         )
         for _ in range(100):
             if socket.exists():
@@ -143,6 +148,39 @@ def test_a_gateway_clients_runs_are_its_own(served):
 
     asyncio.run(go())
     assert gate.reqs and gate.reqs[0].question == "Heat pumps?"
+
+
+def test_a_run_from_a_chat_tells_its_app_when_it_ends(served):
+    """A run the skill started from a workspace's chat is told to notify (research.notify),
+    ok or not, with the report's URL; a gateway client's run and a scheduled job's tell no
+    one, and neither does one without a scope."""
+    _settings, gate, socket, start = served
+    chat = {"workspace": "career", "thread": "7"}
+
+    async def finished(**args):
+        run_id = (await call(socket, "start", **args))["result"]["run_id"]
+        while not (await call(socket, "wait", run_id=run_id))["result"]["done"]:
+            pass
+        return run_id
+
+    async def go():
+        server = await start()
+        gate.go.set()
+        ok = await finished(question="Bitcoin?", scope=chat)
+        gate.status = "failed"
+        failed = await finished(question="Gold?", scope=chat)
+        await finished(question="Mine", scope=chat, owner="client-a")
+        await finished(question="Job", scope={"workspace": "_jobs", "thread": "default"})
+        await finished(question="Old skill")
+        await asyncio.sleep(0.05)  # the notices go in tasks of their own
+        server.cancel()
+        return ok, failed
+
+    ok, failed = asyncio.run(go())
+    assert gate.notices == [
+        (ok, True, "Bitcoin?", chat, "https://h:8445/research/reports/Bitcoin?/"),
+        (failed, False, "Gold?", chat, "https://h:8445/research/reports/Gold?/"),
+    ]
 
 
 def test_two_runs_go_at_once_and_a_third_waits_its_turn(served):

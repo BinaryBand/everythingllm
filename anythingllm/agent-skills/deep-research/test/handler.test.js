@@ -28,12 +28,12 @@ async function fakeRunner(respond) {
   return { requests, close: () => new Promise((r) => server.close(r)) };
 }
 
-function agent({ workspace = { slug: "career", name: "Career" }, runtimeArgs = {} } = {}) {
+function agent({ workspace = { slug: "career", name: "Career" }, thread_id, runtimeArgs = {} } = {}) {
   return {
     runtimeArgs,
     introspect: () => {},
     logger: () => {},
-    super: { handlerProps: { invocation: { workspace } } },
+    super: { handlerProps: { invocation: { workspace, thread_id } } },
   };
 }
 
@@ -42,7 +42,7 @@ const CARD = "[![Deep research: Bitcoin?](https://h:8445/_live/research/dr-1.png
 test("a run is started and the skill answers at once with its live card", async () => {
   const runner = await fakeRunner(() => ({ ok: true, result: { run_id: "dr-1", queued: 0, card: CARD } }));
   try {
-    const self = agent({ runtimeArgs: { PLANNER_MODEL: "glm-5.3" } });
+    const self = agent({ thread_id: 7, runtimeArgs: { PLANNER_MODEL: "glm-5.3" } });
     const reply = await runtime.handler.call(self, {
       question: "Bitcoin?",
       depth: "quick",
@@ -59,6 +59,8 @@ test("a run is started and the skill answers at once with its live card", async 
         args: {
           question: "Bitcoin?", depth: "quick", planner: "glm-5.3", worker: null, planner_fallback: null, site: null,
           sub_questions: ["Price history", { goal: "Energy use" }], title: "Bitcoin",
+          // The chat it came from: the runner tells its app when the run ends.
+          scope: { workspace: "career", thread: "7" },
         },
       },
     ]);
@@ -76,6 +78,8 @@ test("a queued run says so, and without a card the reply says less", async () =>
     assert.match(reply, /the report will be on the research site/);
     assert.equal(runner.requests[0].args.sub_questions, null);
     assert.equal(runner.requests[0].args.title, null);
+    await runtime.handler.call(agent({ workspace: null }), { question: "From a job" });
+    assert.deepEqual(runner.requests[1].args.scope, { workspace: "_jobs", thread: "default" });
   } finally {
     await runner.close();
   }

@@ -22,8 +22,8 @@ PidsLimit=256
 PodmanArgs=--memory=2g --cpus=2 --umask=0002
 RunInit=true
 Timezone=local
-# egress-net only, at its address in egress.toml (profile research: public hosts, and
-# SearXNG by PUBLIC_HOST).
+# egress-net only, at its address in egress.toml (profile research: public hosts, SearXNG
+# by PUBLIC_HOST, and the ntfy host).
 Network=egress-net:ip=10.89.79.11
 Environment=HTTPS_PROXY=http://10.89.79.2:3128
 Environment=HTTP_PROXY=http://10.89.79.2:3128
@@ -65,6 +65,9 @@ Environment=ANYTHINGLLM_ENV=%h/.config/everythingllm/ctr/research-runner.env
 Volume=@ANYTHINGLLM_STORAGE@/anythingllm-fs/research:@ANYTHINGLLM_STORAGE@/anythingllm-fs/research
 # ANYTHINGLLM_STORAGE and PUBLIC_HOST.
 EnvironmentFile=@REPO@/host.env
+# The relay's ntfy topic and token (NTFY_URL, NTFY_TOKEN; research.notify), as values podman
+# reads on the host, not a file it can see. hostctl.relay_env makes the file.
+EnvironmentFile=%h/.config/everythingllm/relay.env
 
 [Service]
 # Its share of AnythingLLM's .env (the model keys), never the file, which holds every key

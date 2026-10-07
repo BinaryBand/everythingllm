@@ -55,9 +55,10 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
     assert (HOST, 3001) not in config.profiles["sites"].allow
     for p in config.profiles.values():  # uv's first sync, for every container
         assert {("pypi.org", 443), ("files.pythonhosted.org", 443)} <= p.allow
-    assert ("ntfy.example", 443) in loaded(NTFY_HOST="ntfy.example").profiles[
-        "relay"
-    ].allow
+    for name in ("relay", "research"):  # both tell the Nilson app through ntfy
+        assert ("ntfy.example", 443) in loaded(NTFY_HOST="ntfy.example").profiles[
+            name
+        ].allow
 
 
 def test_a_profile_without_its_host_doesnt_load(tmp_path):

@@ -257,6 +257,13 @@ def test_research_reaches_searxng_through_the_proxy_and_never_anythingllm(egress
     assert shared and not {"AUTH_TOKEN", "JWT_SECRET", "JWT_SECRET?"} & set(
         shared.group(1).split()
     )
+    # The relay's ntfy settings come in as values, as the relay's do (research.notify), and
+    # its profile lets it reach the ntfy host.
+    assert keys["EnvironmentFile"] == [
+        "@REPO@/host.env",
+        "%h/.config/everythingllm/relay.env",
+    ]
+    assert profile.judge("ntfy.sh", 443) == "allow"
 
 
 # What a service container's PodmanArgs may say: the limits Quadlet 5.4 has no key for.

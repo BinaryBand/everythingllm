@@ -213,7 +213,10 @@ class Elsewhere:
         self.writer = writer
 
     def get_extra_info(self, name, default=None):
-        return {"peername": ("10.89.79.50", 40000), "sockname": ("10.89.79.40", 8000)}.get(name, default)
+        return {
+            "peername": ("10.89.79.50", 40000),
+            "sockname": ("10.89.79.40", 8000),
+        }.get(name, default)
 
     def __getattr__(self, name):
         return getattr(self.writer, name)

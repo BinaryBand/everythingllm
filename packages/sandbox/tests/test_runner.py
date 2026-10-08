@@ -1254,7 +1254,9 @@ def test_a_snapshot_sees_the_scopes_mounts_and_counts_the_rest(cfg):
     for files in (True, False):
         usage = workspace.snapshot(s, files=files)
         assert usage.total == sum(tree.values())
-        assert usage.count == 20  # every file and folder under the workspace and /public
+        assert (
+            usage.count == 20
+        )  # every file and folder under the workspace and /public
         assert usage.tops == {
             "/work/a.txt": 3,
             "/work/sub/": 5,

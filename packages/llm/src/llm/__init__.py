@@ -192,4 +192,3 @@ def _api_error(name: str, resp: httpx.Response) -> APIError:
         resp.status_code,
         code,
     )
-

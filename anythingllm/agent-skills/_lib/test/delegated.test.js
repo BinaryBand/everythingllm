@@ -12,7 +12,7 @@ const SKILLS = path.join(__dirname, "..", "..");
 const READS = new Set([]);
 
 function agent(workspace) {
-  return { logger: () => {}, introspect: () => {}, super: { handlerProps: { invocation: { workspace: { slug: workspace }, thread_id: 3 } } } };
+  return { logger: () => {}, introspect: () => {}, super: { handlerProps: { invocation: { uuid: "inv-1", workspace: { slug: workspace }, thread_id: 3 } } } };
 }
 
 test("every skill that writes, acts or delegates refuses a delegated task, before reaching any service", async () => {

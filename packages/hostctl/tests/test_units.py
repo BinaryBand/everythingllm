@@ -30,8 +30,9 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
         assert not units.PLACEHOLDER.search(unit.text), unit.source
         assert "dev/everythingllm" not in unit.source.read_text(), unit.source
     assert "Volume=/repo:/mcp:ro" in planned["anythingllm.container"].text
-    assert (  # the log filter (anythingllm/log-filter.js), preloaded
-        "Environment=NODE_OPTIONS=--require=/mcp/anythingllm/log-filter.js"
+    assert (  # the log filter and the thread patch (anythingllm/), preloaded
+        'Environment="NODE_OPTIONS=--require=/mcp/anythingllm/log-filter.js '
+        '--require=/mcp/anythingllm/thread-scope.js"'
         in planned["anythingllm.container"].text
     )
     assert "EnvironmentFile=/repo/host.env" in planned["browser-runner.service"].text

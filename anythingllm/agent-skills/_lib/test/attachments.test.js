@@ -34,8 +34,8 @@ function row(title, file) {
   return { metadata: JSON.stringify({ title, location: `direct-uploads/${file}`, wordCount: 3 }) };
 }
 
-// A chat in AnythingLLM's UI: its invocation is a database row, thread_id and user_id included.
-function chat(invocation = { workspace: { id: 7, slug: "career" }, thread_id: 12, user_id: 3 }) {
+// A chat in AnythingLLM's UI: its invocation is a database row, uuid, thread_id and user_id included.
+function chat(invocation = { uuid: "inv-1", workspace: { id: 7, slug: "career" }, thread_id: 12, user_id: 3 }) {
   const logs = [];
   return {
     logs,
@@ -89,14 +89,15 @@ test("run-code sends the chat's attachments, titles and file names only, and lis
 
 test("the workspace's main chat asks for files with no thread, and single-user mode for no user", async () => {
   const prisma = fakePrisma([]);
-  const { self } = chat({ workspace: { id: 7, slug: "career" }, thread_id: null, user_id: null });
+  const { self } = chat({ uuid: "inv-1", workspace: { id: 7, slug: "career" }, thread_id: null, user_id: null });
   assert.deepEqual(await withPrisma(prisma, () => attachments.attachmentArgs(self)), { attachments: [], attachments_known: true });
   assert.deepEqual(prisma.queries[0].where, { workspaceId: 7, threadId: null });
 });
 
 test("API, Telegram and scheduled job runs have no chat, and no lookup", async () => {
   const prisma = fakePrisma([row("data.csv", "data.csv-1a2b.json")]);
-  for (const invocation of [{ workspace: { id: 7, slug: "career" }, workspace_id: 7 }, {}, { thread_id: 3 }]) {
+  // An API or Telegram chat on a thread has thread_id (thread-scope.js), but no uuid.
+  for (const invocation of [{ workspace: { id: 7, slug: "career" }, workspace_id: 7 }, { workspace: { id: 7, slug: "career" }, workspace_id: 7, thread_id: 12 }, {}, { thread_id: 3 }]) {
     assert.deepEqual(await withPrisma(prisma, () => attachments.attachmentArgs(chat(invocation).self)), {});
   }
   assert.deepEqual(prisma.queries, []);
@@ -148,7 +149,7 @@ test("a delegated task is refused before AnythingLLM's database is touched", asy
     return fakePrisma([]);
   };
   try {
-    const reply = await runCode.handler.call(chat({ workspace: { id: 9, slug: "agents-worker" }, thread_id: null, user_id: null }).self, { language: "bash", code: "ls" });
+    const reply = await runCode.handler.call(chat({ uuid: "inv-2", workspace: { id: 9, slug: "agents-worker" }, thread_id: null, user_id: null }).self, { language: "bash", code: "ls" });
     assert.match(reply, /^Error: this tool isn't available to a delegated task/);
     assert.equal(loaded, false);
   } finally {

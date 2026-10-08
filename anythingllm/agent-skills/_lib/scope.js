@@ -1,10 +1,10 @@
 // Where a skill's call came from, for the host services that keep things per workspace and
 // chat thread (the sandbox, the browser): from the invocation, never from what the model
 // says. A scheduled job has no workspace and gets "_jobs"; a workspace's main chat and a
-// job, which have no thread, get "default". So does every API and Telegram chat, thread or
-// not: AnythingLLM (1.16.2) holds their thread but leaves thread_id out of the invocation
-// its EphemeralAgentHandler gives skills, so a workspace's API chats share one scope until
-// it passes it.
+// job, which have no thread, get "default", as does an API chat with none. An API or
+// Telegram chat on a thread gets its thread only because anythingllm/thread-scope.js adds
+// thread_id to the invocation AnythingLLM's EphemeralAgentHandler gives skills, which it
+// leaves out (1.16.2); were that to stop, a workspace's API chats would share one scope.
 
 function scopeOf(self) {
   const invocation = self.super?.handlerProps?.invocation || {};
@@ -15,13 +15,14 @@ function scopeOf(self) {
 }
 
 /** The invocation of a call from a chat in AnythingLLM's UI, or null. Only such a chat has
- *  an invocation row of its own, with thread_id (null in the workspace's main chat). API and
- *  Telegram runs have no such key, because AnythingLLM (1.16.2) leaves their thread out of
- *  the invocation it gives skills, not because they have none; scheduled jobs have none.
- *  Were it to pass an API chat's thread_id, that chat would count as one here too. */
+ *  an invocation row of its own (workspace_agent_invocations), with its uuid and thread_id
+ *  (null in the workspace's main chat). An API or Telegram chat's invocation is made up for
+ *  the call, with no uuid, though it has thread_id (thread-scope.js), and a scheduled job's
+ *  has neither: they aren't told a job's end, nor given the chat's attachments. */
 function uiInvocation(self) {
   const invocation = self.super?.handlerProps?.invocation || {};
-  return Object.hasOwn(invocation, "thread_id") ? invocation : null;
+  const row = typeof invocation.uuid === "string" && invocation.uuid !== "";
+  return row && Object.hasOwn(invocation, "thread_id") ? invocation : null;
 }
 
 /** The chat a call came from, told when a job it starts ends (agents-runner's

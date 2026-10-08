@@ -10,8 +10,9 @@ thread by itself, so it shows once the user reloads the thread or opens it.
 
 Only a chat in AnythingLLM's UI is told. Its skill sends `chat`: {workspace, thread}, the
 thread's numeric id from the invocation, or None for the workspace's main chat. API and
-Telegram runs send none, since AnythingLLM leaves their thread out of the invocation it gives
-skills, and nor do scheduled jobs, which have none. A notice that can't be posted (the thread
+Telegram runs send none (their invocation has their thread, from anythingllm/thread-scope.js,
+but no row of its own: `_lib/scope.js`'s uiInvocation), and nor do scheduled jobs, which have
+none. A notice that can't be posted (the thread
 is gone, AnythingLLM is down) is logged and dropped.
 """
 

@@ -30,14 +30,16 @@ async function fakeRunner(respond) {
   return service;
 }
 
-// A chat in AnythingLLM's UI has thread_id (null in the main chat); an API, Telegram or job
-// run's invocation (`chat: false`) has no such key.
+// A chat in AnythingLLM's UI has an invocation row: its uuid and thread_id (null in the main
+// chat). An API or Telegram chat's (`chat: "api"`) has thread_id but no uuid
+// (thread-scope.js), and a scheduled job's (`chat: false`) neither.
 function agent({ workspace = { slug: "career", name: "Career" }, thread_id = null, chat = true, runtimeArgs = {} } = {}) {
+  const invocation = chat === "api" ? { workspace, workspace_id: 3, thread_id } : chat ? { uuid: "inv-1", workspace, thread_id } : { workspace };
   return {
     runtimeArgs,
     introspect: () => {},
     logger: () => {},
-    super: { handlerProps: { invocation: chat ? { workspace, thread_id } : { workspace } } },
+    super: { handlerProps: { invocation } },
   };
 }
 
@@ -85,13 +87,16 @@ test("only a chat in AnythingLLM's UI is followed, its main chat as thread null"
   const agents = await fakeAgents();
   try {
     await runtime.handler.call(agent(), { question: "q" });
-    const api = await runtime.handler.call(agent({ chat: false }), { question: "q" });
+    const job = await runtime.handler.call(agent({ chat: false }), { question: "q" });
+    const api = await runtime.handler.call(agent({ chat: "api", thread_id: 9 }), { question: "q" });
     assert.deepEqual(
       agents.requests.map((r) => r.args.chat),
       [{ workspace: "career", thread: null }]
     );
-    assert.doesNotMatch(api, /notice/);
+    assert.doesNotMatch(job, /notice/);
+    assert.doesNotMatch(api, /notice/); // an API chat's thread scopes it, but it isn't told
     assert.deepEqual(runner.requests[1].args.scope, { workspace: "career", thread: "default" });
+    assert.deepEqual(runner.requests[2].args.scope, { workspace: "career", thread: "9" });
   } finally {
     await runner.close();
     await agents.close();

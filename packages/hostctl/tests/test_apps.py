@@ -94,9 +94,15 @@ def test_no_container_template_names_its_container():
 
 
 def test_mappings_and_ports_dont_collide():
-    mappings = [m for _, m in apps.serve_mappings()]
-    assert len({(m.https, m.path) for m in mappings}) == len(mappings)
-    assert len({m.port for m in mappings}) == len(mappings)
+    """No two routes on one address, and no port two apps' (one app's server may take
+    several paths, as the sandbox's apps server does)."""
+    mappings = apps.serve_mappings()
+    assert len({(m.https, m.path) for _, m in mappings}) == len(mappings)
+    owner: dict[int, str] = {}
+    for app, m in mappings:
+        assert owner.setdefault(m.port, app) == app, (
+            f"{app} and {owner[m.port]} share :{m.port}"
+        )
 
 
 def test_setup_steps_exist_and_install_says_why_not():
@@ -161,6 +167,10 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     from research.job import PAGES_PORT
     from research.job import Settings as ResearchSettings
 
+    from sandbox.appsweb import PORT as APPS_PORT
+
+    assert port_of("sandbox", "/_live/apps") == APPS_PORT
+    assert port_of("sandbox", "/_apps") == APPS_PORT
     assert port_of("research", "/_live/research") == ResearchSettings.live_port
     assert port_of("agents", "/_live/agents") == AgentsSettings.live_port
     assert port_of("browser", "/_live/browser") == BROWSER_LIVE_PORT

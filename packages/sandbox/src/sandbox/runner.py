@@ -102,6 +102,7 @@ Config (environment):
                     ~/.local/share/everythingllm/sandbox/access.json)
   ANYTHINGLLM_ENV   AnythingLLM's .env, for the model keys (default <storage>/.env)
   USER_TIMEZONE     whose day a model budget is (sandbox.models)
+  APPS_PORT         the apps server's port (sandbox.appsweb; default 8455)
 """
 
 from __future__ import annotations
@@ -137,6 +138,7 @@ from hostrpc import safefs
 from PIL import Image
 
 from sandbox import apps as app_templates
+from sandbox import appsweb
 from sandbox import models as model_access
 
 log = logging.getLogger("sandbox-runner")
@@ -319,9 +321,10 @@ class Config:
     model_log: Path = Path("/nonexistent/models")
     # Each run's model socket, in a folder of its own: a short path, as AF_UNIX's are.
     model_sockets: Path = Path("/nonexistent/m")
-    app_state: Path = Path(
-        "/nonexistent/apps"
-    )  # each app's write-back token, host-only
+    # Each app's write-back token, host-only; the apps server's port (sandbox.appsweb),
+    # with none none served.
+    app_state: Path = Path("/nonexistent/apps")
+    apps_port: int | None = None
     public_root: Path = Path("/nonexistent")
     public_url: str = "http://127.0.0.1:8447/"
     uploads: Path = Path("/nonexistent")  # AnythingLLM's direct-uploads
@@ -353,6 +356,7 @@ class Config:
             model_log=hostrpc.data_dir() / "sandbox" / "models",
             model_sockets=hostrpc.data_dir() / "sandbox" / "m",
             app_state=hostrpc.data_dir() / "sandbox" / "apps",
+            apps_port=int(get("APPS_PORT") or appsweb.PORT),
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
@@ -2263,7 +2267,8 @@ class Runner(hostrpc.Service):
 
 
 async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
-    """Serve the runner on its socket until `stop` is set, or without one until SIGTERM."""
+    """Serve the runner on its socket, and the apps server (sandbox.appsweb) on its port,
+    until `stop` is set, or without one until SIGTERM."""
     runner = Runner(config)
     await runner.cleanup()
     config.root.mkdir(parents=True, exist_ok=True)
@@ -2273,10 +2278,17 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
         stop = asyncio.Event()
         loop.add_signal_handler(signal.SIGTERM, stop.set)
     gc = asyncio.create_task(runner.gc_loop())
+    web = (
+        await appsweb.AppsWeb(runner).serve(config.apps_port)
+        if config.apps_port
+        else None
+    )
     try:
         await hostrpc.serve(runner, config.socket, limit=LIMIT, stop=stop)
     finally:
         gc.cancel()
+        if web is not None:
+            web.close()
         if on_sigterm:
             loop.remove_signal_handler(signal.SIGTERM)
 

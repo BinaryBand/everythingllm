@@ -6,7 +6,16 @@ import re
 import pytest
 from sandbox import apps, runner
 from sandbox.apps.list import template as lists
-from test_runner import A, A2, B, cfg, go, make, project, public  # noqa: F401 - cfg is a fixture
+from test_runner import (  # noqa: F401 - cfg is a fixture
+    A2,
+    A,
+    B,
+    cfg,
+    go,
+    make,
+    project,
+    public,
+)
 
 GATEWAY = {"workspace": "client-laptop", "thread": "gateway", "gateway": True}
 

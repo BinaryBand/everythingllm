@@ -51,6 +51,12 @@ summary = "the code sandbox's runner and its image; its runs reach PyPI through 
 runner = "sandbox-runner.service"
 units = { "sandbox-runner.service" = "code sandbox runner" }
 before = ["python3 -m hostctl sandbox-images"]
+# The apps server (sandbox.appsweb): each app's live card, and its page's write-back.
+serve = [
+  { https = 8445, path = "/_live/apps", port = 8455 },
+  { https = 8447, path = "/_apps", port = 8455 },
+]
+health = { "app cards" = "http://127.0.0.1:8455/_live/apps/" }
 install = true
 
 [egress]

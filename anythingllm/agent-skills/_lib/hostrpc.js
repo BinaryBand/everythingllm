@@ -15,14 +15,16 @@ function socketPath(folder, env) {
 class Down extends Error {}
 /** The service answered with an error. */
 class Refused extends Error {}
+/** The chat closed (its `signal` aborted) before the service answered. */
+class Closed extends Error {}
 
 /**
  * One request to the service on `socket`. Resolves with its result. An abort of `signal`
- * closes the connection and resolves with null.
+ * closes the connection and rejects with Closed.
  */
 function call(socket, op, args, { name, signal = null, timeoutMs = 60_000 }) {
   return new Promise((resolve, reject) => {
-    if (signal?.aborted) return resolve(null);
+    if (signal?.aborted) return reject(new Closed());
     const conn = net.createConnection(socket);
     conn.setEncoding("utf8"); // a character split across chunks stays whole
     let buffer = "";
@@ -35,7 +37,7 @@ function call(socket, op, args, { name, signal = null, timeoutMs = 60_000 }) {
       conn.destroy();
       fn(value);
     };
-    const onAbort = () => finish(resolve, null);
+    const onAbort = () => finish(reject, new Closed());
     const timer = setTimeout(() => finish(reject, new Error(`${name} didn't answer within ${timeoutMs / 1000} s`)), timeoutMs);
     signal?.addEventListener("abort", onAbort, { once: true });
     conn.on("connect", () => conn.write(JSON.stringify({ op, args }) + "\n"));
@@ -62,4 +64,4 @@ function call(socket, op, args, { name, signal = null, timeoutMs = 60_000 }) {
   });
 }
 
-module.exports = { call, socketPath, Down, Refused };
+module.exports = { call, socketPath, Closed, Down, Refused };

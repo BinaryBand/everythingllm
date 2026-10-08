@@ -6,31 +6,14 @@
 // The scope is where the call came from (_lib/scope.js): sandbox-runner (packages/sandbox)
 // mounts /work, /project, /shared/<workspace> and /public by it.
 
-const { call, socketPath, Down, Refused } = require("./hostrpc");
-const { delegatedRefusal } = require("./delegated");
-const { scopeOf } = require("./scope");
+const { withRunner } = require("./runner");
 
 /**
- * Run `work(request)` for a skill, where request(op, args) calls the runner with the
- * call's scope added. Never throws (a skill that throws ends the chat): a failure
- * becomes the reply, and a closed chat resolves request() with null.
+ * Run `work(request)` for a skill, where request(op, args) calls the runner with the call's
+ * scope added (_lib/runner.js's withRunner). `closed` is the reply when the chat closes first.
  */
-async function withSandbox(self, work) {
-  const refused = delegatedRefusal(self);
-  if (refused) return refused;
-  const signal = self.super?.abortController?.signal ?? null;
-  const scope = scopeOf(self);
-  const request = (op, args) =>
-    call(socketPath("sandbox", "SANDBOX_SOCKET"), op, { ...args, scope }, { name: "the sandbox runner", signal });
-  try {
-    return await work(request);
-  } catch (e) {
-    self.logger?.(`sandbox: ${e?.message || e}`);
-    if (e instanceof Down)
-      return `The sandbox isn't running on the server (${e.message}). Tell the user it needs \`uv run hostctl sandbox-setup\`.`;
-    if (e instanceof Refused) return `Error: ${e.message}`;
-    return `The sandbox failed: ${e?.message || e}`;
-  }
+function withSandbox(self, work, { closed } = {}) {
+  return withRunner(self, { service: "sandbox", label: "The sandbox", scoped: true, timeoutMs: 60_000, closed }, work);
 }
 
 /**

@@ -8,7 +8,6 @@ module.exports.runtime = {
   handler: async function ({ path, slug, remove }) {
     return withSandbox(this, async (request) => {
       const r = await request("publish", { slug: slug ?? "", path: path ?? "", remove: remove === true });
-      if (r === null) return "The chat closed.";
       if (r.removed) return `removed /public/${r.slug}; it's no longer on the web`;
       if (r.pages)
         return r.pages.length

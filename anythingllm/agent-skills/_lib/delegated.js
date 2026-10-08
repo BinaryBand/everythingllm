@@ -17,4 +17,4 @@ function delegatedRefusal(self) {
   );
 }
 
-module.exports = { delegatedRefusal, PREFIX };
+module.exports = { delegatedRefusal };

@@ -9,7 +9,6 @@ module.exports.runtime = {
   handler: async function ({ name, prompt, schedule, tools, apply }) {
     return forwardScoped(this, {
       service: "agents",
-      env: "AGENTS_SOCKET",
       op: "schedule_job",
       args: {
         name: name ?? "",

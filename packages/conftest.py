@@ -27,9 +27,8 @@ def no_host_settings(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("ANYTHINGLLM_API", f"{NO_ANYTHINGLLM}/api")
     monkeypatch.delenv("ANYTHINGLLM_ENV", raising=False)
     # hostctl reads its address on import.
-    for name in ("hostctl.sync", "hostctl.machine"):
-        if name in sys.modules:
-            monkeypatch.setattr(sys.modules[name], "API", f"{NO_ANYTHINGLLM}/api")
+    if "hostctl.units" in sys.modules:
+        monkeypatch.setattr(sys.modules["hostctl.units"], "API", f"{NO_ANYTHINGLLM}/api")
     # Nor a service container's: its egress proxy and the addresses it reaches the host by.
     for key in (
         "EGRESS_PROXY",

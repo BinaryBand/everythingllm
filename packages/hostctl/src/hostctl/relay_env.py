@@ -10,9 +10,10 @@ container mounts. Standard library only, like the rest of hostctl.
     python3 -m hostctl.relay_env [path]   # with hostctl on PYTHONPATH, as appctl does
 """
 
-import os
 import sys
 from pathlib import Path
+
+from hostctl import gateway_env
 
 DEFAULT = Path("~/.config/everythingllm/relay.env").expanduser()
 
@@ -30,10 +31,7 @@ NTFY_TOKEN=
 def main() -> None:
     path = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else DEFAULT
     if not path.exists():
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(TEMPLATE)
+        gateway_env.create(path, TEMPLATE)
         print(f"made {path}")
     path.chmod(0o600)
 

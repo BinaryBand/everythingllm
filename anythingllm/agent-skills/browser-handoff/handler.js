@@ -13,13 +13,11 @@ module.exports.runtime = {
       if (asFlag(done)) {
         say(this, "Taking the browser back");
         const r = await request("handoff", { done: true });
-        if (r === null) return null;
         return ["You have the browser again.", r.page].filter(Boolean).join("\n");
       }
       const why = reason == null ? "" : String(reason).trim();
       say(this, "Handing the browser to you");
       const r = await request("handoff", { reason: why });
-      if (r === null) return null;
       const where = r.card ? cardLines(r.card) : [`The browser for the user: ${r.takeover}`, ""];
       const what = r.reason || why; // the runner names an identity provider's sign-in page
       return [

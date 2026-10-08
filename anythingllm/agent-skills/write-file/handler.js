@@ -7,7 +7,6 @@ module.exports.runtime = {
   handler: async function ({ path, content, delete: del }) {
     return withSandbox(this, async (request) => {
       const r = await request("write", { path: path ?? "", content: content ?? "", delete: del === true });
-      if (r === null) return "The chat closed.";
       const done = r.emptied
         ? `emptied ${r.path}`
         : "folder" in r

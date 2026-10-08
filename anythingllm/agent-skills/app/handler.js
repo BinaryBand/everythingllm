@@ -25,7 +25,6 @@ module.exports.runtime = {
         op: op ?? "",
         args,
       });
-      if (r === null) return "The chat closed.";
       if (r.apps)
         return r.apps.length
           ? ["This workspace's apps:", ...r.apps.map((a) => (a.error ? `- ${a.name}: ${a.error}` : `- ${a.name}: ${a.title}, ${a.summary}`))].join("\n")

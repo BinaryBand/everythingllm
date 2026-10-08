@@ -65,27 +65,28 @@ def anythingllm_headers(
     password in its .env (AUTH_TOKEN, set in the UI's Security settings). One login per
     process, since each one is logged; `fresh` logs in again, after a 401. Raises
     LoginFailed when it can't log in."""
+    if not fresh and api in _tokens:
+        return {"Authorization": f"Bearer {_tokens[api]}"}
     env = env_values(env_file, ("AUTH_TOKEN", "JWT_SECRET"), environ=False)
     if not (env.get("AUTH_TOKEN") and env.get("JWT_SECRET")):
         return {}
-    if fresh or api not in _tokens:
-        req = urllib.request.Request(
-            f"{api.rstrip('/')}/request-token",
-            json.dumps({"password": env["AUTH_TOKEN"]}).encode(),
-            {"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as res:
-                token = json.load(res).get("token")
-        except urllib.error.HTTPError as e:
-            raise LoginFailed(
-                f"AnythingLLM refused the password in {env_file} ({e.code})"
-            ) from None
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            raise LoginFailed(f"couldn't log in to AnythingLLM at {api}: {e}") from None
-        if not token:
-            raise LoginFailed(f"AnythingLLM refused the password in {env_file}")
-        _tokens[api] = token
+    req = urllib.request.Request(
+        f"{api.rstrip('/')}/request-token",
+        json.dumps({"password": env["AUTH_TOKEN"]}).encode(),
+        {"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as res:
+            token = json.load(res).get("token")
+    except urllib.error.HTTPError as e:
+        raise LoginFailed(
+            f"AnythingLLM refused the password in {env_file} ({e.code})"
+        ) from None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise LoginFailed(f"couldn't log in to AnythingLLM at {api}: {e}") from None
+    if not token:
+        raise LoginFailed(f"AnythingLLM refused the password in {env_file}")
+    _tokens[api] = token
     return {"Authorization": f"Bearer {_tokens[api]}"}
 
 

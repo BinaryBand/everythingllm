@@ -133,7 +133,7 @@ def picture(
         note = "Nothing to show yet" if state != "closed" else "The browser is closed"
         d.text((x, STRIP + 150), note, font=big, fill=p.faint)
     out = io.BytesIO()
-    image.save(out, "JPEG", quality=72, optimize=True)
+    image.save(out, "JPEG", quality=72)  # replaced within seconds: no optimize pass
     return out.getvalue()
 
 

@@ -4,36 +4,22 @@
 // errors into replies, and the line each call shows in the chat while it runs, so that
 // seven steps of filling a form don't all read "browser-act".
 
-const { call, socketPath, Down, Refused } = require("./hostrpc");
-const { delegatedRefusal } = require("./delegated");
-const { scopeOf } = require("./scope");
+const runner = require("./runner");
 
 // Starting a workspace's browser and loading a page can take a while; the runner's own
 // limits come first.
 const TIMEOUT_MS = 120_000;
-const CLOSED = "The chat closed before the browser answered.";
 
 /**
  * Run `work(request)` for a skill, where request(op, args) calls browser-runner with the
- * call's scope added. Never throws (a skill that throws ends the chat): a failure becomes
- * the reply, and a closed chat resolves request() with null.
+ * call's scope added (_lib/runner.js's withRunner).
  */
-async function withBrowser(self, work) {
-  const refused = delegatedRefusal(self);
-  if (refused) return refused;
-  const signal = self.super?.abortController?.signal ?? null;
-  const scope = scopeOf(self);
-  const request = (op, args) =>
-    call(socketPath("browser", "BROWSER_SOCKET"), op, { ...args, scope }, { name: "the browser runner", signal, timeoutMs: TIMEOUT_MS });
-  try {
-    return (await work(request)) ?? CLOSED;
-  } catch (e) {
-    self.logger?.(`browser: ${e?.message || e}`);
-    if (e instanceof Down)
-      return `The browser service isn't running on the server (${e.message}). Tell the user it needs \`uv run hostctl browser-setup\`.`;
-    if (e instanceof Refused) return `Error: ${e.message}`;
-    return `The browser failed: ${e?.message || e}`;
-  }
+function withBrowser(self, work) {
+  return runner.withRunner(
+    self,
+    { service: "browser", scoped: true, timeoutMs: TIMEOUT_MS, closed: "The chat closed before the browser answered." },
+    work
+  );
 }
 
 /** Show `line` in the chat as what the agent is doing now (AnythingLLM's introspect). */
@@ -85,13 +71,8 @@ function actLine(action, label, ref, text) {
 
 /** The lines that hand the agent a tab's live card. */
 function cardLines(card) {
-  if (!card) return [];
-  return [
-    `Card: ${card}`,
-    "Put the Card line in your reply exactly as given, on its own line: it shows this chat's " +
-      "browser tab live, and opens the browser for the user to watch or take over.",
-    "",
-  ];
+  const what = "it shows this chat's browser tab live, and opens the browser for the user to watch or take over.";
+  return card ? [...runner.cardLines(card, what), ""] : [];
 }
 
-module.exports = { withBrowser, cardLines, say, hostOf, actLine, CLOSED };
+module.exports = { withBrowser, cardLines, say, hostOf, actLine };

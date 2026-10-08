@@ -31,12 +31,11 @@ module.exports.runtime = {
       // Only here, past withSandbox's refusal of a delegated task: it reads AnythingLLM's database.
       const attachments = await attachmentArgs(this);
       let r = await request("run", { language, code, timeout: Number.isInteger(timeout) ? timeout : 60, ...attachments });
-      while (r?.running) {
+      while (r.running) {
         this.introspect(`Still running (${Math.round(r.seconds)} s)…`);
         r = await request("wait", { run_id: r.run_id });
       }
-      if (r === null) return "The chat closed; the run carries on, and its files will be in /work.";
       return format(r);
-    });
+    }, { closed: "The chat closed; the run carries on, and its files will be in /work." });
   },
 };

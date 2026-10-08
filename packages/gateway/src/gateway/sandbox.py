@@ -45,10 +45,6 @@ THREAD = "gateway"
 # doesn't import the runner; a test holds them equal).
 KEY_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")
 
-# How long one run or wait call can take on the runner (sandbox.runner.WAIT; a test holds
-# them equal, and that it fits in hostrpc's call timeout, which an MCP client's own 60 s
-# fits around).
-RUNNER_WAIT = 45
 # The runner's own line limit (sandbox.runner.LIMIT): a run's reply can be long.
 LIMIT = 8 * 1024 * 1024
 

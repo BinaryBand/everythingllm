@@ -9,7 +9,6 @@ module.exports.runtime = {
   handler: async function ({ action, text, scope, id }) {
     return forwardScoped(this, {
       service: "agents",
-      env: "AGENTS_SOCKET",
       op: "memories",
       args: {
         action: String(action || "list").trim().toLowerCase(),

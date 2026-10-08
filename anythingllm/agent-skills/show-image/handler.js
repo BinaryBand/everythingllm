@@ -7,7 +7,6 @@ module.exports.runtime = {
   handler: async function ({ path, alt }) {
     return withSandbox(this, async (request) => {
       const r = await request("show_image", { path: path ?? "", alt: alt ?? "" });
-      if (r === null) return "The chat closed.";
       const kb = Math.max(1, Math.round(r.bytes / 1024));
       return `shown: ${r.url} (${r.width}×${r.height}, ${kb} KB)\nImage: ${r.image}`;
     });

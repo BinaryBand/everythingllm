@@ -31,18 +31,16 @@ import os
 import shutil
 import sys
 import urllib.error
-import urllib.request
 from pathlib import Path
 
 from hostenv import prompt
 
 from hostctl import apps, run_guard, units
-from hostctl.units import ROOT, anythingllm_headers, replace_file, storage
+from hostctl.units import ROOT, replace_file, storage
 
 STORAGE = storage()
 REPO = ROOT / "anythingllm"
 LIVE_SKILLS = STORAGE / units.SKILLS
-API = os.environ.get("ANYTHINGLLM_API", "http://127.0.0.1:3001/api")
 # What the UI set in each skill deploy took out (<skill>.json, host-only), for its return.
 KEPT = run_guard.DATA / "hostctl" / "skills"
 
@@ -138,20 +136,14 @@ def remove(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def api(method: str, path: str, body: dict | None = None, fresh: bool = False) -> dict:
-    """Call AnythingLLM's internal API, logged in if it has a password (once more after a 401)."""
-    data = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json", **anythingllm_headers(API, fresh)}
-    req = urllib.request.Request(API + path, data, headers, method=method)
+def api(method: str, path: str, body: dict | None = None) -> dict:
+    """units.api, exiting with what went wrong."""
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.load(resp)
+        return units.api(method, path, body)
     except urllib.error.HTTPError as e:
-        if e.code == 401 and not fresh:
-            return api(method, path, body, fresh=True)
         sys.exit(f"{method} {path}: {e.code} {e.read().decode(errors='replace')}")
     except urllib.error.URLError as e:
-        sys.exit(f"AnythingLLM API not reachable at {API}: {e.reason}")
+        sys.exit(f"AnythingLLM API not reachable at {units.API}: {e.reason}")
 
 
 def planned_default() -> str | None:

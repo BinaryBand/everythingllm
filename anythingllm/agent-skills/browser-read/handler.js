@@ -11,7 +11,6 @@ module.exports.runtime = {
       const showing = asFlag(card);
       say(this, showing ? "Getting the browser's card" : find == null || !String(find).trim() ? "Reading the page" : "Looking for something on the page");
       const r = await request("read", { find: find == null ? "" : String(find), ...(showing ? { card: true } : {}) });
-      if (r === null) return null;
       return showing ? [...cardLines(r.card), r.page].join("\n") : r.page;
     });
   },

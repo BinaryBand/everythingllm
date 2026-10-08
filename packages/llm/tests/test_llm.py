@@ -3,18 +3,16 @@ import json
 import httpx
 import pytest
 from llm import (
-    DEFAULT_MODEL,
+    DEEPSEEK_BASE,
     REPAIR,
     APIError,
     Completions,
     LLMError,
     Provider,
     chat_json,
-    deepseek,
     parse_json,
     provider,
     provider_for,
-    settings,
 )
 
 
@@ -47,22 +45,6 @@ def clean_env(monkeypatch):
     monkeypatch.delenv("ANYTHINGLLM_ENV", raising=False)
 
 
-def test_settings_read_anythingllms_env(tmp_path, monkeypatch):
-    env = tmp_path / ".env"
-    env.write_text(
-        "OTHER=x\nDEEPSEEK_API_KEY='sk-file'\nDEEPSEEK_MODEL_PREF=\"deepseek-pro\"\n"
-    )
-    assert settings(str(env)) == ("sk-file", "deepseek-pro")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-env")
-    assert settings(str(env)) == ("sk-env", "deepseek-pro")
-    monkeypatch.setenv("ANYTHINGLLM_ENV", str(env))
-    assert settings("/nowhere/.env") == ("sk-env", "deepseek-pro")
-
-
-def test_settings_without_an_env_file(tmp_path):
-    assert settings(str(tmp_path / "missing")) == ("", DEFAULT_MODEL)
-
-
 def answering(status=200, finish="stop", content="hi", raw=None, **extra):
     """Requests sent and a transport answering them; a tuple of statuses is answered in
     turn, the last one from then on."""
@@ -80,9 +62,21 @@ def answering(status=200, finish="stop", content="hi", raw=None, **extra):
     return sent, httpx.MockTransport(handler)
 
 
+def deepseek(transport, max_tokens=8_000):
+    """A chat function on DeepSeek, with thinking off and no retries."""
+    completions = Completions(
+        Provider("deepseek", DEEPSEEK_BASE, "sk", "DEEPSEEK_API_KEY"),
+        transport=transport,
+        retries=0,
+    )
+    return lambda messages: completions.create(
+        "deepseek-flash", messages, max_tokens, think=False
+    )[0]
+
+
 def test_deepseek_asks_with_thinking_off():
     sent, transport = answering()
-    chat = deepseek("sk", "deepseek-flash", max_tokens=500, transport=transport)
+    chat = deepseek(transport, max_tokens=500)
     assert chat([{"role": "user", "content": "hello"}]) == "hi"
     body = json.loads(sent[0].content)
     assert body["model"] == "deepseek-flash" and body["max_tokens"] == 500
@@ -101,7 +95,7 @@ def test_deepseek_asks_with_thinking_off():
 def test_deepseek_errors(answer, error):
     _, transport = answering(**answer)
     with pytest.raises(LLMError, match=error):
-        deepseek("sk", "deepseek-flash", transport=transport)([])
+        deepseek(transport)([])
 
 
 def test_deepseek_unreachable():
@@ -109,7 +103,7 @@ def test_deepseek_unreachable():
         raise httpx.ConnectError("refused")
 
     with pytest.raises(LLMError, match="couldn't reach DeepSeek: refused"):
-        deepseek("sk", "deepseek-flash", transport=httpx.MockTransport(refuse))([])
+        deepseek(httpx.MockTransport(refuse))([])
 
 
 def test_provider_sends_glm_to_the_coding_endpoint_with_the_current_key(

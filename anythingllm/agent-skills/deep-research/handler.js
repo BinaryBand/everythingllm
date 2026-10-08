@@ -11,7 +11,7 @@
 
 const hostrpc = require("../_lib/hostrpc");
 const { delegatedRefusal } = require("../_lib/delegated");
-const { asObject } = require("../_lib/runner");
+const { asObject, cardLines } = require("../_lib/runner");
 const { scopeOf, chatOf, TOLD } = require("../_lib/scope");
 
 const { Down } = hostrpc;
@@ -79,11 +79,7 @@ module.exports.runtime = {
     return [
       `Deep research started (run ${runId}). It runs on the server for several minutes and writes a cited report, ` +
         `even if the chat closes.${waits}`,
-      card ? `Card: ${card}` : "",
-      card
-        ? "Put the Card line in your reply exactly as given, on its own line: it shows the run's progress live. " +
-          "Tell the user that in a sentence."
-        : "",
+      ...cardLines(card, "it shows the run's progress live. Tell the user that in a sentence."),
       followed
         ? "When it's done, the report goes into this workspace's documents under its title."
         : "When it's done, the report is saved in the agent's files, in research/.",

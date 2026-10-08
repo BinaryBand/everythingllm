@@ -3,6 +3,7 @@
 // replies with the page as it is after.
 
 const { withBrowser, say, actLine } = require("../_lib/browser");
+const { Closed } = require("../_lib/hostrpc");
 
 const NAMED = new Set(["click", "fill", "type", "select", "check", "uncheck", "hover"]);
 
@@ -19,14 +20,13 @@ module.exports.runtime = {
       let label = "";
       if (NAMED.has(args.action) && args.ref) {
         try {
-          const named = await request("label", { ref: args.ref });
-          if (named === null) return null;
-          label = named.label;
-        } catch {}
+          label = (await request("label", { ref: args.ref })).label;
+        } catch (e) {
+          if (e instanceof Closed) throw e;
+        }
       }
       say(this, actLine(args.action, label, args.ref, args.text));
-      const r = await request("act", args);
-      return r === null ? null : r.page;
+      return (await request("act", args)).page;
     });
   },
 };

@@ -26,12 +26,10 @@ module.exports.runtime = {
     return withBrowser(this, async (request) => {
       const what = String(action || "list");
       if (what === "list") {
-        const r = await request("logins", {});
-        return r === null ? null : listing(r);
+        return listing(await request("logins", {}));
       }
       if (what === "ask") {
         const r = await request("ask_login", {});
-        if (r === null) return null;
         return [
           r.card ? `Card: ${r.card}` : "",
           r.card
@@ -45,14 +43,12 @@ module.exports.runtime = {
       else args.ref = String(ref ?? "");
       if (what !== "passkey") args.submit = asFlag(submit) === true;
       let r = await request(what, args);
-      if (r === null) return null;
       if (r.approval) {
         const until = Date.now() + MAX_WAIT_MS;
         this.introspect("Waiting for your OK in the browser (open it from this chat's browser card) to use that saved login…");
         let w = { done: false };
         while (!w.done && Date.now() < until) {
           w = await request("wait_approval", { approval: r.approval });
-          if (w === null) return null;
         }
         if (!w.done)
           return [
@@ -63,7 +59,6 @@ module.exports.runtime = {
           return "That request for the user's OK was let go (this chat asked for another of its saved logins, or the browser restarted). Call browser-login again.";
         if (!w.approved) return "The user didn't allow that login. Ask them what they'd like instead.";
         r = await request(what, args);
-        if (r === null) return null;
         if (r.approval) return "The user's OK didn't stick; ask them to try again.";
       }
       return r.page;

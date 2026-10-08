@@ -93,7 +93,7 @@ import shutil
 import signal
 import stat
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -385,6 +385,17 @@ class Runner(hostrpc.Service):
             }
         return {**result, "run_id": run_id}
 
+    async def start(
+        self, workspace: str, work: Coroutine[Any, Any, dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Start `work` as a run of `workspace`'s, and wait for it as op_wait does."""
+        self.prune()
+        run_id = f"r-{secrets.token_hex(4)}"
+        job = Job(workspace, asyncio.create_task(work), self.now())
+        job.task.add_done_callback(lambda _: setattr(job, "finished", self.now()))
+        self._jobs[run_id] = job
+        return await self.wait(run_id, job)
+
     async def op_run(
         self,
         scope: dict[str, Any],
@@ -408,20 +419,12 @@ class Runner(hostrpc.Service):
             raise SandboxError("code is empty")
         timeout = max(1, min(int(timeout), MAX_TIMEOUT))
         s = self.scope(scope)
-        self.prune()
-        run_id = f"r-{secrets.token_hex(4)}"
-        job = Job(
+        return await self.start(
             s.workspace,
-            asyncio.create_task(
-                self.execute(
-                    s, language, code, timeout, attachments, attachments_known is True
-                )
+            self.execute(
+                s, language, code, timeout, attachments, attachments_known is True
             ),
-            self.now(),
         )
-        job.task.add_done_callback(lambda _: setattr(job, "finished", self.now()))
-        self._jobs[run_id] = job
-        return await self.wait(run_id, job)
 
     async def op_wait(self, scope: dict[str, Any], run_id: str) -> dict[str, Any]:
         workspace = self.scope(scope).workspace
@@ -606,16 +609,9 @@ class Runner(hostrpc.Service):
                 "or hyphens"
             )
         self.idle(s.workspace)
-        self.prune()
-        run_id = f"r-{secrets.token_hex(4)}"
-        job = Job(
-            s.workspace,
-            asyncio.create_task(self.build(s, path.strip().rstrip("/"), slug)),
-            self.now(),
+        return await self.start(
+            s.workspace, self.build(s, path.strip().rstrip("/"), slug)
         )
-        job.task.add_done_callback(lambda _: setattr(job, "finished", self.now()))
-        self._jobs[run_id] = job
-        return await self.wait(run_id, job)
 
     async def build(self, scope: Scope, path: str, slug: str) -> dict[str, Any]:
         """One site build, under the workspace's lock: the helper in a container with no

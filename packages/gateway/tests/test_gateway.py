@@ -497,7 +497,8 @@ def test_a_run_still_going_answers_running_and_sandbox_wait_takes_it(
 
 
 def test_a_wait_fits_the_callers_timeout():
-    assert gateway_sandbox.RUNNER_WAIT < hostrpc.CALL_TIMEOUT
+    # hostrpc's call timeout, which an MCP client's own 60 s fits around.
+    assert sandbox.runner.WAIT < hostrpc.CALL_TIMEOUT
 
 
 @pytest.mark.parametrize("name", [None, "", "Bad Name", "x" * 94])
@@ -512,7 +513,6 @@ def test_a_client_name_that_isnt_a_sandbox_key_gets_no_scope(name):
 
 def test_the_gateways_copies_of_the_sandboxs_limits_match_it():
     assert gateway_sandbox.KEY_RE.pattern == sandbox.workspace.KEY_RE.pattern
-    assert gateway_sandbox.RUNNER_WAIT == sandbox.runner.WAIT
     assert gateway_sandbox.LIMIT == sandbox.runner.LIMIT
     assert gateway_agents.LIMIT == agents.runner.LIMIT  # a finished wait can be 6 MB
     # The longest client name the gateway takes still makes a sandbox key.

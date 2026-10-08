@@ -1,6 +1,6 @@
 """Reading a web page's main text (a client that looks like a browser, a capped download
-and trafilatura's extraction) and searching our SearXNG. The article writer and deep
-research read and search with it.
+and trafilatura's extraction) and searching our SearXNG. Deep research reads and searches
+with it.
 
 Config (environment):
   SEARXNG_URL  the SearXNG search endpoint (default SEARXNG, the host's loopback; a

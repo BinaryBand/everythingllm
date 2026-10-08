@@ -10,7 +10,6 @@ module.exports.runtime = {
       const host = hostOf(url);
       say(this, host ? `Opening ${host}` : "Opening a page");
       const r = await request("open", { url: String(url ?? "") });
-      if (r === null) return null;
       return [...(r.new ? cardLines(r.card) : []), r.page].join("\n");
     });
   },

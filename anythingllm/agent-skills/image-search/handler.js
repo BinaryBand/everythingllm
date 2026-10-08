@@ -15,7 +15,6 @@ module.exports.runtime = {
   handler: async function ({ query, count, url, alt }) {
     return forward(this, {
       service: "research",
-      env: "RESEARCH_SOCKET",
       op: "images",
       args: { query: query ?? "", url: url ?? "", count: asInteger(count) ?? null, alt: alt ?? "" },
       timeoutMs: 60_000,

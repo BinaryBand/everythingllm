@@ -1,11 +1,7 @@
-"""AnythingLLM's default model, DeepSeek, for the servers that ask it something themselves.
+"""Chat completions on DeepSeek or Z.AI (GLM), for the servers that ask a model something
+themselves (deep research), with the usage and the API's error codes.
 
-The key and the model are AnythingLLM's own (its .env, at ANYTHINGLLM_ENV or the caller's
-default), so changing the model there changes it everywhere.
-
-`deepseek` is a chat function for one model. `provider` and `Completions` are for callers
-that pick their own models, on DeepSeek or on Z.AI (GLM), and need the usage and the API's
-error codes: deep research.
+The keys are AnythingLLM's own (its .env, at ANYTHINGLLM_ENV or the caller's default).
 """
 
 import json
@@ -18,7 +14,6 @@ from dataclasses import dataclass
 import httpx
 from hostenv import env_values
 
-DEFAULT_MODEL = "deepseek-flash"
 DEEPSEEK_BASE = "https://api.deepseek.com/v1"
 # A GLM Coding Plan key only works on the coding endpoint; elsewhere it gets
 # "1113 Insufficient balance".
@@ -39,18 +34,6 @@ REPAIR = {
 
 class LLMError(RuntimeError):
     """The model didn't answer usably; the message can be shown as it is."""
-
-
-def settings(default_env: str) -> tuple[str, str]:
-    """The DeepSeek key ("" without one) and AnythingLLM's model. The key may also come from
-    DEEPSEEK_API_KEY in the environment; the .env is at ANYTHINGLLM_ENV, else `default_env`."""
-    env = env_values(
-        os.environ.get("ANYTHINGLLM_ENV", default_env),
-        ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL_PREF"),
-        environ=False,
-    )
-    key = os.environ.get("DEEPSEEK_API_KEY") or env.get("DEEPSEEK_API_KEY", "")
-    return key, env.get("DEEPSEEK_MODEL_PREF") or DEFAULT_MODEL
 
 
 def parse_json(text: str) -> dict:
@@ -210,22 +193,3 @@ def _api_error(name: str, resp: httpx.Response) -> APIError:
         code,
     )
 
-
-def deepseek(
-    api_key: str,
-    model: str,
-    max_tokens: int = 8_000,
-    timeout: float = 300,
-    transport: httpx.BaseTransport | None = None,
-) -> Chat:
-    """A chat function for DeepSeek, run with thinking off and no retries: someone is
-    waiting. Any failure, the connection's included, is an LLMError."""
-    completions = Completions(
-        Provider("deepseek", DEEPSEEK_BASE, api_key, "DEEPSEEK_API_KEY"),
-        timeout=timeout,
-        transport=transport,
-        retries=0,
-    )
-    return lambda messages: completions.create(
-        model, messages, max_tokens, think=False
-    )[0]

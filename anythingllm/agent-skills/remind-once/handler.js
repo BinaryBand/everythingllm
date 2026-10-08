@@ -8,7 +8,6 @@ module.exports.runtime = {
   handler: async function ({ name, prompt, at, tools, apply }) {
     return forwardScoped(this, {
       service: "agents",
-      env: "AGENTS_SOCKET",
       op: "remind_once",
       args: {
         name: name ?? "",

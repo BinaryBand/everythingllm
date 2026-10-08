@@ -85,7 +85,7 @@ def draw(
         )
 
     out = io.BytesIO()
-    image.save(out, "PNG", optimize=True)
+    image.save(out, "PNG")  # a live frame, replaced within seconds: no optimize pass
     return out.getvalue()
 
 

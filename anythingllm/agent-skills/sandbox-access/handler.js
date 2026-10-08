@@ -67,7 +67,6 @@ module.exports.runtime = {
       if (wantModels !== null) change.models = wantModels;
       if (budget !== null) change.daily_tokens = budget;
       const shown = await request("access", change);
-      if (shown === null) return "The chat closed.";
       if (!shown.would) return `In this workspace, ${state(shown)}.`;
       if (!asFlag(apply))
         return (
@@ -96,7 +95,6 @@ module.exports.runtime = {
         approved = true;
       }
       const done = await request("access", { ...change, apply: true, approved });
-      if (done === null) return "The chat closed.";
       return `Done. In this workspace, ${state(done)}.`;
     });
   },

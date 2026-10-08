@@ -22,10 +22,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from hostctl import appctl, apps
-from hostctl.units import ROOT, anythingllm_headers, env_file, host_settings
+import hostenv
 
-API = "http://127.0.0.1:3001/api"
+from hostctl import appctl, apps, units
+from hostctl.units import ROOT, api, env_file, host_settings
+
 EXAMPLE_HOST = "machine.example.net"
 # Paths the systemd units run these from (host/systemd/, host/quadlet/).
 TOOLS = {
@@ -33,7 +34,7 @@ TOOLS = {
     "uv": "/usr/local/bin/uv",
 }
 # The pages site's folder, which the static_agent container mounts, so it must exist first.
-SITE_DIR = Path.home() / ".local" / "share" / "everythingllm" / "pages" / "public"
+SITE_DIR = hostenv.site_dir()
 
 
 def settings() -> dict[str, str]:
@@ -101,22 +102,6 @@ def check() -> list[str]:
     return problems
 
 
-def api(method: str, path: str, body: dict | None = None, fresh: bool = False) -> dict:
-    """Call AnythingLLM's internal API, logged in if it has a password (once more after a 401)."""
-    data = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json"}
-    if path != "/ping":  # answers before setup, and without a login
-        headers |= anythingllm_headers(API, fresh)
-    req = urllib.request.Request(API + path, data, headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.load(resp)
-    except urllib.error.HTTPError as e:
-        if e.code == 401 and not fresh:
-            return api(method, path, body, fresh=True)
-        raise
-
-
 def wait_api(timeout: float = 180) -> None:
     end = time.monotonic() + timeout
     while True:
@@ -127,7 +112,7 @@ def wait_api(timeout: float = 180) -> None:
             pass
         if time.monotonic() > end:
             sys.exit(
-                f"AnythingLLM's API didn't answer at {API} within {timeout:.0f} s: `uv run hostctl logs`."
+                f"AnythingLLM's API didn't answer at {units.API} within {timeout:.0f} s: `uv run hostctl logs`."
             )
         time.sleep(2)
 
@@ -234,7 +219,7 @@ def checklist() -> list[tuple[bool | None, str]]:
         ),
         (
             keys.get("DEEPSEEK_API_KEY", False),
-            "Enter a DeepSeek key (Settings > LLM Preference > DeepSeek): the deep-research runner and the article writer use it even when chat runs on another model.",
+            "Enter a DeepSeek key (Settings > LLM Preference > DeepSeek): the deep-research runner uses it even when chat runs on another model.",
         ),
         (
             keys.get("GENERIC_OPEN_AI_API_KEY", False)

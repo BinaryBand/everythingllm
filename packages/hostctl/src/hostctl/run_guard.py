@@ -20,9 +20,11 @@ import sys
 import time
 from pathlib import Path
 
+import hostenv
+
 from hostctl import apps
 
-DATA = Path.home() / ".local" / "share" / "everythingllm"  # hostenv.data_dir()
+DATA = hostenv.data_dir()
 # service: (its run log in DATA, what its runs are called)
 GUARDED = {unit: (g.runs, g.noun) for unit, g in apps.guarded().items()}
 

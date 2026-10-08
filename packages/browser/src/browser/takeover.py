@@ -73,7 +73,6 @@ if TYPE_CHECKING:
 
 HOST = "127.0.0.1"
 STATIC = Path(__file__).with_name("static")
-MAX_HEAD = 16 * 1024
 MAX_BODY = 16 * 1024
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -236,23 +235,9 @@ class Request:
 
 
 async def read_request(reader: asyncio.StreamReader) -> Request:
-    """The request line and headers; live.BadRequest for anything else."""
-    try:
-        head = await reader.readuntil(b"\r\n\r\n")
-    except (asyncio.IncompleteReadError, asyncio.LimitOverrunError) as e:
-        raise live.BadRequest("incomplete request") from e
-    if len(head) > MAX_HEAD:
-        raise live.BadRequest("request too big")
-    line, *rest = head.decode("latin-1").split("\r\n")
-    parts = line.split()
-    if len(parts) != 3 or not parts[2].startswith("HTTP/1."):
-        raise live.BadRequest("not an HTTP/1 request")
-    headers = {}
-    for h in rest:
-        key, sep, value = h.partition(":")
-        if sep:
-            headers[key.strip().lower()] = value.strip()
-    return Request(parts[0], parts[1], headers)
+    """The request line and headers (live.read_head); live.BadRequest for anything else."""
+    method, path, query, headers = await live.read_head(reader)
+    return Request(method, f"{path}?{query}" if query else path, headers)
 
 
 class Takeover:
@@ -265,7 +250,7 @@ class Takeover:
 
     async def serve(self, port: int) -> asyncio.Server:
         return await asyncio.start_server(
-            self.handle, HOST, port, limit=MAX_HEAD + 1024
+            self.handle, HOST, port, limit=live.MAX_HEAD + 1024
         )
 
     async def handle(

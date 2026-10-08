@@ -10,7 +10,6 @@ module.exports.runtime = {
     const jobId = id == null || id === "" ? null : asInteger(id);
     return forwardScoped(this, {
       service: "agents",
-      env: "AGENTS_SOCKET",
       op: "scheduled_jobs",
       args: {
         action: String(action || "list").trim().toLowerCase(),

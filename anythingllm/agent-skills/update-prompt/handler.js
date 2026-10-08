@@ -9,7 +9,6 @@ module.exports.runtime = {
   handler: async function ({ apply }) {
     return forwardScoped(this, {
       service: "agents",
-      env: "AGENTS_SOCKET",
       op: "update_prompt",
       args: { apply: asFlag(apply) === true },
     });

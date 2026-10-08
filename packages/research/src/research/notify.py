@@ -10,7 +10,6 @@ relay's file, which hostctl.relay_env makes):
 
 import logging
 import os
-from typing import Any
 
 import httpx
 

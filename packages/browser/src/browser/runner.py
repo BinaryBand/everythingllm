@@ -212,7 +212,7 @@ class Config:
             ips=dict(egress.profiles[PROFILE].ips),
             network=egress.network,
             proxy=egress.public_url,
-            pages_url=f"https://{host}:8445/" if host else "",
+            pages_url=hostrpc.pages_url(),
             takeover_url=f"https://{host}:{TAKEOVER_PORT}/"
             if host
             else f"http://127.0.0.1:{TAKEOVER_PORT}/",

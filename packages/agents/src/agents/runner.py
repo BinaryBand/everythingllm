@@ -143,10 +143,9 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        host = os.environ.get("PUBLIC_HOST", "")
         return cls(
             runlogs=hostrpc.data_dir() / "agents" / "runs",
-            pages_url=f"https://{host}:8445/" if host else "",
+            pages_url=hostrpc.pages_url(),
             # Set but empty is the default too; no task slot at all would hang every task.
             live_port=int(os.environ.get("AGENTS_LIVE_PORT") or 8451),
             slots=max(1, int(os.environ.get("AGENTS_SLOTS") or 3)),
@@ -332,7 +331,10 @@ class Runner(RunService):
         # A delegation's id -> the chat told when it ends.
         self.chats: dict[str, dict] = {}
         self.following = Following(
-            settings.followed, settings.research_runlogs, settings.research_reports
+            settings.followed,
+            settings.research_runlogs,
+            settings.research_reports,
+            self.keep,
         )
         self.watcher: asyncio.Task | None = None
         self.task_slots = asyncio.Semaphore(settings.slots)
@@ -368,9 +370,7 @@ class Runner(RunService):
         the end of the research runs followed (only runner.main does, so tests don't)."""
         if self.poller is None:
             self.poller = asyncio.create_task(self.scheduled().poll())
-            self.watcher = asyncio.create_task(
-                self.following.watch(self.tell, self.keep)
-            )
+            self.watcher = asyncio.create_task(self.following.watch(self.tell))
 
     async def tell(self, chat: dict, text: str) -> None:
         """Post `text` into the chat (agents.postback); a failure is only logged."""

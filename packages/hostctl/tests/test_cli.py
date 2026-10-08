@@ -71,7 +71,7 @@ def test_deploy_writes_storage_then_restarts_anythingllm(ran):
 
 def test_deploy_refuses_a_worktree(ran, monkeypatch, tmp_path):
     (tmp_path / ".git").write_text("gitdir: /elsewhere\n")
-    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli.units, "ROOT", tmp_path)
     with pytest.raises(SystemExit, match="is a git worktree"):
         cli.main(["deploy"])
     assert ran == []

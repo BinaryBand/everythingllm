@@ -1,4 +1,4 @@
-from research.publish import free_file_slug, report_file, save_report
+from research.publish import report_file, save_report, slugify
 
 TEXT = report_file(
     "Heat pumps",
@@ -15,11 +15,10 @@ def test_report_file_heads_the_report_with_its_title_and_question():
     assert TEXT.endswith("1. x\n")
 
 
-def test_free_file_slug_skips_taken_names(tmp_path):
-    dir = tmp_path / "research"
-    assert free_file_slug(dir, "!!") == "report"
+def test_a_reports_slug_is_its_title_in_ascii():
+    assert slugify("!!") == ""
     assert (
-        free_file_slug(dir, "Heat pumps: Åre, Malmö & Göteborg — a comparison")
+        slugify("Heat pumps: Åre, Malmö & Göteborg — a comparison")
         == "heat-pumps-are-malmo-goteborg-a-comparison"
     )
 
@@ -30,3 +29,4 @@ def test_save_report_makes_the_folder_and_never_replaces_another_report(tmp_path
     second = save_report(dir, "Heat pumps", TEXT)
     assert (first.name, second.name) == ("heat-pumps.md", "heat-pumps-2.md")
     assert first.read_text() == "old" and second.read_text() == TEXT
+    assert save_report(dir, "!!", "x").name == "report.md"

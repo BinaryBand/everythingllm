@@ -22,7 +22,6 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import hostrpc
 from llm import provider_for
@@ -36,23 +35,13 @@ from research.pipeline import Context, research
 from research.web import make_reader, page_client
 
 OFF = re.compile(r"^(no|off|none|false|0)$", re.IGNORECASE)
-PAGES_PORT = 8445  # the pages site, where the live cards are routed
 KEY_FINDINGS = 12  # summary bullets kept in the run log, for the chat's notice
 
 
 def today(now: datetime | None = None) -> str:
     """Today's date in the user's time zone (USER_TIMEZONE)."""
-    try:
-        tz = ZoneInfo(os.environ.get("USER_TIMEZONE") or "Europe/Stockholm")
-    except (ZoneInfoNotFoundError, ValueError):
-        tz = ZoneInfo("Europe/Stockholm")
+    tz = hostrpc.user_zone()
     return (now or datetime.now(tz)).astimezone(tz).date().isoformat()
-
-
-def pages_url() -> str:
-    """The pages site's public URL, from PUBLIC_HOST; "" without it (and no live cards)."""
-    host = os.environ.get("PUBLIC_HOST", "").strip()
-    return f"https://{host}:{PAGES_PORT}/" if host else ""
 
 
 @dataclass
@@ -75,7 +64,7 @@ class Settings:
             searxng_url=searxng_url(),
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
             runlogs=hostrpc.data_dir() / "research" / "runs",
-            pages_url=pages_url(),
+            pages_url=hostrpc.pages_url(),
             live_port=int(get("RESEARCH_LIVE_PORT", "8450")),
         )
 
@@ -227,7 +216,8 @@ def _run(
     report = research(req.question, req.depth, ctx, req.sub_questions, req.title)
     sources.extend({"url": s["url"], "title": s["title"]} for s in report["sources"])
     stats = report["stats"]
-    bullets = "\n".join(f"- {re.sub(r'\s*\[\d+\]', '', b)}" for b in report["summary"])
+    findings = [re.sub(r"\s*\[\d+\]", "", b) for b in report["summary"]]
+    bullets = "\n".join(f"- {f}" for f in findings)
     basis = (
         f"Based on {stats['sources']} sources and {stats['findings']} quote-checked findings; "
         f"took {max(1, round(stats['seconds'] / 60))} min ({report['depth']})."
@@ -254,9 +244,7 @@ def _run(
         title=report["title"],
         stats=stats,
         file=str(file),
-        summary=[re.sub(r"\s*\[\d+\]", "", b) for b in report["summary"]][
-            :KEY_FINDINGS
-        ],
+        summary=findings[:KEY_FINDINGS],
     )
     return "\n\n".join(
         filter(

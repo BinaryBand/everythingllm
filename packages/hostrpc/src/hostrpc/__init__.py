@@ -11,8 +11,9 @@ The agent skills speak the same protocol from node, through
 anythingllm/agent-skills/_lib/hostrpc.js.
 
 It also holds the two file helpers every service needs, `atomic_write` and `env_values`,
-`anythingllm_headers`, the login for AnythingLLM's internal API, and `local_peer`, which a
-service's HTTP server asks of each connection. Opening files in folders a container can
+`anythingllm_headers`, the login for AnythingLLM's internal API, `local_peer`, which a
+service's HTTP server asks of each connection, `pages_url`, where the live cards are, and
+`user_zone`, the user's time zone. Opening files in folders a container can
 write, without following a symlink it put there, is hostrpc.safefs.
 """
 
@@ -34,6 +35,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from types import FunctionType
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 LIMIT = 1 << 20  # longest line either side reads; a service can pass its own
 # Storage as the AnythingLLM container sees it.
@@ -146,6 +148,23 @@ def local_peer(peer: Sequence[Any] | None, local: Sequence[Any] | None) -> bool:
 
     ip = address(peer)
     return ip is not None and (ip.is_loopback or ip == address(local))
+
+
+PAGES_PORT = 8445  # the pages site's HTTPS port, where the live cards are routed too
+
+
+def pages_url() -> str:
+    """The pages site's public URL, from PUBLIC_HOST; "" without it (and no live cards)."""
+    host = os.environ.get("PUBLIC_HOST", "").strip()
+    return f"https://{host}:{PAGES_PORT}/" if host else ""
+
+
+def user_zone() -> ZoneInfo:
+    """The user's time zone (USER_TIMEZONE), or Europe/Stockholm when it's unset or not one."""
+    try:
+        return ZoneInfo(os.environ.get("USER_TIMEZONE") or "Europe/Stockholm")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("Europe/Stockholm")
 
 
 def storage() -> Path:

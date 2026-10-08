@@ -119,18 +119,14 @@ def research_notice(entry: dict, record: dict, kept: str | None = None) -> str:
     url = record.get("url") or ""
     title = record.get("title") or entry["question"]
     if status == "ok" and record.get("file"):
-        name = Path(str(record["file"])).name
-        results = f'The report, "{title}", is done. ' + (
-            "It's in this workspace's documents under that title."
-            if kept == ""
-            else f"It's saved as research/{name} in the agent's files"
-            + (
-                f", but couldn't go into this workspace's documents: {kept}"
-                if kept
-                else ""
-            )
-            + "."
-        )
+        saved = f"It's saved as research/{Path(str(record['file'])).name} in the agent's files"
+        if kept == "":
+            where = "It's in this workspace's documents under that title."
+        elif kept:
+            where = f"{saved}, but couldn't go into this workspace's documents: {kept}."
+        else:
+            where = f"{saved}."
+        results = f'The report, "{title}", is done. {where}'
         if findings := [str(f) for f in record.get("summary") or []]:
             results += "\n\nKey findings:\n" + "\n".join(f"- {f}" for f in findings)
     elif status == "ok" and url:  # a run from before reports went to the documents
@@ -188,18 +184,21 @@ class Following:
     restart of agents-runner doesn't lose them), and seen to from research's run log in
     `runlogs`, where a run gets its line when it ends or, cut short, when research-runner
     starts again: its report goes into the workspace's documents, and a chat in the UI is
-    told. `reports` is the folder research-runner saves the reports in."""
+    told. `reports` is the folder research-runner saves the reports in, and `keep` puts
+    one in a workspace's documents (none kept without either)."""
 
     def __init__(
         self,
         path: Path,
         runlogs: Path,
         reports: Path | None = None,
+        keep: Keep | None = None,
         now: Callable[[], float] = time.time,
     ):
         self.registry = Registry(path)
         self.runlogs = runlogs
         self.reports = reports
+        self.keep = keep
         self.now = now
 
     async def add(
@@ -246,10 +245,10 @@ class Following:
             return None
         return data.decode("utf-8", errors="replace")
 
-    async def kept(self, entry: dict, record: dict, keep: Keep | None) -> str | None:
+    async def kept(self, entry: dict, record: dict) -> str | None:
         """Put the run's report in its workspace's documents: "" when it went in, why
         not when it didn't, None when there's no report to keep."""
-        if keep is None or record.get("status") != "ok" or not record.get("file"):
+        if self.keep is None or record.get("status") != "ok" or not record.get("file"):
             return None
         text = await asyncio.to_thread(self.report, record)
         if text is None:
@@ -264,7 +263,7 @@ class Following:
             "docSource": f"deep research run {entry['id']}",
         }
         try:
-            location = await keep(workspace, text, metadata)
+            location = await self.keep(workspace, text, metadata)
         except AnythingLLMError as e:
             log.warning(
                 "%s: couldn't add its report to %s: %s", entry["id"], workspace, e
@@ -273,14 +272,12 @@ class Following:
         log.info("%s: its report is %s in %s", entry["id"], location, workspace)
         return ""
 
-    async def ended(
-        self, entry: dict, record: dict, tell: Tell, keep: Keep | None
-    ) -> None:
-        kept = await self.kept(entry, record, keep)
+    async def ended(self, entry: dict, record: dict, tell: Tell) -> None:
+        kept = await self.kept(entry, record)
         if entry.get("chat"):
             await tell(entry["chat"], research_notice(entry, record, kept))
 
-    async def sweep(self, tell: Tell, keep: Keep | None = None) -> None:
+    async def sweep(self, tell: Tell) -> None:
         """See to the followed runs that have ended, and let them go."""
         async with self.registry.lock:
             entries = await self.registry.read()
@@ -299,8 +296,8 @@ class Following:
                 await self.registry.write(left)
         # Outside the lock, and side by side: each is a call to AnythingLLM, and a chat
         # with the workspace's model.
-        await asyncio.gather(*(self.ended(e, r, tell, keep) for e, r in ended))
+        await asyncio.gather(*(self.ended(e, r, tell) for e, r in ended))
 
-    async def watch(self, tell: Tell, keep: Keep | None = None) -> None:
+    async def watch(self, tell: Tell) -> None:
         """Sweep every POLL seconds, until cancelled."""
-        await repeat(POLL, lambda: self.sweep(tell, keep), "following research runs")
+        await repeat(POLL, lambda: self.sweep(tell), "following research runs")

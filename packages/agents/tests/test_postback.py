@@ -216,8 +216,8 @@ def test_only_a_plain_report_file_in_the_research_folder_is_kept(tmp_path):
     (reports / "link.md").symlink_to(secret)
     (reports / "good.md").write_text("# Good\n")
     (reports / "huge.md").write_bytes(b"x" * (postback.REPORT_BYTES + 1))
-    following = Following(tmp_path / "followed.json", runlogs, reports)
     told, kept = Told(), Kept()
+    following = Following(tmp_path / "followed.json", runlogs, reports, kept)
 
     async def main():
         files = {
@@ -232,7 +232,7 @@ def test_only_a_plain_report_file_in_the_research_folder_is_kept(tmp_path):
             ended(runlogs, run_id, status="ok", title=run_id, file=file)
         await following.add("dr-0000000f", CHAT, "", "q")
         ended(runlogs, "dr-0000000f", status="failed", error="no sources")
-        await following.sweep(told, kept)
+        await following.sweep(told)
         assert [(w, t, m["title"]) for w, t, m in kept] == [
             ("career", "# Good\n", "dr-0000000a")
         ]
@@ -247,13 +247,15 @@ def test_a_report_anythingllm_wont_take_is_still_told_where_it_is(tmp_path):
     runlogs, reports = tmp_path / "runs", tmp_path / "research"
     reports.mkdir()
     (reports / "btc.md").write_text("# BTC\n")
-    following = Following(tmp_path / "followed.json", runlogs, reports)
+    following = Following(
+        tmp_path / "followed.json", runlogs, reports, Kept("AnythingLLM is busy")
+    )
     told = Told()
 
     async def main():
         await following.add("dr-0000000a", CHAT, CARD, "Bitcoin?")
         ended(runlogs, "dr-0000000a", status="ok", file=str(reports / "btc.md"))
-        await following.sweep(told, Kept("AnythingLLM is busy"))
+        await following.sweep(told)
         [(_, text)] = told
         assert "saved as research/btc.md" in text and "AnythingLLM is busy" in text
 

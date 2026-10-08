@@ -161,13 +161,6 @@ def test_the_reports_date_is_the_users(monkeypatch):
     assert job.today(late) == "2026-10-04"
 
 
-def test_the_live_cards_are_on_the_public_hosts_pages_site(monkeypatch):
-    monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
-    assert job.pages_url() == "https://box.tail.ts.net:8445/"
-    monkeypatch.delenv("PUBLIC_HOST")
-    assert job.pages_url() == ""
-
-
 def test_settings_reach_the_hosts_loopback_unless_told_otherwise(tmp_path, monkeypatch):
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
     monkeypatch.delenv("SEARXNG_URL", raising=False)

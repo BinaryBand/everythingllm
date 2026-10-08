@@ -773,7 +773,7 @@ def test_a_research_runs_report_goes_into_its_workspaces_documents(fake, tmp_pat
                     "summary": ["It went up."],
                 },
             )
-        await r.following.sweep(r.tell, r.keep)
+        await r.following.sweep(r.tell)
         assert sorted(d["metadata"]["title"] for d in fake.documents) == ["BTC", "ETH"]
         for doc in fake.documents:
             assert doc["addToWorkspaces"] == "career"

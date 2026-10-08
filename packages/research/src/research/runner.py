@@ -88,9 +88,12 @@ def check_split(sub_questions: Any, title: Any, depth: Any = None) -> None:
 
 def told(owner: str | None, scope: Any) -> dict | None:
     """The chat told when the run ends, if any (see the module's docstring)."""
-    if owner is None and isinstance(scope, dict):
-        if scope.get("workspace") not in (None, "", "_jobs"):
-            return scope
+    if (
+        owner is None
+        and isinstance(scope, dict)
+        and scope.get("workspace") not in (None, "", "_jobs")
+    ):
+        return scope
     return None
 
 
@@ -115,7 +118,7 @@ class Runner(RunService):
         scope: dict | None = None,
         **args,
     ) -> dict:
-        """args: depth, planner, worker, planner_fallback, site, sub_questions, title
+        """args: depth, planner, worker, planner_fallback, sub_questions, title
         (job.Request's fields); None or "" takes the default. `owner`, `scope`: the
         module's."""
         if not isinstance(question, str) or not question.strip():

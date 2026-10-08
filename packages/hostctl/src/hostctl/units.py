@@ -55,6 +55,15 @@ class Unit:
     always: bool  # restart even if it isn't running (containers: that starts them)
 
 
+def refuse_worktree(what: str) -> None:
+    """Exit unless this is the main checkout: a linked worktree (its .git a file, the main
+    checkout's a folder) is never what AnythingLLM mounts and the units run."""
+    if (ROOT / ".git").is_file():
+        raise SystemExit(
+            f"{ROOT} is a git worktree; {what} from the main checkout, which is what runs."
+        )
+
+
 def env_file(file: Path) -> dict[str, str]:
     """An env file's KEY=value lines, quotes dropped as systemd's EnvironmentFile= and
     hostrpc.env_values drop them; {} when it can't be read. The scripts' one parser."""
@@ -441,12 +450,7 @@ def main(argv: list[str] | None = None) -> None:
     if not (todo or old):
         print("units: nothing to install")
         return
-    if (
-        ROOT / ".git"
-    ).is_file():  # a linked worktree: its .git is a file, the main checkout's a folder
-        raise SystemExit(
-            f"{ROOT} is a git worktree; install from the main checkout, which the units run from."
-        )
+    refuse_worktree("install")
     restart = install(todo)
     start, left = retire(old, plan)
     restart = [s for s in restart if s not in left]

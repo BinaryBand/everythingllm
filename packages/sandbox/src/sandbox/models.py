@@ -22,12 +22,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import hostrpc
 import llm
@@ -46,13 +44,6 @@ ROLES = ("system", "user", "assistant")
 
 # (model, messages, max_tokens) -> (text, usage)
 Ask = Callable[[str, list[dict], int], tuple[str, dict]]
-
-
-def zone() -> ZoneInfo:
-    try:
-        return ZoneInfo(os.environ.get("USER_TIMEZONE") or "Europe/Stockholm")
-    except (ZoneInfoNotFoundError, ValueError):
-        return ZoneInfo("Europe/Stockholm")
 
 
 def provider_ask(env_file: Path) -> Ask:
@@ -140,7 +131,7 @@ class Models(hostrpc.Service):
         self.daily_tokens = daily_tokens
         self.log_dir = log_dir
         self.ask = ask
-        self.now = now or (lambda: datetime.now(zone()))
+        self.now = now or (lambda: datetime.now(hostrpc.user_zone()))
         self.at_once = asyncio.Semaphore(AT_ONCE)
         self.lock = asyncio.Lock()  # one writer of the log at a time
         # The day's tokens so far: read from the log once a day, then counted here (a

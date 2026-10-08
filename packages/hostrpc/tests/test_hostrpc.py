@@ -68,7 +68,9 @@ def test_requests_get_results_and_errors(sock):
         assert (await raw(sock, b'{"op": 5}\n'))["error"] == "unknown op '5'"
         # A request that isn't one is answered, not dropped.
         for line in (b"[1]\n", b"not json\n"):
-            assert (await raw(sock, line))["error"].startswith("the request was too long")
+            assert (await raw(sock, line))["error"].startswith(
+                "the request was too long"
+            )
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
@@ -297,3 +299,10 @@ def test_a_type_error_inside_an_op_is_the_runners_not_bad_arguments(caplog):
     broken = asyncio.run(service.reply({"op": "buggy", "args": {"n": 1}}))
     assert broken["error"].startswith("runner error: TypeError")
     assert "op buggy failed" in caplog.text  # and logged, as the runner's own bug
+
+
+def test_the_live_cards_are_on_the_public_hosts_pages_site(monkeypatch):
+    monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
+    assert hostrpc.pages_url() == "https://box.tail.ts.net:8445/"
+    monkeypatch.delenv("PUBLIC_HOST")
+    assert hostrpc.pages_url() == ""

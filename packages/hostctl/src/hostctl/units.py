@@ -411,9 +411,15 @@ def active(service: str) -> bool:
 
 
 # The states `systemctl is-enabled` answers yes to.
-ENABLED = set(
-    "enabled enabled-runtime static alias indirect generated transient".split()
-)
+ENABLED = {
+    "enabled",
+    "enabled-runtime",
+    "static",
+    "alias",
+    "indirect",
+    "generated",
+    "transient",
+}
 
 
 def enabled(units: list[str]) -> set[str]:

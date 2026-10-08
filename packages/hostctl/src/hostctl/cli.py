@@ -83,7 +83,10 @@ def install() -> None:
     try:  # deploy after the setups: it deploys only the skills of apps set up here
         appctl.main(["setup", "--installed"])
     except SystemExit:
-        deploy()  # the apps set up so far get their skills, and the default prompt
+        try:  # the apps set up so far get their skills, and the default prompt
+            deploy()
+        except SystemExit as e:  # the setup's failure is the one to exit with
+            print(f"deploy: exit {e.code}", file=sys.stderr, flush=True)
         raise
     deploy()
     machine.main(["wait-api"])

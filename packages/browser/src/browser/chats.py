@@ -125,6 +125,10 @@ class KeyCheck:
         return None
 
 
+class Unavailable(Exception):
+    """AnythingLLM couldn't say which chats a workspace has (answered as 502)."""
+
+
 class ThreadIds:
     """A thread's id from its slug, through AnythingLLM's internal API (its UI's, logged in
     with its password: hostrpc.anythingllm_headers), which lists a workspace's threads with
@@ -147,16 +151,29 @@ class ThreadIds:
         ] = {}  # workspace -> (when, slug -> id)
 
     def threads(self, workspace: str) -> dict[str, str]:
+        """The workspace's threads (slug -> id), {} when it has none or there's no such
+        workspace; raises Unavailable when AnythingLLM can't say."""
         url = f"{self.api}/workspace/{quote(workspace, safe='')}/threads"
-        status, body = get_json(
-            url, hostrpc.anythingllm_headers(self.api, self.env_file)
-        )
-        if status == 401:
+        try:
             status, body = get_json(
-                url, hostrpc.anythingllm_headers(self.api, self.env_file, fresh=True)
+                url, hostrpc.anythingllm_headers(self.api, self.env_file)
             )
+            if status == 401:
+                status, body = get_json(
+                    url,
+                    hostrpc.anythingllm_headers(self.api, self.env_file, fresh=True),
+                )
+        except (urllib.error.URLError, OSError, hostrpc.RunnerError) as e:
+            # The exception's text can carry the URL; its class says enough for the log.
+            log.warning("listing %s's threads failed: %s", workspace, type(e).__name__)
+            raise Unavailable(
+                "AnythingLLM couldn't be reached to find the chat."
+            ) from None
+        if status == 404:
+            return {}  # no such workspace
         if status != 200 or not isinstance(body, dict):
-            return {}  # no such workspace, or AnythingLLM's trouble: no chat found
+            log.warning("listing %s's threads answered %d", workspace, status)
+            raise Unavailable(f"AnythingLLM couldn't list the chats ({status}).")
         return {
             str(t["slug"]): str(t["id"])
             for t in body.get("threads") or []
@@ -167,7 +184,9 @@ class ThreadIds:
         when, ids = self.known.get(workspace, (0.0, {}))
         if slug not in ids or self.now() - when > REMEMBER:
             ids = await asyncio.to_thread(self.threads, workspace)
-            self.known[workspace] = (self.now(), ids)
+            now = self.now()
+            self.known = {w: k for w, k in self.known.items() if now - k[0] <= REMEMBER}
+            self.known[workspace] = (now, ids)
         return ids.get(slug)
 
 
@@ -193,7 +212,10 @@ class Chats:
             return f"{status} {'Forbidden' if status == 403 else 'Bad Gateway'}", {
                 "error": error
             }
-        thread = await self.lookup(workspace, slug)
+        try:
+            thread = await self.lookup(workspace, slug)
+        except Unavailable as e:
+            return "502 Bad Gateway", {"error": str(e)}
         if thread is None:
             return "404 Not Found", {"error": "No such chat."}
         return "200 OK", self.of(workspace, thread)

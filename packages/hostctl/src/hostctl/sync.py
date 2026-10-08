@@ -63,14 +63,9 @@ def merge_plugin_json(repo_text: str, live_text: str | None) -> str:
 
 def unset_skills() -> dict[str, str]:
     """The skills whose app isn't set up here (its runner isn't enabled) -> that app."""
-    registry = apps.load().values()
-    on = units.enabled([a.runner for a in registry if a.skills and a.runner])
-    return {
-        skill: app.name
-        for app in registry
-        if app.skills and app.runner not in on
-        for skill in app.skills
-    }
+    of = apps.skill_apps()
+    on = units.enabled(sorted({a.runner for a in of.values() if a.runner}))
+    return {skill: app.name for skill, app in of.items() if app.runner not in on}
 
 
 def planned_files(unset: dict[str, str]) -> dict[Path, str]:

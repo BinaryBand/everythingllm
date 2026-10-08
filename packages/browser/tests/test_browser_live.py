@@ -5,6 +5,7 @@ import asyncio
 import io
 import json
 
+import pytest
 from browser import live
 from browser.runner import Runner
 from browser_fakes import Clock, FakePodman, config, jpeg, scope
@@ -317,7 +318,9 @@ def test_a_threads_id_comes_from_its_workspaces_list(monkeypatch, tmp_path):
     def get_json(url, headers):
         lists.append(url)
         if "nowhere" in url:
-            return 400, None
+            return 404, None  # AnythingLLM's answer for no such workspace
+        if "broken" in url:
+            return 500, None
         return 200, {"threads": list(threads), "defaultThreadChatCount": 0}
 
     monkeypatch.setattr(chats, "get_json", get_json)
@@ -333,5 +336,7 @@ def test_a_threads_id_comes_from_its_workspaces_list(monkeypatch, tmp_path):
         assert await ids("career", "gone") is None
         assert await ids("nowhere", "chat-7") is None
         assert len(lists) == 4
+        with pytest.raises(chats.Unavailable):  # AnythingLLM's trouble isn't "no chat"
+            await ids("broken", "chat-7")
 
     asyncio.run(main())

@@ -1,5 +1,5 @@
 // What the preloads that patch AnythingLLM's own files as they load share (thread-scope.js,
-// agent-stop.js; NODE_OPTIONS in host/quadlet/anythingllm.container.in): one hook on
+// agent-stop.js, job-guard.js; NODE_OPTIONS in host/quadlet/anythingllm.container.in): one hook on
 // Module.prototype._compile that hands each target's source to its patch, and the
 // `node <preload> --check` that prints a patch's state for `uv run hostctl health`. A patch
 // is `patch(source)` -> {source, state}, state "patched", "upstream" (AnythingLLM does it

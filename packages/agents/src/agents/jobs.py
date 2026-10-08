@@ -8,9 +8,8 @@ ask for these through runner.Runner's ops, which refuse a delegated task and a s
 job. The README's "Scheduled jobs from a chat" has the rules.
 
 A job runs with every tool approved, so only a chat may make one. AnythingLLM's own
-create-scheduled-job is turned off (the setup checklist checks), and while a delegation
-runs, `guarding` watches for a job made any other way (a built-in tool turned on again)
-and disables it.
+create-scheduled-job is turned off (the setup checklist checks), and refuses a delegated
+task even when it's on again (anythingllm/job-guard.js).
 
 Config (environment, from host.env through the unit):
   USER_TIMEZONE  the user's time zone, for one-off times and the times `list` shows
@@ -18,11 +17,10 @@ Config (environment, from host.env through the unit):
 """
 
 import asyncio
-import contextlib
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -53,7 +51,6 @@ LISTED_PROMPT = 120  # and the list
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # A cron of five fields (minute, hour, day, month, weekday), as AnythingLLM takes it.
 CRON_RE = re.compile(r"^[0-9A-Za-z*/,-]+( [0-9A-Za-z*/,-]+){4}$")
-WATCH = 10  # seconds between looks for a job made while a delegation runs
 
 
 def zone(name: str) -> ZoneInfo:
@@ -258,12 +255,6 @@ class ScheduledJobs:
     registry: Registry
     timezone: str = DEFAULT_TIMEZONE
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
-    made: set[int] = field(default_factory=set)  # the jobs made here
-    # While delegations run: each one's note (by run id), the job ids there were when the
-    # first started, and the task that watches for new ones.
-    watched: dict[str, Callable[[str], None]] = field(default_factory=dict)
-    known: set[int] | None = None
-    watcher: asyncio.Task | None = None
 
     @property
     def tz(self) -> ZoneInfo:
@@ -427,7 +418,6 @@ class ScheduledJobs:
             )
         async with self.registry.lock:
             job = await self.client.create(full, prompt, wanted, schedule)
-            self.made.add(job["id"])
             entry = {
                 "id": job["id"],
                 "name": full,
@@ -506,96 +496,11 @@ class ScheduledJobs:
                 "call again with apply true only once they agree."
             )
         job = await self.client.create(name, prompt, wanted, schedule)
-        self.made.add(job["id"])
         log.info('made scheduled job %s "%s" (cron "%s")', job["id"], name, schedule)
         return (
             f'Made job {job["id"]} "{name}": it runs on cron "{schedule}" (UTC; {offset}). '
             "scheduled-jobs lists, disables or deletes it."
         )
-
-    # while a delegation runs
-
-    @contextlib.asynccontextmanager
-    async def guarding(
-        self, key: str, note: Callable[[str], None]
-    ) -> AsyncIterator[None]:
-        """While the delegation `key` runs, disable any scheduled job that appears that
-        wasn't made here, telling it through `note`: a delegated task may not make one, and
-        only AnythingLLM's own tools, which our skills' refusal doesn't reach, could."""
-        # Registered before the first await, so a delegation that starts meanwhile doesn't
-        # start a second watcher, which nothing would cancel and which would go on
-        # disabling every new job, the user's own too.
-        first = not self.watched
-        self.watched[key] = note
-        try:
-            if first:
-                self.known = None  # until the listing: a check meanwhile stands in
-                self.known = await self.job_ids()
-                self.watcher = asyncio.create_task(self.watch())
-            yield
-        finally:
-            del self.watched[key]
-            if not self.watched and self.watcher is not None:
-                self.watcher.cancel()
-                self.watcher = None
-            await self.check([note])  # a job made in its last moments
-
-    async def job_ids(self) -> set[int] | None:
-        try:
-            return {j["id"] for j in await self.client.jobs()}
-        except AnythingLLMError as e:
-            log.warning(
-                "couldn't list the scheduled jobs a delegation starts with: %s", e
-            )
-            return None
-
-    async def check(self, notes: list[Callable[[str], None]]) -> None:
-        """One look for jobs that weren't there when the delegations started."""
-        try:
-            jobs = await self.client.jobs()
-        except AnythingLLMError as e:
-            log.warning("couldn't look for jobs made during a delegation: %s", e)
-            return
-        if self.known is None:  # the first listing failed: this one stands in
-            self.known = {j["id"] for j in jobs}
-            return
-        for job in jobs:
-            job_id = job["id"]
-            if job_id in self.known or job_id in self.made:
-                continue
-            self.known.add(job_id)
-            try:
-                if job.get("enabled"):
-                    await self.client.disable(job_id)
-            except AnythingLLMError as e:
-                log.error(
-                    'job %s "%s" appeared during a delegation, and disabling it failed: %s',
-                    job_id,
-                    job.get("name"),
-                    e,
-                )
-                continue
-            log.warning(
-                'job %s "%s" appeared during a delegation; disabled it',
-                job_id,
-                job.get("name"),
-            )
-            for note in notes:
-                note(
-                    f'A scheduled job "{job.get("name")}" (id {job_id}) appeared while '
-                    "this delegation ran, so it was disabled: a delegated task may not "
-                    "make one. If you made it, turn it on again in AnythingLLM's "
-                    "Scheduled Jobs."
-                )
-
-    async def watch(self) -> None:
-        """Check every WATCH seconds, until cancelled."""
-        while True:
-            await asyncio.sleep(WATCH)
-            try:
-                await self.check(list(self.watched.values()))
-            except Exception:
-                log.exception("the delegation's job watch failed a round")
 
     # the poller
 

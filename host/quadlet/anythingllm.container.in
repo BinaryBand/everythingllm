@@ -13,9 +13,10 @@ Volume=@ANYTHINGLLM_STORAGE@/.env:/app/server/.env:Z
 Volume=@REPO@:/mcp:ro
 Environment=STORAGE_DIR=/app/server/storage
 # Preloaded into AnythingLLM's server: the log filter (anythingllm/log-filter.js),
-# thread-scope.js, which gives skills an API or Telegram chat's thread, and agent-stop.js,
-# which stops an API chat's agent when its client goes (health checks both).
-Environment="NODE_OPTIONS=--require=/mcp/anythingllm/log-filter.js --require=/mcp/anythingllm/thread-scope.js --require=/mcp/anythingllm/agent-stop.js"
+# thread-scope.js, which gives skills an API or Telegram chat's thread, agent-stop.js,
+# which stops an API chat's agent when its client goes, and job-guard.js, which keeps a
+# delegated task from making a scheduled job (health checks the last three).
+Environment="NODE_OPTIONS=--require=/mcp/anythingllm/log-filter.js --require=/mcp/anythingllm/thread-scope.js --require=/mcp/anythingllm/agent-stop.js --require=/mcp/anythingllm/job-guard.js"
 PublishPort=127.0.0.1:3001:3001
 
 [Service]

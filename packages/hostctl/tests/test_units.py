@@ -33,7 +33,8 @@ def test_templates_use_only_known_settings_and_not_this_machines_paths(tmp_path)
     assert (  # the log filter and the patches (anythingllm/), preloaded
         'Environment="NODE_OPTIONS=--require=/mcp/anythingllm/log-filter.js '
         "--require=/mcp/anythingllm/thread-scope.js "
-        '--require=/mcp/anythingllm/agent-stop.js"'
+        "--require=/mcp/anythingllm/agent-stop.js "
+        '--require=/mcp/anythingllm/job-guard.js"'
         in planned["anythingllm.container"].text
     )
     assert "EnvironmentFile=/repo/host.env" in planned["browser-runner.service"].text

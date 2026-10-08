@@ -75,7 +75,6 @@ Config (environment, from host.env and agents.env through the unit):
 """
 
 import asyncio
-import contextlib
 import difflib
 import html
 import logging
@@ -627,25 +626,19 @@ class Runner(RunService):
                     note(f"{task.name}: failed: {outcome.error}")
                 return outcome
 
-            guard = (
-                self.scheduled().guarding(run.id, note)
-                if self.poller is not None  # runner.main's; tests don't watch
-                else contextlib.nullcontext()
-            )
-            async with guard:
-                outcomes = list(
-                    await asyncio.gather(
-                        *(one(t, self.message(run.subject, t)) for t in tasks)
-                    )
+            outcomes = list(
+                await asyncio.gather(
+                    *(one(t, self.message(run.subject, t)) for t in tasks)
                 )
-                last = None
-                if then and run.id not in self.cancelled:
-                    if any(o.status == "ok" for o in outcomes):
-                        last = await one(
-                            then, self.then_message(run.subject, outcomes, then)
-                        )
-                    else:
-                        note("then: skipped, since no task finished.")
+            )
+            last = None
+            if then and run.id not in self.cancelled:
+                if any(o.status == "ok" for o in outcomes):
+                    last = await one(
+                        then, self.then_message(run.subject, outcomes, then)
+                    )
+                else:
+                    note("then: skipped, since no task finished.")
             result = self.summary(run, outcomes, last)
         except Exception as e:  # whatever happens, the run log gets its line
             if not isinstance(e, AnythingLLMError):

@@ -65,6 +65,9 @@ else
   preload agent-stop.js "a client's Stop stops an API chat's agent" \
     "AnythingLLM stops an API chat's agent when its client goes" \
     "a client's Stop leaves the agent working and saving its answer"
+  preload job-guard.js "a delegated task can't make a scheduled job" \
+    "AnythingLLM refuses scheduled jobs from delegated tasks itself" \
+    "a delegated task can make a scheduled job, which runs with every tool approved"
 fi
 
 echo "Routes"

@@ -265,6 +265,19 @@ def test_workspaces_get_browsers_of_their_own_and_the_idlest_gives_way(tmp_path)
     test(tmp_path)
 
 
+def test_two_workspaces_starting_at_once_get_slots_of_their_own(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await asyncio.gather(
+            r.op_open(scope("career"), "a.example"),
+            r.op_open(scope("education"), "b.example"),
+        )
+        assert len({s.slot for s in r.sessions.values()}) == 2
+        assert {s.ip for s in r.sessions.values()} == {"10.89.79.32", "10.89.79.33"}
+
+    test(tmp_path)
+
+
 def test_an_idle_browser_is_stopped_and_its_tab_comes_back_with_its_card(tmp_path):
     @run
     async def test(r, podman, clock):
@@ -1019,3 +1032,13 @@ def test_only_the_user_makes_passkeys_and_each_made_is_saved(tmp_path):
         assert len(r.vault.logins("career")) == 3
 
     test(tmp_path)
+
+
+def test_the_card_names_a_pressed_key_only_when_its_a_named_one():
+    describe = runner_mod.describe
+    assert describe("press", "", "Enter") == "Pressed Enter"
+    assert describe("press", "", "Shift+Tab") == "Pressed Shift+Tab"
+    assert (
+        describe("press", "", "h") == "Pressed a key"
+    )  # a run of them could spell a password
+    assert describe("press", "", "Shift+H") == "Pressed a key"

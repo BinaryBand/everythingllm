@@ -427,6 +427,8 @@ class Runner(hostrpc.Service):
         self.podman = podman
         self.now = now
         self.sessions: dict[str, Session] = {}  # workspace -> its running browser
+        # Slots a browser is starting or stopping in: not free, though no session has them.
+        self.reserved: set[str] = set()
         self.tabs: dict[str, Tab] = {}  # tab id -> tab
         # (workspace, thread) -> its tab, open or not: a thread keeps its tab, and its card,
         # from one container to the next
@@ -499,7 +501,7 @@ class Runner(hostrpc.Service):
         ]  # fmt: skip
 
     def free_slot(self) -> tuple[str, str] | None:
-        taken = {s.slot for s in self.sessions.values()}
+        taken = {s.slot for s in self.sessions.values()} | self.reserved
         return next(
             ((s, ip) for s, ip in self.config.ips.items() if s not in taken), None
         )
@@ -521,36 +523,42 @@ class Runner(hostrpc.Service):
             raise RunnerError(
                 f"all {len(self.config.ips)} browsers are in use by other workspaces; try again in a while"
             )
-        home = self.config.root / workspace
-        for d in (home / "browser" / "profile", self.config.downloads(workspace)):
-            d.mkdir(parents=True, exist_ok=True)
-        folder = self.config.sockets(slot[0])
-        folder.mkdir(parents=True, exist_ok=True)
-        for old in folder.iterdir():  # a socket an earlier container left
-            old.unlink(missing_ok=True)
-        s = Session(workspace, *slot, secrets.token_urlsafe(24), folder, self.now())
-        await self.podman(["rm", "-f", s.name], 30)
-        code, _, err = await self.podman(self.container_args(s), 60)
-        if code:
-            raise RunnerError(f"the browser didn't start: {err.strip()[-500:]}")
-        deadline = self.now() + START_SECONDS
-        while True:
-            try:
-                await hostrpc.request(s.driver, "ping", {}, 5, name="browser")
-                break
-            except RunnerError:
-                if self.now() > deadline:
-                    _, out, err = await self.podman(
-                        ["logs", "--tail", "20", s.name], 10
-                    )
-                    await self.podman(["rm", "-f", s.name], 30)
-                    raise RunnerError(
-                        f"the browser didn't come up in {START_SECONDS} s: {(err or out).strip()[-500:]}"
-                    ) from None
-                await asyncio.sleep(0.25)
-        self.sessions[workspace] = s
-        log.info("started %s's browser (%s, %s)", workspace, s.slot, s.ip)
-        return s
+        # Another workspace's start mustn't take this slot (and wipe its sockets) before
+        # this one has a session in it.
+        self.reserved.add(slot[0])
+        try:
+            home = self.config.root / workspace
+            for d in (home / "browser" / "profile", self.config.downloads(workspace)):
+                d.mkdir(parents=True, exist_ok=True)
+            folder = self.config.sockets(slot[0])
+            folder.mkdir(parents=True, exist_ok=True)
+            for old in folder.iterdir():  # a socket an earlier container left
+                old.unlink(missing_ok=True)
+            s = Session(workspace, *slot, secrets.token_urlsafe(24), folder, self.now())
+            await self.podman(["rm", "-f", s.name], 30)
+            code, _, err = await self.podman(self.container_args(s), 60)
+            if code:
+                raise RunnerError(f"the browser didn't start: {err.strip()[-500:]}")
+            deadline = self.now() + START_SECONDS
+            while True:
+                try:
+                    await hostrpc.request(s.driver, "ping", {}, 5, name="browser")
+                    break
+                except RunnerError:
+                    if self.now() > deadline:
+                        _, out, err = await self.podman(
+                            ["logs", "--tail", "20", s.name], 10
+                        )
+                        await self.podman(["rm", "-f", s.name], 30)
+                        raise RunnerError(
+                            f"the browser didn't come up in {START_SECONDS} s: {(err or out).strip()[-500:]}"
+                        ) from None
+                    await asyncio.sleep(0.25)
+            self.sessions[workspace] = s
+            log.info("started %s's browser (%s, %s)", workspace, s.slot, s.ip)
+            return s
+        finally:
+            self.reserved.discard(slot[0])
 
     def watched(self, s: Session) -> bool:
         return s.viewers > 0 or any(
@@ -573,11 +581,16 @@ class Runner(hostrpc.Service):
         s = self.sessions.pop(workspace, None)
         if s is None:
             return
-        if s.approval is not None:  # its waiter hears it's stale
-            s.approval.answered.set()
-        if s.making:
-            await self.save_made(s)
-        await self.podman(["stop", "-t", "5", s.name], 30)
+        # Held until its container, which holds the address, is gone.
+        self.reserved.add(s.slot)
+        try:
+            if s.approval is not None:  # its waiter hears it's stale
+                s.approval.answered.set()
+            if s.making:
+                await self.save_made(s)
+            await self.podman(["stop", "-t", "5", s.name], 30)
+        finally:
+            self.reserved.discard(s.slot)
         await self.collect(workspace)
         self.forget(workspace)
         log.info("stopped %s's browser", workspace)
@@ -594,7 +607,10 @@ class Runner(hostrpc.Service):
     async def idle_loop(self) -> None:
         while True:
             await asyncio.sleep(60)
-            await self.stop_idle()
+            try:  # one failure mustn't leave every idle browser running from then on
+                await self.stop_idle()
+            except Exception:
+                log.exception("stopping idle browsers failed")
 
     async def stop_idle(self) -> None:
         now = self.now()
@@ -629,7 +645,8 @@ class Runner(hostrpc.Service):
                 s.driver, op, args, DRIVER_SECONDS, name="browser", limit=LIMIT
             )
         except RunnerError as e:
-            if "isn't running" not in str(e) and "closed the connection" not in str(e):
+            gone = ("isn't running", "closed the connection", "broke off the call")
+            if not any(why in str(e) for why in gone):
                 raise
         else:
             if thread := args.get("thread"):
@@ -732,7 +749,7 @@ class Runner(hostrpc.Service):
             "act",
             {"thread": thread, "action": action, "ref": ref or "", "text": text or ""},
         )
-        tab.moved(describe(action, label or ref, text), view)
+        tab.moved(describe(action, label or ref, str(text or "")), view)
         return {"page": pagetext.render(view)}
 
     async def op_label(self, scope: dict[str, Any], ref: str = "") -> dict[str, Any]:
@@ -1336,8 +1353,9 @@ def describe(action: str, ref: str, text: str) -> str:
         "scroll_down": "Scrolled down", "scroll_up": "Scrolled up", "back": "Went back",
         "forward": "Went forward", "reload": "Reloaded", "wait": "Waited",
     }.get(action, action)  # fmt: skip
-    if action == "press":
-        return f"Pressed {text}"
+    if action == "press":  # a named key only: single keys could spell a password
+        named = len(text.removeprefix("Shift+")) > 1
+        return f"Pressed {text}" if named else "Pressed a key"
     if action == "select":
         return f"Chose {text[:40]}"
     return f"{what} {ref}".strip()

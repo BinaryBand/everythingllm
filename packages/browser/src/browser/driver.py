@@ -130,6 +130,9 @@ CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
 MAX_OFFERS = 5
 OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
 MAX_SECRET = 1000
+# The shortest value the user left in a password field that's kept as a secret: a stray key
+# or two would otherwise hide every "x" in every read, and lock the agent out of sending one.
+MIN_TYPED = 4
 PASSKEY_SECONDS = 15  # how long a sign-in waits for the page to ask for its passkey
 MAX_MADE = 5  # passkeys made and not yet taken by the runner
 MAKING_SECONDS = 5 * 60  # how long pages wait for a site to make a passkey
@@ -329,13 +332,9 @@ class Driver(hostrpc.Service):
             return
         folder = self.downloads / thread
         folder.mkdir(exist_ok=True)
-        target = folder / name
-        stem, suffix, n = target.stem, target.suffix, 1
-        while target.exists() or target.is_symlink():
-            n += 1
-            target = folder / f"{stem}-{n}{suffix}"
-        # Saved under a dot name the runner passes over, so it never copies half a file.
-        part = folder / f".{target.name}.part"
+        # Saved under a dot name the runner passes over, so it never copies half a file;
+        # one of its own, as two downloads of one name can be saving at once.
+        part = folder / f".{secrets.token_hex(8)}.part"
         try:
             await download.save_as(part)
             if part.stat().st_size > DOWNLOAD_BYTES:
@@ -344,6 +343,13 @@ class Driver(hostrpc.Service):
                     f"{name} was over {DOWNLOAD_BYTES >> 20} MB, so it wasn't kept",
                 )
             else:
+                # Named once it's whole, with no await between the look and the rename,
+                # so another download finishing can't take the same name.
+                target = folder / name
+                stem, suffix, n = target.stem, target.suffix, 1
+                while target.exists() or target.is_symlink():
+                    n += 1
+                    target = folder / f"{stem}-{n}{suffix}"
                 part.rename(target)
         except Exception as e:  # noqa: BLE001 - reported in the next read
             self.note(page, f"a download of {name} failed: {e}")
@@ -885,7 +891,7 @@ class Driver(hostrpc.Service):
             and password
         ):
             return
-        if len(username) > MAX_SECRET or len(password) > MAX_SECRET:
+        if len(username) > MAX_SECRET or not MIN_TYPED <= len(password) <= MAX_SECRET:
             return
         for key in [
             k
@@ -914,6 +920,8 @@ class Driver(hostrpc.Service):
         if self.capturing and not on:
             await self.keep_typed()
             await self.op_make_passkeys(False)
+        if on:  # what the user types gets a site, and must be sent nowhere else
+            await self.guard_requests()
         self.capturing = bool(on)
         if on and user:
             self.locked = False
@@ -926,7 +934,7 @@ class Driver(hostrpc.Service):
                     fields = frame.locator("input[type=password]")
                     for i in range(await fields.count()):
                         value = await fields.nth(i).input_value(timeout=ACT_MS)
-                        if value and len(value) <= MAX_SECRET:
+                        if MIN_TYPED <= len(value) <= MAX_SECRET:
                             self.keep_filled(value, site=site_of(frame.url))
                 except Exception:  # noqa: BLE001, S112 - a frame gone mid-look
                     continue

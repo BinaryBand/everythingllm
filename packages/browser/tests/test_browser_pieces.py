@@ -731,6 +731,10 @@ def test_a_run_of_key_presses_counts_as_text_sent():
 class FakeContext:
     def __init__(self, *pages):
         self.pages = list(pages)
+        self.routes = []
+
+    async def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
 
 
 class PasswordFrame:
@@ -749,12 +753,17 @@ class PasswordFrame:
 
 def test_what_the_user_typed_in_a_password_field_is_hidden_once_the_agent_has_it_back():
     page = FakePage("https://x.example/", {})
-    page.frames = [PasswordFrame("typed-not-sent", ""), PasswordFrame("other-pass")]
-    d = driver.Driver(FakeContext(page), None)
+    page.frames = [
+        PasswordFrame("typed-not-sent", ""),
+        PasswordFrame("other-pass", "x"),  # a stray key isn't a secret to hide
+    ]
+    context = FakeContext(page)
+    d = driver.Driver(context, None)
     asyncio.run(d.op_capture(True))
     asyncio.run(d.op_capture(False))
     assert d.passwords == ["typed-not-sent", "other-pass"]
     assert d.sites == {"typed-not-sent": "x.example", "other-pass": "x.example"}
+    assert [p for p, _ in context.routes] == ["**/*"]  # and they're sent nowhere else
 
 
 def test_a_login_the_user_sends_is_hidden_from_the_agent():

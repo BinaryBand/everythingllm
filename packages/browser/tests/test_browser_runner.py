@@ -159,6 +159,8 @@ def test_an_elements_label_is_its_name_in_the_last_view():
             '[e6] select "Size" options: *Small | Large',
             '[e7] textarea "Notes" placeholder="Anything"',
             f'[e8] button "{"x" * 90}"',
+            '[e9] input[tel] "Telephone:"',
+            '[e10] input[text] " : "',
             "not an element",
         ]
     }
@@ -171,6 +173,7 @@ def test_an_elements_label_is_its_name_in_the_last_view():
         "e6": "Size",
         "e7": "Notes",
         "e8": "x" * (runner_mod.LABEL_CHARS - 1) + "…",
+        "e9": "Telephone",
     }
     assert (
         runner_mod.describe("fill", "Customer name", "Ada") == "Filled in Customer name"

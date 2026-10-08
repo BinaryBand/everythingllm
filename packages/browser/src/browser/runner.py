@@ -1334,10 +1334,13 @@ LABEL_CHARS = 60
 
 
 def labels(view: dict[str, Any]) -> dict[str, str]:
-    """ref -> the element's name, from a view's elements; none for an unnamed one."""
+    """ref -> the element's name, from a view's elements, without the colon a form's label
+    ends in ("Telephone:"); none for an unnamed one."""
     found = {}
     for line in view.get("elements") or []:
-        if (m := ELEMENT_RE.match(str(line))) and (name := " ".join(m[2].split())):
+        if (m := ELEMENT_RE.match(str(line))) and (
+            name := " ".join(m[2].split()).rstrip(":").rstrip()
+        ):
             found[m[1]] = pagetext.clip(name, LABEL_CHARS)
     return found
 

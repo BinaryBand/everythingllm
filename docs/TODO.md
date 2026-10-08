@@ -2,6 +2,18 @@
 
 Work that's been looked into but not done yet. Remove an entry when it lands.
 
+## Finish putting 2026-10-08's changes live
+
+Done live on 2026-10-08: sandbox-runner, agents-runner, research-runner, the gateway, the egress proxy (it knows `sandbox-web`) and the static server restarted onto the new code; sites-runner stopped and its installed unit removed; `sites` dropped from AnythingLLM's MCP servers and the `write-entry` and `delete-entry` skills from storage; the "Daily News Page" job deleted; the news data deleted; the research entries moved to `~/archive/everythingllm/sites/`; sites-runner's venv and `.env` share, and storage's `sites/`, `sandbox-build/` and `mcp/` removed. Web and model access checked end to end through the runner's socket (a web workspace reaches example.com but not the tailnet and sees only its own `/shared`; another doesn't; a model call answers with no key in the run, is logged, and its socket goes after the run). Left, since the auto-mode check refused them or they need a person:
+
+- **`uv run hostctl deploy`.** Ships the skills (the new `sandbox-access`; deep-research, run-code, remind-once and schedule-job changed; `_lib`), the system prompt and its version, and restarts AnythingLLM. Until then the agent has no `sandbox-access` skill and its deep-research skill still says reports go to the research site (the runner ignores the `site` it sends).
+- **`uv run hostctl units`.** Renders research-runner's template (its pages, entries and `sandbox-build` mounts are gone; until then its old unit's `ExecStartPre` makes those folders again on a restart) and the static server's (`ExecStartPre` makes its bind sources).
+- **The machine's route for the article writer.** `tailscale serve --https=8445 --set-path=/news/write off` (nothing listens on :8448 now).
+- **Each workspace's prompt.** career, cloud, algorithms and education have their own copy of the block (`uv run hostctl health` lists them); `update-prompt` in each, the user's call.
+- **Checks that need a person in a chat:** `sandbox-access` turning web on shows AnythingLLM's approval prompt, and a "no" or an always-allowed skill leaves it off; a deep research run from a UI chat lands in the workspace's documents with a notice quoting its findings; `show-image` puts a chart in the chat.
+- **The Nilson app** no longer gets a report link (ntfy's `Click`) when a research run ends, since there's no report page; check what it shows instead.
+- **`hostctl units` doesn't retire a Quadlet container whose template is gone** (only host units in `~/.config/systemd/user`); sites-runner's was removed by hand. Retire one the way a dropped host unit is.
+
 ## Make the test suite faster
 
 `uv run hostctl test` takes about 55 s: `pytest` for 785 tests, plus 0.4 s for the skill tests. Measured on 2026-10-07, by package:

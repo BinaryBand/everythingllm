@@ -58,6 +58,14 @@ def test_deploy_checks_the_skills_first_and_ends_with_the_sites(ran):
     ]
 
 
+def test_deploy_refuses_a_worktree(ran, monkeypatch, tmp_path):
+    (tmp_path / ".git").write_text("gitdir: /elsewhere\n")
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    with pytest.raises(SystemExit, match="is a git worktree"):
+        cli.main(["deploy"])
+    assert ran == []
+
+
 def test_diff_checks_the_skills_first(ran):
     cli.main(["diff"])
     assert ran[1:] == ["sync diff", "units diff"]

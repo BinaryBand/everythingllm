@@ -119,6 +119,11 @@ def diff() -> None:
 def deploy() -> None:
     from hostctl import sync  # needs ANYTHINGLLM_STORAGE
 
+    if (ROOT / ".git").is_file():  # a linked worktree, as `units` refuses
+        raise SystemExit(
+            f"{ROOT} is a git worktree; deploy from the main checkout, which AnythingLLM "
+            "mounts and the runners run."
+        )
     skills_check()
     sync.main(["deploy"])
     mcp_sync()

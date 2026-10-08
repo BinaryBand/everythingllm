@@ -64,10 +64,9 @@ def check() -> list[str]:
             )
     if not shutil.which("podman") or run("podman", "info").returncode:
         problems.append("rootless podman doesn't work for this user (`podman info`).")
-    if run("systemctl", "--user", "is-system-running").returncode not in (
-        0,
-        1,
-    ):  # 1: degraded
+    # By what it says: it exits 1 both when degraded and when there's no user bus at all.
+    state = run("systemctl", "--user", "is-system-running").stdout.strip()
+    if state not in ("running", "degraded", "starting", "initializing", "maintenance"):
         problems.append("there's no systemd user session (`systemctl --user status`).")
     if (
         run(

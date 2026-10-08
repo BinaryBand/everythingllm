@@ -45,15 +45,20 @@ esac
 echo "AnythingLLM"
 # thread-scope.js gives skills an API or Telegram chat's thread, which AnythingLLM leaves out;
 # without it, every such chat in a workspace shares one browser tab and sandbox scope.
-case "$(podman exec systemd-anythingllm printenv NODE_OPTIONS 2>/dev/null)" in
-  *thread-scope.js*) loaded=yes ;; *) loaded=no ;;
-esac
-case "$loaded/$(podman exec -e NODE_OPTIONS= systemd-anythingllm node /mcp/anythingllm/thread-scope.js --check 2>&1)" in
-  yes/patched) ok "API and Telegram chats give skills their thread (thread-scope.js)" ;;
-  */upstream) printf '  NOTE  %s\n' "AnythingLLM gives skills an API chat's thread itself: drop anythingllm/thread-scope.js" ;;
-  no/*) fail "thread-scope.js isn't preloaded: uv run hostctl units" ;;
-  *) fail "thread-scope.js no longer fits AnythingLLM's ephemeral.js: API chats share their workspace's scope" ;;
-esac
+if [ "$(podman container inspect -f '{{.State.Running}}' systemd-anythingllm 2>/dev/null)" != true ]; then
+  fail "AnythingLLM's container isn't running, so thread-scope.js can't be checked"
+else
+  case "$(podman exec systemd-anythingllm printenv NODE_OPTIONS 2>/dev/null)" in
+    *thread-scope.js*) loaded=yes ;; *) loaded=no ;;
+  esac
+  # Only stdout: a warning node prints on stderr isn't the patch's state.
+  case "$loaded/$(podman exec -e NODE_OPTIONS= systemd-anythingllm node /mcp/anythingllm/thread-scope.js --check 2>/dev/null)" in
+    yes/patched) ok "API and Telegram chats give skills their thread (thread-scope.js)" ;;
+    */upstream) printf '  NOTE  %s\n' "AnythingLLM gives skills an API chat's thread itself: drop anythingllm/thread-scope.js" ;;
+    no/*) fail "thread-scope.js isn't preloaded: uv run hostctl units" ;;
+    *) fail "thread-scope.js no longer fits AnythingLLM's ephemeral.js: API chats share their workspace's scope" ;;
+  esac
+fi
 
 echo "Routes"
 # What the machine routes to the apps on PUBLIC_HOST over HTTPS (the apps' `serve`).

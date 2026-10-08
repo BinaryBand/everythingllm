@@ -15,6 +15,9 @@ PublishPort=127.0.0.1:8445:8445
 PublishPort=127.0.0.1:8447:8447
 
 [Service]
+# Podman doesn't make a missing bind source, and on a new machine nothing has made the
+# sandbox's public/ yet (sandbox-runner makes it with a workspace's first call).
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/pages/public %h/.local/share/everythingllm/sandbox/public
 Restart=always
 
 [Install]

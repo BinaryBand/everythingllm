@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import hostrpc
-from chatimage import alt, link, live, progress
+from chatimage import linked_image, live, progress
 
 from runs.runlog import find
 from runs.service import Run, RunService
@@ -83,7 +83,7 @@ class Live:
         if not pages_url:
             return ""
         page = cls.page_url(pages_url, run_id)
-        return f"[![{alt(f'{cls.LABEL}: {subject}')}]({link(page + '.png')})]({link(page)})"
+        return linked_image(f"{cls.LABEL}: {subject}", page + ".png", page)
 
     async def serve(self, port: int) -> asyncio.Server:
         host = os.environ.get("LIVE_HOST") or HOST

@@ -48,6 +48,11 @@ class RunnerError(Exception):
     """An error to show the caller: bad arguments, a missing file, the service being down."""
 
 
+class Unreachable(RunnerError):
+    """The service isn't there to answer: nothing listens, it broke off the call (a restart
+    or a crash), or it closed the connection without answering."""
+
+
 def atomic_write(file: Path, data: bytes | str, mode: int = 0o644) -> None:
     """Replace `file` in one step (a reader sees the old file or the new, never half),
     through a temp file of its own, so two writers never share one. Text is UTF-8; the
@@ -206,7 +211,7 @@ async def request(
     try:
         reader, writer = await asyncio.open_unix_connection(str(socket), limit=limit)
     except (FileNotFoundError, ConnectionRefusedError) as e:
-        raise RunnerError(
+        raise Unreachable(
             f"The {name} isn't running on the host ({type(e).__name__} on {socket})."
         ) from e
     except OSError as e:  # e.g. a socket the caller may not use
@@ -217,7 +222,7 @@ async def request(
     except TimeoutError as e:
         raise RunnerError(f"The {name} didn't answer within {timeout:.0f}s.") from e
     except OSError as e:  # a reset, as it restarts or crashes
-        raise RunnerError(f"The {name} broke off the call ({e}).") from e
+        raise Unreachable(f"The {name} broke off the call ({e}).") from e
     except ValueError as e:  # a reply over `limit`, or cut short
         raise RunnerError(f"The {name}'s answer couldn't be read ({e}).") from e
     finally:
@@ -228,7 +233,7 @@ async def request(
 def _result(reply: Any, name: str) -> Any:
     """A reply's result, or RunnerError with its error."""
     if reply is None:
-        raise RunnerError(f"The {name} closed the connection without answering.")
+        raise Unreachable(f"The {name} closed the connection without answering.")
     if not isinstance(reply, dict):
         raise RunnerError(f"The {name} answered with something other than a reply.")
     if not reply.get("ok"):

@@ -20,7 +20,7 @@ and https://<PUBLIC_HOST>:8447/_apps/ here, the page's own origin, for its write
       page's is its token, the app's current one, which every render replaces: a page
       rendered before gets 409 (reload it), anything else 403. At most MAX_BODY bytes,
       RATE ops per app, and none while a run holds the workspace (409). The answer is the
-      app's data, version and the next token, so the page goes on without a reload.
+      app's data and the next token, so the page goes on without a reload.
 
 A card is per app, not per chat: the same address shows the app as it is now in every
 chat it was pasted in. Paths are taken with or without their prefix (a route may strip
@@ -28,7 +28,7 @@ it). Like the other live servers it answers only loopback and its own address
 (hostrpc.local_peer), where the machine's route delivers from.
 
 Config (environment, from the unit):
-  APPS_PORT   the port to listen on (default 8455), on 127.0.0.1 (APPS_HOST)
+  APPS_PORT   the port to listen on (default 8455), on 127.0.0.1
 """
 
 from __future__ import annotations
@@ -49,6 +49,7 @@ from chatimage import BAR, PAD, THEMES, WIDTH, font, frame, live
 from PIL import Image, ImageDraw
 
 from sandbox import apps
+from sandbox.errors import BadToken, Busy, NoSuchApp, StaleToken
 
 if TYPE_CHECKING:
     from sandbox.runner import Runner
@@ -65,6 +66,7 @@ OPS = re.compile(rf"(?:/_apps)?/({WORKSPACE})/({NAME})/ops")
 MAX_BODY = 4096
 RATE = (10, 10.0)  # ops per app in so many seconds
 PAGE_CORS = {"Access-Control-Allow-Origin": "null", "Vary": "Origin"}
+STATUS = {BadToken: "403 Forbidden", Busy: "409 Conflict", NoSuchApp: "404 Not Found"}
 
 
 def gone_card(theme: str) -> bytes:
@@ -89,17 +91,7 @@ class AppsWeb:
         self.recent: dict[tuple[str, str], deque[float]] = {}
 
     async def serve(self, port: int) -> asyncio.Server:
-        host = os.environ.get("APPS_HOST") or "127.0.0.1"
-        return await asyncio.start_server(self.handle, host, port)
-
-    def scope(self, workspace: str):
-        """The workspace's scope, if it has a sandbox at all (an address names any)."""
-        if not (self.runner.config.root / workspace).is_dir():
-            return None
-        try:
-            return self.runner.scope({"workspace": workspace, "thread": "default"})
-        except hostrpc.RunnerError:  # a gateway client's
-            return None
+        return await asyncio.start_server(self.handle, "127.0.0.1", port)
 
     async def handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -137,11 +129,11 @@ class AppsWeb:
             if not route:
                 return await live.send(writer, "404 Not Found", b"No such app.\n")
             workspace, name, image = route[1], route[2], bool(route[3])
-            theme = live.theme(query)
-            s = self.scope(workspace)
             if not image:
                 page = self.runner.public_url(workspace, f"apps/{name}/")
                 return await live.send(writer, "302 Found", headers={"Location": page})
+            theme = live.theme(query)
+            s = self.runner.app_scope(workspace)
             if s is None:
                 card = await asyncio.to_thread(gone_card, theme)
                 return await live.send(writer, "200 OK", card, "image/png")
@@ -157,6 +149,8 @@ class AppsWeb:
         """Whether the app may take another op now (RATE)."""
         most, seconds = RATE
         now = time.monotonic()
+        for quiet in [k for k, q in self.recent.items() if q[-1] < now - seconds]:
+            del self.recent[quiet]  # so the apps posted to long ago aren't kept
         recent = self.recent.setdefault(key, deque())
         while recent and recent[0] < now - seconds:
             recent.popleft()
@@ -174,7 +168,6 @@ class AppsWeb:
         headers: dict[str, str],
     ) -> None:
         """An op from the app's page (the module's docstring has the rules)."""
-        from sandbox.runner import BadToken, StaleToken  # it imports this module
 
         async def answer(status: str, body: dict) -> None:
             await live.send(
@@ -208,7 +201,7 @@ class AppsWeb:
             TypeError,
         ):
             return await answer("400 Bad Request", {"error": "not an op"})
-        s = self.scope(workspace)
+        s = self.runner.app_scope(workspace)
         if s is None:
             return await answer("404 Not Found", {"error": "no such app"})
         if not self.allowed((workspace, name)):
@@ -216,26 +209,19 @@ class AppsWeb:
                 "429 Too Many Requests", {"error": "too fast; wait a moment"}
             )
         try:
-            self.runner.idle(workspace)
-            async with self.runner.lock(workspace):
-                out = await asyncio.to_thread(
+            async with self.runner.exclusive(workspace):
+                data, _, token = await asyncio.to_thread(
                     self.runner.change_app, s, name, op, args, token
                 )
         except StaleToken as e:
             return await answer("409 Conflict", {"error": str(e), "reload": True})
-        except BadToken as e:
-            return await answer("403 Forbidden", {"error": str(e)})
+        except (BadToken, Busy, NoSuchApp) as e:
+            return await answer(STATUS[type(e)], {"error": str(e)})
         except hostrpc.RunnerError as e:
-            busy = "still running" in str(e)
-            return await answer(
-                "409 Conflict" if busy else "400 Bad Request", {"error": str(e)}
-            )
+            return await answer("400 Bad Request", {"error": str(e)})
         await self.runner.app_changed()
         log.info("%s/%s: %s from its page", workspace, name, op)
-        return await answer(
-            "200 OK",
-            {"data": out["data"], "version": out["version"], "token": out["token"]},
-        )
+        return await answer("200 OK", {"data": data, "token": token})
 
     def stamp(self, s, name: str) -> tuple:
         """What changes when the app does: its data file's identity and time."""

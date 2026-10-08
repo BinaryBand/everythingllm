@@ -6,6 +6,7 @@ import re
 import pytest
 from sandbox import apps, runner
 from sandbox.apps.list import template as lists
+from sandbox.errors import BadToken, StaleToken
 from test_runner import (  # noqa: F401 - cfg is a fixture
     A2,
     A,
@@ -152,15 +153,15 @@ def test_an_app_is_made_changed_shown_and_listed(r, cfg):  # noqa: F811
     assert data["version"] == 1 and len(data["items"]) == 2
     page = (public(cfg, A) / "apps" / "groceries" / "index.html").read_text()
     assert '"ops": "/_apps/career/groceries/ops"' in page
-    token = r.tokens("career", "groceries")["token"]
+    token, _ = r.app_tokens.held("career", "groceries")
     assert token and token in page
     assert (cfg.app_state / "career" / "groceries.json").stat().st_mode & 0o777 == 0o600
 
     done = go(r.op_app(A2, "do", "groceries", op="check", args={"item": "eggs"}))
     assert done["did"] == "ticked off Eggs" and done["summary"] == "1 of 2 left"
     assert "token" not in done and "data" not in done  # the page's, not the agent's
-    assert r.tokens("career", "groceries")["token"] != token  # rotated with the render
-    assert token in r.tokens("career", "groceries")["old"]
+    now, old = r.app_tokens.held("career", "groceries")
+    assert now != token and token in old  # rotated with the render
 
     assert go(r.op_app(A, "show", "groceries"))["version"] == 2
     (public(cfg, A) / "apps" / "groceries" / "index.html").unlink()
@@ -226,14 +227,12 @@ def test_a_second_create_and_a_gateway_client_are_refused(r):
 def test_a_page_changes_the_app_only_with_its_current_token(r, cfg):  # noqa: F811
     go(r.op_app(A, "create", "todo", args={"item": "a"}))
     s = r.scope(A)
-    first = r.tokens("career", "todo")["token"]
-    out = r.change_app(s, "todo", "check", {"item": 1}, token=first)
-    assert out["data"]["items"][0]["done"] and out["token"] != first
-    with pytest.raises(runner.StaleToken, match="out of date"):
+    first, _ = r.app_tokens.held("career", "todo")
+    data, _, token = r.change_app(s, "todo", "check", {"item": 1}, token=first)
+    assert data["items"][0]["done"] and token != first
+    with pytest.raises(StaleToken, match="out of date"):
         r.change_app(s, "todo", "uncheck", {"item": 1}, token=first)
-    with pytest.raises(runner.BadToken):
+    with pytest.raises(BadToken):
         r.change_app(s, "todo", "uncheck", {"item": 1}, token="forged")
-    assert (
-        r.change_app(s, "todo", "uncheck", {"item": 1}, token=out["token"])["version"]
-        == 3
-    )
+    data, _, _ = r.change_app(s, "todo", "uncheck", {"item": 1}, token=token)
+    assert data["version"] == 3

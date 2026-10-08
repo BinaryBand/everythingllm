@@ -4,7 +4,8 @@ import asyncio
 import json
 
 import pytest
-from sandbox import appsweb, runner
+from sandbox import appsweb
+from sandbox.errors import Busy
 from test_runner import A, cfg, make, project  # noqa: F401 - cfg is a fixture
 
 
@@ -153,12 +154,12 @@ def op(token, name="check", **args) -> bytes:
 def test_the_page_writes_back_with_its_current_token(r):
     async def main():
         await r.op_app(A, "create", "groceries", args={"items": ["Oat milk", "Eggs"]})
-        first = r.tokens("career", "groceries")["token"]
+        first, _ = r.app_tokens.held("career", "groceries")
         server, port = await started(r)
         try:
             path = "/_apps/career/groceries/ops"
             status, body, _ = await post(port, path, op(first, item=1))
-            assert status == 200 and body["version"] == 2
+            assert status == 200 and body["data"]["version"] == 2
             assert body["data"]["items"][0]["done"] and body["token"] != first
             # The same page's next op, with the token it was given.
             status, body, _ = await post(
@@ -183,7 +184,7 @@ def test_the_page_writes_back_with_its_current_token(r):
 def test_what_the_write_back_refuses(r, monkeypatch):
     async def main():
         await r.op_app(A, "create", "todo", args={"item": "a"})
-        token = r.tokens("career", "todo")["token"]
+        token, _ = r.app_tokens.held("career", "todo")
         server, port = await started(r)
         path = "/_apps/career/todo/ops"
         try:
@@ -196,14 +197,14 @@ def test_what_the_write_back_refuses(r, monkeypatch):
             status, body, _ = await post(port, path, op(token, "shuffle"))
             assert status == 400 and "op must be one of" in body["error"]
             assert (await post(port, "/_apps/nowhere/todo/ops", op(token)))[0] == 404
-            assert (await post(port, "/_apps/career/gone/ops", op(token)))[0] == 400
+            assert (await post(port, "/_apps/career/gone/ops", op(token)))[0] == 404
 
             def busy(workspace):
-                raise runner.SandboxError("code is still running in this workspace")
+                raise Busy("code is still running in this workspace")
 
-            monkeypatch.setattr(r, "idle", busy)
-            assert (await post(port, path, op(token, item="a")))[0] == 409
-            monkeypatch.undo()
+            with monkeypatch.context() as m:
+                m.setattr(r, "idle", busy)
+                assert (await post(port, path, op(token, item="a")))[0] == 409
             monkeypatch.setattr(appsweb, "RATE", (2, 10.0))
             fresh = appsweb.AppsWeb(r)
             assert fresh.allowed(("career", "todo")) and fresh.allowed(

@@ -38,12 +38,11 @@ from chatimage import (
     THEMES,
     WIDTH,
     accent_for,
-    alt,
     clean,
     fit,
     font,
     frame,
-    link,
+    linked_image,
     wrap,
 )
 
@@ -80,7 +79,7 @@ def make(
         log.warning("couldn't make a card for %s: %s", url, e)
         return ""
     image = urljoin(images or url, f"/{FOLDER}/{files[THEME].name}?v={version}")
-    return f"[![{alt(title)}]({link(image)})]({link(url)})"
+    return linked_image(title, image, url)
 
 
 def remove(site_dir: Path, url: str) -> None:

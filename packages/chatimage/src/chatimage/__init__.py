@@ -140,6 +140,11 @@ def link(url: str) -> str:
     return url.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
 
 
+def linked_image(text: str, image: str, url: str) -> str:
+    """The Markdown line of an image (a card) that links to `url`."""
+    return f"[![{alt(text)}]({link(image)})]({link(url)})"
+
+
 def clean(text: str) -> str:
     """One line of text the fonts can draw: no emoji or other symbols they'd show as boxes."""
     kept = (

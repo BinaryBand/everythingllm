@@ -110,7 +110,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
-import hmac
 import html as htmllib
 import io
 import json
@@ -140,22 +139,12 @@ from PIL import Image
 from sandbox import apps as app_templates
 from sandbox import appsweb
 from sandbox import models as model_access
+from sandbox.apps.tokens import Tokens
+from sandbox.errors import Busy, NoSuchApp, SandboxError
 
 log = logging.getLogger("sandbox-runner")
 # Big enough for a run's output, which the runner caps well below this.
 LIMIT = 8 * 1024 * 1024
-
-
-class SandboxError(hostrpc.RunnerError):
-    """An error to show the agent: bad arguments, a missing file, the runner being down."""
-
-
-class BadToken(SandboxError):
-    """A write-back that isn't from the app's page."""
-
-
-class StaleToken(SandboxError):
-    """A write-back from a page of the app's that has been rendered again since."""
 
 
 # Also named in hostctl's sandbox-images (cli.py).
@@ -206,7 +195,6 @@ IMAGE_MAX_BYTES = 10 << 20
 IMAGES_MAX_BYTES = 500 << 20
 APP_DATA_BYTES = 1 << 20  # an app's data.json, at most
 APP_ACTIONS = ("create", "do", "show", "list", "delete")
-OLD_TOKENS = 8  # an app's earlier write-back tokens, known as a stale page's
 THREAD_MAX_AGE = 7 * 24 * 3600
 # The workspace's browser profile, in its folder beside the sandbox's (packages/browser).
 BROWSER = "browser"
@@ -873,6 +861,7 @@ class Runner(hostrpc.Service):
             self._free_web.put_nowait(ip)
         if self.ask_model is None:
             self.ask_model = model_access.provider_ask(self.config.model_env)
+        self.app_tokens = Tokens(self.config.app_state)
 
     @contextlib.asynccontextmanager
     async def slot(self, web: bool = False) -> AsyncIterator[str]:
@@ -1032,6 +1021,19 @@ class Runner(hostrpc.Service):
         os.utime(s.roots["/work"])
         return s
 
+    def app_scope(self, workspace: str) -> Scope | None:
+        """A workspace's scope for its apps, as an address names it (sandbox.appsweb): None
+        if it has no sandbox or is a gateway client's. Nothing is made."""
+        if workspace.startswith(CLIENT_PREFIX) or not KEY_RE.fullmatch(workspace):
+            return None
+        s = Scope(
+            workspace,
+            "default",
+            self.config.root / workspace,
+            self.config.public_root / workspace,
+        )
+        return s if s.home.is_dir() else None
+
     def split(self, scope: Scope, path: str) -> tuple[str, Path, Path]:
         """`path` in the sandbox (under one of the caller's own mounts, or relative to /work)
         as its mount, that mount's host folder and the path inside it, unresolved. `..` is
@@ -1079,9 +1081,17 @@ class Runner(hostrpc.Service):
         for job in self._jobs.values():
             if job.workspace == workspace and not job.task.done():
                 left = max(0, MAX_TIMEOUT - (self.now() - job.started))
-                raise SandboxError(
+                raise Busy(
                     f"code is still running in this workspace (at most {left:.0f} s more); try again after"
                 )
+
+    @contextlib.asynccontextmanager
+    async def exclusive(self, workspace: str) -> AsyncIterator[None]:
+        """The workspace's lock for a file operation, which fails at once (Busy) while a
+        run holds it rather than queueing behind the run."""
+        self.idle(workspace)
+        async with self.lock(workspace):
+            yield
 
     def gc(self) -> list[str]:
         """Delete threads' /work folders untouched for a week. /project stays."""
@@ -1700,8 +1710,7 @@ class Runner(hostrpc.Service):
         it."""
         s = self.scope(scope)
         mount = self.split(s, path)[0]
-        self.idle(s.workspace)
-        async with self.lock(s.workspace):
+        async with self.exclusive(s.workspace):
             result = await self.write(s, path, content, delete)
             if mount == "/public" and (target := self.split(s, path)[2]) != s.public:
                 result["published"] = await asyncio.to_thread(
@@ -1826,8 +1835,7 @@ class Runner(hostrpc.Service):
                 "slug must be 1-63 lowercase letters, digits or hyphens, not starting "
                 "or ending with a hyphen, e.g. 'trip-plan'"
             )
-        self.idle(s.workspace)
-        async with self.lock(s.workspace):
+        async with self.exclusive(s.workspace):
             if outside:
                 await asyncio.to_thread(self.stage, s, path, slug)
                 name = slug
@@ -1882,8 +1890,7 @@ class Runner(hostrpc.Service):
             raise SandboxError("give the image's path, e.g. /work/chart.png")
         if not isinstance(alt, str):
             raise SandboxError("alt must be text")
-        self.idle(s.workspace)
-        async with self.lock(s.workspace):
+        async with self.exclusive(s.workspace):
             data = await asyncio.to_thread(self.read_image, s, path)
             return await asyncio.to_thread(
                 self.put_image, s.workspace, data, path.strip(), alt
@@ -1944,13 +1951,13 @@ class Runner(hostrpc.Service):
         finally:
             os.close(folder)
         url = f"{self.config.site_url.rstrip('/')}/{IMAGES}/{quote(workspace)}/{name}"
-        label = chatimage.alt(alt) or chatimage.alt(Path(path).stem) or "image"
+        label = " ".join(alt.split()) or Path(path).stem or "image"
         return {
             "url": url,
             "width": width,
             "height": height,
             "bytes": len(data),
-            "image": f"[![{label}]({chatimage.link(url)})]({chatimage.link(url)})",
+            "image": chatimage.linked_image(label, url, url),
         }
 
     # --- apps (sandbox.apps) ---
@@ -1977,23 +1984,24 @@ class Runner(hostrpc.Service):
             raise SandboxError(
                 "name must be 1-63 lowercase letters, digits or hyphens, e.g. 'groceries'"
             )
-        self.idle(s.workspace)
-        async with self.lock(s.workspace):
+        async with self.exclusive(s.workspace):
             if action == "list":
                 return {"apps": await asyncio.to_thread(self.list_apps, s)}
+            if action == "show":
+                return await asyncio.to_thread(self.show_app, s, name)
             if action == "delete":
                 await asyncio.to_thread(self.delete_app, s, name)
                 result: dict[str, Any] = {"name": name, "deleted": True}
             elif action == "create":
-                result = await asyncio.to_thread(
+                data, did = await asyncio.to_thread(
                     self.create_app, s, name, template, title, args
                 )
-            elif action == "show":
-                result = await asyncio.to_thread(self.show_app, s, name)
+                result = self.app_reply(s, name, data, did)
             else:
-                result = await asyncio.to_thread(self.change_app, s, name, op, args)
-                result.pop("token", None)  # the page's, never the agent's
-                result.pop("data", None)
+                data, did, _ = await asyncio.to_thread(
+                    self.change_app, s, name, op, args
+                )
+                result = self.app_reply(s, name, data, did)
         await self.app_changed()
         return result
 
@@ -2007,7 +2015,7 @@ class Runner(hostrpc.Service):
             s.roots["/project"], ("apps", name, "data.json"), APP_DATA_BYTES + 1
         )
         if raw is None:
-            raise SandboxError(f"there's no app '{name}' (app list shows them)")
+            raise NoSuchApp(f"there's no app '{name}' (app list shows them)")
         if len(raw) > APP_DATA_BYTES:
             raise SandboxError(f"{name}'s data is over {APP_DATA_BYTES >> 20} MB")
         try:
@@ -2016,14 +2024,16 @@ class Runner(hostrpc.Service):
         except ValueError as e:  # AppError is one
             raise SandboxError(f"{name}'s data can't be used: {e}") from None
 
-    def save_app(self, s: Scope, name: str, data: dict[str, Any]) -> dict[str, Any]:
+    def save_app(
+        self, s: Scope, name: str, data: dict[str, Any]
+    ) -> tuple[dict[str, Any], str]:
         """Write the app's data, one version on, and its page, under a new write-back
-        token; the data as saved, with the token under "token"."""
+        token; the data as saved, and the token."""
         data = {**data, "version": data["version"] + 1}
         try:
             with safefs.folder(s.roots["/project"], ("apps", name), make=True) as d:
                 safefs.replace(d, "data.json", json.dumps(data, indent=1).encode())
-            token = self.rotate_token(s.workspace, name)
+            token = self.app_tokens.rotate(s.workspace, name)
             page = app_templates.render(
                 data, token, f"/_apps/{quote(s.workspace)}/{quote(name)}/ops"
             )
@@ -2031,29 +2041,7 @@ class Runner(hostrpc.Service):
                 safefs.replace(d, "index.html", page.encode())
         except OSError as e:
             raise SandboxError(f"couldn't save {name}: {e}") from None
-        return {**data, "token": token}
-
-    def token_file(self, workspace: str, name: str) -> Path:
-        return self.config.app_state / workspace / f"{name}.json"
-
-    def tokens(self, workspace: str, name: str) -> dict[str, Any]:
-        try:
-            held = json.loads(self.token_file(workspace, name).read_text())
-        except (OSError, ValueError):
-            return {"token": "", "old": []}
-        return held if isinstance(held, dict) else {"token": "", "old": []}
-
-    def rotate_token(self, workspace: str, name: str) -> str:
-        """A new write-back token for the app; the one before joins the stale ones."""
-        held = self.tokens(workspace, name)
-        token = secrets.token_urlsafe(24)
-        old = [held.get("token") or "", *held.get("old", [])][:OLD_TOKENS]
-        file = self.token_file(workspace, name)
-        file.parent.mkdir(parents=True, exist_ok=True)
-        hostrpc.atomic_write(
-            file, json.dumps({"token": token, "old": [t for t in old if t]}), 0o600
-        )
-        return token
+        return data, token
 
     def app_reply(
         self, s: Scope, name: str, data: dict[str, Any], did: str = ""
@@ -2063,10 +2051,6 @@ class Runner(hostrpc.Service):
             f"{self.config.site_url.rstrip('/')}/_live/apps/"
             f"{quote(s.workspace)}/{quote(name)}"
         )
-        card = (
-            f"[![{chatimage.alt(data['title'])}]({chatimage.link(live + '.png')})]"
-            f"({chatimage.link(live)})"
-        )
         return {
             "name": name,
             "template": kind.NAME,
@@ -2075,12 +2059,13 @@ class Runner(hostrpc.Service):
             "did": did,
             "version": data["version"],
             "page": self.public_url(s.workspace, f"apps/{quote(name)}/"),
-            "card": card,
+            "card": chatimage.linked_image(data["title"], live + ".png", live),
         }
 
     def create_app(
         self, s: Scope, name: str, template: str, title: str, args: Any
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], str]:
+        """Make the app; its data as saved, and what was done."""
         project = s.roots["/project"]
         if safefs.read_regular(project, ("apps", name, "data.json"), 1) is not None:
             raise SandboxError(f"there's an app '{name}' already; change it with do")
@@ -2093,36 +2078,28 @@ class Runner(hostrpc.Service):
                 did = f"made it and {did}"
         except ValueError as e:
             raise SandboxError(str(e)) from None
-        saved = self.save_app(s, name, data)
-        return self.app_reply(s, name, saved, did)
+        return self.save_app(s, name, data)[0], did
 
     def change_app(
         self, s: Scope, name: str, op: str, args: Any, token: str | None = None
-    ) -> dict[str, Any]:
-        """Apply one of the app's ops and save it; its reply, with the data and the new
-        token. With `token` (a page's), only when it's the app's current one: StaleToken
-        for one it had before, BadToken for any other."""
+    ) -> tuple[dict[str, Any], str, str]:
+        """Apply one of the app's ops and save it; its data as saved, what was done, and
+        the page's new token. With `token` (a page's), only when it's the app's current
+        one (Tokens.check)."""
         data = self.read_app(s, name)
         if token is not None:
-            held = self.tokens(s.workspace, name)
-            current = held.get("token") or ""
-            if not (current and hmac.compare_digest(current, token)):
-                old = [t for t in held.get("old", []) if isinstance(t, str)]
-                if any(hmac.compare_digest(t, token) for t in old):
-                    raise StaleToken("this page is out of date; reload it")
-                raise BadToken("this isn't the app's page")
+            self.app_tokens.check(s.workspace, name, token)
         try:
             data, did = app_templates.of(data).apply(data, op, args)
         except ValueError as e:
             raise SandboxError(str(e)) from None
-        saved = self.save_app(s, name, data)
-        token = saved.pop("token")
-        return {**self.app_reply(s, name, saved, did), "data": saved, "token": token}
+        saved, token = self.save_app(s, name, data)
+        return saved, did, token
 
     def show_app(self, s: Scope, name: str) -> dict[str, Any]:
         data = self.read_app(s, name)
         if not (s.public / "apps" / name / "index.html").is_file():
-            data = self.save_app(s, name, data)  # a page a run removed comes back
+            data, _ = self.save_app(s, name, data)  # a page a run removed comes back
         return self.app_reply(s, name, data)
 
     def list_apps(self, s: Scope) -> list[dict[str, Any]]:
@@ -2149,10 +2126,10 @@ class Runner(hostrpc.Service):
     def delete_app(self, s: Scope, name: str) -> None:
         folder = s.roots["/project"] / "apps" / name
         if not os.path.lexists(folder):
-            raise SandboxError(f"there's no app '{name}' (app list shows them)")
+            raise NoSuchApp(f"there's no app '{name}' (app list shows them)")
         remove_path(folder)
         remove_path(s.public / "apps" / name)
-        self.token_file(s.workspace, name).unlink(missing_ok=True)
+        self.app_tokens.remove(s.workspace, name)
 
     def listing(self, scope: Scope) -> dict[str, Any]:
         """The workspace's pages: /public's top-level entries and where they are."""

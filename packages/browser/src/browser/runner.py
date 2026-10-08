@@ -116,7 +116,7 @@ from pathlib import Path
 from typing import Any
 
 import hostrpc
-from chatimage import alt, link
+from chatimage import linked_image
 from egress import config as egress_config
 from hostrpc import RunnerError, safefs
 
@@ -644,10 +644,8 @@ class Runner(hostrpc.Service):
             result = await hostrpc.request(
                 s.driver, op, args, DRIVER_SECONDS, name="browser", limit=LIMIT
             )
-        except RunnerError as e:
-            gone = ("isn't running", "closed the connection", "broke off the call")
-            if not any(why in str(e) for why in gone):
-                raise
+        except hostrpc.Unreachable:
+            pass  # gone: forgotten below
         else:
             if thread := args.get("thread"):
                 await self.collect(s.workspace)
@@ -694,7 +692,7 @@ class Runner(hostrpc.Service):
             if tab.title and not pagetext.challenge_title(tab.title)
             else site_of(tab.url)
         )
-        return f"[![{alt(f'Browser: {subject}')}]({link(page + '.jpg')})]({link(page)})"
+        return linked_image(f"Browser: {subject}", page + ".jpg", page)
 
     def takeover(self, s: Session, tab: Tab | None = None) -> str:
         url = f"{self.config.takeover_url.rstrip('/')}/{s.token}/"
@@ -705,7 +703,7 @@ class Runner(hostrpc.Service):
         if not self.config.pages_url:
             return ""
         page = f"{self.config.pages_url.rstrip('/')}/_live/browser/login/{req.id}"
-        return f"[![{alt(f'Log in to {registrable(req.site)}')}]({link(page + '.png')})]({link(page)})"
+        return linked_image(f"Log in to {registrable(req.site)}", page + ".png", page)
 
     def login_form(self, req: LoginRequest) -> str:
         return f"{self.config.takeover_url.rstrip('/')}/login/{req.id}/"

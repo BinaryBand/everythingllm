@@ -31,7 +31,9 @@ Who has the browser: the agent, until the user takes over in the take-over view 
 agent hands it over (`handoff`, for a login, 2FA or a CAPTCHA, after which the agent ends
 its reply so the card shows). While the user has it, the agent's actions and reads are refused. It
 comes back when the user hands it back in the view, or says in the chat that they're done
-(`handoff` with `done`), or when the browser is stopped.
+(`handoff` with `done`), or when the browser is stopped. Only while they have it do the
+view's VNC keys and its text field (type_text, press_key) reach the browser; what they type
+there goes to the driver and is never logged, said back or shown on a card.
 
 What the card and the take-over view say of a tab (`state`): `working` while one of the
 agent's ops for its chat runs and for ACTIVE seconds after (it thinks between steps),
@@ -65,7 +67,9 @@ Ops (each takes `scope`):
   open(url)                      go to url in the thread's tab -> {page, card, new}
   act(action, ref?, text?)       one browser.driver action -> {page}
   read(find?)                    the page as it is, or its lines with `find` -> {page}
-  handoff(reason)                give the user the browser -> {card, takeover}
+  handoff(reason)                give the user the browser -> {card, takeover, reason}:
+                                 `reason` as the user sees it, naming the identity
+                                 provider when the page is its sign-in (tabs.SIGN_IN)
   handoff(done=true)             take it back -> {page}
   close()                        close the thread's tab
   logins()                       the workspace's saved logins, no secrets -> {logins, site}
@@ -118,7 +122,15 @@ from browser.containers import (
 )
 from browser.logins import LoginRequests
 from browser.origin import host_of, normal_site, registrable, secure, site_matches
-from browser.tabs import Approval, LoginRequest, Tab, as_who, describe, site_of
+from browser.tabs import (
+    Approval,
+    LoginRequest,
+    Tab,
+    as_who,
+    describe,
+    sign_in_provider,
+    site_of,
+)
 from browser.vault import Vault, VaultError, credential, totp
 
 log = logging.getLogger("browser-runner")
@@ -132,6 +144,7 @@ START_SECONDS = 40  # for a container's driver to answer
 # An op in the driver: its own limits are shorter (30 s for a page load).
 DRIVER_SECONDS = 42
 LIMIT = 8 << 20  # a driver's reply: a screenshot is a few hundred KB
+USER_KEYS = {"Enter", "Tab", "Backspace"}  # as browser.driver's: the view's key buttons
 ACTIVE = 30  # seconds after the agent's last op on a tab that it still reads as working
 # The ops that are the agent at work in its chat's tab (not wait_approval, which waits).
 WORK = {"open", "act", "read", "handoff", "close", "logins", "login", "code", "passkey",
@@ -506,10 +519,20 @@ class Runner(hostrpc.Service):
         tab, _ = self.tab(workspace, thread)
         s.control, s.reason, s.asked = "user", (reason or "").strip()[:200], True
         await self.capture(s, True)
-        tab.moved(f"Waiting for you: {s.reason}" if s.reason else "Waiting for you")
         if tab.url:
-            await self.call(s, "front", {"thread": thread})
-        return {"card": self.card(tab), "takeover": self.takeover(s, tab)}
+            front = await self.call(s, "front", {"thread": thread})
+            # The page as it is now (a sign-in popup, say), not as the agent last read it.
+            where = (front or {}).get("url") or tab.url
+            if provider := sign_in_provider(where):
+                said = f" ({s.reason})" if s.reason else ""
+                line = f"Sign in to {provider}, then hand the browser back{said}"
+                s.reason = line[:200]
+        tab.moved(f"Waiting for you: {s.reason}" if s.reason else "Waiting for you")
+        return {
+            "card": self.card(tab),
+            "takeover": self.takeover(s, tab),
+            "reason": s.reason,
+        }
 
     async def op_close(self, scope: dict[str, Any]) -> dict[str, Any]:
         workspace, thread = check_scope(scope)
@@ -915,6 +938,39 @@ class Runner(hostrpc.Service):
             s.control, s.reason, s.asked, s.made = "user", "you took over", False, ""
             await self.capture(s, True, user=True)
             self.tell(s, "You took over the browser")
+
+    async def type_text(
+        self, s: Session, text: str, secret: bool = False, tab: str = ""
+    ) -> None:
+        """The user's text from the take-over view's field into the focused field of the
+        page the view shows (the tab `tab`, or the one last brought to the front), as text,
+        only while they have the browser; `secret`: they sent it as a password. It goes to
+        the driver and nowhere else: no reply, log line or card holds it."""
+        thread = self.typing_thread(s, tab)
+        if not isinstance(text, str) or not text:
+            raise RunnerError("there's nothing to type")
+        await self.call(
+            s, "user_type", {"text": text, "secret": secret is True, "thread": thread}
+        )
+
+    async def press_key(self, s: Session, key: str, tab: str = "") -> None:
+        """One of USER_KEYS, from the take-over view's buttons, as type_text."""
+        thread = self.typing_thread(s, tab)
+        if key not in USER_KEYS:
+            raise RunnerError(f"the key is one of {', '.join(sorted(USER_KEYS))}")
+        await self.call(s, "user_key", {"key": key, "thread": thread})
+
+    def typing_thread(self, s: Session, tab: str) -> str:
+        """The thread of the tab the view shows, "" for none (or one closed since), once
+        the user has the browser, as VNC's keys reach it only then (the view makes them
+        view-only)."""
+        if s.control != "user":
+            raise RunnerError("take over the browser first: the agent has it")
+        s.used = self.now()
+        found = self.tabs.get(tab) if tab else None
+        if found is None or found.workspace != s.workspace or not found.open:
+            return ""
+        return found.thread
 
     def by_token(self, token: str) -> Session | None:
         return next(

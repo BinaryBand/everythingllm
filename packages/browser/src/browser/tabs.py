@@ -1,7 +1,7 @@
 """What browser-runner keeps of a chat's browsing for its card and the take-over view: a
 thread's tab (Tab), the agent waiting for the user's OK to use a saved login (Approval) or
 for a login it asked for (LoginRequest), and how the card names a page and says what the
-agent did on it (site_of, labels, describe).
+agent did on it (site_of, labels, describe) or whose sign-in page it is (sign_in_provider).
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import ipaddress
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from browser import page as pagetext
 from browser.origin import host_of, is_public_suffix, normal_site, registrable
@@ -101,6 +102,31 @@ def site_of(url: str) -> str:
     if "." not in host or is_public_suffix(host):
         return host
     return registrable(host)
+
+
+# Identity providers' sign-in pages, by host and path prefix: a handoff from one says whose.
+SIGN_IN = {
+    ("accounts.google.com", "/"): "Google",
+    ("github.com", "/login"): "GitHub",
+    ("github.com", "/session"): "GitHub",  # and /sessions/two-factor
+    ("login.microsoftonline.com", "/"): "Microsoft",
+    ("login.live.com", "/"): "Microsoft",
+    ("appleid.apple.com", "/"): "Apple",
+}
+
+
+def sign_in_provider(url: str) -> str:
+    """Whose sign-in page `url` is (SIGN_IN), as "Google", or "" for any other page."""
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower()
+    path = parts.path or "/"
+    return next(
+        (who for (h, prefix), who in SIGN_IN.items() if host == h and path.startswith(prefix)),
+        "",
+    )  # fmt: skip
 
 
 def parent_sites(site: str) -> list[str]:

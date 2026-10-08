@@ -26,6 +26,12 @@ container, so a stopped browser's old address goes nowhere.
                                  save, or not, a login the user just sent in the browser
   POST /<token>/passkeys/make {on}  let the browser's pages make a passkey (only while the
                                  user has the browser), saved as the state is next asked for
+  POST /<token>/type {text, secret, tab}  put text into the focused field of the page the
+                                 view shows (tab `tab`'s, which ?tab= brought to the front),
+                                 as text (any layout, a phone's keyboard, a paste, a password
+                                 manager), only while the user has the browser; `secret`: it
+                                 came from the password field
+  POST /<token>/key {key, tab}   press Enter, Tab or Backspace there, likewise
   GET  /<token>/websockify       the WebSocket noVNC speaks, carried to the container's
                                  x11vnc socket (browser.websocket)
   GET  /login/<id>/              the form for a login the agent asked for (Runner.op_ask_login),
@@ -40,7 +46,8 @@ A POST or a WebSocket must come from the page's own origin (its Origin header), 
 other page can drive the browser. A login request's form needs no token: its id, long and
 known only to its card, is its key, and it can only add a login for the site the agent's
 page was on. Nothing here ever sends a password or 2FA secret back:
-the page can save and delete logins, not read them. Connections are taken only from loopback or the
+the page can save and delete logins, not read them. Nor what the user types: it goes on to
+the driver, and is in no answer or log line. Connections are taken only from loopback or the
 server's own address (hostrpc.local_peer), where the machine's HTTPS routes deliver them.
 """
 
@@ -93,6 +100,7 @@ PAGE = """<!doctype html>
   <span id="state">Connecting…</span>
   <button id="take" hidden>Take over</button>
   <button id="give" hidden>Hand back to the agent</button>
+  <button id="keyboard" type="button" class="quiet" hidden>Keyboard</button>
   <button id="fit" type="button" class="quiet">Actual size</button>
 </header>
 <p id="reason" hidden></p>
@@ -119,6 +127,26 @@ PAGE = """<!doctype html>
   </p>
 </details>
 <main id="screen"></main>
+<form id="typing" hidden>
+  <label for="type-text">Type into the browser</label>
+  <span class="row">
+    <input id="type-text" name="username" autocomplete="username" autocapitalize="off"
+      autocorrect="off" spellcheck="false" placeholder="Goes into the field in focus there">
+    <button type="button" data-field="type-text">Send</button>
+  </span>
+  <span class="row">
+    <input id="type-password" name="password" type="password" autocomplete="current-password"
+      placeholder="Password">
+    <button type="button" data-field="type-password">Send</button>
+  </span>
+  <span class="row">
+    <button type="button" class="quiet" data-key="Tab">Tab</button>
+    <button type="button" class="quiet" data-key="Backspace">Backspace</button>
+    <button type="button" class="quiet" data-key="Enter">Enter</button>
+  </span>
+  <span class="note">Tap a field in the browser, then send text to it here (Enter sends too); the
+  buttons press those keys there. Nothing you send is kept.</span>
+</form>
 <script type="module" src="app.js"></script>
 </body>
 </html>
@@ -433,6 +461,12 @@ class Takeover:
                 await r.call(s, "drop_offer", {"id": offer})
             case ["passkeys", "make"]:
                 await r.make_passkeys(s, body.get("on") is True)
+            case ["type"]:
+                await r.type_text(
+                    s, text(body, "text"), body.get("secret") is True, text(body, "tab")
+                )
+            case ["key"]:
+                await r.press_key(s, text(body, "key"), text(body, "tab"))
             case _:
                 return False
         return True

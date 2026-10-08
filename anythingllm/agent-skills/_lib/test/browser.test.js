@@ -142,6 +142,18 @@ test("handing the browser over tells the agent to end its reply, and done takes 
   }
 });
 
+test("a handoff on an identity provider's sign-in page says the runner's reason, which names it", async () => {
+  const reason = "Sign in to Google, then hand the browser back (log in to Notion)";
+  const runner = await fakeRunner(() => ({ ok: true, result: { card: CARD, takeover: "https://h:8454/t/", reason } }));
+  try {
+    const over = await handoff.handler.call(agent(), { reason: "log in to Notion" });
+    assert.ok(over.includes(`(${reason})`));
+  } finally {
+    delete process.env.BROWSER_SOCKET;
+    await runner.close();
+  }
+});
+
 test("a refusal and a missing runner become replies", async () => {
   const runner = await fakeRunner(() => ({ ok: false, error: "the user has this workspace's browser (log in)." }));
   try {

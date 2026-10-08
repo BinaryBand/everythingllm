@@ -2,10 +2,13 @@
 // view-only while the agent has it, and the buttons that take it and hand it back; the
 // agent's requests to use a saved login or for one it hasn't got, offers to save what you
 // logged in with, and the workspace's saved logins and passkeys. Everything from the server goes in as text, never as HTML: a
-// username can come from a web page.
+// username can come from a web page. While the browser is yours, a field under the screen
+// types into it as text (POST type), so a phone's keyboard, a paste and a password manager
+// work where the canvas takes none of them; on a phone it's focused as you take over.
 import RFB from "./novnc/core/rfb.js";
 
 const base = location.pathname.replace(/[^/]*$/, ""); // /<token>/
+const tab = new URLSearchParams(location.search).get("tab") || ""; // the tab brought to the front
 const $ = (id) => document.getElementById(id);
 const scheme = location.protocol === "https:" ? "wss://" : "ws://";
 
@@ -16,6 +19,7 @@ let control = "agent";
 // tapped. So below NARROW the view shows it at its own size and a drag pans it (a tap still
 // clicks once it's yours); the button fits it to the view instead, or back.
 const NARROW = window.matchMedia("(max-width: 800px)");
+const TOUCH = window.matchMedia("(pointer: coarse)");
 let fit = null; // the user's choice, once they've made one
 
 function size() {
@@ -55,6 +59,8 @@ function show(s) {
   $("state").textContent = STATES[state] || STATES.idle;
   $("take").hidden = mine;
   $("give").hidden = !mine;
+  $("keyboard").hidden = !mine;
+  $("typing").hidden = !mine;
   const why = mine && s.waiting && s.reason ? `The agent asked: ${s.reason}` : "";
   $("reason").textContent = why;
   $("reason").hidden = !why;
@@ -230,11 +236,47 @@ async function post(what, body) {
     data = JSON.parse(raw);
   } catch {}
   if (r.ok) render(data);
-  if (what === "take") rfb?.focus();
+  if (what === "take" && !$("typing").contains(document.activeElement)) rfb?.focus();
   return r.ok ? null : data.error || raw.trim() || `${r.status}`; // some refusals are plain text
 }
 
-$("take").addEventListener("click", () => act("take over", "take"));
+// The typing field, focused. A phone opens its keyboard only for a focus in the tap's own
+// handler, so this runs before anything is awaited.
+function keyboard() {
+  $("typing").hidden = false;
+  $("type-text").focus();
+  $("type-text").scrollIntoView({ block: "nearest" });
+}
+
+// Send a field's text to the browser's focused field, and empty it; it's put back if it
+// didn't go. Nothing keeps it.
+async function send(field) {
+  const text = field.value;
+  if (!text) return;
+  field.value = "";
+  const error = await act("type into the browser", "type", { text, secret: field.type === "password", tab });
+  if (error && !field.value) field.value = text;
+}
+
+$("take").addEventListener("click", () => {
+  if (NARROW.matches || TOUCH.matches) keyboard();
+  act("take over", "take");
+});
+$("keyboard").addEventListener("click", keyboard);
+$("typing").addEventListener("submit", (e) => e.preventDefault());
+for (const field of [$("type-text"), $("type-password")]) {
+  field.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    e.preventDefault();
+    send(field);
+  });
+}
+for (const button of $("typing").querySelectorAll("button")) {
+  button.addEventListener("mousedown", (e) => e.preventDefault()); // the field keeps focus, and a phone its keyboard
+  button.addEventListener("click", () =>
+    button.dataset.field ? send($(button.dataset.field)) : act(`press ${button.dataset.key}`, "key", { key: button.dataset.key, tab })
+  );
+}
 $("fit").addEventListener("click", () => {
   fit = !(fit ?? !NARROW.matches);
   size();

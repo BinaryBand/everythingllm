@@ -21,10 +21,11 @@ module.exports.runtime = {
       const r = await request("handoff", { reason: why });
       if (r === null) return null;
       const where = r.card ? cardLines(r.card) : [`The browser for the user: ${r.takeover}`, ""];
+      const what = r.reason || why; // the runner names an identity provider's sign-in page
       return [
         ...where,
         "The user has the browser now. In your reply, say in a sentence what they should do in it" +
-          (why ? ` (${why})` : "") +
+          (what ? ` (${what})` : "") +
           ', that they open it from the card, and that they press "Hand back to the agent" (or tell you) when ' +
           "they're done. Then end your reply: your browser actions are refused until they hand it back. " +
           "If they tell you in the chat that they're done, call browser-handoff with done: true.",

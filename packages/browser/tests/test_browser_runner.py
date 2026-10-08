@@ -317,6 +317,7 @@ def test_while_the_user_has_the_browser_the_agent_waits_for_them(tmp_path):
         assert handed == {
             "card": r.card(tab),
             "takeover": f"https://host.example.ts.net:8454/{s.token}/?tab={tab.id}",
+            "reason": "log in to the site",
         }
         assert (
             s.control == "user"
@@ -342,6 +343,51 @@ def test_while_the_user_has_the_browser_the_agent_waits_for_them(tmp_path):
         assert (await r.op_act(scope(), "click", "e1"))["page"]
 
     test(tmp_path)
+
+
+def test_a_handoff_on_an_identity_providers_sign_in_page_names_the_provider(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        await r.op_open(scope(), "https://notion.so/login")
+        s = r.sessions["career"]
+        tab = r.threads[("career", "7")]
+        # "Continue with Google" opened the provider's page: the driver's page, not the read.
+        podman.drivers[s.name].pages["7"] = (
+            "https://accounts.google.com/v3/signin/identifier?continue=x&flowName=GlifWebSignIn"
+        )
+        handed = await r.op_handoff(scope(), "log in to Notion")
+        said = "Sign in to Google, then hand the browser back (log in to Notion)"
+        assert handed["reason"] == s.reason == said
+        assert tab.last == f"Waiting for you: {said}"
+        await r.op_handoff(scope(), done=True)
+        podman.drivers[s.name].pages["7"] = (
+            "https://github.com/login/oauth/authorize?x=1"
+        )
+        assert (await r.op_handoff(scope()))["reason"] == (
+            "Sign in to GitHub, then hand the browser back"
+        )
+
+    test(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "url, provider",
+    [
+        ("https://accounts.google.com/v3/signin/identifier?flowName=x", "Google"),
+        ("https://accounts.google.com/o/oauth2/auth?client_id=x", "Google"),
+        ("https://github.com/login", "GitHub"),
+        ("https://github.com/sessions/two-factor/app", "GitHub"),
+        ("https://login.microsoftonline.com/common/oauth2/v2.0/authorize", "Microsoft"),
+        ("https://appleid.apple.com/auth/authorize?client_id=x", "Apple"),
+        ("https://github.com/anthropics", ""),
+        ("https://accounts.google.com.evil.app/signin", ""),
+        ("https://notion.so/login", ""),
+        ("", ""),
+        ("https://[::1", ""),
+    ],
+)
+def test_whose_sign_in_page_a_page_is(url, provider):
+    assert tabs.sign_in_provider(url) == provider
 
 
 def test_taking_back_needs_a_browser(tmp_path):

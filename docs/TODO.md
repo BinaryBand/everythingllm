@@ -29,17 +29,13 @@ The relay and research-runner went live in their containers on 2026-10-07 (see t
   - Run one Nilson chat to the end through the relay, with its ntfy notice.
 - **Once the containers have run for a week:** delete the old host venvs `~/.local/share/everythingllm/venvs/{relay,research}`, and the leftover `browser-net` network (`podman network rm browser-net`).
 
-## Typing in the take-over view, for SSO and other handoffs
+## Typing in the take-over view: what's left
 
-Decided 2026-10-08: SSO ("Continue with Google"), logins the vault doesn't have and 2FA prompts stay with the user through `browser-handoff`. No saved identity-provider logins, and no agent in an SSO popup or on a consent screen. That makes the handoff the path that has to work, and its weak point is typing: on 2026-10-08 the keyboard was hard to use in the view.
+Built 2026-10-08: the view's "Type into the browser" field (text and password, sent as text through the driver, with Enter, Tab and Backspace), focused on a phone at take-over, and the handoff naming Google, GitHub, Microsoft or Apple on their sign-in pages. Left:
 
-- **What failed.** On a phone the keyboard never opened: noVNC's bare RFB core (`static/app.js`) draws a canvas and gives the page no field to focus, so Android shows no keyboard and nothing can be typed at all. The screen being a canvas also means a password manager can't fill it, and nothing carries the clipboard into the browser. Not yet tried: a desktop keyboard. Xvfb runs with its default US keymap and x11vnc without `-xkb` (`host/containers/browser/entrypoint.sh`), so on a Swedish keyboard what's behind AltGr (`@`, `{`, `\`) and perhaps å, ä and ö may arrive wrong.
-- **A text field in the view.** A real `<input>` under the screen ("Type into the browser") whose text goes to the page's focused field through the runner and the driver (`page.keyboard.insert_text`), not as key events. Then any layout, a phone's keyboard, paste and a password manager all work. A second field with `type=password` and `autocomplete=current-password`, so a manager offers the login, and buttons for Enter, Tab and Backspace (`page.keyboard.press`).
-- **What it must keep.** Only while the user has the browser (`control == "user"`), like VNC input. The text goes from the view to the driver and nowhere else: no reply, log, card or offer line holds it. After the hand-back, what was typed into a password field stays hidden from the agent's reads, as today (`driver.hide`), and a form sent with it is still offered for saving (`capture.js`).
-- **On a phone, the field is the fix.** Show it, focused, as soon as the user takes over on a narrow screen, so the keyboard opens without a hunt, with a Keyboard button to bring it back.
-- **On a desktop, check before changing.** Type `@`, `{` and å, ä, ö on a Swedish layout; if they arrive wrong, start x11vnc with `-xkb` (and check Xvfb's keymap) so keys map by symbol.
-- **A smoother handoff for SSO.** When the chat's page is an identity provider's sign-in (`accounts.google.com`, `github.com/login`, `login.microsoftonline.com`, `appleid.apple.com`), the handoff's reason, the card's strip and the view name the provider: "Sign in to Google, then hand the browser back". The provider's session stays in the workspace's profile until `browser-reset`, so it's once per workspace. One Google session opens every "Sign in with Google" in that workspace to the agent, so the README's "Mind what it's logged into" should say so.
-- **Check by hand.** A Swedish keyboard on Linux, Gboard on an Android phone, and a password manager's fill, at `https://the-internet.herokuapp.com/login` in a scratch workspace.
+- **Check by hand.** Gboard on an Android phone (the keyboard opens at take-over, and text lands in the field), a password manager's fill of the view's password field, and a Swedish keyboard on Linux, at `https://the-internet.herokuapp.com/login` in a scratch workspace.
+- **The desktop keymap.** Type `@`, `{` and å, ä, ö over VNC on a Swedish layout; if they arrive wrong, start x11vnc with `-xkb` (and check Xvfb's keymap) so keys map by symbol (`host/containers/browser/entrypoint.sh`). The field sidesteps it meanwhile.
+- **VNC input while the agent has the browser.** Only noVNC's `viewOnly` in the page stops it: the take-over view's websocket bridge passes keys and clicks whoever has the browser. The new typing routes refuse on the runner; VNC would need the bridge to drop RFB key and pointer messages unless `control == "user"`.
 
 ## Gaps the Muse probes showed
 

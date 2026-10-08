@@ -61,6 +61,9 @@ def test_the_page_its_files_and_its_state(tmp_path):
         assert b"Browser \xc2\xb7 career" in body and b'src="app.js"' in body
         assert b'id="problem"' in body  # where a button's failure shows
         assert b'<button id="fit"' in body  # a phone's view pans at full size
+        # A field to type into the browser as text, and one a password manager fills.
+        assert b'<form id="typing" hidden>' in body and b'<button id="keyboard"' in body
+        assert b'autocomplete="current-password"' in body
         assert ("front", {"thread": "7"}) in podman.drivers[s.name].calls
         head, body = await answer(port, "GET", f"/{s.token}/app.js")
         assert "text/javascript" in head and b"novnc/core/rfb.js" in body
@@ -400,4 +403,67 @@ def test_the_form_for_a_login_the_agent_asked_for(tmp_path):
         assert "404" in (await answer(port, "GET", "/login/lr-" + "0" * 32 + "/"))[0]
         assert "404" in (await answer(port, "GET", f"/login/{s.token}/"))[0]
 
+    test(tmp_path)
+
+
+def test_the_field_types_into_the_browser_only_while_its_yours_and_says_it_nowhere(
+    tmp_path, caplog
+):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        tab = r.threads[("career", "7")]
+        driver = podman.drivers[s.name]
+        secret = "correct-horse-battery-staple"
+        # The agent has it: refused, as VNC's keys are.
+        head, body = await post(port, f"/{s.token}/type", {"text": secret})
+        assert (
+            "400" in head and "take over the browser first" in json.loads(body)["error"]
+        )
+        head, _ = await post(port, f"/{s.token}/key", {"key": "Enter"})
+        assert "400" in head and driver.typed == []
+        await post(port, f"/{s.token}/take")
+        # Only from the page's own origin.
+        head, _ = await post(
+            port, f"/{s.token}/type", {"text": secret}, "https://evil.example"
+        )
+        assert "403" in head and driver.typed == []
+        # Into the tab the view shows (its ?tab=), the chat's thread's page.
+        head, body = await post(
+            port, f"/{s.token}/type", {"text": "alice@example.com", "tab": tab.id}
+        )
+        assert "200 OK" in head and json.loads(body)["control"] == "user"
+        await post(port, f"/{s.token}/key", {"key": "Tab", "tab": tab.id})
+        head, body = await post(
+            port, f"/{s.token}/type", {"text": secret, "secret": True, "tab": tab.id}
+        )
+        assert "200 OK" in head
+        # Without one, or with one not open in this browser: the page last brought forward.
+        await post(port, f"/{s.token}/key", {"key": "Enter", "tab": "bw-0000"})
+        await post(port, f"/{s.token}/type", {"text": "x"})
+        assert driver.typed == [
+            ("alice@example.com", False, "7"), ("Tab", "key", "7"), (secret, True, "7"),
+            ("Enter", "key", ""), ("x", False, ""),
+        ]  # fmt: skip
+        for bad in ({"key": "Control+v"}, {"key": "Escape"}, {"key": 1}, {}):
+            head, body = await post(port, f"/{s.token}/key", bad)
+            assert "400" in head and "the key is one of" in json.loads(body)["error"], (
+                bad
+            )
+        for bad in ({"text": ""}, {"text": 7}, {}):
+            head, _ = await post(port, f"/{s.token}/type", bad)
+            assert "400" in head, bad
+        head, _ = await post(port, f"/{s.token}/type", {"text": "x" * 20_000})
+        assert "400" in head  # over the view's body limit
+        assert len(driver.typed) == 5
+        state = (await answer(port, "GET", f"/{s.token}/state"))[1]
+        await post(port, f"/{s.token}/give")
+        assert secret.encode() not in state and "alice@" not in tab.last
+        assert secret not in tab.last and secret not in json.dumps(vars(s), default=str)
+        assert not any(secret in rec.getMessage() for rec in caplog.records)
+        assert not any(
+            "alice@example.com" in rec.getMessage() for rec in caplog.records
+        )
+
+    caplog.set_level("DEBUG")
     test(tmp_path)

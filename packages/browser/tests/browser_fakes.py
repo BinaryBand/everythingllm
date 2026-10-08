@@ -38,6 +38,9 @@ class FakeDriver(hostrpc.Service):
         self.pages: dict[str, str] = {}  # thread -> url
         self.calls: list[tuple[str, dict]] = []
         self.filled: list[dict] = []
+        self.typed: list[
+            tuple
+        ] = []  # what the user sent from the take-over view's field
         self.capturing = self.taken = False
         self.offers: dict[str, dict] = {}
         self.making = False
@@ -84,6 +87,18 @@ class FakeDriver(hostrpc.Service):
 
     async def op_front(self, thread):
         self.calls.append(("front", {"thread": thread}))
+        return {"url": self.pages.get(thread, "")}
+
+    async def op_user_type(self, text, secret=False, thread=""):
+        if not self.capturing:
+            raise hostrpc.RunnerError("only the user types here, while they have it")
+        self.typed.append((text, secret, thread))
+        return {}
+
+    async def op_user_key(self, key, thread=""):
+        if not self.capturing:
+            raise hostrpc.RunnerError("only the user types here, while they have it")
+        self.typed.append((key, "key", thread))
         return {}
 
     async def op_fill_login(

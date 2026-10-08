@@ -25,7 +25,9 @@ leave or replace: typing, a key other than SECRET_KEYS, or a choice in it is ref
 the agent can't make a value a read would show part of. And `press` sends only plain keys
 (KEYS, and Shift with SHIFTED), never a shortcut, so nothing reaches the clipboard to be
 pasted elsewhere. Passwords are hidden for the container's life (only stale 2FA codes are
-let go), and so are those the user typed while they had the browser, sent or not. As a
+let go), and so are those the user typed while they had the browser, sent or not, over VNC
+or through the take-over view's field (`user_type`, which puts text in as text, so any
+keyboard layout, a phone's keyboard and a password manager work). As a
 read hides what the agent sends too, sending a guess and seeing it hidden would spell a
 secret out: an address or text (or a run of key presses) holding a piece of one is
 refused, and locks the browser to the agent until the user takes it over in the view. Chromium's own password saving is off. While the user has the browser, capture.js offers what they log in with for saving;
@@ -50,7 +52,7 @@ notes}, snapshot.js's reading of the page (browser.page renders it).
                                     a saved login into the fields with those refs
   fill_code(thread, site, code, ref, submit)  a 2FA code into the field `ref`
   screenshot(thread)                {jpeg (base64), title, url}; the front tab's without a thread
-  front(thread)                     bring the thread's tab to the front of the window
+  front(thread)                     bring the thread's tab to the front of the window -> {url}
   close(thread)                     close the thread's tab (and its popups)
   tabs()                            [{thread, title, url}]
   capture(on)                       whether logins the user sends are offered for saving
@@ -61,6 +63,9 @@ notes}, snapshot.js's reading of the page (browser.page renders it).
                                     click `ref` with the passkey in the page -> the view
                                     and `sign_count` (None if the page never asked for it)
   make_passkeys(on)                 whether pages can make a passkey (the user's alone)
+  user_type(text, secret, thread)   the user's text into the focused field of the thread's
+                                    page (the user's alone; `secret`: a password)
+  user_key(key, thread)             press one of USER_KEYS there, for the user
   made()                            {making, made: [{credential, url}]} since the last call
 
 Config (environment):
@@ -188,6 +193,9 @@ EDITS = {
 }  # checked against filled secrets
 FOCUSED = "input:focus, textarea:focus, [contenteditable]:focus"
 TYPED = 64  # the single characters pressed last, checked as text
+# The keys the user's buttons in the take-over view press, besides their text.
+USER_KEYS = {"Enter", "Tab", "Backspace"}
+MAX_USER_TEXT = 2000  # characters the user's field sends at once
 LOCKED = (
     "what you sent holds part of a saved login's secret, so this workspace's browser is "
     "locked to you until the user takes it over in the take-over view; tell them so in "
@@ -264,6 +272,7 @@ class Driver(hostrpc.Service):
         self.sites: dict[str, str] = {}  # a password -> the site it may be sent to
         self.guarding = False  # whether requests are routed through on_request
         self.typed: dict[str, str] = {}  # thread -> the last characters it pressed
+        self.shown: Any = None  # the page op_front last brought to the front
         # While the user makes passkeys: each page's CDP session, and what was made.
         self.making = False
         self.deadline: asyncio.TimerHandle | None = None
@@ -939,6 +948,82 @@ class Driver(hostrpc.Service):
                 except Exception:  # noqa: BLE001, S112 - a frame gone mid-look
                     continue
 
+    # --- what the user types in the take-over view's field ---
+
+    def typing_page(self, thread: str) -> Any:
+        """The page the user's typing goes to: the thread's (its popup, if one is open, as
+        that's on top), which the take-over view shows; without one, the page last brought
+        to the front. Not asked of the pages, whose scripts could claim to be on screen."""
+        if thread:
+            if (page := self.current(thread)) is None:
+                raise hostrpc.RunnerError("that tab has no page open")
+            return page
+        if self.shown is not None and not self.shown.is_closed():
+            return self.shown
+        if (page := self.front_page()) is None:
+            raise hostrpc.RunnerError("the browser has no page to type into")
+        return page
+
+    async def op_user_type(
+        self, text: str, secret: bool = False, thread: str = ""
+    ) -> dict[str, Any]:
+        """Put the user's text into the focused field of the thread's page (typing_page), as
+        text (any layout, a phone's keyboard, a paste or a password manager), only while
+        they have the browser. It's the user's own, so it isn't checked as the agent's is
+        (check_sent), but kept as a secret to hide as a password they type over VNC is,
+        once it's in a password field or they sent it as one (`secret`). Nothing here says it back, nor
+        passes on Playwright's errors, which could."""
+        if not self.capturing:
+            raise hostrpc.RunnerError("only the user types here, while they have it")
+        if not isinstance(text, str) or not text or len(text) > MAX_USER_TEXT:
+            raise hostrpc.RunnerError(
+                f"type from 1 to {MAX_USER_TEXT} characters at a time"
+            )
+        page = self.typing_page(thread)
+        if secret and MIN_TYPED <= len(text) <= MAX_SECRET:
+            self.keep_filled(text, site=site_of(page.url))
+        try:
+            await page.keyboard.insert_text(text)
+        except Exception:  # noqa: BLE001 - its text could hold what was typed
+            raise hostrpc.RunnerError(
+                "the text couldn't be typed into the page"
+            ) from None
+        await self.keep_focused_password(page)
+        return {}
+
+    async def op_user_key(self, key: str, thread: str = "") -> dict[str, Any]:
+        """Press one of USER_KEYS in the thread's page, for the user, as op_user_type."""
+        if not self.capturing:
+            raise hostrpc.RunnerError("only the user types here, while they have it")
+        if key not in USER_KEYS:
+            raise hostrpc.RunnerError(
+                f"the key is one of {', '.join(sorted(USER_KEYS))}"
+            )
+        page = self.typing_page(thread)
+        if key == "Enter":  # before it sends the field, and the page goes
+            await self.keep_focused_password(page)
+        try:
+            await page.keyboard.press(key)
+        except Exception:  # noqa: BLE001 - the page went away under it
+            raise hostrpc.RunnerError(
+                f"{key} couldn't be pressed in the page"
+            ) from None
+        return {}
+
+    async def keep_focused_password(self, page: Any) -> None:
+        """Keep what's in the page's focused password field as a secret, as keep_typed does
+        at the hand-back, for the site of its frame: Enter may send it and leave the page
+        before then, by a way capture.js doesn't see."""
+        for frame in page.frames:
+            try:
+                focused = frame.locator("input[type=password]:focus")
+                if await focused.count():
+                    value = await focused.first.input_value(timeout=ACT_MS)
+                    if MIN_TYPED <= len(value) <= MAX_SECRET:
+                        self.keep_filled(value, site=site_of(frame.url))
+            except Exception:  # noqa: BLE001, S112 - a frame gone mid-look
+                continue
+
     async def op_offers(self) -> list[dict[str, Any]]:
         return [
             {"id": k, "site": o["site"], "username": o["username"]}
@@ -973,9 +1058,12 @@ class Driver(hostrpc.Service):
         return pages[-1] if pages else None
 
     async def op_front(self, thread: str) -> dict[str, Any]:
-        if (page := self.current(thread)) is not None:
-            await page.bring_to_front()
-        return {}
+        """Bring the thread's page (a popup, if it has one open) to the front -> {url}."""
+        if (page := self.current(thread)) is None:
+            return {"url": ""}
+        await page.bring_to_front()
+        self.shown = page
+        return {"url": page.url}
 
     async def op_close(self, thread: str) -> dict[str, Any]:
         for page in self.stacks.pop(thread, []):

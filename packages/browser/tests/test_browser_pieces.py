@@ -2,6 +2,7 @@
 driver lets through (browser.driver's checks and flags) and WebSocket framing."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from browser import driver, page, websocket
@@ -1023,3 +1024,124 @@ def test_pages_stop_making_passkeys_when_time_is_up(monkeypatch):
         assert await d.op_made() == {"making": False, "made": []}
 
     asyncio.run(main())
+
+
+class TypingPage:
+    """A page as the user's typing finds it: what has focus, and a keyboard that puts text
+    into the focused field. Its own scripts are never asked."""
+
+    def __init__(self, url, field=None):
+        self.url = url
+        self.field = field or FakeElement("input", "text", url, "")
+        self.field.focused = True
+        self.frames = [self]
+        self.keys = []
+        self.fronted = self.broken = False
+        page = self
+
+        class Keyboard:
+            async def insert_text(self, text):
+                if page.broken:  # as Playwright's error might, it names the call
+                    raise RuntimeError(f"keyboard.insertText: Target closed ({text!r})")
+                page.field.filled = (page.field.filled or "") + text
+
+            async def press(self, key):
+                page.keys.append(key)
+
+        self.keyboard = Keyboard()
+
+    def is_closed(self):
+        return False
+
+    async def bring_to_front(self):
+        self.fronted = True
+
+    def locator(self, selector):
+        assert selector == "input[type=password]:focus"
+        f = self.field
+        return FakeLocator([f] if f.kind == "password" and f.focused else [])
+
+
+def user_driver(*pages, thread="t1"):
+    """A driver whose `thread` has the first page, while the user has the browser."""
+    d = driver.Driver(FakeContext(*pages), Path("/downloads"))
+    d.stacks[thread] = [pages[0]]
+    d.capturing = True
+    return d
+
+
+def test_the_users_text_goes_into_the_threads_page_and_only_while_they_have_it():
+    mine, other = TypingPage("https://a.example/"), TypingPage("https://b.example/")
+    d = user_driver(mine, other)
+    d.stacks["t2"] = [other]
+    asyncio.run(d.op_user_type("alice@example.com", thread="t1"))
+    asyncio.run(d.op_user_key("Tab", thread="t1"))
+    assert mine.field.filled == "alice@example.com" and mine.keys == ["Tab"]
+    assert other.field.filled == "" and d.filled == []  # a plain text isn't a secret
+    # A popup the thread's page opened is on top: it gets it.
+    popup = TypingPage("https://accounts.google.com/")
+    d.stacks["t1"].append(popup)
+    asyncio.run(d.op_user_type("x", thread="t1"))
+    assert popup.field.filled == "x"
+    # Without a thread: the page last brought to the front, as the view and handoff do.
+    asyncio.run(d.op_front("t2"))
+    asyncio.run(d.op_user_type("y"))
+    assert other.fronted and other.field.filled == "y"
+    with pytest.raises(RunnerError, match="that tab has no page open"):
+        asyncio.run(d.op_user_type("z", thread="t9"))
+    d.capturing = False  # the agent has it again
+    for op in (d.op_user_type("z", thread="t1"), d.op_user_key("Enter", thread="t1")):
+        with pytest.raises(RunnerError, match="only the user types here"):
+            asyncio.run(op)
+    assert popup.field.filled == "x" and mine.keys == ["Tab"]
+
+
+@pytest.mark.parametrize("key", ["Escape", "Control+v", "a", "Shift+Tab"])
+def test_the_users_buttons_press_only_enter_tab_and_backspace(key):
+    page = TypingPage("https://b.example/")
+    with pytest.raises(RunnerError, match="the key is one of"):
+        asyncio.run(user_driver(page).op_user_key(key, thread="t1"))
+    assert page.keys == []
+
+
+@pytest.mark.parametrize("text", ["", "x" * (driver.MAX_USER_TEXT + 1)])
+def test_the_users_text_is_some_and_not_too_much(text):
+    page = TypingPage("https://b.example/")
+    with pytest.raises(RunnerError, match="characters at a time"):
+        asyncio.run(user_driver(page).op_user_type(text, thread="t1"))
+
+
+def test_a_password_the_user_types_through_the_field_is_hidden_from_the_agent():
+    """Into a password field, or sent from the view's password field: kept as a secret the
+    moment it's in, for its site, as one typed over VNC is at the hand-back."""
+    field = FakeElement("input", "password", "https://www.x.example/login", "")
+    page = TypingPage("https://www.x.example/login", field=field)
+    d = user_driver(page)
+    asyncio.run(d.op_user_type("s3cret-pass", thread="t1"))
+    assert field.filled == "s3cret-pass"
+    assert d.passwords == ["s3cret-pass"] and d.sites == {"s3cret-pass": "x.example"}
+    assert "s3cret" not in driver.hide("you typed s3cret-pass", d.pieces)
+    # Sent as a password into a text field (a 2FA box, a page that masks its own): kept too.
+    text = TypingPage(
+        "https://www.y.example/", field=FakeElement("input", "text", "", "")
+    )
+    d = user_driver(text)
+    asyncio.run(d.op_user_type("other-secret", secret=True, thread="t1"))
+    assert d.passwords == ["other-secret"] and d.sites == {"other-secret": "y.example"}
+
+
+def test_the_users_text_isnt_the_agents_to_be_refused_or_locked():
+    page = TypingPage("https://www.x.example/login")
+    d = user_driver(page)
+    d.keep_filled("hunter2pass")
+    d.locked = True  # the agent sent part of it; the user is the one to type it again
+    asyncio.run(d.op_user_type("hunter2pass", thread="t1"))
+    assert page.field.filled == "hunter2pass" and d.locked
+
+
+def test_the_users_text_isnt_said_back_when_the_page_fails_it():
+    page = TypingPage("https://www.x.example/")
+    page.broken = True
+    with pytest.raises(RunnerError) as e:
+        asyncio.run(user_driver(page).op_user_type("s3cret-pass", thread="t1"))
+    assert "s3cret" not in str(e.value) and e.value.__cause__ is None

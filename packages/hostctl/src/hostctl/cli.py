@@ -65,7 +65,7 @@ def command(name: str, help: str):
 def run(*cmd: str, check: bool = True) -> int:
     """Echo a command and run it from the repo's root; a failure stops hostctl with its code."""
     print(shlex.join(cmd), flush=True)
-    code = subprocess.run(cmd, cwd=ROOT).returncode
+    code = subprocess.run(cmd, cwd=ROOT, check=False).returncode
     if check and code:
         raise SystemExit(code)
     return code

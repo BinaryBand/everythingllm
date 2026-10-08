@@ -203,11 +203,7 @@ def installed(unit: Unit) -> str:
 def changed(units: list[Unit]) -> list[Unit]:
     """Units whose installed copy differs from the rendered one, or that are a symlink (how
     units were installed before they were rendered)."""
-    return [
-        u
-        for u in units
-        if u.dest.is_symlink() or installed(u) != u.text
-    ]
+    return [u for u in units if u.dest.is_symlink() or installed(u) != u.text]
 
 
 def replace_file(dest: Path, text: str, mode: int = 0o644) -> None:

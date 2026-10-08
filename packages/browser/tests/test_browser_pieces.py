@@ -530,7 +530,9 @@ def test_a_bot_check_is_said_in_the_view_so_the_agent_hands_over():
         {"width": 300, "height": 65},
     )
     # A box in a page of the site's own may pass by itself: one more look first.
-    assert view(page_with(turnstile))["notes"] == [driver.BOT_BOX.format("Cloudflare's")]
+    assert view(page_with(turnstile))["notes"] == [
+        driver.BOT_BOX.format("Cloudflare's")
+    ]
     assert "read the page again once" in driver.BOT_BOX
     shown = ChallengeFrame(
         "https://newassets.hcaptcha.com/captcha/v1/x/static/hcaptcha.html#frame=checkbox",
@@ -549,7 +551,8 @@ def test_a_bot_check_is_said_in_the_view_so_the_agent_hands_over():
     assert page.challenge_title("Attention Required! | Cloudflare")
     assert page.challenge_title("Just a moment…")
     assert not page.challenge_title("Waiting just a moment for GitLab")
-    assert not page.challenge_title("Just a Moment - a song by someone")  # the site's own
+    # The site's own title, not a challenge's:
+    assert not page.challenge_title("Just a Moment - a song by someone")
 
 
 def test_chromium_goes_through_the_proxy_alone():

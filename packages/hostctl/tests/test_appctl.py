@@ -58,8 +58,12 @@ def test_routes_checks_each_on_the_public_host(monkeypatch, capsys):
     )
     registry = {
         **PAGES,
-        "agents": appctl.apps.App("agents", "x", serve=(Mapping(8445, 8451, "/_live/agents"),)),
-        "relay": appctl.apps.App("relay", "x", serve=(Mapping(3001, 8446, "/everythingllm"),)),
+        "agents": appctl.apps.App(
+            "agents", "x", serve=(Mapping(8445, 8451, "/_live/agents"),)
+        ),
+        "relay": appctl.apps.App(
+            "relay", "x", serve=(Mapping(3001, 8446, "/everythingllm"),)
+        ),
     }
     assert appctl.routes(registry, "h.example") is False
     assert sorted(asked) == [
@@ -72,7 +76,10 @@ def test_routes_checks_each_on_the_public_host(monkeypatch, capsys):
     assert out[1] == (
         "  FAIL  https://h.example:8445/_live/agents/ -> http://127.0.0.1:8451 (agents): HTTP 502"
     )
-    assert out[2].startswith("  FAIL  https://h.example:3001/everythingllm/") and "refused" in out[2]
+    assert (
+        out[2].startswith("  FAIL  https://h.example:3001/everythingllm/")
+        and "refused" in out[2]
+    )
     assert appctl.routes(PAGES, "h.example") is True
 
 
@@ -101,14 +108,20 @@ def test_routes_without_a_public_host_fail_and_say_why(capsys):
         (["100.89.16.22", "203.0.114.7"], True),
     ],
 )
-def test_a_public_address_is_warned_about_not_failed(monkeypatch, capsys, found, warned):
+def test_a_public_address_is_warned_about_not_failed(
+    monkeypatch, capsys, found, warned
+):
     answers(monkeypatch, {}, found)
     assert appctl.routes(PAGES, "h.example") is True
     out = capsys.readouterr().out
-    assert ("WARN  h.example resolves to a public address (203.0.114.7)" in out) is warned
+    assert (
+        "WARN  h.example resolves to a public address (203.0.114.7)" in out
+    ) is warned
 
 
-def test_a_name_on_loopback_fails_since_the_containers_cant_reach_it(monkeypatch, capsys):
+def test_a_name_on_loopback_fails_since_the_containers_cant_reach_it(
+    monkeypatch, capsys
+):
     answers(monkeypatch, {}, ["127.0.0.1", "::1"])
     assert appctl.routes(PAGES, "h.example") is False
     assert "FAIL  h.example resolves only to loopback" in capsys.readouterr().out
@@ -226,4 +239,3 @@ def test_a_failing_step_stops_the_setup(monkeypatch):
     with pytest.raises(SystemExit) as stopped:
         appctl.setup(appctl.apps.load()["relay"])
     assert stopped.value.code == 1 and calls == ["python3 -m hostctl.relay_env"]
-

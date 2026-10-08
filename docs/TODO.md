@@ -63,10 +63,6 @@ Decided 2026-10-08: SSO ("Continue with Google"), logins the vault doesn't have 
 - **A smoother handoff for SSO.** When the chat's page is an identity provider's sign-in (`accounts.google.com`, `github.com/login`, `login.microsoftonline.com`, `appleid.apple.com`), the handoff's reason, the card's strip and the view name the provider: "Sign in to Google, then hand the browser back". The provider's session stays in the workspace's profile until `browser-reset`, so it's once per workspace. One Google session opens every "Sign in with Google" in that workspace to the agent, so the README's "Mind what it's logged into" should say so.
 - **Check by hand.** A Swedish keyboard on Linux, Gboard on an Android phone, and a password manager's fill, at `https://the-internet.herokuapp.com/login` in a scratch workspace.
 
-## Format hostctl's older modules
-
-`cli.py`, `appctl.py` and `machine.py` in `packages/hostctl` aren't ruff-formatted, and `cli.py` has two ruff findings (`PLW1510`, `SIM905`). So `ruff format` on any change there reformats unrelated code, and the churn has to be undone by hand. Format them once, alone, in a commit of their own.
-
 ## Gaps the Muse probes showed
 
 From the Muse parity notes (2026-10-07, now in the private notes), after page scripts, chat attachments in `/work`, and the scheduled-job and memories skills. Most of these combine tools the agent already has rather than adding services.

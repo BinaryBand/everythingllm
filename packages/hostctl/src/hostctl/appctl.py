@@ -56,7 +56,9 @@ ROUTE_SECONDS = 5
 
 def app_named(registry: dict[str, apps.App], name: str) -> apps.App:
     if name not in registry:
-        raise SystemExit(f"appctl: no app '{name}'; the apps are: {', '.join(registry)}")
+        raise SystemExit(
+            f"appctl: no app '{name}'; the apps are: {', '.join(registry)}"
+        )
     return registry[name]
 
 
@@ -81,7 +83,11 @@ def route_problem(url: str, timeout: float = ROUTE_SECONDS) -> str:
         reason = getattr(e, "reason", e)
         if isinstance(reason, ssl.SSLCertVerificationError):
             return f"no valid certificate for the name ({reason.verify_message})"
-        return f"{type(reason).__name__}: {reason}" if isinstance(reason, OSError) else str(reason)
+        return (
+            f"{type(reason).__name__}: {reason}"
+            if isinstance(reason, OSError)
+            else str(reason)
+        )
     except (http.client.HTTPException, ValueError) as e:  # a garbled answer, a bad name
         return f"{type(e).__name__}: {e}"
 
@@ -106,7 +112,9 @@ def host_problems(host: str) -> tuple[str, str]:
             " SearXNG by it through the egress proxy, so it must be an address of this machine"
             " the routes listen on, not 127.0.0.1"
         )
-    if public := [str(a) for a in found if a.is_global]:  # not private, loopback or CGNAT
+    if public := [
+        str(a) for a in found if a.is_global
+    ]:  # not private, loopback or CGNAT
         warn = (
             f"{host} resolves to a public address ({', '.join(public)}): nothing here asks"
             " who's calling on the pages site, and AnythingLLM only by its password, so keep"
@@ -132,7 +140,10 @@ def route_report(registry: dict[str, apps.App], host: str) -> tuple[list[str], b
         if app.serve and set_up(app):
             mappings += [(app.name, m) for m in app.serve]
         else:
-            lines += [f"  --    {m.describe(shown)} ({app.name}, not set up)" for m in app.serve]
+            lines += [
+                f"  --    {m.describe(shown)} ({app.name}, not set up)"
+                for m in app.serve
+            ]
     if host:
         with ThreadPoolExecutor(len(mappings) or 1) as pool:
             why = list(pool.map(lambda nm: route_problem(nm[1].url(host)), mappings))
@@ -163,7 +174,11 @@ def setup(app: apps.App) -> None:
     for step in app.before:
         print(step, flush=True)
         env = {**os.environ, "PYTHONPATH": PYTHONPATH}
-        if (code := subprocess.run(step, shell=True, cwd=ROOT, env=env).returncode) != 0:
+        if (
+            code := subprocess.run(
+                step, shell=True, cwd=ROOT, env=env, check=False
+            ).returncode
+        ) != 0:
             raise SystemExit(code)
     if app.units:
         systemctl("enable", *app.units)
@@ -182,13 +197,19 @@ def setup(app: apps.App) -> None:
         systemctl("enable", "--now", *app.timers)
     if app.serve:
         host = public_host() or "<PUBLIC_HOST>"
-        print("routes it needs from the machine (uv run hostctl routes checks them):", flush=True)
+        print(
+            "routes it needs from the machine (uv run hostctl routes checks them):",
+            flush=True,
+        )
         for m in app.serve:
             print(f"  {m.describe(host)}", flush=True)
     if app.skills:  # only then does it need storage, which exits when it isn't set
         live = storage() / SKILLS
         if missing := [s for s in app.skills if not (live / s).is_dir()]:
-            print(f"its skills reach AnythingLLM with `uv run hostctl deploy` ({', '.join(missing)})", flush=True)
+            print(
+                f"its skills reach AnythingLLM with `uv run hostctl deploy` ({', '.join(missing)})",
+                flush=True,
+            )
 
 
 def ping(sock: Path, timeout: float = PING_SECONDS) -> str:
@@ -211,7 +232,11 @@ def ping(sock: Path, timeout: float = PING_SECONDS) -> str:
     try:
         reply = json.loads(line)
     except ValueError:
-        return "closed the connection without answering" if not line else "a reply that isn't JSON"
+        return (
+            "closed the connection without answering"
+            if not line
+            else "a reply that isn't JSON"
+        )
     if not reply.get("ok"):
         return reply.get("error") or "unknown error"
     return "; ".join((reply.get("result") or {}).get("problems") or [])
@@ -237,11 +262,19 @@ def main(argv: list[str] | None = None) -> None:
             how = (
                 "uv run hostctl install"
                 if app.install
-                else app.why_not_installed and f"not in uv run hostctl install: {app.why_not_installed}"
+                else app.why_not_installed
+                and f"not in uv run hostctl install: {app.why_not_installed}"
             )
-            print(f"  {app.name:12} {app.summary}" + (f"\n  {'':12} ({how})" if how else ""))
+            print(
+                f"  {app.name:12} {app.summary}"
+                + (f"\n  {'':12} ({how})" if how else "")
+            )
     elif args.cmd == "setup":
-        names = [a.name for a in registry.values() if a.install] if args.installed else args.apps
+        names = (
+            [a.name for a in registry.values() if a.install]
+            if args.installed
+            else args.apps
+        )
         if not names:
             raise SystemExit("appctl: name the apps to set up, or --installed")
         for app in [app_named(registry, n) for n in names]:
@@ -265,9 +298,14 @@ def main(argv: list[str] | None = None) -> None:
         runners = apps.runners(registry)
         folder = storage() / "everythingllm"
         with ThreadPoolExecutor(len(runners) or 1) as pool:
-            why = list(pool.map(lambda f: ping(folder / f / "runner.sock"), runners.values()))
+            why = list(
+                pool.map(lambda f: ping(folder / f / "runner.sock"), runners.values())
+            )
         for name, problem in zip(runners, why):
-            print(f"  {'FAIL' if problem else 'OK  '}  {name}" + (f": {problem}" if problem else ""))
+            print(
+                f"  {'FAIL' if problem else 'OK  '}  {name}"
+                + (f": {problem}" if problem else "")
+            )
         raise SystemExit(1 if any(why) else 0)
 
 

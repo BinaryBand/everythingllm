@@ -292,7 +292,9 @@ def main(argv: list[str] | None = None) -> None:
         search()
     else:
         items = checklist()
-        print("\nLeft to do in AnythingLLM (uv run hostctl install sets up everything else):")
+        print(
+            "\nLeft to do in AnythingLLM (uv run hostctl install sets up everything else):"
+        )
         for done, item in items:
             print(f"  [{'x' if done else ' ' if done is not None else '?'}] {item}")
         print(

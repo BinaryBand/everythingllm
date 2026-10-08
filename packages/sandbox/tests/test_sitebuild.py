@@ -138,7 +138,7 @@ def test_a_workspaces_theme_swapped_for_a_symlink_after_the_check_isnt_followed(
 ):
     """The workspace the theme is from can write its /shared while this build runs: a
     folder swapped for a symlink between theme_source's check and the copy is refused."""
-    import sandbox.sitebuild as sitebuild
+    from sandbox import sitebuild
 
     system, shared = roots
     private = tmp_path / "project"

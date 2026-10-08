@@ -4,7 +4,7 @@
   "name": "Browser Read",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Read this chat's browser tab again as it is now, or only the lines containing `find`: the quickest way to locate something on a long page.",
+  "description": "Read this chat's browser tab again as it is now, or only the lines containing `find`: the quickest way to locate something on a long page. With card, also get the tab's live card, when the user asks to see, watch or take over the browser.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -12,6 +12,10 @@
     {
       "prompt": "Is there a 'Next page' link?",
       "call": "{\"find\": \"next\"}"
+    },
+    {
+      "prompt": "Show me the browser",
+      "call": "{\"card\": true}"
     }
   ],
   "entrypoint": {
@@ -20,6 +24,10 @@
       "find": {
         "type": "string",
         "description": "Only lines containing this (any case); leave out for the whole page."
+      },
+      "card": {
+        "type": "boolean",
+        "description": "true when the user asks to see the browser: the reply then has this chat's card for your reply."
       }
     }
   }

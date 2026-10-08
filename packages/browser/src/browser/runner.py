@@ -744,8 +744,24 @@ class Runner(hostrpc.Service):
             return {"label": ""}
         return {"label": tab.labels.get(str(ref or "").strip(), "")}
 
-    async def op_read(self, scope: dict[str, Any], find: str = "") -> dict[str, Any]:
+    async def op_read(
+        self, scope: dict[str, Any], find: str = "", card: bool = False
+    ) -> dict[str, Any]:
+        """The chat's page as text. With `card`, its card too, for a user who asks to see the
+        browser: given whenever the chat has a tab, even one closed, stopped or the user's,
+        with the reason the page can't be read in its place."""
         workspace, thread = check_scope(scope)
+        if card is True:
+            if (tab := self.threads.get((workspace, thread))) is None:
+                raise RunnerError(
+                    "this chat hasn't used the browser yet, so it has no card; open a "
+                    "page first"
+                )
+            try:
+                page = (await self.op_read(scope, find))["page"]
+            except RunnerError as e:
+                page = f"The page can't be read now: {e}"
+            return {"page": page, "card": self.card(tab)}
         s, tab = await self.running(workspace, thread)
         self.agent_may_act(s)  # nor watch what the user types
         view = await self.call(s, "read", {"thread": thread})

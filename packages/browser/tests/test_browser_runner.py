@@ -219,6 +219,30 @@ def test_act_and_read_need_an_open_page(tmp_path):
     test(tmp_path)
 
 
+def test_a_read_with_card_gives_the_chats_card_whenever_it_has_a_tab(tmp_path):
+    @run
+    async def test(r, podman, clock):
+        with pytest.raises(RunnerError, match="hasn't used the browser yet"):
+            await r.op_read(scope(), card=True)
+        opened = await r.op_open(scope(), "example.com")
+        shown = await r.op_read(scope(), card=True)
+        assert shown["card"] == opened["card"] and "Page: " in shown["page"]
+        assert "card" not in await r.op_read(scope())  # only when asked
+        # The user's browser: the card still, and why the page isn't read.
+        await r.take(r.sessions["career"])
+        held = await r.op_read(scope(), card=True)
+        assert held["card"] == opened["card"]
+        assert held["page"].startswith("The page can't be read now: the user has")
+        await r.give_back(r.sessions["career"])
+        # A stopped browser: the tab's card, which shows its last look.
+        await r.stop("career")
+        stopped = await r.op_read(scope(), card=True)
+        assert stopped["card"] == opened["card"] and "no page open" in stopped["page"]
+        assert ("career", "8") not in r.threads  # another chat's has none
+
+    test(tmp_path)
+
+
 def test_workspaces_get_browsers_of_their_own_and_the_idlest_gives_way(tmp_path):
     @run
     async def test(r, podman, clock):

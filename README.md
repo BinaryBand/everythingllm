@@ -397,7 +397,7 @@ Each workspace has a browser of its own, a real Chromium that the agent drives a
 
 - `browser-act` does one thing to an element by its ref (click, fill, type, press, select, check, hover, scroll, back, forward, reload, wait) and replies with the page after. `press` sends plain keys only (Enter, Tab, an arrow, a character, Shift with Tab or an arrow), never a Control, Meta or Alt shortcut, so nothing goes through the clipboard.
 
-- `browser-read` reads the page again, or only its lines that contain `find`.
+- `browser-read` reads the page again, or only its lines that contain `find`. With `card`, it also gives the tab's card for the reply, for when you ask to see the browser: `browse` gives the card only when a chat's tab is new, and a card scrolled out of sight was otherwise gone. It's given whenever the chat has a tab, closed, stopped or yours, with why the page can't be read in its place.
 
 - `browser-handoff` gives you the browser (to log in, enter a 2FA code, solve a CAPTCHA, pay) and replies at once with the card. The agent puts the card in its reply and ends the reply, since a skill that waited would keep the card out of the chat. Until you hand the browser back, its actions are refused. Hand it back in the take-over view, or tell the agent you're done, and it calls `browser-handoff` with `done: true`.
 

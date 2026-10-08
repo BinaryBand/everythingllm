@@ -54,6 +54,26 @@ test("the browser skills send the call's own scope and give the card only when i
   }
 });
 
+test("a read with card gives the card for the reply, before the page", async () => {
+  const runner = await fakeRunner((op, args) => ({ ok: true, result: args.card ? { page: "Page: x", card: CARD } : { page: "Page: x" } }));
+  const lines = [];
+  try {
+    const shown = await read.handler.call({ ...agent(), introspect: (m) => lines.push(m) }, { card: "true" });
+    assert.match(shown, /^Card: \[!\[Browser: x\]/);
+    assert.match(shown, /Put the Card line in your reply exactly as given/);
+    assert.ok(shown.endsWith("Page: x"));
+    assert.equal(await read.handler.call(agent(), { card: false }), "Page: x");
+    assert.deepEqual(runner.requests.map((r) => r.args), [
+      { scope: { workspace: "career", thread: "12" }, find: "", card: true },
+      { scope: { workspace: "career", thread: "12" }, find: "" },
+    ]);
+    assert.deepEqual(lines, ["Getting the browser's card"]);
+  } finally {
+    delete process.env.BROWSER_SOCKET;
+    await runner.close();
+  }
+});
+
 test("each browser step says in the chat what it does, by the element's name and never what's typed", async () => {
   const runner = await fakeRunner((op, args) => {
     if (op === "label") return args.ref === "e4" ? { ok: false, error: "unknown op 'label'" } : { ok: true, result: { label: args.ref === "e2" ? "Customer name" : "" } };

@@ -31,7 +31,7 @@ import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
-import hostrpc
+import hostenv
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -91,7 +91,7 @@ def host_sockets() -> None:
     otherwise falls back to the container's storage path."""
     for front in FRONTS:
         os.environ.setdefault(
-            front.ENV, str(hostrpc.socket_path(front.FOLDER, front.ENV))
+            front.ENV, str(hostenv.socket_path(front.FOLDER, front.ENV))
         )
 
 

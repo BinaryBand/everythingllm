@@ -157,7 +157,7 @@ def port_of(name: str, path: str = "") -> int:
 
 
 def test_the_ports_are_the_ones_the_code_and_units_use():
-    import hostrpc
+    import hostenv
     from agents.runner import Settings as AgentsSettings
     from browser.runner import LIVE_PORT as BROWSER_LIVE_PORT
     from browser.runner import TAKEOVER_PORT as BROWSER_TAKEOVER_PORT
@@ -177,7 +177,7 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     assert port_of("relay", RELAY_PREFIX) == RelayConfig.port
     assert port_of("gateway") == GatewayConfig.port
     pages = {m.port for app, m in apps.serve_mappings() if app == "pages"}
-    assert hostrpc.PAGES_PORT in pages
+    assert hostenv.PAGES_PORT in pages
     assert f":{port_of('searxng')}/" in SEARXNG
     caddy = (HOST / "caddy" / "pages.Caddyfile").read_text()
     assert {int(p) for p in re.findall(r"^:(\d+) \{", caddy, re.MULTILINE)} == pages

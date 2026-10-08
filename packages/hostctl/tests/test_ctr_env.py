@@ -58,10 +58,10 @@ def test_bad_arguments(tmp_path):
         ctr_env.share({}, ["A=B"])
 
 
-def test_hostrpc_reads_the_share_as_it_read_the_env(tmp_path):
+def test_hostenv_reads_the_share_as_it_read_the_env(tmp_path):
     """What the containers' code reads the file with: the password logs in only when
     JWT_SECRET is set, which `set` keeps true."""
-    import hostrpc
+    import hostenv
 
     out = tmp_path / "x.env"
     out.write_text(
@@ -69,7 +69,7 @@ def test_hostrpc_reads_the_share_as_it_read_the_env(tmp_path):
             {"AUTH_TOKEN": "pw", "JWT_SECRET": "s"}, ["AUTH_TOKEN", "JWT_SECRET?"]
         )
     )
-    assert hostrpc.env_values(out, ("AUTH_TOKEN", "JWT_SECRET"), environ=False) == {
+    assert hostenv.env_values(out, ("AUTH_TOKEN", "JWT_SECRET"), environ=False) == {
         "AUTH_TOKEN": "pw",
         "JWT_SECRET": "set",
     }

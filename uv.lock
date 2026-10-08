@@ -14,6 +14,7 @@ members = [
     "egress",
     "gateway",
     "hostctl",
+    "hostenv",
     "hostrpc",
     "llm",
     "publicweb",
@@ -36,7 +37,7 @@ name = "agents"
 version = "0.1.0"
 source = { editable = "packages/agents" }
 dependencies = [
-    { name = "hostctl" },
+    { name = "hostenv" },
     { name = "hostrpc" },
     { name = "httpx" },
     { name = "runs" },
@@ -44,7 +45,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "hostctl", editable = "packages/hostctl" },
+    { name = "hostenv", editable = "packages/hostenv" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "runs", editable = "packages/runs" },
@@ -98,6 +99,7 @@ dependencies = [
     { name = "chatimage" },
     { name = "cryptography" },
     { name = "egress" },
+    { name = "hostenv" },
     { name = "hostrpc" },
     { name = "pillow" },
 ]
@@ -107,6 +109,7 @@ requires-dist = [
     { name = "chatimage", editable = "packages/chatimage" },
     { name = "cryptography", specifier = ">=45" },
     { name = "egress", editable = "packages/egress" },
+    { name = "hostenv", editable = "packages/hostenv" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "pillow", specifier = ">=11" },
 ]
@@ -473,6 +476,7 @@ name = "gateway"
 version = "0.1.0"
 source = { editable = "packages/gateway" }
 dependencies = [
+    { name = "hostenv" },
     { name = "hostrpc" },
     { name = "mcp" },
     { name = "pydantic" },
@@ -481,6 +485,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "hostenv", editable = "packages/hostenv" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "mcp", specifier = ">=2.2,<3" },
     { name = "pydantic", specifier = ">=2" },
@@ -500,6 +505,17 @@ wheels = [
 name = "hostctl"
 version = "0.1.0"
 source = { editable = "packages/hostctl" }
+dependencies = [
+    { name = "hostenv" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "hostenv", editable = "packages/hostenv" }]
+
+[[package]]
+name = "hostenv"
+version = "0.1.0"
+source = { editable = "packages/hostenv" }
 
 [[package]]
 name = "hostrpc"
@@ -651,13 +667,13 @@ name = "llm"
 version = "0.1.0"
 source = { editable = "packages/llm" }
 dependencies = [
-    { name = "hostrpc" },
+    { name = "hostenv" },
     { name = "httpx" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "hostrpc", editable = "packages/hostrpc" },
+    { name = "hostenv", editable = "packages/hostenv" },
     { name = "httpx", specifier = ">=0.27" },
 ]
 
@@ -1273,6 +1289,7 @@ name = "research"
 version = "0.1.0"
 source = { editable = "packages/research" }
 dependencies = [
+    { name = "hostenv" },
     { name = "hostrpc" },
     { name = "httpx" },
     { name = "llm" },
@@ -1282,6 +1299,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "hostenv", editable = "packages/hostenv" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "llm", editable = "packages/llm" },
@@ -1432,6 +1450,7 @@ source = { editable = "packages/sandbox" }
 dependencies = [
     { name = "chatimage" },
     { name = "egress" },
+    { name = "hostenv" },
     { name = "hostrpc" },
     { name = "llm" },
 ]
@@ -1440,6 +1459,7 @@ dependencies = [
 requires-dist = [
     { name = "chatimage", editable = "packages/chatimage" },
     { name = "egress", editable = "packages/egress" },
+    { name = "hostenv", editable = "packages/hostenv" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "llm", editable = "packages/llm" },
 ]

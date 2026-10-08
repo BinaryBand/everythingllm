@@ -64,7 +64,7 @@ EnvironmentFile=%h/.config/everythingllm/relay.env
 # Its share of AnythingLLM's .env (the model keys), never the file, which holds every key
 # and secret AnythingLLM has: written on the host before each start (hostctl.ctr_env), so a
 # restart takes up a changed key.
-ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/research-runner.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF GENERIC_OPEN_AI_BASE_PATH GENERIC_OPEN_AI_API_KEY ZAI_API_KEY
+ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src:@REPO@/packages/hostenv/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/research-runner.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF GENERIC_OPEN_AI_BASE_PATH GENERIC_OPEN_AI_API_KEY ZAI_API_KEY
 # podman won't bind-mount what isn't there.
 ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/anythingllm-fs/research
 # A run is mostly waiting on the models; what CPU it takes (page parsing) can give way.

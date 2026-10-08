@@ -3,7 +3,7 @@ name = "gateway"
 version = "0.1.0"
 description = "Host service that serves the runners' MCP tools over streamable HTTP to clients other than AnythingLLM (Claude Code, …), each with a bearer token of its own"
 requires-python = ">=3.12"
-dependencies = ["mcp>=2.2,<3", "pydantic>=2", "uvicorn>=0.30", "hostrpc"]
+dependencies = ["mcp>=2.2,<3", "pydantic>=2", "uvicorn>=0.30", "hostenv", "hostrpc"]
 
 [project.scripts]
 gateway = "gateway.app:main"

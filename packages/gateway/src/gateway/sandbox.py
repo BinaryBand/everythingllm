@@ -61,7 +61,7 @@ RunId = Annotated[
 
 # The runner's socket: $SANDBOX_SOCKET, else storage/everythingllm/sandbox/runner.sock.
 FOLDER, ENV = "sandbox", "SANDBOX_SOCKET"
-runner = hostrpc.caller(FOLDER, ENV, "sandbox runner", error=ToolError, limit=LIMIT)
+runner = hostrpc.caller(ENV, "sandbox runner", error=ToolError, limit=LIMIT)
 
 
 def client_key(what: str) -> str:

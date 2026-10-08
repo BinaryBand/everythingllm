@@ -130,6 +130,7 @@ from urllib.parse import quote
 
 import chatimage
 import chatimage.card
+import hostenv
 import hostrpc
 from egress import config as egress_config
 from hostrpc import safefs
@@ -326,7 +327,7 @@ class Config:
         egress = egress_config.load()  # ValueError without PUBLIC_HOST
         host = os.environ["PUBLIC_HOST"]
         return cls(
-            socket=hostrpc.socket_path("sandbox", "SANDBOX_SOCKET"),
+            socket=hostenv.socket_path("sandbox", "SANDBOX_SOCKET"),
             network=egress.network,
             ips=tuple(egress.profiles[PROFILE].ips.values()),
             proxy=egress.url,
@@ -337,30 +338,30 @@ class Config:
             ),
             public_proxy=egress.public_url,
             access_file=Path(
-                get("SANDBOX_ACCESS", hostrpc.data_dir() / "sandbox" / "access.json")
+                get("SANDBOX_ACCESS", hostenv.data_dir() / "sandbox" / "access.json")
             ),
-            model_env=Path(get("ANYTHINGLLM_ENV", hostrpc.storage() / ".env")),
-            model_log=hostrpc.data_dir() / "sandbox" / "models",
-            model_sockets=hostrpc.data_dir() / "sandbox" / "m",
-            app_state=hostrpc.data_dir() / "sandbox" / "apps",
+            model_env=Path(get("ANYTHINGLLM_ENV", hostenv.storage() / ".env")),
+            model_log=hostenv.data_dir() / "sandbox" / "models",
+            model_sockets=hostenv.data_dir() / "sandbox" / "m",
+            app_state=hostenv.data_dir() / "sandbox" / "apps",
             apps_port=int(get("APPS_PORT") or appsweb.PORT),
             root=Path(
-                get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
+                get("SANDBOX_ROOT", hostenv.data_dir() / "sandbox" / "workspaces")
             ),
             system_themes=Path(get("SANDBOX_SYSTEM_THEMES", SYSTEM_THEMES)),
-            site_dir=Path(get("SANDBOX_SITE_DIR", hostrpc.site_dir())),
+            site_dir=Path(get("SANDBOX_SITE_DIR", hostenv.site_dir())),
             site_url=get(
                 "SANDBOX_SITE_URL",
                 f"https://{host}:8445/",
             ),
             public_root=Path(
-                get("SANDBOX_PUBLIC", hostrpc.data_dir() / "sandbox" / "public")
+                get("SANDBOX_PUBLIC", hostenv.data_dir() / "sandbox" / "public")
             ),
             public_url=get(
                 "SANDBOX_PUBLIC_URL",
                 f"https://{host}:8447/",
             ),
-            uploads=Path(get("SANDBOX_UPLOADS", hostrpc.storage() / "direct-uploads")),
+            uploads=Path(get("SANDBOX_UPLOADS", hostenv.storage() / "direct-uploads")),
         )
 
 

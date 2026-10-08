@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import hostenv
 import hostrpc
 import llm
 from hostrpc import RunnerError
@@ -131,7 +132,7 @@ class Models(hostrpc.Service):
         self.daily_tokens = daily_tokens
         self.log_dir = log_dir
         self.ask = ask
-        self.now = now or (lambda: datetime.now(hostrpc.user_zone()))
+        self.now = now or (lambda: datetime.now(hostenv.user_zone()))
         self.at_once = asyncio.Semaphore(AT_ONCE)
         self.lock = asyncio.Lock()  # one writer of the log at a time
         # The day's tokens so far: read from the log once a day, then counted here (a

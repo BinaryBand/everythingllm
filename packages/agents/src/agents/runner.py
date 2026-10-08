@@ -21,7 +21,7 @@ gets their results. Callers (the delegate skill, agents-run) ask over its socket
 `owner` is a gateway client's (gateway.agents adds it from the client's token): its
 delegations are its own, and it sees and cancels no others (runs.service).
   update_prompt(scope, apply=False)
-                          refresh the calling workspace's EverythingLLM block (hostctl.prompt)
+                          refresh the calling workspace's EverythingLLM block (hostenv.prompt)
                           from anythingllm/system-prompt.md, keeping its own text around it;
                           without apply, only show what would change (the update-prompt skill)
   scheduled_jobs(scope, action=list|delete|disable, job_id?, apply=False)
@@ -87,8 +87,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
-import hostrpc
-from hostctl import prompt
+import hostenv
+from hostenv import prompt
 from hostrpc import RunnerError
 from runs import live
 from runs.runlog import RunLog, iso, since
@@ -131,10 +131,10 @@ class Settings:
     # research's run log, for the runs followed (research.job.Settings's runlogs), and
     # where it saves the reports (its reports_dir)
     research_runlogs: Path = field(
-        default_factory=lambda: hostrpc.data_dir() / "research" / "runs"
+        default_factory=lambda: hostenv.data_dir() / "research" / "runs"
     )
     research_reports: Path = field(
-        default_factory=lambda: hostrpc.storage() / "anythingllm-fs" / "research"
+        default_factory=lambda: hostenv.storage() / "anythingllm-fs" / "research"
     )
 
     @property
@@ -144,8 +144,8 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            runlogs=hostrpc.data_dir() / "agents" / "runs",
-            pages_url=hostrpc.pages_url(),
+            runlogs=hostenv.data_dir() / "agents" / "runs",
+            pages_url=hostenv.pages_url(),
             # Set but empty is the default too; no task slot at all would hang every task.
             live_port=int(os.environ.get("AGENTS_LIVE_PORT") or 8451),
             slots=max(1, int(os.environ.get("AGENTS_SLOTS") or 3)),
@@ -759,7 +759,7 @@ def main() -> None:
     asyncio.run(
         serve(
             Settings.from_env(),
-            hostrpc.socket_path("agents", "AGENTS_SOCKET"),
+            hostenv.socket_path("agents", "AGENTS_SOCKET"),
             poll=True,
         )
     )

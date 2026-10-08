@@ -26,16 +26,15 @@ Standard library only, like the rest of hostctl.
 
 import argparse
 import difflib
-import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+import hostenv
 
 from hostctl import apps, run_guard
 
@@ -66,7 +65,7 @@ def refuse_worktree(what: str) -> None:
 
 def env_file(file: Path) -> dict[str, str]:
     """An env file's KEY=value lines, quotes dropped as systemd's EnvironmentFile= and
-    hostrpc.env_values drop them; {} when it can't be read. The scripts' one parser."""
+    hostenv.env_values drop them; {} when it can't be read. The scripts' one parser."""
     try:
         lines = file.read_text().splitlines()
     except OSError:
@@ -101,35 +100,13 @@ def storage() -> Path:
     )
 
 
-_tokens: dict[str, str] = {}  # AnythingLLM's API -> this run's login token
-
-
 def anythingllm_headers(api: str, fresh: bool = False) -> dict[str, str]:
-    """The headers for AnythingLLM's internal API: none while it has no password, else a
-    Bearer token from logging in with the password in storage's .env, once per run
-    (`fresh` logs in again, after a 401). A copy of hostrpc.anythingllm_headers."""
-    env = env_file(storage() / ".env")
-    if not (env.get("AUTH_TOKEN") and env.get("JWT_SECRET")):
-        return {}
-    if fresh or api not in _tokens:
-        req = urllib.request.Request(
-            f"{api.rstrip('/')}/request-token",
-            json.dumps({"password": env["AUTH_TOKEN"]}).encode(),
-            {"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as res:
-                token = json.load(res).get("token")
-        except urllib.error.HTTPError as e:
-            sys.exit(
-                f"AnythingLLM refused the password in {storage() / '.env'} ({e.code})"
-            )
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            sys.exit(f"couldn't log in to AnythingLLM at {api}: {e}")
-        if not token:
-            sys.exit(f"AnythingLLM refused the password in {storage() / '.env'}")
-        _tokens[api] = token
-    return {"Authorization": f"Bearer {_tokens[api]}"}
+    """The headers for AnythingLLM's internal API (hostenv.anythingllm_headers, with the
+    password in storage's .env); exits when it can't log in."""
+    try:
+        return hostenv.anythingllm_headers(api, storage() / ".env", fresh=fresh)
+    except hostenv.LoginFailed as e:
+        sys.exit(str(e))
 
 
 def render(template: str, values: dict[str, str]) -> str:

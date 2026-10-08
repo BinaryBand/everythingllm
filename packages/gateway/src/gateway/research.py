@@ -39,7 +39,7 @@ RunId = Annotated[
 
 # The runner's socket: $RESEARCH_SOCKET, else storage/everythingllm/research/runner.sock.
 FOLDER, ENV = "research", "RESEARCH_SOCKET"
-runner = hostrpc.caller(FOLDER, ENV, "research runner", error=ToolError)
+runner = hostrpc.caller(ENV, "research runner", error=ToolError)
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:

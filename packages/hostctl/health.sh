@@ -5,7 +5,7 @@
 set -u
 cd "$(dirname "$0")/../.."
 
-appctl() { PYTHONPATH=packages/hostctl/src python3 -m hostctl.appctl "$@"; }
+appctl() { PYTHONPATH=packages/hostctl/src:packages/hostenv/src python3 -m hostctl.appctl "$@"; }
 failed=0
 
 ok()   { printf '  OK    %s\n' "$1"; }
@@ -70,7 +70,7 @@ appctl sockets || failed=1
 
 echo "Prompts"
 # Notices only: a workspace's prompt is its own, and update-prompt refreshes its block.
-PYTHONPATH=packages/hostctl/src python3 -m hostctl.prompt check
+PYTHONPATH=packages/hostctl/src:packages/hostenv/src python3 -m hostctl.prompt check
 
 echo
 [ "$failed" = 0 ] && echo "All good." || echo "Something needs a look (FAIL lines above)."

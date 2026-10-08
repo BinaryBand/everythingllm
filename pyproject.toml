@@ -12,6 +12,7 @@ browser = { workspace = true }
 chatimage = { workspace = true }
 egress = { workspace = true }
 hostctl = { workspace = true }
+hostenv = { workspace = true }
 hostrpc = { workspace = true }
 llm = { workspace = true }
 publicweb = { workspace = true }

@@ -12,7 +12,7 @@ and keeps what the UI set in its plugin.json (KEPT) for when it's deployed again
 A skill the repo dropped stays in storage, as do skills made in the UI.
 
 A workspace's system prompt is AnythingLLM's, and deploy never writes one. It sets
-the system prompt's block (system-prompt.md, as hostctl.prompt wraps it) as the
+the system prompt's block (system-prompt.md, as hostenv.prompt wraps it) as the
 default for new workspaces, and the static System Prompt Variable
 everythingllm_version to the repo's version, so a workspace whose block is behind
 says so; the update-prompt skill refreshes it. Scheduled jobs have no workspace, so
@@ -34,7 +34,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from hostctl import apps, prompt, run_guard, units
+from hostenv import prompt
+
+from hostctl import apps, run_guard, units
 from hostctl.units import ROOT, anythingllm_headers, replace_file, storage
 
 STORAGE = storage()

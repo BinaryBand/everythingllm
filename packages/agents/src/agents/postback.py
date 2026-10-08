@@ -31,7 +31,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from hostctl import prompt
+from hostenv import prompt
 from hostrpc import RunnerError, safefs
 from runs.runlog import find
 

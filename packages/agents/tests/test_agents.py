@@ -14,7 +14,7 @@ from agents.anythingllm import (
     InternalAPI,
     without_thinking,
 )
-from hostctl import prompt
+from hostenv import prompt
 from hostrpc import RunnerError
 from runs.runlog import find, sweep_interrupted
 

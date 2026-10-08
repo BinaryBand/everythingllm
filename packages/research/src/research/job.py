@@ -5,7 +5,7 @@ research-runner runs these for the skill; `research-run` runs one by hand:
     research-run "Why is the sky blue?" --depth quick
 
 Config (environment, from host.env and the unit; Settings.from_env):
-  ANYTHINGLLM_STORAGE  storage directory (hostrpc.storage)
+  ANYTHINGLLM_STORAGE  storage directory (hostenv.storage)
   ANYTHINGLLM_ENV      AnythingLLM's .env, for the model keys (default <storage>/.env)
   SEARXNG_URL          the SearXNG to search (default the host's; publicweb.pages)
   RESEARCH_LIVE_PORT   where the live cards listen (default 8450)
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-import hostrpc
+import hostenv
 from llm import provider_for
 from publicweb.pages import make_search, searxng_client, searxng_url
 from runs.runlog import RunLog
@@ -40,7 +40,7 @@ KEY_FINDINGS = 12  # summary bullets kept in the run log, for the chat's notice
 
 def today(now: datetime | None = None) -> str:
     """Today's date in the user's time zone (USER_TIMEZONE)."""
-    tz = hostrpc.user_zone()
+    tz = hostenv.user_zone()
     return (now or datetime.now(tz)).astimezone(tz).date().isoformat()
 
 
@@ -58,13 +58,13 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         get = os.environ.get
-        storage = hostrpc.storage()
+        storage = hostenv.storage()
         return cls(
             storage=storage,
             searxng_url=searxng_url(),
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
-            runlogs=hostrpc.data_dir() / "research" / "runs",
-            pages_url=hostrpc.pages_url(),
+            runlogs=hostenv.data_dir() / "research" / "runs",
+            pages_url=hostenv.pages_url(),
             live_port=int(get("RESEARCH_LIVE_PORT", "8450")),
         )
 

@@ -1,20 +1,18 @@
 """How AnythingLLM's skills and the MCP gateway talk to the services we run on the host.
 
-A service listens on a Unix socket in storage, which the container sees without a Quadlet
-change. One request per connection, each way a single line of JSON:
+A service listens on a Unix socket in storage (hostenv.socket_path), which the container
+sees without a Quadlet change. One request per connection, each way a single line of JSON:
   -> {"op": "run", "args": {...}}
   <- {"ok": true, "result": {...}}  or  {"ok": false, "error": "..."}
 
-The services serve with `Service` and `serve` (most through `run`); the gateway's fronts ask
-with `request` (most through `caller`).
-The agent skills speak the same protocol from node, through
+The services serve with `Service` and `serve`; the gateway's fronts ask with `request`
+(most through `caller`). The agent skills speak the same protocol from node, through
 anythingllm/agent-skills/_lib/hostrpc.js.
 
-It also holds the two file helpers every service needs, `atomic_write` and `env_values`,
-`anythingllm_headers`, the login for AnythingLLM's internal API, `local_peer`, which a
-service's HTTP server asks of each connection, `pages_url`, where the live cards are, and
-`user_zone`, the user's time zone. Opening files in folders a container can
-write, without following a symlink it put there, is hostrpc.safefs.
+It also holds what a service needs beside it: `atomic_write`, `local_peer`, which a
+service's HTTP server asks of each connection, and hostrpc.safefs, for opening files in
+folders a container can write without following a symlink it put there. Where things are
+on this host, and AnythingLLM's login, are hostenv's.
 """
 
 from __future__ import annotations
@@ -29,20 +27,12 @@ import logging
 import os
 import signal
 import tempfile
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from types import FunctionType
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 LIMIT = 1 << 20  # longest line either side reads; a service can pass its own
-# Storage as the AnythingLLM container sees it.
-CONTAINER_STORAGE = "/app/server/storage"
-# The folder in storage that holds our services' sockets, apart from AnythingLLM's own:
-# a service's socket is <storage>/everythingllm/<folder>/runner.sock.
-SOCKETS = "everythingllm"
 CALL_TIMEOUT = 55  # for an MCP tool's call; AnythingLLM gives up on one after 60 s
 
 
@@ -70,62 +60,6 @@ def atomic_write(file: Path, data: bytes | str, mode: int = 0o644) -> None:
         raise
 
 
-def env_values(
-    file: str | Path, names: Iterable[str], *, environ: bool = True
-) -> dict[str, str]:
-    """Just these KEY=value settings from an env file (AnythingLLM's .env, host.env), quotes
-    dropped, so a service doesn't hold the others. With `environ` a non-empty value in the
-    environment wins. An unreadable file reads as empty; names found nowhere are left out."""
-    names = set(names)
-    try:
-        lines = Path(file).read_text().splitlines()
-    except OSError:
-        lines = []
-    found = {}
-    for line in lines:
-        key, sep, value = line.partition("=")
-        if sep and key.strip() in names:
-            found[key.strip()] = value.strip().strip("'\"")
-    if environ:
-        found.update({n: os.environ[n] for n in names if os.environ.get(n)})
-    return found
-
-
-_tokens: dict[str, str] = {}  # AnythingLLM's API -> this process's login token
-
-
-def anythingllm_headers(
-    api: str, env_file: str | Path, *, fresh: bool = False
-) -> dict[str, str]:
-    """The headers for AnythingLLM's internal API (`<api>/...`, not the developer API's
-    /v1): none while it has no password, else a Bearer token from logging in with the
-    password in its .env (AUTH_TOKEN, set in the UI's Security settings). One login per
-    process, since each one is logged; `fresh` logs in again, after a 401. Tools copy this
-    as units.anythingllm_headers."""
-    env = env_values(env_file, ("AUTH_TOKEN", "JWT_SECRET"), environ=False)
-    if not (env.get("AUTH_TOKEN") and env.get("JWT_SECRET")):
-        return {}
-    if fresh or api not in _tokens:
-        req = urllib.request.Request(
-            f"{api.rstrip('/')}/request-token",
-            json.dumps({"password": env["AUTH_TOKEN"]}).encode(),
-            {"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as res:
-                token = json.load(res).get("token")
-        except urllib.error.HTTPError as e:
-            raise RunnerError(
-                f"AnythingLLM refused the password in {env_file} ({e.code})"
-            ) from None
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            raise RunnerError(f"couldn't log in to AnythingLLM at {api}: {e}") from None
-        if not token:
-            raise RunnerError(f"AnythingLLM refused the password in {env_file}")
-        _tokens[api] = token
-    return {"Authorization": f"Bearer {_tokens[api]}"}
-
-
 def local_peer(peer: Sequence[Any] | None, local: Sequence[Any] | None) -> bool:
     """Whether a TCP connection comes from this side of its server's port: from loopback, or
     from the server's own address. `peer` and `local` are the accepted connection's peername
@@ -148,59 +82,6 @@ def local_peer(peer: Sequence[Any] | None, local: Sequence[Any] | None) -> bool:
 
     ip = address(peer)
     return ip is not None and (ip.is_loopback or ip == address(local))
-
-
-PAGES_PORT = 8445  # the pages site's HTTPS port, where the live cards are routed too
-
-
-def pages_url() -> str:
-    """The pages site's public URL, from PUBLIC_HOST; "" without it (and no live cards)."""
-    host = os.environ.get("PUBLIC_HOST", "").strip()
-    return f"https://{host}:{PAGES_PORT}/" if host else ""
-
-
-def user_zone() -> ZoneInfo:
-    """The user's time zone (USER_TIMEZONE), or Europe/Stockholm when it's unset or not one."""
-    try:
-        return ZoneInfo(os.environ.get("USER_TIMEZONE") or "Europe/Stockholm")
-    except (ZoneInfoNotFoundError, ValueError):
-        return ZoneInfo("Europe/Stockholm")
-
-
-def storage() -> Path:
-    """AnythingLLM's storage directory as the host sees it (from host.env)."""
-    return Path(os.environ.get("ANYTHINGLLM_STORAGE", "/srv/anythingllm/storage"))
-
-
-def data_dir() -> Path:
-    """EverythingLLM's own data on the host: what only host services read or write, kept
-    out of AnythingLLM's storage, which the container mounts. By kind:
-
-      venvs/<name>/        the host services' venvs
-      venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/)
-      pages/public/        the pages site Caddy serves; pages/entries/, the Zola entries
-      sandbox/workspaces/  the sandbox's folders, per workspace: threads/, project/, shared/
-      sandbox/public/      each sandbox workspace's /public, served as it is on :8447
-      browser/             browser-runner's: profiles/<workspace>/ (each workspace's
-                           browser profile), sockets/<slot>/ (each browser's), downloads/,
-                           novnc/ and vault/ (the saved logins, sealed)
-      research/runs/       the deep-research run log and live runs' markers
-      agents/runs/         the delegations' run log and live runs' markers; agents/ also
-                           keeps the one-offs made (once.json) and the research runs
-                           followed for their chats (followed.json)
-      relay/               the Nilson relay's database
-      hostctl/skills/      what the UI set in each skill deploy took out (hostctl.sync)"""
-    return Path("~/.local/share/everythingllm").expanduser()
-
-
-def site_dir() -> Path:
-    """The pages site's folder on the host, which Caddy serves on :8445."""
-    return data_dir() / "pages" / "public"
-
-
-def socket_path(folder: str, env: str) -> Path:
-    """A service's socket on the host: $<env>, else <storage>/everythingllm/<folder>/runner.sock."""
-    return Path(os.environ.get(env) or storage() / SOCKETS / folder / "runner.sock")
 
 
 async def read_message(reader: asyncio.StreamReader) -> dict[str, Any] | None:
@@ -262,7 +143,6 @@ def _result(reply: Any, name: str) -> Any:
 
 
 def caller(
-    folder: str,
     env: str,
     name: str,
     *,
@@ -270,15 +150,15 @@ def caller(
     timeout: float = CALL_TIMEOUT,
     limit: int = LIMIT,
 ):
-    """For an MCP server in the container: `async call(op, args)`, which asks the service
-    whose socket is $<env>, else <CONTAINER_STORAGE>/everythingllm/<folder>/runner.sock, and raises
-    `error` (the server's ToolError) with RunnerError's text."""
+    """For an MCP server's tools: `async call(op, args)`, which asks the service whose
+    socket is $<env> (read at each call; the gateway sets it, gateway.app.host_sockets) and
+    raises `error` (the server's ToolError) with RunnerError's text."""
 
     async def call(op: str, args: dict[str, Any]) -> Any:
-        socket = (
-            os.environ.get(env) or f"{CONTAINER_STORAGE}/{SOCKETS}/{folder}/runner.sock"
-        )
         try:
+            socket = os.environ.get(env)
+            if not socket:
+                raise Unreachable(f"The {name}'s socket isn't set (${env}).")
             return await request(socket, op, args, timeout, name=name, limit=limit)
         except RunnerError as e:
             raise error(str(e)) from e
@@ -424,12 +304,6 @@ async def serve(
         if on_sigterm:
             loop.remove_signal_handler(signal.SIGTERM)
         socket.unlink(missing_ok=True)
-
-
-def run(service: Service, folder: str, env: str, *, limit: int = LIMIT) -> None:
-    """A service's main(): log to the journal and serve on its socket until SIGTERM."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    asyncio.run(serve(service, socket_path(folder, env), limit=limit))
 
 
 @contextlib.asynccontextmanager

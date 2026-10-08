@@ -22,7 +22,7 @@ from pathlib import Path
 
 from hostctl import apps
 
-DATA = Path.home() / ".local" / "share" / "everythingllm"  # hostrpc.data_dir()
+DATA = Path.home() / ".local" / "share" / "everythingllm"  # hostenv.data_dir()
 # service: (its run log in DATA, what its runs are called)
 GUARDED = {unit: (g.runs, g.noun) for unit, g in apps.guarded().items()}
 

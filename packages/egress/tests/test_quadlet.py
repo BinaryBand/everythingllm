@@ -187,7 +187,7 @@ def test_research_mounts_only_what_it_uses():
 
 def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     """Every path research-runner's code uses outside the repo, under the mount it needs."""
-    import hostrpc
+    import hostenv
     from research import job
 
     home, storage = tmp_path / "home", tmp_path / "storage"
@@ -211,7 +211,7 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     for path in (
         settings.runlogs,
         settings.reports_dir,
-        hostrpc.socket_path("research", "RESEARCH_SOCKET"),
+        hostenv.socket_path("research", "RESEARCH_SOCKET"),
     ):
         assert not read_only(path), path
     read_only(settings.env_file)  # mounted; read-only will do

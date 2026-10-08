@@ -114,6 +114,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import hostenv
 import hostrpc
 from chatimage import linked_image
 from egress import config as egress_config
@@ -205,13 +206,13 @@ class Config:
         egress = egress_config.load()
         return cls(
             root=Path(
-                get("BROWSER_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
+                get("BROWSER_ROOT", hostenv.data_dir() / "sandbox" / "workspaces")
             ),
-            data=Path(get("BROWSER_DATA", hostrpc.data_dir() / "browser")),
+            data=Path(get("BROWSER_DATA", hostenv.data_dir() / "browser")),
             ips=dict(egress.profiles[PROFILE].ips),
             network=egress.network,
             proxy=egress.public_url,
-            pages_url=hostrpc.pages_url(),
+            pages_url=hostenv.pages_url(),
             takeover_url=f"https://{host}:{TAKEOVER_PORT}/"
             if host
             else f"http://127.0.0.1:{TAKEOVER_PORT}/",
@@ -1382,7 +1383,7 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
     idle = asyncio.create_task(runner.idle_loop())
     try:
         await hostrpc.serve(
-            runner, hostrpc.socket_path("browser", "BROWSER_SOCKET"), stop=stop
+            runner, hostenv.socket_path("browser", "BROWSER_SOCKET"), stop=stop
         )
     finally:
         idle.cancel()

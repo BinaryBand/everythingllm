@@ -49,7 +49,7 @@ from hostctl.units import SKILLS, active, host_settings, storage
 
 ROOT = Path(__file__).resolve().parents[4]
 # hostctl, so a `before` step's python3 finds it whichever it is.
-PYTHONPATH = f"{ROOT}/packages/hostctl/src"
+PYTHONPATH = f"{ROOT}/packages/hostctl/src:{ROOT}/packages/hostenv/src"
 PING_SECONDS = 5  # a runner that's up answers at once
 ROUTE_SECONDS = 5
 

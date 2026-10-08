@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
-from hostrpc import env_values
+from hostenv import env_values
 
 DEFAULT_MODEL = "deepseek-flash"
 DEEPSEEK_BASE = "https://api.deepseek.com/v1"

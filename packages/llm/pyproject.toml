@@ -3,7 +3,7 @@ name = "llm"
 version = "0.1.0"
 description = "The DeepSeek chat client the servers share, with its key and model from AnythingLLM's .env"
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.27", "hostrpc"]
+dependencies = ["httpx>=0.27", "hostenv"]
 
 [build-system]
 requires = ["hatchling"]

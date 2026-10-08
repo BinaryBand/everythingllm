@@ -335,7 +335,7 @@ def test_a_threads_id_comes_from_its_workspaces_list(monkeypatch, tmp_path):
         return 200, {"threads": list(threads), "defaultThreadChatCount": 0}
 
     monkeypatch.setattr(chats, "get_json", get_json)
-    monkeypatch.setattr(chats.hostrpc, "anythingllm_headers", lambda *a, **k: {})
+    monkeypatch.setattr(chats.hostenv, "anythingllm_headers", lambda *a, **k: {})
     ids = chats.ThreadIds("http://all.example", tmp_path / ".env", now=lambda: now[0])
 
     async def main():

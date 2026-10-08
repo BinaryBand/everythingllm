@@ -1,0 +1,10 @@
+[project]
+name = "hostenv"
+version = "0.1.0"
+description = "This host and the AnythingLLM on it, as the services and hostctl see them: where things are kept, a service's socket, AnythingLLM's login and the system prompt's block"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

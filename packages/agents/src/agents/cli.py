@@ -18,6 +18,7 @@ import asyncio
 import re
 import sys
 
+import hostenv
 import hostrpc
 from hostrpc import RunnerError
 
@@ -69,7 +70,7 @@ def delegation(args: argparse.Namespace) -> dict:
 
 
 async def call(op: str, args: dict) -> dict:
-    socket = hostrpc.socket_path("agents", "AGENTS_SOCKET")
+    socket = hostenv.socket_path("agents", "AGENTS_SOCKET")
     return await hostrpc.request(
         socket, op, args, CALL_SECONDS, name="agents runner", limit=LIMIT
     )

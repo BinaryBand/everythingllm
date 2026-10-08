@@ -37,7 +37,7 @@ LIMIT = 8 * 1024 * 1024
 
 # The runner's socket: $AGENTS_SOCKET, else storage/everythingllm/agents/runner.sock.
 FOLDER, ENV = "agents", "AGENTS_SOCKET"
-runner = hostrpc.caller(FOLDER, ENV, "agents runner", error=ToolError, limit=LIMIT)
+runner = hostrpc.caller(ENV, "agents runner", error=ToolError, limit=LIMIT)
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:

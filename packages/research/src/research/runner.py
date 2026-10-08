@@ -44,7 +44,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-import hostrpc
+import hostenv
 from hostrpc import RunnerError
 from runs.service import Meter, Progress, Run, RunService
 
@@ -178,4 +178,4 @@ def main() -> None:
     # Hundreds of requests a run; the run log has what matters.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     settings = job.Settings.from_env()
-    asyncio.run(serve(settings, hostrpc.socket_path("research", "RESEARCH_SOCKET")))
+    asyncio.run(serve(settings, hostenv.socket_path("research", "RESEARCH_SOCKET")))

@@ -5,7 +5,7 @@ ended: workspaces, threads and a thread's chat, which runs the workspace's agent
 when the message starts with @agent. `InternalAPI` is the internal one (/api, which
 AnythingLLM's UI uses), for its scheduled jobs, saved memories and threads' ids, which the
 developer API doesn't have; it logs in with
-AnythingLLM's password (hostrpc.anythingllm_headers), and once more after a 401.
+AnythingLLM's password (hostenv.anythingllm_headers), and once more after a 401.
 
 Config (environment, from host.env and agents.env through the unit):
   ANYTHINGLLM_URL      AnythingLLM's address (default http://127.0.0.1:3001)
@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import hostenv
 import hostrpc
 import httpx
 
@@ -216,7 +217,7 @@ def created(reply: Any, key: str, what: str) -> dict:
 @dataclass
 class InternalAPI:
     """AnythingLLM's internal API: its scheduled jobs, saved memories and threads' ids. `login(fresh)` gives the headers
-    (by default hostrpc.anythingllm_headers, with the password in `env_file`); it runs in
+    (by default hostenv.anythingllm_headers, with the password in `env_file`); it runs in
     a thread, since it blocks, and once more with fresh=True after a 401."""
 
     base_url: str
@@ -229,7 +230,7 @@ class InternalAPI:
     def from_env(cls) -> "InternalAPI":
         return cls(
             os.environ.get("ANYTHINGLLM_URL", "http://127.0.0.1:3001"),
-            Path(os.environ.get("ANYTHINGLLM_ENV") or hostrpc.storage() / ".env"),
+            Path(os.environ.get("ANYTHINGLLM_ENV") or hostenv.storage() / ".env"),
         )
 
     @property
@@ -241,9 +242,9 @@ class InternalAPI:
             if self.login is not None:
                 return await asyncio.to_thread(self.login, fresh)
             return await asyncio.to_thread(
-                hostrpc.anythingllm_headers, self.api, self.env_file, fresh=fresh
+                hostenv.anythingllm_headers, self.api, self.env_file, fresh=fresh
             )
-        except hostrpc.RunnerError as e:
+        except (hostenv.LoginFailed, hostrpc.RunnerError) as e:
             raise AnythingLLMError(str(e)) from None
 
     async def call(self, method: str, path: str, body: dict | None = None) -> Any:

@@ -20,7 +20,7 @@
 #                         it by. One with an egress-net address is a service container
 #                         (README, "Service containers")
 # managed = false         deployed by something else (no template here)
-# before                  commands setup runs first, from the repo's root with hostctl on PYTHONPATH
+# before                  commands setup runs first, from the repo's root with hostctl and hostenv on PYTHONPATH
 # guard                   restarts wait while a run is going: {runs (under the data dir), noun}
 # serve                   the HTTPS routes the machine must provide, from the host (tailscale
 #                         serve, Caddy, …): {https, port, path?}, https://<PUBLIC_HOST>:<https><path>

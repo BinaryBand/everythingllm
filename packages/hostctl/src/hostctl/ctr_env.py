@@ -8,7 +8,7 @@ it writes read-only, with ANYTHINGLLM_ENV naming it (README, "Service containers
     python3 -m hostctl.ctr_env <AnythingLLM's .env> <out file> KEY... [KEY?...]
 
 A plain KEY is copied as it is. `KEY?` is a key whose value is never needed, only whether
-it's set (hostrpc.anythingllm_headers takes a set JWT_SECRET to mean the password is on):
+it's set (hostenv.anythingllm_headers takes a set JWT_SECRET to mean the password is on):
 it's written as `set` when it is, so the secret itself stays on the host. A key that isn't
 set is left out. The file is mode 600 in a mode 700 folder and replaced whole, so a
 restart takes up a key changed in AnythingLLM's settings. With hostctl and apps on

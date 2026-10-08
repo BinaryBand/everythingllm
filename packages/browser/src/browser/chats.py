@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-import hostrpc
+import hostenv
 
 from browser.origin import registrable
 
@@ -136,7 +136,7 @@ class Unavailable(Exception):
 
 class ThreadIds:
     """A thread's id from its slug, through AnythingLLM's internal API (its UI's, logged in
-    with its password: hostrpc.anythingllm_headers), which lists a workspace's threads with
+    with its password: hostenv.anythingllm_headers), which lists a workspace's threads with
     both. A workspace's list is kept for a minute, and asked again sooner for a slug it
     lacks, as a chat made since."""
 
@@ -148,7 +148,7 @@ class ThreadIds:
     ) -> None:
         self.api = (base_url or anythingllm_url()) + "/api"
         self.env_file = env_file or Path(
-            os.environ.get("ANYTHINGLLM_ENV") or hostrpc.storage() / ".env"
+            os.environ.get("ANYTHINGLLM_ENV") or hostenv.storage() / ".env"
         )
         self.now = now
         self.known: dict[
@@ -161,14 +161,14 @@ class ThreadIds:
         url = f"{self.api}/workspace/{quote(workspace, safe='')}/threads"
         try:
             status, body = get_json(
-                url, hostrpc.anythingllm_headers(self.api, self.env_file)
+                url, hostenv.anythingllm_headers(self.api, self.env_file)
             )
             if status == 401:
                 status, body = get_json(
                     url,
-                    hostrpc.anythingllm_headers(self.api, self.env_file, fresh=True),
+                    hostenv.anythingllm_headers(self.api, self.env_file, fresh=True),
                 )
-        except (urllib.error.URLError, OSError, hostrpc.RunnerError) as e:
+        except (urllib.error.URLError, OSError, hostenv.LoginFailed) as e:
             # The exception's text can carry the URL; its class says enough for the log.
             log.warning("listing %s's threads failed: %s", workspace, type(e).__name__)
             raise Unavailable(

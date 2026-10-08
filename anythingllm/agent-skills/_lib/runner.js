@@ -8,14 +8,14 @@ const { scopeOf } = require("./scope");
 
 /**
  * Run `work(request)` for a skill, where request(op, args) calls the runner of `service` (its
- * folder in storage and its unit's name: agents -> agents-runner; `env` can point at another
- * socket) and, when `scoped`, adds the call's scope ({workspace, thread}, from the
+ * folder in storage and its unit's name: agents -> agents-runner; <SERVICE>_SOCKET can point
+ * at another socket) and, when `scoped`, adds the call's scope ({workspace, thread}, from the
  * invocation, never the model). `label` names the service in a failure, and `closed` is the
  * reply when the chat closes first.
  */
 async function withRunner(
   self,
-  { service, env = `${service.toUpperCase()}_SOCKET`, label = `The ${service} service`, scoped = false, timeoutMs = 120_000, closed = "The chat closed." },
+  { service, label = `The ${service} service`, scoped = false, timeoutMs = 120_000, closed = "The chat closed." },
   work
 ) {
   const refused = delegatedRefusal(self);
@@ -23,7 +23,7 @@ async function withRunner(
   const signal = self.super?.abortController?.signal ?? null;
   const scope = scoped ? { scope: scopeOf(self) } : {};
   const request = (op, args) =>
-    call(socketPath(service, env), op, { ...args, ...scope }, { name: `the ${service} runner`, signal, timeoutMs });
+    call(socketPath(service, `${service.toUpperCase()}_SOCKET`), op, { ...args, ...scope }, { name: `the ${service} runner`, signal, timeoutMs });
   try {
     return await work(request);
   } catch (e) {
@@ -40,11 +40,6 @@ async function withRunner(
  *  itself, or its JSON). */
 async function forward(self, { op, args, reply = asText, ...spec }) {
   return withRunner(self, spec, async (request) => reply(await request(op, args)));
-}
-
-/** forward, with the call's scope added to `args`: for an op that acts on the chat's workspace. */
-async function forwardScoped(self, spec) {
-  return forward(self, { ...spec, scoped: true });
 }
 
 /** The lines that hand the agent a live card for its reply, `what` saying what it shows;
@@ -81,4 +76,4 @@ function asFlag(value) {
   return value === true || String(value).toLowerCase() === "true";
 }
 
-module.exports = { withRunner, forward, forwardScoped, cardLines, asObject, asFlag, asInteger };
+module.exports = { withRunner, forward, cardLines, asObject, asFlag, asInteger };

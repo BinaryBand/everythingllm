@@ -27,7 +27,7 @@ from pathlib import Path
 
 import tomllib
 
-from hostctl import apps
+from hostctl import apps, units
 from hostctl.units import ROOT, env_file
 
 DEFAULT = Path("~/.config/everythingllm/gateway.env").expanduser()
@@ -53,18 +53,10 @@ def key(name: str) -> str:
     return PREFIX + name.upper().replace("-", "_")
 
 
-def create(path: Path, text: str) -> None:
-    """Write a new file only its owner can read, in a folder only its owner can enter."""
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(text)
-
-
 def main() -> None:
     path = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else DEFAULT
     if not path.exists():
-        create(path, TEMPLATE.format(token=secrets.token_urlsafe(32)))
+        units.create(path, TEMPLATE.format(token=secrets.token_urlsafe(32)))
         print(f"made {path} with a token for claude-code")
     path.chmod(0o600)
     clients = [k for k, v in env_file(path).items() if k.startswith(PREFIX) and v]
@@ -115,7 +107,7 @@ def add_client(name: str, path: Path = DEFAULT, grants: Path = GRANTS) -> None:
         print(f"added a token for {name} to {path}")
     else:
         token = secrets.token_urlsafe(32)
-        create(path, f"{HEADER}{env}={token}\n")
+        units.create(path, f"{HEADER}{env}={token}\n")
         print(f"made {path} with a token for {name}")
 
     [mapping] = apps.load()["gateway"].serve

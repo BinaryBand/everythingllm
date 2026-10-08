@@ -159,11 +159,11 @@ class Live:
         return self.STATES.get((result or {}).get("status", ""), "failed")
 
     def frame(self, run: Run, theme: str) -> bytes:
-        return self.draw(self.snapshot(run.id, run, None)[0], theme)
+        return self.draw(self.snapshot(run.id, run, None), theme)
 
     def logged_frame(self, run_id: str, theme: str) -> bytes:
         """One frame of how a run this service doesn't hold ended, from the run log."""
-        view, _ = self.snapshot(run_id, None, find(self.runlogs, run_id))
+        view = self.snapshot(run_id, None, find(self.runlogs, run_id))
         if view["state"] == "unknown":
             return progress.draw(
                 "This run isn't known here",
@@ -188,9 +188,9 @@ class Live:
 
     def snapshot(
         self, run_id: str, run: Run | None, record: dict[str, Any] | None
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """The run as its card, page and `<id>.json` say it (the JSON's fields), and its
-        result: the run held, else its run log line `record`, else unknown."""
+    ) -> dict[str, Any]:
+        """The run as its card, page and `<id>.json` say it (the JSON's fields): the run
+        held, else its run log line `record`, else unknown."""
         if run is not None:
             result = run.result or {}
             state = self.state_of(run.result) if run.done else "running"
@@ -229,7 +229,7 @@ class Live:
             "url": (self.destination(result) if ended else None) or None,
             "error": (result.get("error") if state == "failed" else None) or None,
         }
-        return view, result
+        return view
 
     async def logged(self, run_id: str, run: Run | None) -> dict[str, Any] | None:
         """The run's log line when this service doesn't hold it, read in a thread."""
@@ -275,7 +275,7 @@ class Live:
     ) -> None:
         if run:
             run.last_seen = time.monotonic()  # a client polling it is following it
-        view, _ = self.snapshot(run_id, run, await self.logged(run_id, run))
+        view = self.snapshot(run_id, run, await self.logged(run_id, run))
         await live.send(
             writer,
             "200 OK",
@@ -288,7 +288,9 @@ class Live:
         self, writer: asyncio.StreamWriter, run_id: str, run: Run | None
     ) -> None:
         """The card's link: its destination once there is one, else a page of the run."""
-        view, result = self.snapshot(run_id, run, await self.logged(run_id, run))
+        record = await self.logged(run_id, run)
+        view = self.snapshot(run_id, run, record)
+        result = (run.result if run else record) or {}
         if url := view["url"]:
             return await live.send(writer, "302 Found", headers={"Location": url})
         subject, events = view["subject"], view["steps"]

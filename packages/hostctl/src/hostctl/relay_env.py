@@ -13,7 +13,7 @@ container mounts. Standard library only, like the rest of hostctl.
 import sys
 from pathlib import Path
 
-from hostctl import gateway_env
+from hostctl import units
 
 DEFAULT = Path("~/.config/everythingllm/relay.env").expanduser()
 
@@ -31,7 +31,7 @@ NTFY_TOKEN=
 def main() -> None:
     path = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else DEFAULT
     if not path.exists():
-        gateway_env.create(path, TEMPLATE)
+        units.create(path, TEMPLATE)
         print(f"made {path}")
     path.chmod(0o600)
 

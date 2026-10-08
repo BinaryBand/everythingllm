@@ -39,8 +39,8 @@ test("forward sends the op and its args to the service and gives back its text",
   const service = await fakeService((op, args) =>
     args.slug === "nope" ? { ok: false, error: "there's no page 'nope'" } : { ok: true, result: `${op} ok` }
   );
-  const spec = { service: "probe", env: "PROBE_RUNNER", op: "show" };
-  process.env.PROBE_RUNNER = service.socket;
+  const spec = { service: "probe", op: "show" };
+  process.env.PROBE_SOCKET = service.socket;
   try {
     assert.equal(await forward(agent("career"), { ...spec, args: { slug: "a" } }), "show ok");
     assert.deepEqual(service.requests[0], { op: "show", args: { slug: "a" } });
@@ -52,14 +52,14 @@ test("forward sends the op and its args to the service and gives back its text",
     assert.match(await forward(agent("agents-worker"), { ...spec, args: {} }), /^Error: this tool isn't available to a delegated task/);
     assert.equal(service.requests.length, 3);
   } finally {
-    delete process.env.PROBE_RUNNER;
+    delete process.env.PROBE_SOCKET;
     await service.close();
   }
-  process.env.PROBE_RUNNER = "/nonexistent/probe.sock";
+  process.env.PROBE_SOCKET = "/nonexistent/probe.sock";
   try {
     assert.match(await forward(agent("career"), { ...spec, args: {} }), /probe service isn't running.*uv run hostctl probe-setup/);
   } finally {
-    delete process.env.PROBE_RUNNER;
+    delete process.env.PROBE_SOCKET;
   }
 });
 

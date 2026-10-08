@@ -122,9 +122,7 @@ def api(method: str, path: str, body: dict | None = None, fresh: bool = False) -
     """Call AnythingLLM's internal API, logged in if it has a password (once more after a
     401); raises urllib's errors."""
     data = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json"}
-    if path != "/ping":  # answers before setup, and without a login
-        headers |= anythingllm_headers(API, fresh)
+    headers = {"Content-Type": "application/json", **anythingllm_headers(API, fresh)}
     req = urllib.request.Request(API + path, data, headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -207,6 +205,14 @@ def changed(units: list[Unit]) -> list[Unit]:
     """Units whose installed copy differs from the rendered one, or that are a symlink (how
     units were installed before they were rendered)."""
     return [u for u in units if u.dest.is_symlink() or installed(u) != u.text]
+
+
+def create(path: Path, text: str) -> None:
+    """Write a new file only its owner can read, in a folder only its owner can enter."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
 
 
 def replace_file(dest: Path, text: str, mode: int = 0o644) -> None:

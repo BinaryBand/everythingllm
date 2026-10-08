@@ -574,7 +574,7 @@ class Runner(hostrpc.Service):
         run if it fills the disk; what it went over, or "" if it was stopped first."""
         while True:
             await asyncio.sleep(WATCH_SECONDS)
-            usage = await asyncio.to_thread(snapshot, scope, False)
+            usage = await asyncio.to_thread(snapshot, scope, files=False)
             most = workspace.WORKSPACE_MAX_BYTES + workspace.RUN_SLACK
             if usage.total > most:
                 over = f"the workspace went over {most >> 20} MB"
@@ -619,7 +619,7 @@ class Runner(hostrpc.Service):
         name = f"sandbox-{secrets.token_hex(6)}"
         run_dir = self.config.scripts / name
         async with self.lock(scope.workspace):
-            usage = await asyncio.to_thread(snapshot, scope, False)
+            usage = await asyncio.to_thread(snapshot, scope, files=False)
             if usage.total > workspace.WORKSPACE_MAX_BYTES:
                 raise over_quota(usage, "build a site")
             source = resolve(scope, path)
@@ -693,7 +693,7 @@ class Runner(hostrpc.Service):
             raise SandboxError(
                 f"content is {len(data)} bytes; the limit is {pages.WRITE_BYTES}"
             )
-        usage = await asyncio.to_thread(snapshot, s, False)
+        usage = await asyncio.to_thread(snapshot, s, files=False)
         if usage.total + len(data) > workspace.WORKSPACE_MAX_BYTES:
             raise over_quota(usage, "write files")
         target = resolve(s, path)

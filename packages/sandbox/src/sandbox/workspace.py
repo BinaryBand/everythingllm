@@ -314,17 +314,25 @@ def _walk_mount(usage: Usage, mount: str, root: str, files: bool) -> None:
         usage.count += len(dirnames) + len(filenames)
         inside = dirpath[cut:]  # "" in the mount's own folder
         top = inside.split(os.sep, 1)[0]
+        key = (
+            f"{mount}/{top}/" if top else ""
+        )  # below the top: one entry for the folder
+        size = None  # its files' sizes, added to tops once
         for name in filenames:
             try:
                 st = os.lstat(os.path.join(dirpath, name))
             except FileNotFoundError:
                 continue
             usage.total += st.st_size
-            key = f"{mount}/{top}/" if top else f"{mount}/{name}"
-            usage.tops[key] = usage.tops.get(key, 0) + st.st_size
+            if key:
+                size = (size or 0) + st.st_size
+            else:
+                usage.tops[f"{mount}/{name}"] = st.st_size
             if files and not (top or name).startswith("."):
                 path = f"{mount}/{inside}/{name}" if inside else f"{mount}/{name}"
                 usage.files[path] = (st.st_mtime_ns, st.st_size)
+        if size is not None:
+            usage.tops[key] = usage.tops.get(key, 0) + size
 
 
 def public_changes(before: Usage, after: Usage) -> set[str]:

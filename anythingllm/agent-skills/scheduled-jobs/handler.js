@@ -3,12 +3,13 @@
 // workspace comes from the invocation, never from the model; a delegated task is refused
 // (_lib/delegated.js), and a scheduled job by the runner.
 
-const { forwardScoped, asFlag, asInteger } = require("../_lib/runner");
+const { forward, asFlag, asInteger } = require("../_lib/runner");
 
 module.exports.runtime = {
   handler: async function ({ action, id, apply }) {
     const jobId = id == null || id === "" ? null : asInteger(id);
-    return forwardScoped(this, {
+    return forward(this, {
+      scoped: true,
       service: "agents",
       op: "scheduled_jobs",
       args: {

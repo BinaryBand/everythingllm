@@ -105,9 +105,10 @@ def check() -> list[str]:
 def wait_api(timeout: float = 180) -> None:
     end = time.monotonic() + timeout
     while True:
-        try:
-            if api("GET", "/ping").get("online"):
-                return
+        try:  # /ping answers before setup, and without a login
+            with urllib.request.urlopen(units.API + "/ping", timeout=10) as resp:
+                if json.load(resp).get("online"):
+                    return
         except (urllib.error.URLError, OSError, ValueError):
             pass
         if time.monotonic() > end:

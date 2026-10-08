@@ -204,10 +204,9 @@ def watching(s: Session):
 
 
 class Request:
-    def __init__(self, method: str, target: str, headers: dict[str, str]):
-        parts = urlsplit(target)
-        self.method, self.path, self.headers = method, parts.path, headers
-        self.query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+    def __init__(self, method: str, path: str, query: str, headers: dict[str, str]):
+        self.method, self.path, self.headers = method, path, headers
+        self.query = {k: v[0] for k, v in parse_qs(query).items()}
         self.body: dict = {}
 
     async def read_body(self, reader: asyncio.StreamReader) -> None:
@@ -252,8 +251,7 @@ class Takeover:
     ) -> None:
         if not (head := await live.accept(reader, writer)):
             return
-        method, path, query, headers = head
-        req = Request(method, f"{path}?{query}" if query else path, headers)
+        req = Request(*head)
         try:
             await self.route(req, reader, writer)
         except Exception:

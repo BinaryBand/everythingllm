@@ -7,7 +7,7 @@
 // login for the site of the chat's page, which goes into the vault.
 
 const { withBrowser } = require("../_lib/browser");
-const { asFlag } = require("../_lib/runner");
+const { asFlag, cardLines } = require("../_lib/runner");
 
 const MAX_WAIT_MS = 5 * 60_000;
 
@@ -30,12 +30,10 @@ module.exports.runtime = {
       }
       if (what === "ask") {
         const r = await request("ask_login", {});
-        return [
-          r.card ? `Card: ${r.card}` : "",
-          r.card
-            ? `Put the Card line in your reply exactly as given, on its own line, ask the user to open it and save their ${r.site} login there (never in the chat), and end your reply. When they say it's saved, list the logins and log in with it.`
-            : `Ask the user to save their ${r.site} login in the browser's take-over view (Saved logins), never in the chat, and end your reply.`,
-        ].filter(Boolean).join("\n");
+        if (!r.card)
+          return `Ask the user to save their ${r.site} login in the browser's take-over view (Saved logins), never in the chat, and end your reply.`;
+        const what = `it opens a form for a login. Ask the user to open it and save their ${r.site} login there (never in the chat), and end your reply. When they say it's saved, list the logins and log in with it.`;
+        return cardLines(r.card, what).join("\n");
       }
       if (!["login", "code", "passkey"].includes(what)) return `Error: action is list, ask, login, code or passkey, not '${what}'.`;
       const args = { login: String(login ?? "") };

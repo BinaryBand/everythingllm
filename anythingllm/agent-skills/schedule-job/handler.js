@@ -3,11 +3,12 @@
 // own create-scheduled-job, which is turned off: a job runs with every tool approved, so a
 // delegated task is refused (_lib/delegated.js), and a scheduled job by the runner.
 
-const { forwardScoped, asFlag, asObject } = require("../_lib/runner");
+const { forward, asFlag, asObject } = require("../_lib/runner");
 
 module.exports.runtime = {
   handler: async function ({ name, prompt, schedule, tools, apply }) {
-    return forwardScoped(this, {
+    return forward(this, {
+      scoped: true,
       service: "agents",
       op: "schedule_job",
       args: {

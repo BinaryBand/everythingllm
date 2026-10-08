@@ -144,6 +144,8 @@ def test_a_plain_request_is_sent_on_in_origin_form_without_its_proxy_headers():
         b"GET http://example.com/ HTTP/2\r\n\r\n",
         b"GET http://example.com/ HTTP/1.1\r\nno colon\r\n\r\n",
         b"GET http://example.com:99999/ HTTP/1.1\r\n\r\n",
+        b"GET http://[::1/ HTTP/1.1\r\n\r\n",  # urlsplit's own ValueError
+        b"GET http://example.com/ HTTP/1.1\r\nX: a\nHost: b\r\n\r\n",  # a bare LF
     ],
 )
 def test_what_isnt_a_proxy_request_is_bad(head):

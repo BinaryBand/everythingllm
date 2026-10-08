@@ -101,20 +101,27 @@ def parse(head: bytes) -> Request:
         except ValueError:
             raise BadRequest("CONNECT wants host:port") from None
         return Request(method, host, port)
-    url = urlsplit(target)
-    try:
-        port = url.port or 80
+    try:  # urlsplit refuses "http://[::1/", and .port a port out of range
+        url = urlsplit(target)
+        hostname, port = url.hostname, url.port or 80
     except ValueError:
-        raise BadRequest("a bad port") from None
-    if url.scheme != "http" or not url.hostname:
+        raise BadRequest("a bad URL or port") from None
+    if url.scheme != "http" or not hostname:
         raise BadRequest("only CONNECT, or an absolute http:// URL")
-    host = normal_host(url.hostname)
+    host = normal_host(hostname)
     headers = []
     for line in lines[1:]:
         if not line:
             break
         name, sep, value = line.partition(":")
-        if not sep or not name or name != name.strip() or line[0] in " \t":
+        if (
+            not sep
+            or not name
+            or name != name.strip()
+            or line[0] in " \t"
+            or "\r" in line
+            or "\n" in line  # a bare LF would start a header of its own upstream
+        ):
             raise BadRequest("a malformed header")
         headers.append((name, value.strip()))
     named = {

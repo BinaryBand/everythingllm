@@ -86,7 +86,8 @@ def gather(
             if not candidates:
                 raise SourceError(f"search failed: {e}") from None
         wait(reads, timeout=max(0, deadline - time.monotonic()))
-        texts = [r.result() if r.done() else None for r in reads]
+        # A page that failed in any way (a malformed link, say) is skipped, not the article.
+        texts = [r.result() if r.done() and not r.exception() else None for r in reads]
     finally:
         # Don't wait for slow pages: their threads finish (or time out) on their own.
         pool.shutdown(wait=False, cancel_futures=True)

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 import httpx
 from publicweb import public_client, read
@@ -102,14 +102,16 @@ def clean(text: str, limit: int = 0) -> str:
 
 
 def canonical(url: str) -> str:
-    """The link without click-tracking parameters or a fragment."""
+    """The link without click-tracking parameters or a fragment. The parameters kept stay
+    as they were, byte for byte: re-encoding them would change "?12345" or a Latin-1
+    escape, and the link with it."""
     parts = urlsplit(url.strip())
     query = [
-        (k, v)
-        for k, v in parse_qsl(parts.query, keep_blank_values=True)
-        if not TRACKING.fullmatch(k)
+        piece
+        for piece in parts.query.split("&")
+        if piece and not TRACKING.fullmatch(unquote_plus(piece.split("=", 1)[0]))
     ]
-    return urlunsplit(parts._replace(query=urlencode(query), fragment=""))
+    return urlunsplit(parts._replace(query="&".join(query), fragment=""))
 
 
 def _local(tag: str) -> str:
@@ -128,7 +130,10 @@ def _date(text: str) -> datetime | None:
             return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    try:
+        return dt.astimezone(timezone.utc)
+    except OverflowError:  # 9999-12-31T23:59-01:00 is past datetime.max in UTC
+        return None
 
 
 def _link(item: ET.Element) -> str:
@@ -275,7 +280,8 @@ def headlines(
             continue
         try:
             stories = future.result()
-        except FeedError as e:
+        except Exception as e:  # noqa: BLE001 - one feed's failure (a bad date, an odd
+            # encoding) is a note, never the section's
             failed.append(f"{feed.name} ({e})")
             continue
         # A little slack for clocks; a date further ahead is a feed's mistake.

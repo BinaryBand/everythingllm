@@ -57,7 +57,7 @@ def read_html(
             if "html" not in resp.headers.get("content-type", ""):
                 return None
             html = b"".join(body).decode(resp.encoding or "utf-8", errors="replace")
-    except (httpx.HTTPError, error):
+    except (httpx.HTTPError, httpx.InvalidURL, error):  # InvalidURL: a bad IDNA host
         return None
     text = trafilatura.extract(html, include_comments=False, include_tables=False) or ""
     return text[:max_chars] if len(text) >= min_chars else None

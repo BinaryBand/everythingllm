@@ -152,6 +152,9 @@ def test_canonical_keeps_real_parameters():
         canonical("https://x.example/a?id=1&at_medium=RSS&traffic_source=rss#c")
         == "https://x.example/a?id=1"
     )
+    # What's kept stays as it was.
+    for url in ("https://e.example/a?12345", "https://e.example/a?x=%E4&q=a+b"):
+        assert canonical(url) == url
 
 
 def story(title: str, url: str, hours: float, source: str = "A") -> Story:
@@ -215,14 +218,18 @@ def test_headlines_reports_a_bad_feed_without_failing(section):
     web = Web(
         {
             "https://a.example/rss": b"<html>busy</html>",
-            "https://b.example/rss": rss(),
+            # Not a FeedError: an encoding Python doesn't know.
+            "https://b.example/rss": b'<?xml version="1.0" encoding="foo"?><rss/>',
             "https://radio.example/atom": ATOM,
         }
     )
     with web.client() as client:
         stories, failed = headlines(client, "Test", NOW)
     assert [s.source for s in stories] == ["Radio"]
-    assert failed == ["Paper A (not an RSS or Atom feed.)"]
+    assert failed == [
+        "Paper A (not an RSS or Atom feed.)",
+        "Paper B (unknown encoding: foo)",
+    ]
 
 
 def test_slow_feeds_are_skipped_at_the_deadline(section):

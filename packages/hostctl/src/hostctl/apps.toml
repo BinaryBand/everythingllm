@@ -27,6 +27,9 @@
 #                         -> http://127.0.0.1:<port>; `uv run hostctl routes` lists and checks them
 # health                  name -> URL that should answer below 500
 # install                 whether `uv run hostctl install` sets it up; why_not_installed says why not
+# skills                  its skills (anythingllm/agent-skills/<skill>): deploy copies them only
+#                         while its runner is enabled here (its setup enables it), and takes
+#                         them out of storage otherwise
 
 [anythingllm]
 summary = "AnythingLLM, in its Quadlet container (127.0.0.1:3001; units restart it)"
@@ -58,6 +61,7 @@ serve = [
 ]
 health = { "app cards" = "http://127.0.0.1:8455/_live/apps/" }
 install = true
+skills = ["app", "build-site", "publish", "run-code", "sandbox-access", "show-image", "write-file"]
 
 [egress]
 summary = "the egress proxy: the service containers' only way out of egress-net, to what egress.toml allows each"
@@ -75,6 +79,7 @@ before = ["python3 -m hostctl browser-images"]
 serve = [{ https = 8445, path = "/_live/browser", port = 8453 }, { https = 8454, port = 8454 }]
 health = { "browser live cards" = "http://127.0.0.1:8453/_live/browser/bw-0000000000000000.jpg", "browser take-over view" = "http://127.0.0.1:8454/health" }
 install = true
+skills = ["browse", "browser-act", "browser-handoff", "browser-login", "browser-read"]
 
 [research]
 summary = "research-runner, in its service container, which runs deep research for the skill (live cards at :8445/_live/research)"
@@ -85,6 +90,7 @@ guard = { runs = "research/runs", noun = "Deep-research runs" }
 serve = [{ https = 8445, path = "/_live/research", port = 8450 }]
 health = { "research live cards" = "http://127.0.0.1:8450/_live/research/dr-00000000.png" }
 install = true
+skills = ["deep-research"]
 
 [agents]
 summary = "agents-runner, which runs delegations (live cards at :8445/_live/agents)"
@@ -95,6 +101,7 @@ guard = { runs = "agents/runs", noun = "Delegations" }
 serve = [{ https = 8445, path = "/_live/agents", port = 8451 }]
 health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-00000000.png" }
 why_not_installed = "it needs a developer API key in ~/.config/everythingllm/agents.env first"
+skills = ["delegate", "memories", "remind-once", "schedule-job", "scheduled-jobs", "update-prompt"]
 
 [relay]
 summary = "the Nilson relay, in its service container, beside AnythingLLM at https :3001/everythingllm/"

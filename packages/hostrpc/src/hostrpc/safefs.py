@@ -22,8 +22,10 @@ FILE_FLAGS = os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
 
 def open_dir(root: Path, parts: Sequence[str] = (), *, make: bool = False) -> int:
-    """An fd for the folder `root`/`parts`, no step of it a symlink; with `make`, the
-    folders in `parts` are made (0755) where missing."""
+    """An fd for the folder `root`/`parts`, no step of it a symlink; with `make`, `root`
+    and the folders in `parts` are made (0755) where missing."""
+    if make:
+        os.makedirs(root, 0o755, exist_ok=True)  # the caller's, trusted
     fd = os.open(root, DIR_FLAGS)
     try:
         for name in parts:

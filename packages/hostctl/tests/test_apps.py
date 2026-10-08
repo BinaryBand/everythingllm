@@ -212,6 +212,23 @@ def test_the_skills_socket_list_is_the_registrys():
     assert named == {name.upper() for name in apps.runners().values()}
 
 
+def test_every_skill_is_one_apps_and_reaches_its_runner():
+    """Deploy copies a skill only while its app is set up, so each of ours is one app's,
+    and one whose runner it calls (it may call others too: deep-research has agents-runner
+    follow its run, if it's there)."""
+    skills = REPO / "anythingllm" / "agent-skills"
+    ours = sorted(p.name for p in skills.iterdir() if p.is_dir() and p.name != "_lib")
+    listed = [s for app in apps.load().values() for s in app.skills]
+    assert sorted(listed) == ours  # each once, and none that isn't there
+    reaches = re.compile(
+        r'socketPath\("(\w+)"|service: "(\w+)"|require\("\.\./_lib/(\w+)"\)'
+    )
+    for skill, app in apps.skill_apps().items():
+        assert app.runner, f"{app.name} has skills but no runner"
+        code = "".join(p.read_text() for p in (skills / skill).glob("*.js"))
+        assert app.name in {n for m in reaches.findall(code) for n in m}, skill
+
+
 def test_a_mapping_is_a_url_on_the_public_host():
     assert apps.Mapping(8445, 8445).url("h.example") == "https://h.example:8445/"
     m = apps.Mapping(3001, 8446, "/everythingllm")

@@ -179,11 +179,11 @@ def data_dir() -> Path:
       venvs/<name>/        the host services' venvs
       venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/)
       pages/public/        the pages site Caddy serves; pages/entries/, the Zola entries
-      sandbox/workspaces/  the sandbox's folders, per workspace: threads/, project/, shared/,
-                           and browser/, the workspace's browser profile (browser-runner's)
+      sandbox/workspaces/  the sandbox's folders, per workspace: threads/, project/, shared/
       sandbox/public/      each sandbox workspace's /public, served as it is on :8447
-      browser/             browser-runner's: sockets/<slot>/ (each browser's), novnc/ and
-                           vault/ (the saved logins, sealed)
+      browser/             browser-runner's: profiles/<workspace>/ (each workspace's
+                           browser profile), sockets/<slot>/ (each browser's), downloads/,
+                           novnc/ and vault/ (the saved logins, sealed)
       research/runs/       the deep-research run log and live runs' markers
       agents/runs/         the delegations' run log and live runs' markers; agents/ also
                            keeps the one-offs made (once.json) and the research runs

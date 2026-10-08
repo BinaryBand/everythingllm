@@ -6,7 +6,7 @@ them out from unit names. App code doesn't read it. Standard library only, like 
 any python3 with packages/hostctl/src on PYTHONPATH can import it (health.sh, the `before` steps).
 
     apps = load()                 # name -> App, in the file's order
-    runners(), guarded(), app_of(unit), serve_mappings(), health_checks()
+    runners(), guarded(), app_of(unit), serve_mappings(), health_checks(), skill_apps()
 """
 
 from dataclasses import dataclass, field
@@ -29,6 +29,7 @@ FIELDS = {
     "health",
     "install",
     "why_not_installed",
+    "skills",
 }
 
 
@@ -74,6 +75,7 @@ class App:
     health: dict[str, str] = field(default_factory=dict)  # name -> URL
     install: bool = False
     why_not_installed: str = ""
+    skills: tuple[str, ...] = ()  # its skills in anythingllm/agent-skills/
 
     @property
     def container_units(self) -> list[str]:
@@ -107,6 +109,7 @@ def _app(name: str, raw: dict) -> App:
         health=dict(raw.get("health", {})),
         install=raw.get("install", False),
         why_not_installed=raw.get("why_not_installed", ""),
+        skills=tuple(raw.get("skills", ())),
     )
 
 
@@ -153,3 +156,8 @@ def health_checks(apps: dict[str, App] | None = None) -> list[tuple[str, str]]:
         for app in (apps or load()).values()
         for name, url in app.health.items()
     ]
+
+
+def skill_apps(apps: dict[str, App] | None = None) -> dict[str, App]:
+    """The skills an app lists -> that app."""
+    return {skill: app for app in (apps or load()).values() for skill in app.skills}

@@ -5,7 +5,8 @@
   list               the apps: what each is, and whether `uv run hostctl install` sets it up (or why not)
   setup APP...       for each app: run its `before` steps, enable and (re)start its units and (re)start its containers (asking first while a
                      guarded one has a run going; FORCE=1 doesn't ask), and enable and start
-                     its timers, and print the HTTPS routes it needs from the machine
+                     its timers, and print the HTTPS routes it needs from the machine and
+                     whether its skills wait for a deploy
   setup --installed  the same for every app `uv run hostctl install` sets up
   routes             the HTTPS routes the machine must provide (each app's `serve`), each
                      checked over https://PUBLIC_HOST with OK/FAIL (an app `install`
@@ -44,7 +45,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from hostctl import apps, run_guard
-from hostctl.units import active, host_settings, storage
+from hostctl.units import SKILLS, active, host_settings, storage
 
 ROOT = Path(__file__).resolve().parents[4]
 # hostctl, so a `before` step's python3 finds it whichever it is.
@@ -184,6 +185,9 @@ def setup(app: apps.App) -> None:
         print("routes it needs from the machine (uv run hostctl routes checks them):", flush=True)
         for m in app.serve:
             print(f"  {m.describe(host)}", flush=True)
+    live = storage() / SKILLS
+    if missing := [s for s in app.skills if not (live / s).is_dir()]:
+        print(f"its skills reach AnythingLLM with `uv run hostctl deploy` ({', '.join(missing)})", flush=True)
 
 
 def ping(sock: Path, timeout: float = PING_SECONDS) -> str:

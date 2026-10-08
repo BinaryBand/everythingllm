@@ -4,10 +4,9 @@ browser-login), with a live card in the chat and a take-over view on its own HTT
 
 A workspace's browser is a podman container (host/containers/browser) started on its first
 call and stopped when nobody has used or watched it for IDLE seconds. Its profile (cookies,
-logins, history) is the workspace's alone and outlives the container: it's in the
-sandbox's folder for the workspace, beside the folders the sandbox mounts, never in one:
+logins, history) is the workspace's alone and outlives the container:
 
-  <root>/<workspace>/browser/profile/   the profile, which no sandbox run can see
+  <data>/profiles/<workspace>/          the profile, which no sandbox run can see
   <root>/<workspace>/project/downloads/ downloads, which run-code sees as /project/downloads
 
 The container never mounts a folder a sandbox run can write: a run could make one a symlink,
@@ -85,11 +84,11 @@ PUBLIC_HOST; `new` whether the card is new to this chat (the tab was just made).
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST  from host.env (the egress profile needs PUBLIC_HOST)
   BROWSER_SOCKET         the socket to listen on (default <storage>/everythingllm/browser/runner.sock)
-  BROWSER_ROOT           the workspaces' folders (default ~/.local/share/everythingllm/sandbox/workspaces,
-                         the sandbox's SANDBOX_ROOT)
+  BROWSER_ROOT           the sandbox's workspace folders, where downloads go (default
+                         ~/.local/share/everythingllm/sandbox/workspaces, the sandbox's SANDBOX_ROOT)
   BROWSER_DATA           the runner's own folder (default ~/.local/share/everythingllm/browser):
-                         sockets/<slot>/, downloads/<workspace>/ and novnc/ (copied from the image by
-                         hostctl browser-images)
+                         profiles/<workspace>/, sockets/<slot>/, downloads/<workspace>/ and novnc/
+                         (copied from the image by hostctl browser-images)
   BROWSER_LIVE_PORT      the live cards' port (default 8453), on LIVE_HOST (default 127.0.0.1)
   BROWSER_TAKEOVER_PORT  the take-over view's port (default 8454), on 127.0.0.1
   BROWSER_VAULT_KEY      the saved logins' key (default ~/.config/everythingllm/browser-vault.key,
@@ -226,6 +225,9 @@ class Config:
 
     def downloads(self, workspace: str) -> Path:
         return self.data / "downloads" / workspace
+
+    def profile(self, workspace: str) -> Path:
+        return self.data / "profiles" / workspace
 
 
 @dataclass(eq=False)
@@ -476,7 +478,6 @@ class Runner(hostrpc.Service):
         mounted (data only: noexec) and the repo read-only for the driver's code."""
         c, ws = self.config, session.workspace
         data = "rw,noexec,nosuid,nodev"
-        home = c.root / ws  # only browser/, which no sandbox run mounts
         src = c.repo / "packages"
         return [
             "run", "-d", "--rm", "--init",
@@ -494,7 +495,7 @@ class Runner(hostrpc.Service):
             "-e", f"BROWSER_SCREEN={SCREEN}",
             "-e", f"PYTHONPATH={src / 'browser' / 'src'}:{src / 'hostrpc' / 'src'}",
             "-v", f"{c.repo}:{c.repo}:ro",
-            "-v", f"{home / 'browser' / 'profile'}:/profile:{data}",
+            "-v", f"{c.profile(ws)}:/profile:{data}",
             "-v", f"{c.downloads(ws)}:/downloads:{data}",
             "-v", f"{session.folder}:/run/browser:{data}",
             IMAGE,
@@ -527,8 +528,7 @@ class Runner(hostrpc.Service):
         # this one has a session in it.
         self.reserved.add(slot[0])
         try:
-            home = self.config.root / workspace
-            for d in (home / "browser" / "profile", self.config.downloads(workspace)):
+            for d in (self.config.profile(workspace), self.config.downloads(workspace)):
                 d.mkdir(parents=True, exist_ok=True)
             folder = self.config.sockets(slot[0])
             folder.mkdir(parents=True, exist_ok=True)

@@ -148,6 +148,11 @@ def test_setup_runs_its_steps_restarts_and_says_its_routes(ran, monkeypatch, cap
     out = capsys.readouterr().out
     assert "  https://h.example:8445/_live/browser/ -> http://127.0.0.1:8453" in out
     assert "  https://h.example:8454/ -> http://127.0.0.1:8454" in out
+    assert "its skills reach AnythingLLM with `uv run hostctl deploy` (browse, " in out
+    for skill in registry["browser"].skills:
+        (appctl.storage() / appctl.SKILLS / skill).mkdir(parents=True)
+    appctl.setup(registry["browser"])
+    assert "uv run hostctl deploy" not in capsys.readouterr().out
     ran.clear()
     # The relay is a container, which Quadlet enables, so it's only restarted.
     appctl.setup(registry["relay"])

@@ -360,18 +360,11 @@ def test_a_workspaces_shared_folder_counts_toward_its_quota(cfg, monkeypatch):
     go(r.op_run(B, "python", "1"))  # other workspaces are unaffected
 
 
-def test_the_workspaces_browser_profile_isnt_the_sandboxs_to_count_or_show(
-    cfg, monkeypatch
-):
+def test_the_browsers_downloads_count_toward_the_workspace(cfg, monkeypatch):
     monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 10)
     r = make(cfg)
     go(r.op_run(A, "bash", "true"))
-    profile = cfg.root / "career" / "browser" / "profile"  # browser-runner's
-    profile.mkdir(parents=True)
-    (profile / "Cookies").write_bytes(b"x" * 100)
-    result = go(r.op_run(A, "bash", "true"))
-    assert result["exit_code"] == 0 and result["changed"] == []
-    downloads = cfg.root / "career" / "project" / "downloads"  # these count: /project's
+    downloads = cfg.root / "career" / "project" / "downloads"  # browser-runner's copies
     downloads.mkdir()
     (downloads / "a.pdf").write_bytes(b"x" * 11)
     with pytest.raises(runner.SandboxError, match=r"biggest: /project/downloads/"):

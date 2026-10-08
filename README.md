@@ -16,9 +16,9 @@ uv run hostctl install
 
 1. renders and starts the units (`uv run hostctl units`)
 1. waits for AnythingLLM
-1. deploys (`uv run hostctl deploy`)
 1. points web search at SearXNG
 1. runs every setup target: the sandbox, the egress proxy, the browser and research
+1. deploys (`uv run hostctl deploy`), after the setups, since it deploys only the skills of the apps set up here
 1. runs `uv run hostctl health`, which checks the machine's routes (see "The machine's routes")
 1. ends with a checklist of what only AnythingLLM's UI can do. Each item is ticked when it's already done: the chat model and embedder, a DeepSeek key, the agent limits in the `.env`, create-scheduled-job off and no job or file tool running without asking, the machine's routes answering, SearXNG answering, a workspace, the built-in skills to turn off, Gmail.
 
@@ -93,14 +93,15 @@ An Ansible playbook used to install the two containers' units and `/srv/static-a
 
 ### The apps
 
-Every app this repo runs is declared once, in `packages/hostctl/src/hostctl/apps.toml`: its units and a label for each, its socket, the HTTPS routes it needs from the machine, whether its restarts wait for a run (the guard), its health checks, the steps its setup runs first, and whether `uv run hostctl install` sets it up (and if not, why). hostctl reads it through `hostctl.apps` (standard library only, like the rest of hostctl); app code never does. `uv run hostctl apps` lists the apps; for each:
+Every app this repo runs is declared once, in `packages/hostctl/src/hostctl/apps.toml`: its units and a label for each, its socket, the HTTPS routes it needs from the machine, whether its restarts wait for a run (the guard), its health checks, the steps its setup runs first, whether `uv run hostctl install` sets it up (and if not, why), and its skills. hostctl reads it through `hostctl.apps` (standard library only, like the rest of hostctl); app code never does. `uv run hostctl apps` lists the apps; for each:
 
 - `uv run hostctl <app>-setup` installs its own units (`uv run hostctl units <app>`, so another app's runner never moves into its container on the side), runs its `before` steps (the sandbox's and the service containers' image builds, the agents and gateway key files, the relay's settings file), enables and (re)starts its units and (re)starts its containers, asking first while a guarded one has a run going (`FORCE=1` doesn't ask), starts its timers, and prints the routes it needs from the machine (`hostctl.appctl`).
 - `uv run hostctl <app>-logs` follows its units and the ones it watches.
+- `uv run hostctl deploy` copies an app's skills into AnythingLLM only while the app is set up here, which is while its runner is enabled (its setup enables a host unit; a container's unit counts once `uv run hostctl units` installed it), and takes them out of storage otherwise, so the agent isn't offered a tool whose runner isn't there. So a machine can run some apps and not others: the browser without the sandbox, say, or no delegations until agents-runner has its key. `<app>-setup` says when the app's skills are still waiting for a deploy.
 - `uv run hostctl routes` lists every app's routes on `PUBLIC_HOST` and checks each answers (see "The machine's routes"); it sets nothing up.
 - `uv run hostctl health` checks every app's units, health URLs, routes and sockets (`health.sh`, which gets them from `python3 -m hostctl.appctl units`, `health`, `routes` and `sockets`, pinging each runner).
 
-Adding an app: its code, its unit template in `host/`, and one entry in `apps.toml`. `packages/hostctl/tests/test_apps.py` says what's missing: a template no app owns, a unit without a template, two mappings on one port, or a port that isn't the one the code or the unit uses.
+Adding an app: its code, its unit template in `host/`, and one entry in `apps.toml`, listing its skills. `packages/hostctl/tests/test_apps.py` says what's missing: a template no app owns, a unit without a template, two mappings on one port, a port that isn't the one the code or the unit uses, or a skill no app lists (or one that never calls its app's runner).
 
 ### AnythingLLM's password
 
@@ -156,13 +157,14 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
   pages/public/        the pages site Caddy serves: link cards (_cards/), shown images
                        (_images/) and the research site's old reports (research/)
   sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
-                       shared/), and beside them the workspace's browser profile
-                       (browser/, browser-runner's)
+                       shared/)
   sandbox/access.json  each workspace's web and model access (sandbox-access)
   sandbox/apps/        each app's write-back token (<workspace>/<name>.json, mode 600)
   sandbox/models/      the model calls runs made (YYYY-MM.jsonl), and sandbox/m/ their sockets
-  browser/             browser-runner's: each running browser's sockets (sockets/<slot>/),
-                       noVNC for the take-over view (novnc/) and the saved logins
+  browser/             browser-runner's: each workspace's browser profile
+                       (profiles/<workspace>/), each running browser's sockets
+                       (sockets/<slot>/), downloads as they're saved (downloads/), noVNC
+                       for the take-over view (novnc/) and the saved logins
                        (vault/<workspace>.vault, sealed)
   research/runs/       the deep-research run log and live runs' markers
   agents/runs/         the delegations' run log and live runs' markers
@@ -194,7 +196,7 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
 
 `uv run hostctl` lists every command. Day to day: `uv run hostctl diff` shows what would change live, `uv run hostctl deploy` copies it into storage and restarts AnythingLLM, `uv run hostctl test` runs every test and `uv run hostctl health` checks every unit, port, host service and runner socket. `uv run hostctl import-skill <hubId>` brings a skill made in the UI under the repo. Slash commands aren't in the repo: they're AnythingLLM's, made and changed in its UI.
 
-Skill handlers are re-required on each load, so a changed skill doesn't need a restart, but `uv run hostctl deploy` also runs `uv run hostctl restart`, so AnythingLLM picks up a new or removed skill and what it preloads (`thread-scope.js`, the log filter). Deploy doesn't remove a skill the repo dropped from storage; delete its folder in `storage/plugins/agent-skills/` by hand. On deploy, a skill's `active` flag and any setup_args `value` saved through the UI are kept from the live `plugin.json` unless the repo sets a `value` itself. AnythingLLM's MCP servers (`storage/plugins/anythingllm_mcp_servers.json`) and scheduled jobs are its own: deploy writes neither.
+Skill handlers are re-required on each load, so a changed skill doesn't need a restart, but `uv run hostctl deploy` also runs `uv run hostctl restart`, so AnythingLLM picks up a new or removed skill and what it preloads (`thread-scope.js`, the log filter). Deploy copies only the skills of the apps set up here (see "The apps"). It doesn't remove a skill the repo dropped; delete its folder in `storage/plugins/agent-skills/` by hand. On deploy, a skill's `active` flag and any setup_args `value` saved through the UI are kept from the live `plugin.json` unless the repo sets a `value` itself. AnythingLLM's MCP servers (`storage/plugins/anythingllm_mcp_servers.json`) and scheduled jobs are its own: deploy writes neither.
 
 ## uv cheatsheet
 
@@ -403,13 +405,13 @@ They're skills, not MCP tools, because they act and must know their workspace: e
 **Where things are.** A workspace's browser is a container, `everythingllm-browser-<workspace>` (image `localhost/everythingllm-browser`, `host/containers/browser/`). It's started on the workspace's first call and stopped after 20 minutes unused and unwatched; the profile outlives it:
 
 ```text
-sandbox/workspaces/<workspace>/browser/profile/   cookies, logins, history (mounted at /profile)
+browser/profiles/<workspace>/                     cookies, logins, history (mounted at /profile)
 browser/downloads/<workspace>/<thread>/           downloads as they're saved (/downloads)
 sandbox/workspaces/<workspace>/project/downloads/ where they end up (run-code's /project/downloads)
 browser/sockets/<slot>/                           driver.sock and vnc.sock (/run/browser)
 ```
 
-The profile sits in the workspace's sandbox folder, beside the folders the sandbox mounts, never in one: no run can read the cookies, and the sandbox's size limit leaves the profile out. The container never mounts a folder a run can write, since a run could make it a symlink and podman would mount wherever it points. Downloads are saved to browser-runner's own folder (at most 10 between two reads, 256 MB each), and the runner copies each one to `/project/downloads` after the thread's next call, opening every step without following a symlink (`hostrpc.safefs`). They go to `/project`, not `/shared`, which every other workspace can read. `uv run hostctl browser-reset <workspace>` stops the workspace's browser and wipes its profile.
+The profile is in browser-runner's own folder, which no sandbox run mounts, so no run can read the cookies. The container never mounts a folder a run can write, since a run could make it a symlink and podman would mount wherever it points. Downloads are saved to browser-runner's own folder (at most 10 between two reads, 256 MB each), and the runner copies each one to `/project/downloads` after the thread's next call, opening every step without following a symlink (`hostrpc.safefs`). They go to `/project`, not `/shared`, which every other workspace can read. `uv run hostctl browser-reset <workspace>` stops the workspace's browser and wipes its profile.
 
 **The container.** It's hardened like a service container: read-only root (`/tmp` and Xvfb's key maps on tmpfs), every capability dropped, `no-new-privileges`, `keep-id`, 2 GB of memory, 1 CPU, 1024 processes, `--init`, and the repo mounted read-only for the driver's code. Its entrypoint starts Xvfb, x11vnc on `/run/browser/vnc.sock`, and `browser.driver`, which launches Chromium through Playwright with the persistent profile and answers browser-runner on `/run/browser/driver.sock` (hostrpc). A stop tells the driver first, which closes Chromium while its screen is still there, so the profile is saved as closed cleanly; a browser that ends badly anyway doesn't offer to restore its pages (`--hide-crash-restore-bubble`). One tab per chat thread (an API chat's too, by `thread-scope.js`; see "Scopes" under "Code sandbox"); a popup (a login window) becomes the thread's tab until it closes; downloads are saved and alerts answered on their own (confirms are dismissed), and both are reported in the next read. Closing the window ends the container, and browser-runner starts it again on the next call. Chromium's own sandbox is off (it needs user namespaces the container doesn't give), so the container is the boundary.
 

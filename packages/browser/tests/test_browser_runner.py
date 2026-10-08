@@ -93,11 +93,10 @@ def test_a_browser_is_hardened_and_mounts_only_its_workspaces_profile_downloads_
     assert "host" not in joined.split("--network ")[1].split()[0]
     assert f"BROWSER_PROXY={r.config.proxy}" in args
     volumes = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
-    home = tmp_path / "workspaces" / "career"
     data = "rw,noexec,nosuid,nodev"
     assert volumes == [
         "/repo:/repo:ro",
-        f"{home}/browser/profile:/profile:{data}",
+        f"{tmp_path}/data/profiles/career:/profile:{data}",
         f"{tmp_path}/data/downloads/career:/downloads:{data}",
         f"{tmp_path}/data/sockets/browser-1:/run/browser:{data}",
     ]
@@ -129,10 +128,10 @@ def test_open_starts_the_workspaces_browser_and_gives_each_thread_a_tab_and_card
         assert (
             len(podman.runs()) == 1
         )  # one browser for the workspace, a tab per thread
-        home = tmp_path / "workspaces" / "career"
-        assert (home / "browser" / "profile").is_dir()
+        assert (tmp_path / "data" / "profiles" / "career").is_dir()
         assert (tmp_path / "data" / "downloads" / "career").is_dir()
-        assert not (home / "shared").exists() and not (home / "project").exists()
+        # The sandbox's folders, which the browser uses only for downloads.
+        assert not (tmp_path / "workspaces").exists()
         acted = await r.op_act(scope(thread="7"), "click", "e1")
         assert "Sign in" in acted["page"]
         found = await r.op_read(scope(thread="7"), "home")

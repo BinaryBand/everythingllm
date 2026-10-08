@@ -78,10 +78,9 @@ def install() -> None:
     machine.main(["check"])
     install_units()
     machine.main(["wait-api"])
-    deploy()
-    machine.main(["wait-api"])
     machine.main(["search"])
     appctl.main(["setup", "--installed"])
+    deploy()  # after the setups: it deploys only the skills of apps set up here
     machine.main(["wait-api"])
     try:
         health()
@@ -318,7 +317,7 @@ def browser_reset(workspace: str) -> None:
     if not WORKSPACE_RE.fullmatch(workspace):
         raise SystemExit(f"browser-reset: '{workspace}' isn't a workspace's slug")
     run("podman", "rm", "-f", "--time", "5", BROWSER_PREFIX + workspace, check=False)
-    profile = run_guard.DATA / "sandbox" / "workspaces" / workspace / "browser"
+    profile = run_guard.DATA / "browser" / "profiles" / workspace
     if profile.exists():
         shutil.rmtree(profile)
         print(f"removed {profile}")

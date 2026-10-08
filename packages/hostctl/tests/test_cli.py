@@ -96,7 +96,9 @@ def test_install_keeps_going_past_a_failed_health_check(ran, monkeypatch):
     cli.main(["install"])
     assert ran[:3] == ["machine check", "units install", "machine wait-api"]
     assert ran[-3:] == ["machine wait-api", "health", "machine checklist"]
-    assert "appctl setup --installed" in ran
+    # Deploy comes after the setups, which enable the runners whose skills it deploys.
+    setup, synced = ran.index("appctl setup --installed"), ran.index("sync deploy")
+    assert setup < synced
 
 
 def test_sandbox_images_builds_the_image_and_egress_net(ran):
@@ -222,12 +224,14 @@ def test_browser_reset_stops_the_browser_and_wipes_only_its_profile(
     ran, monkeypatch, tmp_path
 ):
     monkeypatch.setattr(cli.run_guard, "DATA", tmp_path)
-    home = tmp_path / "sandbox" / "workspaces" / "career"
-    (home / "browser" / "profile").mkdir(parents=True)
-    (home / "project").mkdir()
+    browser = tmp_path / "browser"
+    (browser / "profiles" / "career" / "Default").mkdir(parents=True)
+    (browser / "profiles" / "other").mkdir()
+    (browser / "vault").mkdir()
     cli.main(["browser-reset", "career"])
     assert ran == ["podman rm -f --time 5 everythingllm-browser-career"]
-    assert not (home / "browser").exists() and (home / "project").is_dir()
+    assert not (browser / "profiles" / "career").exists()
+    assert (browser / "profiles" / "other").is_dir() and (browser / "vault").is_dir()
     for bad in ("../career", "Career", "career\n"):
         with pytest.raises(SystemExit):
             cli.main(["browser-reset", bad])

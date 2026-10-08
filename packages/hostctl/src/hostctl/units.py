@@ -85,6 +85,10 @@ def host_settings(file: Path) -> dict[str, str]:
     return {**values, **{k: v for k, v in os.environ.items() if k in values}}
 
 
+# Where deploy puts the skills, in storage (hostctl.sync).
+SKILLS = Path("plugins") / "agent-skills"
+
+
 def storage() -> Path:
     """AnythingLLM's storage, from host.env or the environment; exits if neither has it."""
     found = host_settings(ROOT / "host.env").get("ANYTHINGLLM_STORAGE")
@@ -401,13 +405,20 @@ def belongs(unit: str, names: list[str]) -> bool:
     return any(unit == f"{n}.service" or unit.startswith(f"{n}-") for n in names)
 
 
+def is_(state: str, unit: str) -> bool:
+    """`systemctl --user is-<state> --quiet unit` said yes."""
+    cmd = ["systemctl", "--user", f"is-{state}", "--quiet", unit]
+    return subprocess.run(cmd, check=False).returncode == 0
+
+
 def active(service: str) -> bool:
-    return (
-        subprocess.run(
-            ["systemctl", "--user", "is-active", "--quiet", service], check=False
-        ).returncode
-        == 0
-    )
+    return is_("active", service)
+
+
+def enabled(unit: str) -> bool:
+    """Whether `unit` starts with the user's session: enabled (a host unit, by its app's
+    setup) or generated (a Quadlet container, once `uv run hostctl units` installed it)."""
+    return is_("enabled", unit)
 
 
 def main(argv: list[str] | None = None) -> None:

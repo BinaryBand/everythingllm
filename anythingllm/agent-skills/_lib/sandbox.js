@@ -21,7 +21,7 @@ async function withSandbox(self, work) {
   const signal = self.super?.abortController?.signal ?? null;
   const scope = scopeOf(self);
   const request = (op, args) =>
-    call(socketPath("sandbox", "SANDBOX_SOCKET"), op, { scope, ...args }, { name: "the sandbox runner", signal });
+    call(socketPath("sandbox", "SANDBOX_SOCKET"), op, { ...args, scope }, { name: "the sandbox runner", signal });
   try {
     return await work(request);
   } catch (e) {

@@ -24,7 +24,7 @@ async function withBrowser(self, work) {
   const signal = self.super?.abortController?.signal ?? null;
   const scope = scopeOf(self);
   const request = (op, args) =>
-    call(socketPath("browser", "BROWSER_SOCKET"), op, { scope, ...args }, { name: "the browser runner", signal, timeoutMs: TIMEOUT_MS });
+    call(socketPath("browser", "BROWSER_SOCKET"), op, { ...args, scope }, { name: "the browser runner", signal, timeoutMs: TIMEOUT_MS });
   try {
     return (await work(request)) ?? CLOSED;
   } catch (e) {

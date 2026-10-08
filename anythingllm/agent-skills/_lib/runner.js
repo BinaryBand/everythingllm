@@ -32,7 +32,7 @@ async function forward(self, { service, env, op, args, timeoutMs = 120_000, repl
 /** forward, with the call's scope ({workspace, thread}, from the invocation, never the
  *  model) added to `args`: for an op that acts on the chat's workspace. */
 async function forwardScoped(self, { args, ...spec }) {
-  return forward(self, { ...spec, args: { scope: scopeOf(self), ...args } });
+  return forward(self, { ...spec, args: { ...args, scope: scopeOf(self) } }); // the invocation's, always
 }
 
 /**

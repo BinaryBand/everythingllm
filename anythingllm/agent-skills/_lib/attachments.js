@@ -27,7 +27,8 @@ const source = { load: () => require(PRISMA) };
 
 /** The chat a skill call came from: a chat in AnythingLLM's UI has a row of its own, with
  *  thread_id and user_id (null in the main chat and in single-user mode); API, Telegram
- *  and scheduled job runs have neither, and get no attachments. */
+ *  and scheduled job runs have no row (an API chat's thread_id is thread-scope.js's), and
+ *  get no attachments. */
 function chatOf(self) {
   const invocation = uiInvocation(self);
   const workspaceId = invocation?.workspace?.id;

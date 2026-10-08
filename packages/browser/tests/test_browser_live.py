@@ -215,9 +215,11 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
         return None if key == "GOOD" else (403, "No valid api key found.")
 
     async def lookup(workspace, slug):
-        return {("career", "chat-7"): "7", ("career", "chat-8"): "8"}.get(
-            (workspace, slug)
-        )
+        return {
+            ("career", "chat-7"): "7",
+            ("career", "chat-8"): "8",
+            ("career", None): "default",
+        }.get((workspace, slug))
 
     async def main():
         podman = FakePodman()
@@ -274,6 +276,15 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
             assert body["logins"][0]["state"] == "declined"
             _, body = await ask(port, "/chat/career/chat-8", key="GOOD")
             assert body == {"tab": None, "logins": []}  # another chat's are its own
+            # The main chat, which has no thread: the workspace's route alone.
+            _, body = await ask(port, "/chat/career", key="GOOD")
+            assert body == {"tab": None, "logins": []}
+            await r.op_open(scope(thread="default"), "https://example.com/")
+            main = r.threads[("career", "default")]
+            _, body = await ask(port, "/_live/browser/chat/career", key="GOOD")
+            assert body["tab"]["page"] == f"{cards}/{main.id}"
+            head, body = await ask(port, "/chat/nowhere", key="GOOD")
+            assert b"404" in head and body == {"error": "No such chat."}
             await r.stop("career")
             _, body = await ask(port, route, key="GOOD")
             assert body["tab"]["state"] == "closed"
@@ -336,6 +347,11 @@ def test_a_threads_id_comes_from_its_workspaces_list(monkeypatch, tmp_path):
         assert await ids("career", "gone") is None
         assert await ids("nowhere", "chat-7") is None
         assert len(lists) == 4
+        assert (
+            await ids("career", None) == "default"
+        )  # the main chat, from the list kept
+        assert await ids("nowhere", None) is None  # no workspace, no main chat
+        assert len(lists) == 5
         with pytest.raises(chats.Unavailable):  # AnythingLLM's trouble isn't "no chat"
             await ids("broken", "chat-7")
 

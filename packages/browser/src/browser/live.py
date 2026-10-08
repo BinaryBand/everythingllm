@@ -31,8 +31,8 @@ The agent's request for a login (Runner.op_ask_login) has a card too:
 
 A tab's id is `bw-` and 16 hex digits, not guessable, and a request's `lr-` and 32: the
 card and its link are the only way to either, but for a client with an AnythingLLM
-developer API key, which `chat/<workspace>/<thread>` tells a chat's cards and how they
-stand (browser.chats). A connection from anywhere but loopback or the server's own address
+developer API key, which `chat/<workspace>/<thread>` (or `chat/<workspace>` for its main
+chat) tells a chat's cards and how they stand (browser.chats). A connection from anywhere but loopback or the server's own address
 is refused (hostrpc.local_peer).
 
 Config (environment):
@@ -211,7 +211,7 @@ class Live:
         writer: asyncio.StreamWriter,
         method: str,
         workspace: str,
-        thread: str,
+        thread: str | None,
         headers: dict[str, str],
     ) -> None:
         """A chat's cards and how they stand, for a client with a key (browser.chats)."""

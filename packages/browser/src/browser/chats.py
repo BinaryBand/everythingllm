@@ -5,10 +5,13 @@ show the tab's card from the agent's first step and say in words who has the bro
 the answer too.
 
     GET /_live/browser/chat/<workspace>/<thread>     Authorization: Bearer <key>
+    GET /_live/browser/chat/<workspace>              the workspace's main chat
 
 `<thread>` is the thread's slug, as the developer API names it; the runner keeps tabs by
 AnythingLLM's thread id (the scope a skill gives it), which only the internal API has, so it
-asks that for the workspace's threads (ThreadIds). The answer:
+asks that for the workspace's threads (ThreadIds). The main chat, which has no thread (nor
+does a developer API chat sent without one, which goes to it), is the runner's thread
+`default` (MAIN, as `_lib/scope.js` names it). The answer:
 
     {"tab": null | {"card", "page", "state", "title", "last"},
      "logins": [{"card", "page", "site", "state"}, ...]}
@@ -57,8 +60,9 @@ if TYPE_CHECKING:
 log = logging.getLogger("browser-runner")
 
 ROUTE = re.compile(
-    r"(?:/_live/browser)?/chat/([a-z0-9_][a-z0-9_-]{0,99})/([A-Za-z0-9_-]{1,64})"
+    r"(?:/_live/browser)?/chat/([a-z0-9_][a-z0-9_-]{0,99})(?:/([A-Za-z0-9_-]{1,64}))?"
 )
+MAIN = "default"  # the main chat's thread in the scopes skills give (_lib/scope.js)
 CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Authorization",
@@ -71,8 +75,9 @@ TIMEOUT = 10
 
 # None for a good key, else the status and error to answer with.
 Check = Callable[[str], Awaitable[tuple[int, str] | None]]
-# A thread's id from its workspace and slug, or None when the workspace has no such thread.
-Lookup = Callable[[str, str], Awaitable[str | None]]
+# A thread's id from its workspace and slug (None: the main chat, MAIN), or None when the
+# workspace has no such thread or doesn't exist.
+Lookup = Callable[[str, str | None], Awaitable[str | None]]
 
 
 def anythingllm_url() -> str:
@@ -150,9 +155,9 @@ class ThreadIds:
             str, tuple[float, dict[str, str]]
         ] = {}  # workspace -> (when, slug -> id)
 
-    def threads(self, workspace: str) -> dict[str, str]:
-        """The workspace's threads (slug -> id), {} when it has none or there's no such
-        workspace; raises Unavailable when AnythingLLM can't say."""
+    def threads(self, workspace: str) -> dict[str, str] | None:
+        """The workspace's threads (slug -> id), None when there's no such workspace;
+        raises Unavailable when AnythingLLM can't say."""
         url = f"{self.api}/workspace/{quote(workspace, safe='')}/threads"
         try:
             status, body = get_json(
@@ -170,7 +175,7 @@ class ThreadIds:
                 "AnythingLLM couldn't be reached to find the chat."
             ) from None
         if status == 404:
-            return {}  # no such workspace
+            return None  # no such workspace
         if status != 200 or not isinstance(body, dict):
             log.warning("listing %s's threads answered %d", workspace, status)
             raise Unavailable(f"AnythingLLM couldn't list the chats ({status}).")
@@ -180,14 +185,23 @@ class ThreadIds:
             if isinstance(t, dict) and t.get("slug") and t.get("id") is not None
         }
 
-    async def __call__(self, workspace: str, slug: str) -> str | None:
-        when, ids = self.known.get(workspace, (0.0, {}))
-        if slug not in ids or self.now() - when > REMEMBER:
+    async def __call__(self, workspace: str, slug: str | None) -> str | None:
+        known = self.known.get(workspace)
+        if (
+            known
+            and self.now() - known[0] <= REMEMBER
+            and (slug is None or slug in known[1])
+        ):
+            ids: dict[str, str] | None = known[1]
+        else:
             ids = await asyncio.to_thread(self.threads, workspace)
             now = self.now()
             self.known = {w: k for w, k in self.known.items() if now - k[0] <= REMEMBER}
-            self.known[workspace] = (now, ids)
-        return ids.get(slug)
+            if ids is not None:
+                self.known[workspace] = (now, ids)
+        if ids is None:
+            return None
+        return MAIN if slug is None else ids.get(slug)
 
 
 class Chats:
@@ -201,7 +215,7 @@ class Chats:
         self.lookup = lookup or ThreadIds()
 
     async def answer(
-        self, workspace: str, slug: str, headers: dict[str, str]
+        self, workspace: str, slug: str | None, headers: dict[str, str]
     ) -> tuple[str, dict[str, Any]]:
         """The status and JSON body for a GET of the chat's route."""
         scheme, _, key = headers.get("authorization", "").partition(" ")

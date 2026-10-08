@@ -4,6 +4,7 @@ The message is the start of the question; the answer's text never goes to ntfy.
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -16,8 +17,17 @@ def message(run: dict[str, Any], question: str) -> tuple[dict[str, str], bytes]:
     """The ntfy headers and body for a finished run."""
     headers = {
         "Title": "Answer ready" if run["status"] == "done" else "Answer failed",
-        # Subscribers get the tags, not other request headers.
-        "Tags": f"run={run['id']},workspace={run['workspace']},thread={run['thread']}",
+        # Subscribers get the tags, not other request headers. The client names the
+        # workspace and thread: quoted, a comma can't add a tag, nor a non-ASCII
+        # character make the header unsendable.
+        "Tags": ",".join(
+            f"{tag}={quote(str(run[key]), safe='')}"
+            for tag, key in (
+                ("run", "id"),
+                ("workspace", "workspace"),
+                ("thread", "thread"),
+            )
+        ),
     }
     return headers, " ".join(question.split())[:QUESTION_CHARS].encode()
 
@@ -31,7 +41,7 @@ def publisher(client: httpx.AsyncClient, url: str, token: str = ""):
             headers["Authorization"] = f"Bearer {token}"
         try:
             response = await client.post(url, content=body, headers=headers, timeout=10)
-        except httpx.HTTPError as e:
+        except Exception as e:  # noqa: BLE001 - a notice that can't go is only logged
             # Neither the topic's URL nor the token goes in the log: the topic is the secret.
             log.warning(
                 "couldn't notify ntfy about %s: %s", run["id"], type(e).__name__

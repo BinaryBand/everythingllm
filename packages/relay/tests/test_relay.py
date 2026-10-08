@@ -676,3 +676,18 @@ def test_only_loopback_and_the_relays_own_address_are_served():
     # On the host, where it listens on loopback.
     ask = partial(asked, LocalPeers(who_asked, "10.89.79.10"), ("127.0.0.1", 8446))
     assert go(ask(("127.0.0.1", 40000))) == (200, "127.0.0.1 http")
+
+
+def test_the_ntfy_tags_hold_the_clients_names_quoted():
+    from relay import notify
+
+    run = {
+        "id": "r_1",
+        "status": "done",
+        "workspace": "career",
+        "thread": "t,run=r_other",
+    }
+    headers, _ = notify.message(run, "q")
+    assert headers["Tags"] == "run=r_1,workspace=career,thread=t%2Crun%3Dr_other"
+    headers, _ = notify.message({**run, "thread": "tråd"}, "q")
+    headers["Tags"].encode("ascii")  # httpx sends header values as ASCII

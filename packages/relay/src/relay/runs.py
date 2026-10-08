@@ -144,7 +144,10 @@ class Relay:
             return
         log.info("run %s %s", run_id, row["status"])
         if notify and self.notify is not None and row["status"] in ("done", "failed"):
-            await self.notify(public(row), question)
+            try:  # nothing awaits this task, so its errors are logged here or nowhere
+                await self.notify(public(row), question)
+            except Exception:
+                log.exception("couldn't tell the app that run %s ended", run_id)
 
     async def _append(self, run_id: str, name: str, data: dict[str, Any]) -> None:
         async with self.changed:

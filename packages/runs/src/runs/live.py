@@ -46,7 +46,6 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, ClassVar
 
-import hostrpc
 from chatimage import linked_image, live, progress
 
 from runs.runlog import find
@@ -100,14 +99,9 @@ class Live:
     async def handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        try:
-            method, path, query = await asyncio.wait_for(live.read_request(reader), 10)
-        except (live.BadRequest, TimeoutError):
-            return await live.send(writer, "400 Bad Request", b"Bad request.\n")
-        if not hostrpc.local_peer(
-            writer.get_extra_info("peername"), writer.get_extra_info("sockname")
-        ):
-            return await live.send(writer, "403 Forbidden", b"Not from here.\n")
+        if not (head := await live.accept(reader, writer)):
+            return
+        method, path, query, _ = head
         if method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET only.\n")
         route = self.route.fullmatch(path)

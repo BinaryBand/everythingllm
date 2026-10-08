@@ -345,11 +345,15 @@ name = "chatimage"
 version = "0.1.0"
 source = { editable = "packages/chatimage" }
 dependencies = [
+    { name = "hostrpc" },
     { name = "pillow" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pillow", specifier = ">=11" }]
+requires-dist = [
+    { name = "hostrpc", editable = "packages/hostrpc" },
+    { name = "pillow", specifier = ">=11" },
+]
 
 [[package]]
 name = "click"

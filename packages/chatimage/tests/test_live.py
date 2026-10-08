@@ -39,7 +39,7 @@ def test_frames_are_pushed_in_order_and_the_stream_ends():
             yield b"png%d" % n
 
     async def handler(reader, writer):
-        seen.append(await live.read_request(reader))
+        seen.append((await live.read_head(reader))[:3])
         seen.append(await live.push(writer, frames()))
 
     async def go():
@@ -62,7 +62,7 @@ def test_a_push_without_cors_is_only_its_own_origins_to_read():
         yield b"png0"
 
     async def handler(reader, writer):
-        await live.read_request(reader)
+        await live.read_head(reader)
         await live.push(writer, frames(), cors=False)
 
     async def go():
@@ -86,7 +86,7 @@ def test_a_still_streams_frame_is_followed_by_a_part_so_a_browser_shows_it():
         yield b"png1"
 
     async def handler(reader, writer):
-        await live.read_request(reader)
+        await live.read_head(reader)
         await live.push(writer, frames())
 
     async def go():
@@ -115,7 +115,7 @@ def test_frames_that_come_quickly_are_sent_once():
             yield b"png%d" % n
 
     async def handler(reader, writer):
-        await live.read_request(reader)
+        await live.read_head(reader)
         await live.push(writer, frames())
 
     async def go():
@@ -143,7 +143,7 @@ def test_a_client_that_leaves_closes_the_frames():
             closed.set()
 
     async def handler(reader, writer):
-        await live.read_request(reader)
+        await live.read_head(reader)
         result.append(await live.push(writer, frames()))
 
     async def go():
@@ -166,7 +166,7 @@ def test_a_client_that_leaves_closes_the_frames():
 def test_a_plain_response_and_a_bad_request():
     async def handler(reader, writer):
         try:
-            await live.read_request(reader)
+            await live.read_head(reader)
         except live.BadRequest as e:
             return await live.send(writer, "400 Bad Request", str(e).encode())
         await live.send(writer, "302 Found", headers={"Location": "https://h/r/"})
@@ -187,7 +187,7 @@ def test_a_plain_response_and_a_bad_request():
 
 def test_a_single_frame_may_be_read_by_any_origin():
     async def handler(reader, writer):
-        await live.read_request(reader)
+        await live.read_head(reader)
         await live.send(writer, "200 OK", b"png", "image/png")
 
     async def go():
@@ -204,3 +204,42 @@ def test_a_query_asks_for_a_theme():
     assert live.theme("v=abc&theme=light") == "light"
     assert live.theme("theme=sepia") == "dark"
     assert live.theme("theme=light&theme=dark") == "dark"
+
+
+class Elsewhere:
+    """A connection's writer, as though it came from another container on egress-net."""
+
+    def __init__(self, writer):
+        self.writer = writer
+
+    def get_extra_info(self, name, default=None):
+        return {"peername": ("10.89.79.50", 40000), "sockname": ("10.89.79.40", 8000)}.get(name, default)
+
+    def __getattr__(self, name):
+        return getattr(self.writer, name)
+
+
+def test_accept_answers_only_a_request_from_here():
+    seen = []
+
+    def handler(wrap):
+        async def handle(reader, writer):
+            head = await live.accept(reader, wrap(writer))
+            seen.append(head)
+            if head:
+                await live.send(writer, "200 OK", b"ok\n")
+
+        return handle
+
+    async def go(wrap, request):
+        server, port = await serve(handler(wrap))
+        async with server:
+            return await get(port, request)
+
+    here = asyncio.run(go(lambda w: w, b"GET /a?b=1 HTTP/1.1\r\nHost: h\r\n\r\n"))
+    assert here.startswith(b"HTTP/1.1 200 OK")
+    assert seen.pop() == ("GET", "/a", "b=1", {"host": "h"})
+    bad = asyncio.run(go(lambda w: w, b"NOPE\r\n\r\n"))
+    assert bad.startswith(b"HTTP/1.1 400 Bad Request") and seen.pop() is None
+    other = asyncio.run(go(Elsewhere, b"GET /a HTTP/1.1\r\n\r\n"))
+    assert other.startswith(b"HTTP/1.1 403 Forbidden") and seen.pop() is None

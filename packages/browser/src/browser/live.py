@@ -53,7 +53,6 @@ import zlib
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
-import hostrpc
 from chatimage import (
     EDGE,
     THEME,
@@ -157,16 +156,9 @@ class Live:
     async def handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        try:
-            method, path, query, headers = await asyncio.wait_for(
-                live.read_head(reader), 10
-            )
-        except (live.BadRequest, TimeoutError):
-            return await live.send(writer, "400 Bad Request", b"Bad request.\n")
-        if not hostrpc.local_peer(
-            writer.get_extra_info("peername"), writer.get_extra_info("sockname")
-        ):
-            return await live.send(writer, "403 Forbidden", b"Not from here.\n")
+        if not (head := await live.accept(reader, writer)):
+            return
+        method, path, query, headers = head
         if chat := chats.ROUTE.fullmatch(path):
             return await self.chat(
                 writer,

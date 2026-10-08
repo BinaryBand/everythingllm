@@ -14,7 +14,8 @@ within SETTLE: the copy's headers show the frame, and the copy waits unseen in i
 Every part stays a whole image with its Content-Length, for readers that go by it.
 
 These are helpers for a service's own small asyncio server (research.live is one): it
-reads the request line, then either pushes frames or sends one plain response. An image's
+takes the request with `accept`, which refuses any not from this machine, then either
+pushes frames or sends one plain response. An image's
 address may ask for the light theme with `?theme=light` (`theme`); else it's dark. There's
 no framework: GET only, no keep-alive, every response closes its connection. An image may
 be read by a page of any origin (CORS), since a client's web build fetches the cards to draw
@@ -28,11 +29,14 @@ import contextlib
 from collections.abc import AsyncIterator
 from urllib.parse import parse_qs
 
+import hostrpc
+
 from chatimage import THEME, THEMES
 
 BOUNDARY = b"frame"
 SETTLE = 0.2  # seconds a frame waits for a newer one before it's sent again to be shown
 MAX_HEAD = 16 * 1024  # a request's line and headers; the machine's route adds a few
+HEAD_SECONDS = 10  # for them to come in
 CORS = {"Access-Control-Allow-Origin": "*"}  # on images, and runs.live's run JSON
 
 
@@ -71,10 +75,25 @@ async def read_head(
     return method, path, query, headers
 
 
-async def read_request(reader: asyncio.StreamReader) -> tuple[str, str, str]:
-    """read_head without the headers."""
-    method, path, query, _ = await read_head(reader)
-    return method, path, query
+async def accept(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+) -> tuple[str, str, str, dict[str, str]] | None:
+    """A request's head (read_head) once it's one to answer; None once it's been refused:
+    400 when it isn't a request or doesn't come in within HEAD_SECONDS, 403 when it isn't
+    from this side of the server's port (hostrpc.local_peer: loopback, or a service
+    container's own address, where its published port delivers from; never another
+    container on egress-net). Every server here starts with it."""
+    try:
+        head = await asyncio.wait_for(read_head(reader), HEAD_SECONDS)
+    except (BadRequest, TimeoutError):
+        await send(writer, "400 Bad Request", b"Bad request.\n")
+        return None
+    if not hostrpc.local_peer(
+        writer.get_extra_info("peername"), writer.get_extra_info("sockname")
+    ):
+        await send(writer, "403 Forbidden", b"Not from here.\n")
+        return None
+    return head
 
 
 def theme(query: str) -> str:

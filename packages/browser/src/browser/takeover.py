@@ -234,12 +234,6 @@ class Request:
         return bool(origin) and urlsplit(origin).netloc == self.headers.get("host", "")
 
 
-async def read_request(reader: asyncio.StreamReader) -> Request:
-    """The request line and headers (live.read_head); live.BadRequest for anything else."""
-    method, path, query, headers = await live.read_head(reader)
-    return Request(method, f"{path}?{query}" if query else path, headers)
-
-
 class Takeover:
     def __init__(self, runner: Runner):
         self.runner = runner
@@ -256,14 +250,10 @@ class Takeover:
     async def handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        try:
-            req = await asyncio.wait_for(read_request(reader), 10)
-        except (live.BadRequest, TimeoutError):
-            return await live.send(writer, "400 Bad Request", b"Bad request.\n")
-        if not hostrpc.local_peer(
-            writer.get_extra_info("peername"), writer.get_extra_info("sockname")
-        ):
-            return await live.send(writer, "403 Forbidden", b"Not from here.\n")
+        if not (head := await live.accept(reader, writer)):
+            return
+        method, path, query, headers = head
+        req = Request(method, f"{path}?{query}" if query else path, headers)
         try:
             await self.route(req, reader, writer)
         except Exception:

@@ -530,3 +530,21 @@ def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, ca
     assert (containers / "research-runner.container").exists()
     with pytest.raises(SystemExit, match="no app nope"):
         units.main(["install", "nope"])
+
+
+def test_enabled_asks_once_and_reads_a_state_per_unit(monkeypatch):
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return units.subprocess.CompletedProcess(
+            cmd, 0, "enabled\nnot-found\ngenerated\n", ""
+        )
+
+    monkeypatch.setattr(units.subprocess, "run", run)
+    assert units.enabled(["a.service", "b.service", "c.service"]) == {
+        "a.service",
+        "c.service",
+    }
+    assert len(calls) == 1 and calls[0][-3:] == ["a.service", "b.service", "c.service"]
+    assert units.enabled([]) == set() and len(calls) == 1

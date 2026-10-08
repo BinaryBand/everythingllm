@@ -169,6 +169,8 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
   research/runs/       the deep-research run log and live runs' markers
   agents/runs/         the delegations' run log and live runs' markers
   relay/               the Nilson relay's database
+  hostctl/skills/      what the UI set (on/off, setup values) in each skill deploy took
+                       out, for when its app is set up again
   ```
 
   Storage keeps AnythingLLM's own data, the runners' sockets (`storage/everythingllm/<name>/runner.sock`, which the container reaches) and what AnythingLLM reads (`anythingllm-fs/research/`, `documents/`).

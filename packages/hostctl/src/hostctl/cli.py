@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 import tomllib
 
@@ -79,8 +80,12 @@ def install() -> None:
     install_units()
     machine.main(["wait-api"])
     machine.main(["search"])
-    appctl.main(["setup", "--installed"])
-    deploy()  # after the setups: it deploys only the skills of apps set up here
+    try:  # deploy after the setups: it deploys only the skills of apps set up here
+        appctl.main(["setup", "--installed"])
+    except SystemExit:
+        deploy()  # the apps set up so far get their skills, and the default prompt
+        raise
+    deploy()
     machine.main(["wait-api"])
     try:
         health()
@@ -280,6 +285,12 @@ def egress_net() -> None:
     internal_network(network["name"], network["subnet"], network["ip_range"])
 
 
+def browser_data() -> Path:
+    """browser-runner's folder: BROWSER_DATA from host.env, its unit's only source for it."""
+    found = units.host_settings(ROOT / "host.env").get("BROWSER_DATA")
+    return Path(found) if found else run_guard.DATA / "browser"
+
+
 @command(
     "browser-images",
     "build the workspaces' browser image, copy noVNC out of it for the take-over view, and make egress-net (browser-setup runs this first)",
@@ -291,7 +302,7 @@ def browser_images() -> None:
     egress_net()
     # browser-runner serves noVNC's files to the take-over page from the data dir, the
     # image's copy, so the page and the image's x11vnc come from one build.
-    folder = run_guard.DATA / "browser"
+    folder = browser_data()
     folder.mkdir(parents=True, exist_ok=True)
     new, old = folder / ".novnc.new", folder / ".novnc.old"
     shutil.rmtree(new, ignore_errors=True)
@@ -317,7 +328,7 @@ def browser_reset(workspace: str) -> None:
     if not WORKSPACE_RE.fullmatch(workspace):
         raise SystemExit(f"browser-reset: '{workspace}' isn't a workspace's slug")
     run("podman", "rm", "-f", "--time", "5", BROWSER_PREFIX + workspace, check=False)
-    profile = run_guard.DATA / "browser" / "profiles" / workspace
+    profile = browser_data() / "profiles" / workspace
     if profile.exists():
         shutil.rmtree(profile)
         print(f"removed {profile}")

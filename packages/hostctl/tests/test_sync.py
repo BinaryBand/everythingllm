@@ -42,7 +42,7 @@ def test_import_skill_refuses_a_skill_holding_symlinks(sync, monkeypatch, tmp_pa
 
 def skills_repo(sync, monkeypatch, tmp_path, enabled):
     """A repo with a sandbox skill and a browser skill, and a live copy of each; `enabled`
-    the runners that are."""
+    the runners that are (None: ask systemctl)."""
     for skill in ("run-code", "browse"):
         folder = tmp_path / "repo" / "agent-skills" / skill
         folder.mkdir(parents=True)
@@ -53,7 +53,9 @@ def skills_repo(sync, monkeypatch, tmp_path, enabled):
         (live / "handler.js").write_text("old")
     monkeypatch.setattr(sync, "REPO", tmp_path / "repo")
     monkeypatch.setattr(sync, "LIVE_SKILLS", tmp_path / "live")
-    monkeypatch.setattr(sync.units, "enabled", lambda unit: unit in enabled)
+    monkeypatch.setattr(sync, "KEPT", tmp_path / "kept")
+    if enabled is not None:
+        monkeypatch.setattr(sync.units, "enabled", lambda units: set(units) & enabled)
     for name in ("planned_default", "planned_variable"):
         monkeypatch.setattr(sync, name, lambda: None)
 
@@ -95,3 +97,35 @@ def test_a_skill_the_container_made_a_symlink_goes_as_the_link(
     assert not live.is_symlink() and not live.exists()
     assert (target / "keep").read_text() == "mine"
     assert not (tmp_path / "live" / "run-code").exists()
+
+
+def test_deploy_stops_when_systemctl_cant_say_whats_enabled(
+    sync, monkeypatch, tmp_path
+):
+    skills_repo(sync, monkeypatch, tmp_path, None)
+    no_bus = units.subprocess.CompletedProcess([], 1, "", "Failed to connect to bus")
+    monkeypatch.setattr(units.subprocess, "run", lambda *a, **k: no_bus)
+    with pytest.raises(SystemExit, match="Failed to connect to bus"):
+        sync.deploy()
+    assert (tmp_path / "live" / "browse" / "handler.js").read_text() == "old"
+
+
+def test_a_skill_taken_out_comes_back_as_the_ui_left_it(sync, monkeypatch, tmp_path):
+    on: set[str] = set()
+    skills_repo(sync, monkeypatch, tmp_path, on)
+    repo = tmp_path / "repo" / "agent-skills" / "browse" / "plugin.json"
+    repo.write_text(
+        json.dumps({"name": "browse", "setup_args": {"KEY": {"type": "string"}}})
+    )
+    live = tmp_path / "live" / "browse" / "plugin.json"
+    live.write_text(
+        json.dumps({"active": False, "setup_args": {"KEY": {"value": "k"}}})
+    )
+    sync.deploy()  # the browser isn't set up: out it goes, and what the UI set is kept
+    assert not live.parent.exists()
+    assert (tmp_path / "kept" / "browse.json").stat().st_mode & 0o777 == 0o600
+    on.add("browser-runner.service")
+    sync.deploy()  # it's back as the user left it
+    back = json.loads(live.read_text())
+    assert back["active"] is False and back["setup_args"]["KEY"]["value"] == "k"
+    assert not (tmp_path / "kept" / "browse.json").exists()

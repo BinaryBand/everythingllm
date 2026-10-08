@@ -188,7 +188,8 @@ def data_dir() -> Path:
       agents/runs/         the delegations' run log and live runs' markers; agents/ also
                            keeps the one-offs made (once.json) and the research runs
                            followed for their chats (followed.json)
-      relay/               the Nilson relay's database"""
+      relay/               the Nilson relay's database
+      hostctl/skills/      what the UI set in each skill deploy took out (hostctl.sync)"""
     return Path("~/.local/share/everythingllm").expanduser()
 
 

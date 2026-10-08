@@ -203,6 +203,7 @@ class Clock:
 
 
 def config(tmp_path, **kw) -> runner_mod.Config:
+    (tmp_path / "workspaces").mkdir(exist_ok=True)  # as serve() makes it
     return runner_mod.Config(
         root=tmp_path / "workspaces",
         data=tmp_path / "data",

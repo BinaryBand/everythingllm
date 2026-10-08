@@ -101,6 +101,22 @@ def test_install_keeps_going_past_a_failed_health_check(ran, monkeypatch):
     assert setup < synced
 
 
+def test_install_deploys_what_was_set_up_when_a_setup_fails(ran, monkeypatch):
+    def appctl(argv):
+        ran.append(f"appctl {' '.join(argv)}")
+        raise SystemExit(3)
+
+    monkeypatch.setattr(cli.appctl, "main", appctl)
+    with pytest.raises(SystemExit) as e:
+        cli.main(["install"])
+    assert e.value.code == 3
+    assert ran[-3:] == [
+        "appctl setup --installed",
+        "sync deploy",
+        "systemctl --user restart anythingllm.service",
+    ]
+
+
 def test_sandbox_images_builds_the_image_and_egress_net(ran):
     cli.main(["sandbox-images"])
     folder = cli.ROOT / "host" / "containers" / "sandbox"
@@ -191,6 +207,7 @@ def test_browser_images_builds_the_image_and_puts_its_novnc_in_place(
     ran, monkeypatch, tmp_path
 ):
     monkeypatch.setattr(cli.run_guard, "DATA", tmp_path)
+    monkeypatch.setattr(cli.units, "host_settings", lambda f: {})  # not this machine's
     old = tmp_path / "browser" / "novnc"
     old.mkdir(parents=True)
     (old / "stale.js").write_text("")
@@ -224,6 +241,7 @@ def test_browser_reset_stops_the_browser_and_wipes_only_its_profile(
     ran, monkeypatch, tmp_path
 ):
     monkeypatch.setattr(cli.run_guard, "DATA", tmp_path)
+    monkeypatch.setattr(cli.units, "host_settings", lambda f: {})  # not this machine's
     browser = tmp_path / "browser"
     (browser / "profiles" / "career" / "Default").mkdir(parents=True)
     (browser / "profiles" / "other").mkdir()
@@ -232,6 +250,14 @@ def test_browser_reset_stops_the_browser_and_wipes_only_its_profile(
     assert ran == ["podman rm -f --time 5 everythingllm-browser-career"]
     assert not (browser / "profiles" / "career").exists()
     assert (browser / "profiles" / "other").is_dir() and (browser / "vault").is_dir()
+    # A BROWSER_DATA in host.env moves the runner's folder, and the reset with it.
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "profiles" / "career").mkdir(parents=True)
+    monkeypatch.setattr(
+        cli.units, "host_settings", lambda f: {"BROWSER_DATA": str(elsewhere)}
+    )
+    cli.main(["browser-reset", "career"])
+    assert not (elsewhere / "profiles" / "career").exists()
     for bad in ("../career", "Career", "career\n"):
         with pytest.raises(SystemExit):
             cli.main(["browser-reset", bad])

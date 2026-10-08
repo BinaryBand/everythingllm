@@ -1364,6 +1364,7 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
     is set, or without one until SIGTERM; then stop every browser."""
     from browser import live, takeover
 
+    config.root.mkdir(parents=True, exist_ok=True)  # the sandbox's, for downloads
     runner = Runner(config)
     await runner.cleanup()
     loop = asyncio.get_running_loop()

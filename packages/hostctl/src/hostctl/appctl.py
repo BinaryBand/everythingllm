@@ -185,9 +185,10 @@ def setup(app: apps.App) -> None:
         print("routes it needs from the machine (uv run hostctl routes checks them):", flush=True)
         for m in app.serve:
             print(f"  {m.describe(host)}", flush=True)
-    live = storage() / SKILLS
-    if missing := [s for s in app.skills if not (live / s).is_dir()]:
-        print(f"its skills reach AnythingLLM with `uv run hostctl deploy` ({', '.join(missing)})", flush=True)
+    if app.skills:  # only then does it need storage, which exits when it isn't set
+        live = storage() / SKILLS
+        if missing := [s for s in app.skills if not (live / s).is_dir()]:
+            print(f"its skills reach AnythingLLM with `uv run hostctl deploy` ({', '.join(missing)})", flush=True)
 
 
 def ping(sock: Path, timeout: float = PING_SECONDS) -> str:

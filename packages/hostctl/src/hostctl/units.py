@@ -405,20 +405,31 @@ def belongs(unit: str, names: list[str]) -> bool:
     return any(unit == f"{n}.service" or unit.startswith(f"{n}-") for n in names)
 
 
-def is_(state: str, unit: str) -> bool:
-    """`systemctl --user is-<state> --quiet unit` said yes."""
-    cmd = ["systemctl", "--user", f"is-{state}", "--quiet", unit]
+def active(service: str) -> bool:
+    cmd = ["systemctl", "--user", "is-active", "--quiet", service]
     return subprocess.run(cmd, check=False).returncode == 0
 
 
-def active(service: str) -> bool:
-    return is_("active", service)
+# The states `systemctl is-enabled` answers yes to.
+ENABLED = set(
+    "enabled enabled-runtime static alias indirect generated transient".split()
+)
 
 
-def enabled(unit: str) -> bool:
-    """Whether `unit` starts with the user's session: enabled (a host unit, by its app's
-    setup) or generated (a Quadlet container, once `uv run hostctl units` installed it)."""
-    return is_("enabled", unit)
+def enabled(units: list[str]) -> set[str]:
+    """Those of `units` that start with the user's session: enabled (a host unit, by its
+    app's setup) or generated (a Quadlet container, once `uv run hostctl units` installed
+    it), in one call. Exits when systemctl can't say (no user bus): deploy takes out the
+    skills of every app that isn't, so a failed call mustn't read as "disabled"."""
+    if not units:
+        return set()
+    cmd = ["systemctl", "--user", "is-enabled", *units]
+    r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    states = r.stdout.split()  # one per unit, "not-found" included, when it knows
+    if len(states) != len(units):
+        why = r.stderr.strip() or r.stdout.strip()
+        raise SystemExit(f"systemctl --user is-enabled: {why}")
+    return {u for u, state in zip(units, states) if state in ENABLED}
 
 
 def main(argv: list[str] | None = None) -> None:

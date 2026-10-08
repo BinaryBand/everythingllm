@@ -131,7 +131,7 @@ def test_open_starts_the_workspaces_browser_and_gives_each_thread_a_tab_and_card
         assert (tmp_path / "data" / "profiles" / "career").is_dir()
         assert (tmp_path / "data" / "downloads" / "career").is_dir()
         # The sandbox's folders, which the browser uses only for downloads.
-        assert not (tmp_path / "workspaces").exists()
+        assert not any((tmp_path / "workspaces").iterdir())
         acted = await r.op_act(scope(thread="7"), "click", "e1")
         assert "Sign in" in acted["page"]
         found = await r.op_read(scope(thread="7"), "home")

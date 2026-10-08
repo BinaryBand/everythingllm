@@ -58,6 +58,17 @@ else
     no/*) fail "thread-scope.js isn't preloaded: uv run hostctl units" ;;
     *) fail "thread-scope.js no longer fits AnythingLLM's ephemeral.js: API chats share their workspace's scope" ;;
   esac
+  # agent-stop.js stops an API chat's agent when its client goes; without it, a Stop in a
+  # client app leaves the agent working and saving its answer.
+  case "$(podman exec systemd-anythingllm printenv NODE_OPTIONS 2>/dev/null)" in
+    *agent-stop.js*) loaded=yes ;; *) loaded=no ;;
+  esac
+  case "$loaded/$(podman exec -e NODE_OPTIONS= systemd-anythingllm node /mcp/anythingllm/agent-stop.js --check 2>/dev/null)" in
+    yes/patched) ok "a client's Stop stops an API chat's agent (agent-stop.js)" ;;
+    */upstream) printf '  NOTE  %s\n' "AnythingLLM stops an API chat's agent when its client goes: drop anythingllm/agent-stop.js" ;;
+    no/*) fail "agent-stop.js isn't preloaded: uv run hostctl units" ;;
+    *) fail "agent-stop.js no longer fits AnythingLLM's apiChatHandler.js: a client's Stop leaves the agent working" ;;
+  esac
 fi
 
 echo "Routes"

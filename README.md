@@ -71,7 +71,7 @@ What the code counts on from them:
 
 This repo owns the containers the setup runs, as templates in `host/quadlet/`; besides the service containers (see "Service containers"), these two:
 
-- `anythingllm.container`: AnythingLLM, pinned by digest, because what it preloads from `anythingllm/` depends on its internals: the log filter, and `thread-scope.js`, which gives skills an API chat's thread
+- `anythingllm.container`: AnythingLLM, pinned by digest, because what it preloads from `anythingllm/` depends on its internals: the log filter, `thread-scope.js`, which gives skills an API chat's thread, and `agent-stop.js`, which stops an API chat's agent when its client goes
 
 - `static_agent.container`: a Caddy container that mounts `host/caddy/pages.Caddyfile` from the repo, so its CSPs are versioned, and serves two sites:
 
@@ -199,7 +199,7 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
 
 `uv run hostctl` lists every command. Day to day: `uv run hostctl diff` shows what would change live, `uv run hostctl deploy` copies it into storage and restarts AnythingLLM, `uv run hostctl test` runs every test and `uv run hostctl health` checks every unit, port, host service and runner socket. `uv run hostctl import-skill <hubId>` brings a skill made in the UI under the repo. Slash commands aren't in the repo: they're AnythingLLM's, made and changed in its UI.
 
-Skill handlers are re-required on each load, so a changed skill doesn't need a restart, but `uv run hostctl deploy` also runs `uv run hostctl restart`, so AnythingLLM picks up a new or removed skill and what it preloads (`thread-scope.js`, the log filter). Deploy copies only the skills of the apps set up here (see "The apps"). It doesn't remove a skill the repo dropped; delete its folder in `storage/plugins/agent-skills/` by hand. On deploy, a skill's `active` flag and any setup_args `value` saved through the UI are kept from the live `plugin.json` unless the repo sets a `value` itself. AnythingLLM's MCP servers (`storage/plugins/anythingllm_mcp_servers.json`) and scheduled jobs are its own: deploy writes neither.
+Skill handlers are re-required on each load, so a changed skill doesn't need a restart, but `uv run hostctl deploy` also runs `uv run hostctl restart`, so AnythingLLM picks up a new or removed skill and what it preloads (`thread-scope.js`, `agent-stop.js`, the log filter). Deploy copies only the skills of the apps set up here (see "The apps"). It doesn't remove a skill the repo dropped; delete its folder in `storage/plugins/agent-skills/` by hand. On deploy, a skill's `active` flag and any setup_args `value` saved through the UI are kept from the live `plugin.json` unless the repo sets a `value` itself. AnythingLLM's MCP servers (`storage/plugins/anythingllm_mcp_servers.json`) and scheduled jobs are its own: deploy writes neither.
 
 ## uv cheatsheet
 
@@ -226,7 +226,7 @@ uv tree --package research                 # what a member pulls in
 
 ## Services outside AnythingLLM
 
-The repo is mounted read-only into the AnythingLLM container at `/mcp` (see the `Volume=` line in `host/quadlet/anythingllm.container.in`), for what it preloads (`thread-scope.js`, the log filter) and the skill tests. AnythingLLM runs no MCP server of ours: its MCP servers (`storage/plugins/anythingllm_mcp_servers.json`) are its own, set up in its UI. Its tools from this repo are the skills, and other MCP clients get the runners' tools over HTTP from the gateway (see "MCP gateway").
+The repo is mounted read-only into the AnythingLLM container at `/mcp` (see the `Volume=` line in `host/quadlet/anythingllm.container.in`), for what it preloads (`thread-scope.js`, `agent-stop.js`, the log filter) and the skill tests. AnythingLLM runs no MCP server of ours: its MCP servers (`storage/plugins/anythingllm_mcp_servers.json`) are its own, set up in its UI. Its tools from this repo are the skills, and other MCP clients get the runners' tools over HTTP from the gateway (see "MCP gateway").
 
 ### Services on the host
 
@@ -578,7 +578,7 @@ That's the one place a token is printed, so it's run on purpose and its output k
 
 ## Nilson relay
 
-Nilson is a Flutter chat client (Linux desktop, Android) that talks to AnythingLLM's developer API. Asked with `stream-chat`, AnythingLLM stops the answer when the client disconnects and saves it to the thread only when the stream completes, so an answer whose app closes, sleeps or loses its network is lost. On 2026-10-06, with AnythingLLM 1.16.2, an answer cut off after 15 chunks was missing from the thread three minutes later.
+Nilson is a Flutter chat client (Linux desktop, Android) that talks to AnythingLLM's developer API. Asked with `stream-chat`, AnythingLLM stops the answer when the client disconnects and saves it to the thread only when the stream completes, so an answer whose app closes, sleeps or loses its network is lost. On 2026-10-06, with AnythingLLM 1.16.2, an answer cut off after 15 chunks was missing from the thread three minutes later. An agent's answer (Agent mode, or `@agent`) was the exception: AnythingLLM (1.16.2 and 1.17.0) kept the agent working, calling its tools and saving the whole answer after the client left, so a Stop stopped only the reading. `anythingllm/agent-stop.js`, preloaded beside `thread-scope.js`, aborts the agent's session when the response closes before it ends (`AIbitat.abort`, as the UI's Stop does), so a stopped agent answer goes no further and isn't saved, like any other; a skill call already going finishes. `uv run hostctl health` says when the patch stops fitting or isn't needed any more.
 
 The relay (`packages/relay`, the `relay` service container, 127.0.0.1:8446) makes that one call for Nilson and owns the answer. Each run streams from AnythingLLM to the end in its own task, which no follower owns; the relay never closes the upstream connection because a follower left, only when the run ends or is cancelled.
 

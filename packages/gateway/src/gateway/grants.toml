@@ -8,8 +8,6 @@
 #   tools = ["<group>", ...]
 #
 # The groups:
-#   sites                    the sites front's read tools, the ones AnythingLLM's agent has
-#   sites:write              write_entry, delete_entry
 #   agents                   delegations to AnythingLLM's own agents (agents_*), each
 #                            client's its own
 #   research                 deep research runs (research_*), each client's its own, with
@@ -19,8 +17,6 @@
 
 [clients.claude-code]
 tools = [
-  "sites",
-  "sites:write",
   "agents",
   "research",
   "sandbox",

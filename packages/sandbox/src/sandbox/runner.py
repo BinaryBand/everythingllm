@@ -61,19 +61,9 @@ own folders, puts the theme it names in place (the repo's from /system/themes, o
 workspace's from /shared/<it>/themes), and builds it. The runner copies the output into
 /public/<slug> (plain files only), so a site goes live like any page.
 
-The system sites (research) are built the same way, with the theme their
-repo zola.toml names in [extra.build] theme_from (op_build_system_site, which sites.build calls):
-their repo source and the repo's themes come in read-only, with a copy of their entries
-made without following a symlink (the sites and research containers can write
-pages/entries), and no workspace's /shared; the output goes, plain files only, into the
-pages site's `.<site>.new`, which sites.build marks and swaps in. A page's title for its
-card, and what its CSP blocks and its notices, are read the same way: a run could leave a
-symlink in /public pointing at another workspace's files. The op takes only
-a site's name, and reads what to build from the repo itself: its socket is reachable from
-the AnythingLLM container. It is also served alone, with ping, on a second socket
-(SANDBOX_BUILD_SOCKET, `SystemBuilds`), the one the sites and research service containers
-mount: the full socket trusts the scope a caller names, so a container that parses the web
-must not have it.
+A page's title for its card, and what its CSP blocks and its notices, are read without
+following a symlink: a run could leave one in /public pointing at another workspace's
+files.
 
 Config (environment):
   ANYTHINGLLM_STORAGE, PUBLIC_HOST
@@ -81,20 +71,15 @@ Config (environment):
                     (default /srv/anythingllm/storage; PUBLIC_HOST is required, since
                     egress.toml needs it to load)
   SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/everythingllm/sandbox/runner.sock)
-  SANDBOX_BUILD_SOCKET  the socket serving only build_system_site (default
-                    <storage>/everythingllm/sandbox-build/runner.sock)
   SANDBOX_ROOT      workspace folders, host-only (default
                     ~/.local/share/everythingllm/sandbox/workspaces);
                     run scripts go in its `.runs` folder
   SANDBOX_SYSTEM_THEMES  the themes mounted at /system/themes (default the repo's
-                         packages/sites/zola/themes)
-  SANDBOX_SITES_SOURCE   the system sites' sources (default packages/sites/zola/sites)
-  SANDBOX_SITES_CONTENT  their entries (default ~/.local/share/everythingllm/pages/entries,
-                         as sites.build's SITES_CONTENT)
+                         packages/sandbox/zola/themes)
   SANDBOX_PUBLIC    every workspace's /public, as <workspace>/ (default
                     ~/.local/share/everythingllm/sandbox/public)
   SANDBOX_PUBLIC_URL  public URL of SANDBOX_PUBLIC (default https://<PUBLIC_HOST>:8447/)
-  SANDBOX_SITE_DIR  the pages site's root, where system sites are staged and link cards
+  SANDBOX_SITE_DIR  the pages site's root, where the link cards and shown images are
                     saved (default ~/.local/share/everythingllm/pages/public)
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
   SANDBOX_UPLOADS   AnythingLLM's chat attachments, whose text a run gets in
@@ -128,7 +113,6 @@ from urllib.parse import quote
 import chatimage
 import chatimage.card
 import hostrpc
-import tomllib
 from egress import config as egress_config
 from hostrpc import safefs
 from PIL import Image
@@ -154,22 +138,16 @@ KEY_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")  # workspace slugs and threa
 # "gateway": true, which AnythingLLM's skills never do, so a workspace someone happens to
 # name "Client X" can't share a gateway client's folders.
 CLIENT_PREFIX = "client-"
-SLUG_RE = re.compile(
-    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
-)  # as sites.store.NAME_RE
+SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")  # a page's slug
 # Shared and system folders are data: nothing in them runs as ./file.
 DATA_RW = "rw,noexec,nosuid,nodev"
 DATA_RO = "ro,noexec,nosuid,nodev"
 REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/sandbox/src/sandbox/
-SYSTEM_ZOLA = REPO / "packages" / "sites" / "zola"  # the system sites and their themes
+SYSTEM_THEMES = REPO / "packages" / "sandbox" / "zola" / "themes"  # the repo's themes
 MEMORY = "1g"
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
 BUILD_TIMEOUT = 60  # a site build, assembling included
-SYSTEM_BUILD_TIMEOUT = (
-    40  # a system site's, as sites.build's; its callers give up after 50
-)
-SYSTEM_SLOT_WAIT = 5  # how long a system build waits for a slot before saying "busy"
 SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
 OUTPUT_BYTES = 20_000  # per stream of a run
 WRITE_BYTES = 1_000_000  # op_write
@@ -200,7 +178,6 @@ LIST_MAX = 200  # files named in a run's changed list
 WAIT = 45
 RESULT_KEEP = 3600  # how long a finished run's result can still be fetched
 CSP_SCAN = 200  # HTML and .js files of a changed page checked (blocked, notices)
-ENTRIES_BYTES = 64 << 20  # a system site's entries copied into its build, at most
 # A chat's attachments, as text in /work/attachments (sync_attachments): AnythingLLM keeps
 # each one's text as <uploads>/<name>-<uuid>.json, and the skill names the chat's.
 ATTACHMENTS = "attachments"
@@ -299,9 +276,6 @@ class Config:
     proxy: str = ""
     public_root: Path = Path("/nonexistent")
     public_url: str = "http://127.0.0.1:8447/"
-    sites_source: Path = SYSTEM_ZOLA / "sites"
-    sites_content: Path = Path("/nonexistent")
-    build_socket: Path | None = None  # SystemBuilds' socket; none, none served
     uploads: Path = Path("/nonexistent")  # AnythingLLM's direct-uploads
 
     @property
@@ -318,15 +292,10 @@ class Config:
             network=egress.network,
             ips=tuple(egress.profiles[PROFILE].ips.values()),
             proxy=egress.url,
-            build_socket=hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET"),
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
-            system_themes=Path(get("SANDBOX_SYSTEM_THEMES", SYSTEM_ZOLA / "themes")),
-            sites_source=Path(get("SANDBOX_SITES_SOURCE", SYSTEM_ZOLA / "sites")),
-            sites_content=Path(
-                get("SANDBOX_SITES_CONTENT", hostrpc.data_dir() / "pages" / "entries")
-            ),
+            system_themes=Path(get("SANDBOX_SYSTEM_THEMES", SYSTEM_THEMES)),
             site_dir=Path(get("SANDBOX_SITE_DIR", hostrpc.site_dir())),
             site_url=get(
                 "SANDBOX_SITE_URL",
@@ -505,42 +474,6 @@ def trim_images(folder: int, limit: int) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(name, dir_fd=folder)
         total -= size
-
-
-DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-
-
-def open_dir(path: Path) -> int:
-    """An fd for the folder `path`, refusing a symlink as its last part."""
-    return os.open(path, DIR_FLAGS)
-
-
-def make_dir(parent: int, name: str) -> int:
-    """Make the folder `name` in the open folder `parent` if it isn't there, and open it,
-    refusing a symlink in its place."""
-    try:
-        os.mkdir(name, 0o755, dir_fd=parent)
-    except FileExistsError:
-        pass
-    return os.open(name, DIR_FLAGS, dir_fd=parent)
-
-
-def copy_into(source: Path, folder: int, name: str) -> None:
-    """Copy the plain file `source` to a new file `name` in the open folder `folder`
-    (mode 644): never through a symlink, and never over a file that's already there."""
-    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, "rb") as src:
-        if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):
-            raise SandboxError(f"'{source.name}' isn't a regular file")
-        out_fd = os.open(
-            name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o644,
-            dir_fd=folder,
-        )
-        with os.fdopen(out_fd, "wb") as out:
-            os.fchmod(out.fileno(), 0o644)
-            shutil.copyfileobj(src, out)
 
 
 def remove_path(path: Path) -> None:
@@ -844,20 +777,14 @@ class Runner(hostrpc.Service):
             self._free.put_nowait(ip)
 
     @contextlib.asynccontextmanager
-    async def slot(self, wait: float | None = None) -> AsyncIterator[str]:
+    async def slot(self) -> AsyncIterator[str]:
         """One of the sandbox profile's addresses, held until the block ends: a run's
-        container takes it on egress-net, a build's (no network) only its turn. With
-        `wait`, a caller that can't wait out two runs is told the sandbox is busy instead."""
+        container takes it on egress-net, a build's (no network) only its turn."""
         if not self.config.ips:
             raise SandboxError(
                 "the sandbox has no addresses on egress-net (egress.toml's sandbox profile)"
             )
-        try:
-            ip = await asyncio.wait_for(self._free.get(), wait)
-        except TimeoutError:
-            raise SandboxError(
-                "the sandbox is busy with other runs; try again in a few minutes"
-            ) from None
+        ip = await self._free.get()
         try:
             yield ip
         finally:
@@ -1457,145 +1384,6 @@ class Runner(hostrpc.Service):
             "published": published,
         }
 
-    async def op_build_system_site(self, site: str) -> dict[str, Any]:
-        """Build a system site whose repo zola.toml names a theme with [extra.build]
-        theme_from into the pages site's `.<site>.new`, for sites.build to mark and swap in.
-        Answers with where it went; raises with zola's error if it didn't build."""
-        if not isinstance(site, str) or not SLUG_RE.fullmatch(site):
-            raise SandboxError(f"bad site '{site}'")
-        source = self.config.sites_source / site
-        try:
-            conf = tomllib.loads((source / "zola.toml").read_text())
-        except FileNotFoundError:
-            raise SandboxError(f"there's no system site '{site}'") from None
-        origin = conf.get("extra", {}).get("build", {}).get("theme_from")
-        if not origin:
-            raise SandboxError(
-                f"{site}'s zola.toml names no [extra.build] theme_from, which every site needs"
-            )
-        if origin != "system":
-            # A system site pins a workspace's theme rather than following its live folder
-            # (docs/.proposals/shared-sites.md, Decision 2), and pinning isn't built yet.
-            raise SandboxError(
-                f"{site} takes its theme from {origin!r}, but a system site can only use "
-                "'system' until workspace themes can be pinned"
-            )
-        name = f"sandbox-{secrets.token_hex(6)}"
-        run_dir = self.config.scripts / name
-        new = self.config.site_dir / f".{site}.new"
-        async with self.lock(f"site:{site}"):  # no workspace can be called that
-            try:
-                args = await asyncio.to_thread(
-                    self.prepare_system_build, name, site, run_dir
-                )
-                # sites.build gives up after 50 s; runs can hold both slots for 300.
-                async with self.slot(wait=SYSTEM_SLOT_WAIT):
-                    exit_code, out, err, timed_out = await self.podman(
-                        [
-                            *args,
-                            "python",
-                            "/sandbox/sitebuild.py",
-                            "/site",
-                            f"{self.config.site_url.rstrip('/')}/{site}",
-                            "/entries",
-                        ],
-                        SYSTEM_BUILD_TIMEOUT,
-                        name,
-                    )
-                if timed_out:
-                    raise SandboxError(
-                        f"the build of {site} took over {SYSTEM_BUILD_TIMEOUT} s and was stopped"
-                    )
-                if exit_code != 0:
-                    raise SandboxError(
-                        f"zola build failed for {site}:\n{(err or out).strip()[-2000:]}"
-                    )
-                files = await asyncio.to_thread(
-                    self.copy_out, run_dir / "out" / "site", new
-                )
-            finally:
-                await self.podman(["rm", "-f", "--ignore", name], 60, None)
-                await asyncio.to_thread(shutil.rmtree, run_dir, True)
-        log.info("built system site %s in the sandbox: %d files", site, files)
-        return {"site": site, "path": str(new), "files": files}
-
-    def prepare_system_build(self, name: str, site: str, run_dir: Path) -> list[str]:
-        """A system site build's podman arguments: no network, its repo source, a copy of its
-        entries and the repo's themes read-only, an empty /out. No workspace's /shared: a
-        system site's theme is the repo's (theme_from = "system").
-
-        The entries are copied, not mounted: the sites and research containers can write
-        pages/entries, and could make the site's folder a symlink that podman would mount
-        wherever it points. The copy follows none, at any depth."""
-        (run_dir / "code").mkdir(parents=True)
-        (run_dir / "out").mkdir()
-        entries = run_dir / "entries"
-        try:
-            with safefs.folder(self.config.sites_content, (site,)) as d:
-                safefs.copy_tree(d, entries, ENTRIES_BYTES)
-        except FileNotFoundError:
-            entries.mkdir(exist_ok=True)
-        except OSError as e:
-            raise SandboxError(f"couldn't read {site}'s entries: {e}") from None
-        shutil.copyfile(SITEBUILD, run_dir / "code" / "sitebuild.py")
-        return [
-            *self.hardening(name),
-            "--network",
-            "none",
-            "-v",
-            f"{self.config.sites_source / site}:/site:{DATA_RO}",
-            "-v",
-            f"{entries}:/entries:{DATA_RO}",
-            "-v",
-            f"{self.config.system_themes}:/system/themes:{DATA_RO}",
-            "-v",
-            f"{run_dir / 'out'}:/out:rw,noexec,nosuid,nodev",
-            "-v",
-            f"{run_dir / 'code'}:/sandbox:ro",
-            IMAGE,
-        ]
-
-    def copy_out(self, source: Path, dest: Path) -> int:
-        """A system site's built files into `dest` (replaced), plain files only.
-
-        `dest` is in the pages site, which the sites and research containers can write as
-        this same user while the copy runs. So nothing here follows a symlink: each folder
-        is made and opened relative to its parent's open fd, never by path, and each file
-        is created new (O_EXCL), so a symlink planted on the way stops the copy instead of
-        sending a write outside the pages site."""
-        files, size = regular_files(source) if source.is_dir() else ([], 0)
-        if not files:
-            raise SandboxError("the build produced no files")
-        if size > PUBLISH_MAX_BYTES:
-            raise SandboxError(f"the built site is {size >> 20} MB, over the cap")
-        remove_path(dest)
-        # Only the folders on the current file's path stay open (os.walk's order keeps a
-        # folder's files together), so a site of thousands of folders doesn't run out of fds.
-        folders: dict[tuple[str, ...], int] = {}
-        try:
-            parent = open_dir(dest.parent)
-            try:
-                folders[()] = make_dir(parent, dest.name)
-            finally:
-                os.close(parent)
-            for src, rel in files:
-                *parts, name = Path(rel).parts
-                for key in [k for k in folders if tuple(parts[: len(k)]) != k]:
-                    os.close(folders.pop(key))
-                for i in range(len(parts)):
-                    key = tuple(parts[: i + 1])
-                    if key not in folders:
-                        folders[key] = make_dir(folders[key[:-1]], parts[i])
-                copy_into(src, folders[tuple(parts)], name)
-        except OSError as e:
-            raise SandboxError(
-                f"couldn't copy the built site into {dest.name}: {e.strerror or e}"
-            ) from None
-        finally:
-            for fd in folders.values():
-                os.close(fd)
-        return len(files)
-
     def prepare_build(self, name: str, scope: Scope, run_dir: Path) -> list[str]:
         """A build container's podman arguments: no network, the workspace's own folders
         (but /public) and everything else read-only, an empty /out, and the helper."""
@@ -2008,23 +1796,8 @@ class Runner(hostrpc.Service):
             await asyncio.sleep(3600)
 
 
-class SystemBuilds(hostrpc.Service):
-    """The runner's build_system_site alone (and ping), for SANDBOX_BUILD_SOCKET: what the
-    sites and research containers may ask of the sandbox. No op here takes a scope."""
-
-    log = log
-
-    def __init__(self, runner: Runner):
-        super().__init__()
-        self.runner = runner
-
-    async def op_build_system_site(self, site: str) -> dict[str, Any]:
-        return await self.runner.op_build_system_site(site)
-
-
 async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
-    """Serve the runner on its socket, and SystemBuilds on the build socket, until `stop`
-    is set, or without one until SIGTERM."""
+    """Serve the runner on its socket until `stop` is set, or without one until SIGTERM."""
     runner = Runner(config)
     await runner.cleanup()
     config.root.mkdir(parents=True, exist_ok=True)
@@ -2034,15 +1807,9 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
         stop = asyncio.Event()
         loop.add_signal_handler(signal.SIGTERM, stop.set)
     gc = asyncio.create_task(runner.gc_loop())
-    servers = [hostrpc.serve(runner, config.socket, limit=LIMIT, stop=stop)]
-    if config.build_socket is not None:
-        servers.append(
-            hostrpc.serve(SystemBuilds(runner), config.build_socket, stop=stop)
-        )
     try:
-        await asyncio.gather(*servers)
+        await hostrpc.serve(runner, config.socket, limit=LIMIT, stop=stop)
     finally:
-        stop.set()  # one failed: the other stops too
         gc.cancel()
         if on_sigterm:
             loop.remove_signal_handler(signal.SIGTERM)

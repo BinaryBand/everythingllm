@@ -3,10 +3,8 @@ import itertools
 import json
 import os
 import re
-import shutil
 from pathlib import Path
 
-import hostrpc
 import pytest
 from sandbox import runner
 from sandbox.runner import Config, Runner
@@ -968,7 +966,6 @@ def test_publish_refuses_bad_input(cfg, tmp_path, monkeypatch):
 def test_config_follows_this_machines_host_settings(monkeypatch):
     for var in (
         "SANDBOX_SOCKET",
-        "SANDBOX_BUILD_SOCKET",
         "SANDBOX_ROOT",
         "SANDBOX_SYSTEM_THEMES",
         "SANDBOX_SITE_DIR",
@@ -989,16 +986,13 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
         "http://10.89.79.2:3128",
     )
     assert config.socket == Path("/data/allm/everythingllm/sandbox/runner.sock")
-    assert config.build_socket == Path(
-        "/data/allm/everythingllm/sandbox-build/runner.sock"
-    )
     data = Path("~/.local/share/everythingllm").expanduser()
     assert config.site_dir == data / "pages" / "public"
     assert config.site_url == "https://box.tail.ts.net:8445/"
     assert config.root == data / "sandbox" / "workspaces"
     assert config.public_root == data / "sandbox" / "public"
     assert config.public_url == "https://box.tail.ts.net:8447/"
-    assert config.system_themes == runner.SYSTEM_ZOLA / "themes"
+    assert config.system_themes == runner.SYSTEM_THEMES
     assert (config.system_themes / "agent-site" / "theme.toml").is_file()
 
 
@@ -1107,225 +1101,6 @@ def test_what_a_build_refuses(cfg):
         with pytest.raises(runner.SandboxError, match=why):
             go(r.op_build_site(A, path, slug))
     assert r.podman.runs() == []
-
-
-# --- system sites ---
-
-
-def system_cfg(cfg, tmp_path, theme_from='theme_from = "system"'):
-    site = tmp_path / "sites" / "status"
-    site.mkdir(parents=True)
-    (site / "zola.toml").write_text(
-        f'theme = "agent-site"\n[extra.build]\n{theme_from}\n'
-    )
-    (tmp_path / "sites" / "news").mkdir()
-    (tmp_path / "sites" / "news" / "zola.toml").write_text('theme = "agent-site"\n')
-    (tmp_path / "entries" / "status" / "reports").mkdir(parents=True)
-    cfg.sites_source = tmp_path / "sites"
-    cfg.sites_content = tmp_path / "entries"
-    return cfg
-
-
-def test_a_system_site_builds_in_the_sandbox_into_its_staging_folder(cfg, tmp_path):
-    cfg = system_cfg(cfg, tmp_path)
-    r = make(cfg)
-    # A run first, so career's folders exist and its shared folder is mounted.
-    go(r.op_run(A, "bash", "true"))
-    r.podman.effect = built
-    res = go(r.op_build_system_site("status"))
-    new = cfg.site_dir / ".status.new"
-    assert res == {"site": "status", "path": str(new), "files": 2}
-    assert sorted(str(p.relative_to(new)) for p in new.rglob("*") if p.is_file()) == [
-        "index.html",
-        "notes/index.html",
-    ]  # the planted symlink is left out
-    args = r.podman.runs()[-1][0]
-    assert args[args.index("--network") + 1] == "none"
-    m = mounts(args)
-    assert m["/site"] == tmp_path / "sites" / "status"
-    # The entries are a copy in the run's folder, and no workspace's /shared is mounted.
-    assert (
-        m["/entries"].name == "entries" and m["/entries"].parent.parent.name == ".runs"
-    )
-    assert not any(k.startswith("/shared") for k in m) and "/work" not in m
-    assert "/system/themes" in m
-    assert args[-5:] == [
-        "python",
-        "/sandbox/sitebuild.py",
-        "/site",
-        "https://pages.example/status",
-        "/entries",
-    ]
-
-
-def test_a_system_site_copy_never_follows_a_symlink_planted_on_the_way(
-    cfg, tmp_path, monkeypatch
-):
-    """The pages site is writable by the sites and research containers as the same user,
-    so one could put a symlink in .status.new while the host copies into it."""
-    cfg = system_cfg(cfg, tmp_path)
-    r = make(cfg)
-    r.podman.effect = built
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    new = cfg.site_dir / ".status.new"
-    copy = runner.copy_into
-
-    def racing(source, folder, name):
-        copy(source, folder, name)
-        if not (new / "notes").exists():  # after the first file, before notes/
-            (new / "notes").symlink_to(outside)
-
-    monkeypatch.setattr(runner, "copy_into", racing)
-    with pytest.raises(runner.SandboxError, match="couldn't copy the built site"):
-        go(r.op_build_system_site("status"))
-    assert list(outside.iterdir()) == []
-
-    # Nor over a file planted where one is about to go (a hardlink, say).
-    monkeypatch.setattr(runner, "copy_into", copy)
-    planted = outside / "target"
-    planted.write_text("host file")
-
-    def plant(name, *args, **kwargs):
-        made = real_mkdir(name, *args, **kwargs)
-        if name == "notes":
-            os.link(planted, new / "notes" / "index.html")
-        return made
-
-    real_mkdir = os.mkdir
-    monkeypatch.setattr(runner.os, "mkdir", plant)
-    with pytest.raises(runner.SandboxError, match="couldn't copy the built site"):
-        go(r.op_build_system_site("status"))
-    assert planted.read_text() == "host file"
-
-
-def test_the_build_socket_serves_only_system_site_builds(cfg, tmp_path, monkeypatch):
-    """The sites and research containers mount the build socket, not the runner's: the
-    runner takes the scope a caller names, so the full socket would let a container act as
-    any workspace."""
-    cfg = system_cfg(cfg, tmp_path)
-    # AF_UNIX paths are short, so not tmp_path.
-    base = Path("/tmp") / f"sandbox-test-{os.getpid()}"
-    cfg.socket, cfg.build_socket = base / "runner.sock", base / "build.sock"
-    made = []
-
-    def fake_runner(config):
-        made.append(make(config, effect=built))
-        return made[-1]
-
-    monkeypatch.setattr(runner, "Runner", fake_runner)
-
-    async def check():
-        stop = asyncio.Event()
-        task = asyncio.create_task(runner.serve(cfg, stop))
-        while not (cfg.socket.exists() and cfg.build_socket.exists()):
-            await asyncio.sleep(0.01)
-        try:
-            ask = hostrpc.request
-            assert await ask(cfg.build_socket, "ping", {}, 5) == {}
-            for op, args in [
-                ("run", {"scope": A, "language": "bash", "code": "true"}),
-                ("write", {"scope": A, "path": "/project/x", "content": "x"}),
-                ("publish", {"scope": A, "slug": "x", "path": "x"}),
-                ("build_site", {"scope": A, "path": "/project/s"}),
-            ]:
-                with pytest.raises(hostrpc.RunnerError, match=f"unknown op '{op}'"):
-                    await ask(cfg.build_socket, op, args, 5)
-            res = await ask(
-                cfg.build_socket, "build_system_site", {"site": "status"}, 5
-            )
-            assert res["path"] == str(cfg.site_dir / ".status.new")
-            # The runner's own socket still has every op.
-            await ask(cfg.socket, "write", {"scope": A, "path": "x", "content": "x"}, 5)
-        finally:
-            stop.set()
-            await task
-        assert not cfg.socket.exists() and not cfg.build_socket.exists()
-
-    try:
-        go(check())
-    finally:
-        shutil.rmtree(base, ignore_errors=True)
-    assert len(made) == 1  # one runner behind both
-
-
-def test_a_copy_refused_at_its_first_folder_leaves_no_fd_open(
-    cfg, tmp_path, monkeypatch
-):
-    """Something planted at .status.new itself stops the copy at its first folder; the
-    long-running runner mustn't keep the parent's fd each time it does."""
-    cfg = system_cfg(cfg, tmp_path)
-    r = make(cfg)
-    r.podman.effect = built
-
-    def planted(parent, name):
-        raise OSError(40, "Too many levels of symbolic links")
-
-    monkeypatch.setattr(runner, "make_dir", planted)
-    before = len(os.listdir("/proc/self/fd"))
-    for _ in range(3):
-        with pytest.raises(runner.SandboxError, match="couldn't copy the built site"):
-            go(r.op_build_system_site("status"))
-    assert len(os.listdir("/proc/self/fd")) == before
-
-
-def test_what_a_system_site_build_refuses(cfg, tmp_path):
-    cfg = system_cfg(cfg, tmp_path)
-    r = make(cfg)
-    for site, why in [
-        ("news", "names no \\[extra.build\\] theme_from, which every site needs"),
-        ("nope", "no system site 'nope'"),
-        ("../status", "bad site"),
-        ("Status", "bad site"),
-    ]:
-        with pytest.raises(runner.SandboxError, match=why):
-            go(r.op_build_system_site(site))
-    assert r.podman.runs() == []
-    r = make(cfg, result=(1, "", "Error: Failed to render\n", False))
-    with pytest.raises(
-        runner.SandboxError,
-        match="zola build failed for status:\nError: Failed to render",
-    ):
-        go(r.op_build_system_site("status"))
-    assert not (cfg.site_dir / ".status.new").exists()
-
-
-def test_a_system_site_cannot_follow_a_workspace_theme(cfg, tmp_path):
-    # Until a workspace's theme can be pinned (docs/.proposals/shared-sites.md, Decision 2), a system
-    # site never builds from a workspace's live /shared.
-    cfg = system_cfg(cfg, tmp_path, theme_from='theme_from = "career"')
-    r = make(cfg)
-    with pytest.raises(runner.SandboxError, match="can only use 'system' until"):
-        go(r.op_build_system_site("status"))
-    assert r.podman.runs() == []
-
-
-def test_a_system_sites_entries_are_copied_without_following_a_symlink(cfg, tmp_path):
-    """The sites and research containers can write pages/entries: a site's folder made a
-    symlink to the home folder, or a symlink inside it, mustn't put host files in the build."""
-    cfg = system_cfg(cfg, tmp_path)
-    r = make(cfg)
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / "host.env").write_text("SECRET=1")
-    entries = tmp_path / "entries" / "status"
-    (entries / "reports" / "a.md").write_text("{}\n")
-    (entries / "reports" / "env.md").symlink_to(home / "host.env")
-    (entries / "reports" / "home").symlink_to(home)
-    seen = {}
-
-    def look(m):
-        src = m["/entries"]
-        seen["files"] = sorted(str(p.relative_to(src)) for p in src.rglob("*"))
-        built(m)
-
-    r.podman.effect = look
-    go(r.op_build_system_site("status"))
-    assert seen["files"] == ["reports", "reports/a.md"]
-    entries.rename(tmp_path / "entries" / "status-real")
-    entries.symlink_to(home)
-    with pytest.raises(runner.SandboxError, match="couldn't read status's entries"):
-        go(r.op_build_system_site("status"))
 
 
 def test_publish_never_reads_through_a_symlink_a_run_left_in_public(cfg):

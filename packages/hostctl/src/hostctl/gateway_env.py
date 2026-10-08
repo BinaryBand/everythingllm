@@ -134,7 +134,7 @@ def add_client(name: str, path: Path = DEFAULT, grants: Path = GRANTS) -> None:
     if groups is None:
         print(
             f"{name} has no grant, so it gets no tools. Add one to {grants} (its comments "
-            f'list the groups):\n\n    [clients.{name}]\n    tools = ["sites", ...]\n'
+            f'list the groups):\n\n    [clients.{name}]\n    tools = ["sandbox", ...]\n'
         )
     else:
         print(f"Its grant in grants.toml: {', '.join(groups) or 'no groups'}.")

@@ -38,8 +38,8 @@ class FakeJobsAPI:
                     {"id": "sql-agent", "requiresSetup": True},
                 ],
             },
-            {"category": "custom-skills", "items": [{"id": "@@write-entry"}]},
-            {"category": "mcp-servers", "items": [{"id": "@@mcp_sites"}]},
+            {"category": "custom-skills", "items": [{"id": "@@run-code"}]},
+            {"category": "mcp-servers", "items": [{"id": "@@mcp_gmail"}]},
         ]
 
     def add(self, name, schedule="0 18 * * *", tools=None, enabled=True, **more):
@@ -174,14 +174,14 @@ def test_remind_once_shows_first_then_makes_and_registers_the_job(api, tmp_path)
             "name": "stretch",
             "prompt": "Remind the user to stretch.",
             "at": "2026-10-07 14:05",
-            "tools": '["@@mcp_sites"]',
+            "tools": '["@@run-code"]',
         }
         preview = await r.op_remind_once(CHAT, **args)
         assert (
             '"[once] stretch"' in preview and "Remind the user to stretch." in preview
         )
         assert "Wed 2026-10-07 14:05 CEST (2026-10-07 12:05 UTC" in preview
-        assert "@@mcp_sites" in preview and "call again with apply true" in preview
+        assert "@@run-code" in preview and "call again with apply true" in preview
         assert api.jobs == {} and registry(tmp_path) == []
         done = await r.op_remind_once(CHAT, **args, apply=True)
         assert done.startswith('Made one-off job 1 "[once] stretch"')
@@ -189,7 +189,7 @@ def test_remind_once_shows_first_then_makes_and_registers_the_job(api, tmp_path)
         assert (job["name"], job["schedule"], json.loads(job["tools"])) == (
             "[once] stretch",
             "5 12 7 10 *",
-            ["@@mcp_sites"],
+            ["@@run-code"],
         )
         [entry] = registry(tmp_path)
         assert (entry["id"], entry["fire_at"], entry["state"]) == (
@@ -455,7 +455,7 @@ def test_schedule_job_shows_first_then_makes_a_recurring_job(api, tmp_path):
             "name": "morning news",
             "prompt": "Summarize the headlines.",
             "schedule": "0  6 * * 1-5",
-            "tools": ["@@mcp_sites"],
+            "tools": ["@@run-code"],
         }
         preview = await r.op_schedule_job(CHAT, **args)
         assert '"morning news"' in preview and 'cron "0 6 * * 1-5"' in preview
@@ -466,7 +466,7 @@ def test_schedule_job_shows_first_then_makes_a_recurring_job(api, tmp_path):
         job = api.jobs[1]
         assert (job["schedule"], json.loads(job["tools"])) == (
             "0 6 * * 1-5",
-            ["@@mcp_sites"],
+            ["@@run-code"],
         )
         assert registry(tmp_path) == []  # not a one-off: the poller leaves it be
 

@@ -15,15 +15,12 @@ TARGETS = [
     "units",
     "diff",
     "deploy",
-    "skills",
-    "skills-check",
     "restart",
     "logs",
     "status",
     "health",
     "test",
     "test-skills",
-    "mcp-sync",
     "apps",
     "routes",
     "gateway-client",
@@ -31,7 +28,6 @@ TARGETS = [
     "service-images",
     "browser-images",
     "browser-reset",
-    "sites-build",
 ]
 
 
@@ -50,9 +46,7 @@ def ran(monkeypatch):
     monkeypatch.setattr(cli.units, "main", step("units"))
     monkeypatch.setattr(cli.machine, "main", step("machine"))
     monkeypatch.setattr(cli.appctl, "main", step("appctl"))
-    sync = SimpleNamespace(
-        main=step("sync"), mcp_packages=lambda: ["sites", "research"]
-    )
+    sync = SimpleNamespace(main=step("sync"))
     monkeypatch.setitem(sys.modules, "hostctl.sync", sync)
     monkeypatch.setattr("hostctl.sync", sync, raising=False)
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/storage")
@@ -62,7 +56,7 @@ def ran(monkeypatch):
 def test_every_target_is_a_command():
     for target in TARGETS:
         cli.lookup(target)
-    assert cli.lookup("sites-setup") == (cli.setup_app, ["sites"])
+    assert cli.lookup("relay-setup") == (cli.setup_app, ["relay"])
     assert cli.lookup("research-logs") == (cli.app_logs, ["research"])
     with pytest.raises(SystemExit):
         cli.lookup("nope-setup")
@@ -70,16 +64,9 @@ def test_every_target_is_a_command():
         cli.lookup("<app>-setup")
 
 
-def test_deploy_checks_the_skills_first_and_ends_with_the_sites(ran):
+def test_deploy_writes_storage_then_restarts_anythingllm(ran):
     cli.main(["deploy"])
-    assert ran[0].endswith("python -m hostctl.skills --check")
-    assert ran[1] == "sync deploy"
-    assert "--package sites --project /mcp" in ran[2]
-    assert "--inexact" not in ran[2] and "--inexact" in ran[3]
-    assert ran[4:] == [
-        "systemctl --user restart anythingllm.service",
-        "uv run --package sites sites-build",
-    ]
+    assert ran == ["sync deploy", "systemctl --user restart anythingllm.service"]
 
 
 def test_deploy_refuses_a_worktree(ran, monkeypatch, tmp_path):
@@ -90,14 +77,14 @@ def test_deploy_refuses_a_worktree(ran, monkeypatch, tmp_path):
     assert ran == []
 
 
-def test_diff_checks_the_skills_first(ran):
+def test_diff_shows_storage_then_the_units(ran):
     cli.main(["diff"])
-    assert ran[1:] == ["sync diff", "units diff"]
+    assert ran == ["sync diff", "units diff"]
 
 
 def test_an_app_setup_installs_the_units_first(ran):
-    cli.main(["sites-setup"])
-    assert ran == ["units install sites", "appctl setup sites"]
+    cli.main(["relay-setup"])
+    assert ran == ["units install relay", "appctl setup relay"]
 
 
 def test_install_keeps_going_past_a_failed_health_check(ran, monkeypatch):

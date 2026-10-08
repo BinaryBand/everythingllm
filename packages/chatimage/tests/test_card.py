@@ -105,8 +105,8 @@ def test_a_card_for_a_page_served_elsewhere_lives_on_the_pages_site(tmp_path):
 
 
 def test_a_card_never_goes_through_a_symlink_a_container_planted(tmp_path):
-    """The sites and research containers can write the pages site: _cards or a card made
-    a symlink mustn't send the host's write elsewhere."""
+    """_cards or a card made a symlink (by a container that could once write the pages
+    site) mustn't send the host's write elsewhere."""
     site, outside = tmp_path / "site", tmp_path / "outside"
     site.mkdir()
     outside.mkdir()

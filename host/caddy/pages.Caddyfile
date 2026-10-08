@@ -34,9 +34,7 @@
   route @lightcard {
     try_files /_cards/{re.lightcard.1}.light.png {path}
   }
-  file_server {
-    hide .zola-site
-  }
+  file_server
 }
 
 # Every sandbox workspace's /public (sandbox.runner), served as it is: /<workspace>/... is

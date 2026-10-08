@@ -9,7 +9,4 @@ standard library, so health.sh and the apps' `before` steps can run them with an
 with hostctl's src on PYTHONPATH:
 
     PYTHONPATH=packages/hostctl/src python3 -m hostctl.appctl health
-
-The exception is skills, which imports the fronts, so it runs in the whole workspace's venv
-(`uv run hostctl skills`).
 """

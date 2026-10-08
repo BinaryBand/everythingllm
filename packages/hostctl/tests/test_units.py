@@ -282,7 +282,7 @@ def test_hold_back_leaves_a_guarded_runner_with_a_run_going(
 
 
 def test_a_container_waits_for_the_proxy_it_wants(tmp_path, monkeypatch, capsys):
-    """`units sites` before `units egress` would start containers whose first uv sync
+    """`units research` before `units egress` would start containers whose first uv sync
     can't reach PyPI, and they'd crash-loop: a container held to the egress proxy waits
     until the proxy's unit is installed."""
     monkeypatch.setattr(units, "podman_has", lambda kind, name: True)
@@ -483,17 +483,17 @@ def test_units_retires_the_old_host_unit_then_starts_its_container(
 
 
 def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, capsys):
-    """`uv run hostctl units relay` switches the relay alone; sites-runner's old host unit
-    and research's old timer wait for their own runs."""
+    """`uv run hostctl units relay` switches the relay alone; research-runner's old host unit
+    and research's old timer wait for theirs."""
     import subprocess
 
     user, containers = tmp_path / "user", tmp_path / "containers"
     user.mkdir()
-    for name in ("relay.service", "sites-runner.service", "research-old.timer"):
+    for name in ("relay.service", "research-runner.service", "research-old.timer"):
         (user / name).write_text(RENDERED + "[Service]\nExecStart=old\n")
     planned = plan(tmp_path)
     for u in planned:  # installed as the repo has them, but the two containers
-        if u.service not in ("relay.service", "sites-runner.service"):
+        if u.service not in ("relay.service", "research-runner.service"):
             u.dest.parent.mkdir(parents=True, exist_ok=True)
             u.dest.write_text(u.text)
     calls = []
@@ -517,14 +517,16 @@ def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, ca
         ["restart", "relay.service"],
     ]
     assert (containers / "relay.container").exists()
-    assert not (containers / "sites-runner.container").exists()
+    assert not (containers / "research-runner.container").exists()
     assert not (user / "relay.service").exists()
     assert (user / "research-old.timer").exists()
-    assert (user / "sites-runner.service").exists()
+    assert (user / "research-runner.service").exists()
     calls.clear()
-    units.main(["install", "research"])  # a timer the registry no longer has
+    # Its own app moves its runner, and drops a timer the registry no longer has.
+    units.main(["install", "research"])
     assert ["systemctl", "--user", "disable", "--now", "research-old.timer"] in calls
     assert not (user / "research-old.timer").exists()
-    assert (user / "sites-runner.service").exists()
+    assert not (user / "research-runner.service").exists()
+    assert (containers / "research-runner.container").exists()
     with pytest.raises(SystemExit, match="no app nope"):
         units.main(["install", "nope"])

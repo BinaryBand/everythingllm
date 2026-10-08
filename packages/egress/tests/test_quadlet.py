@@ -284,8 +284,7 @@ def test_a_service_container_gets_nothing_beyond_its_mounts_and_limits(template)
         source = volume.split(":")[0].rstrip("/")
         assert source not in TOO_WIDE, (name, volume)
         assert "podman" not in source and not source.endswith(".sock"), (name, volume)
-        # The sandbox runner's own socket takes any workspace's scope; a container gets
-        # its build socket's folder (sandbox-build) at most.
+        # The sandbox runner's own socket takes any workspace's scope.
         assert source != "@ANYTHINGLLM_STORAGE@/everythingllm/sandbox", (name, volume)
         # Nor AnythingLLM's .env, with every key and secret it has: its own share at most.
         assert not source.endswith("/.env"), (name, volume)
@@ -317,41 +316,3 @@ def test_a_share_of_anythingllms_env_is_written_before_each_start(template):
     assert given and "OPENROUTER_API_KEY" not in given
     # A signing secret goes in only as being set, never its value.
     assert "JWT_SECRET" not in given
-
-
-def test_sites_runner_mounts_only_what_it_uses():
-    """sites-runner (sites.tools, sites.build) reads the repo, writes the entries and
-    builds into the pages site, serves its socket and asks the sandbox runner to build.
-    Nothing else."""
-    keys = container_keys(QUADLET / "sites-runner.container.in")
-    data, storage = "%h/.local/share/everythingllm", "@ANYTHINGLLM_STORAGE@"
-    assert sorted(keys["Volume"]) == sorted(
-        [
-            "@REPO@:@REPO@:ro",
-            f"{data}/pages/entries:{data}/pages/entries",
-            f"{data}/pages/public:{data}/pages/public",
-            f"{storage}/everythingllm/sites:{storage}/everythingllm/sites",
-            f"{storage}/everythingllm/sandbox-build:{storage}/everythingllm/sandbox-build:ro",
-            f"{data}/venvs/sites-runner-ctr:{data}/venvs/sites-runner-ctr",
-        ]
-    )
-    # Its socket is in storage, so it keeps the host user's groups.
-    assert keys["GroupAdd"] == ["keep-groups"]
-    env = dict(e.partition("=")[::2] for e in keys["Environment"])
-    assert "PublishPort" not in keys  # it serves nothing over HTTP
-    assert env["UV_PROJECT_ENVIRONMENT"] == f"{data}/venvs/sites-runner-ctr/venv"
-    assert env["UV_CACHE_DIR"] == f"{data}/venvs/sites-runner-ctr/uv-cache"
-    assert keys["Exec"] == [
-        "uv run --frozen --no-dev --project @REPO@ --package sites --extra host sites-runner"
-    ]
-
-
-def test_the_sites_profile_lets_through_what_sites_runner_reaches(egress):
-    """Feeds, story pages and DeepSeek are public hosts; SearXNG is on PUBLIC_HOST."""
-    sites = egress.profile_for(egress.ips()["sites-runner"])
-    assert sites is not None and sites.name == "sites"
-    assert sites.judge("api.deepseek.com", 443) == "public"
-    assert sites.judge("host.example.ts.net", 8888) == "allow"
-    # Not AnythingLLM, nor the pages sites: it writes those to disk.
-    for port in (3001, 8445, 8447):
-        assert sites.judge("host.example.ts.net", port) is None

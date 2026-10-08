@@ -26,7 +26,7 @@
       },
       "tools": {
         "type": "array",
-        "description": "Tool ids the job may use, e.g. [\"@@mcp_sites\", \"web-browsing\"]; [] for none."
+        "description": "Tool ids the job may use, e.g. [\"@@run-code\", \"web-browsing\"]; [] for none."
       },
       "apply": {
         "type": "boolean",

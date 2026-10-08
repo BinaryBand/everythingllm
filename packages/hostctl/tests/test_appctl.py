@@ -149,11 +149,12 @@ def test_setup_runs_its_steps_restarts_and_says_its_routes(ran, monkeypatch, cap
     assert "  https://h.example:8445/_live/browser/ -> http://127.0.0.1:8453" in out
     assert "  https://h.example:8454/ -> http://127.0.0.1:8454" in out
     ran.clear()
-    # sites-runner is a container, which Quadlet enables, so it's only restarted.
-    appctl.setup(registry["sites"])
+    # The relay is a container, which Quadlet enables, so it's only restarted.
+    appctl.setup(registry["relay"])
     assert ran == [
+        "python3 -m hostctl.relay_env",
         "python3 -m hostctl service-images",
-        "systemctl --user restart sites-runner.service",
+        "systemctl --user restart relay.service",
     ]
     ran.clear()
     # No app of ours has a timer now.

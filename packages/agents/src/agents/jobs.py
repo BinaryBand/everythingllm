@@ -156,7 +156,7 @@ def tool_list(tools: Any) -> list[str]:
     if isinstance(tools, str):
         tools = [tools]
     if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
-        raise RunnerError('tools must be a list of tool ids, e.g. ["@@mcp_sites"]')
+        raise RunnerError('tools must be a list of tool ids, e.g. ["@@run-code"]')
     found = list(dict.fromkeys(t.strip() for t in tools if t.strip()))
     if len(found) > MAX_TOOLS:
         raise RunnerError(f"give at most {MAX_TOOLS} tools")

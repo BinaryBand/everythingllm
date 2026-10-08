@@ -45,11 +45,6 @@ public = true
 allow = ["@PUBLIC_HOST@:8888", "@NTFY_HOST@:443"]
 ips = { research-runner = "10.89.79.11" }
 
-[profiles.sites]
-public = true
-allow = ["@PUBLIC_HOST@:8888"]
-ips = { sites-runner = "10.89.79.12" }
-
 # The workspaces' browsers (packages/browser): browser-runner starts each on one of these
 # addresses, the slot it holds while it runs. Chromium uses the public port only.
 [profiles.browser]

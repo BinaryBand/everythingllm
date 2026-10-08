@@ -78,9 +78,9 @@ def test_requests_get_results_and_errors(sock):
 
 def test_a_service_that_isnt_there_is_down(sock):
     with pytest.raises(
-        RunnerError, match="The sites runner isn.t running on the host"
+        RunnerError, match="The sandbox runner isn.t running on the host"
     ):
-        asyncio.run(hostrpc.request(sock, "ping", {}, 5, name="sites runner"))
+        asyncio.run(hostrpc.request(sock, "ping", {}, 5, name="sandbox runner"))
 
 
 def test_a_slow_answer_times_out(sock):
@@ -207,29 +207,6 @@ def test_env_values_keeps_only_the_names_and_lets_the_environment_win(
     assert hostrpc.env_values(env, ["A", "B", "C"]) == {"A": "last", "B": "env"}
     assert hostrpc.env_values(env, ["B"], environ=False) == {"B": "two"}
     assert hostrpc.env_values(tmp_path / "missing", ["A"]) == {}
-
-
-def test_request_sync_works_from_inside_a_running_loop(sock):
-    async def go():
-        svc = Echo()
-        task = await served(svc, sock)
-        call = (
-            hostrpc.request_sync
-        )  # blocking, so off the loop as a worker thread would be
-        assert await asyncio.to_thread(call, sock, "echo", {"text": "hi"}, 5) == {
-            "text": "hi"
-        }
-        with pytest.raises(RunnerError, match="^no, thanks$"):
-            await asyncio.to_thread(call, sock, "refuse", {}, 5)
-        with pytest.raises(RunnerError, match="didn't answer within 0s"):
-            await asyncio.to_thread(call, sock, "hang", {}, 0.1)
-        svc.slow.set()
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-
-    asyncio.run(go())
-    with pytest.raises(RunnerError, match="The sandbox runner isn.t running"):
-        hostrpc.request_sync(sock, "ping", {}, 5, name="sandbox runner")
 
 
 @pytest.fixture

@@ -41,7 +41,7 @@ container = { "systemd-searxng" = "SearXNG" }
 serve = [{ https = 8888, port = 8888 }]
 
 [pages]
-summary = "the pages site (Caddy): the Zola sites on :8445 and the workspaces' /public on :8447"
+summary = "the pages site (Caddy): the link cards, shown images and live cards on :8445, and the workspaces' /public on :8447"
 container = { "systemd-static_agent" = "pages site (Caddy)" }
 serve = [{ https = 8445, port = 8445 }, { https = 8447, port = 8447 }]
 health = { "pages site" = "http://127.0.0.1:8445/research/", "workspace pages" = "http://127.0.0.1:8447/" }
@@ -89,13 +89,6 @@ guard = { runs = "agents/runs", noun = "Delegations" }
 serve = [{ https = 8445, path = "/_live/agents", port = 8451 }]
 health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-00000000.png" }
 why_not_installed = "it needs a developer API key in ~/.config/everythingllm/agents.env first"
-
-[sites]
-summary = "sites-runner, in its container: writes the sites' entries and has the sandbox build them"
-runner = "sites-runner.service"
-container = { "systemd-sites-runner" = "sites runner" }
-before = ["python3 -m hostctl service-images"]
-install = true
 
 [relay]
 summary = "the Nilson relay, in its service container, beside AnythingLLM at https :3001/everythingllm/"

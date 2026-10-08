@@ -8,7 +8,6 @@ Work that's been looked into but not done yet. Remove an entry when it lands.
 
 | Package | Time | Where it goes |
 | --- | --- | --- |
-| sites | ~7 s | real zola builds and the article-web tests (`test_web_answers_only_loopback_and_its_own_address` alone is 1.6 s) |
 | egress | ~4 s | the tunnel idle tests wait out a 0.3 s limit, 0.8 s each |
 | others | \<4 s each | |
 
@@ -18,11 +17,11 @@ Tests are a small part of how long sessions take. Run one package's tests while 
 
 ## Finish the service-container rollout
 
-The relay, research-runner and sites-runner went live in their containers on 2026-10-07 (see the proposal's status and the README's "Service containers"). The checks a script couldn't make, and the cleanup once they've held:
+The relay and research-runner went live in their containers on 2026-10-07 (see the proposal's status and the README's "Service containers"). The checks a script couldn't make, and the cleanup once they've held:
 
 - **Checks that need a person.**
   - Run one Nilson chat to the end through the relay, with its ntfy notice.
-- **Once the containers have run for a week:** delete the old host venvs `~/.local/share/everythingllm/venvs/{relay,research,sites}`, and the leftover `browser-net` network (`podman network rm browser-net`).
+- **Once the containers have run for a week:** delete the old host venvs `~/.local/share/everythingllm/venvs/{relay,research}`, and the leftover `browser-net` network (`podman network rm browser-net`).
 - **Rolling a container back is partly by hand.** `hostctl.units.retired()` only looks in `~/.config/systemd/user`, so going back to a host unit means moving `~/.config/containers/systemd/<x>.container` aside yourself, then restoring its template to `host/systemd/` from git and running `uv run hostctl units`. A `uv run hostctl units --host <app>` could do both.
 
 ## Saved logins in the browser: loose ends

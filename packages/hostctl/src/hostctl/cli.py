@@ -2,7 +2,7 @@
 name (`uv run hostctl deploy`). `uv run hostctl` lists them.
 
 The steps are the other hostctl modules, called in-process; what isn't (systemctl, podman, the
-test runs, the skills, the site builds) runs as a subprocess, echoed first.
+test runs) runs as a subprocess, echoed first.
 
 Config (environment):
   PUBLIC_HOST, ANYTHINGLLM_STORAGE  from host.env, or the environment over it; passed on to
@@ -47,8 +47,6 @@ BROWSER = ROOT / "host" / "containers" / "browser"
 BROWSER_IMAGE = "localhost/everythingllm-browser"
 BROWSER_PREFIX = "everythingllm-browser-"
 WORKSPACE_RE = re.compile(r"[a-z0-9_][a-z0-9_-]{0,99}")  # as the sandbox's KEY_RE
-# The MCP servers' venv and uv cache inside the AnythingLLM container.
-MCP = "/app/server/storage/everythingllm/mcp"
 EXPORTED = ("PUBLIC_HOST", "ANYTHINGLLM_STORAGE")
 
 # name: (help, function); `uv run hostctl` lists them in this order.
@@ -107,14 +105,13 @@ def install_units(*names: str) -> None:
 def diff() -> None:
     from hostctl import sync  # needs ANYTHINGLLM_STORAGE
 
-    skills_check()
     sync.main(["diff"])
     units.main(["diff"])
 
 
 @command(
     "deploy",
-    "write skills, the default prompt and its version, and MCP config live, refresh MCP deps, restart AnythingLLM, rebuild the sites",
+    "write the skills and the default prompt and its version live, and restart AnythingLLM",
 )
 def deploy() -> None:
     from hostctl import sync  # needs ANYTHINGLLM_STORAGE
@@ -124,27 +121,8 @@ def deploy() -> None:
             f"{ROOT} is a git worktree; deploy from the main checkout, which AnythingLLM "
             "mounts and the runners run."
         )
-    skills_check()
     sync.main(["deploy"])
-    mcp_sync()
     restart()
-    sites_build()
-
-
-@command(
-    "skills",
-    "write the agent skills that forward an op to a host service, from the fronts' `skills` (hostrpc.skillgen)",
-)
-def skills() -> None:
-    run("uv", "run", "--all-packages", "python", "-m", "hostctl.skills")
-
-
-@command(
-    "skills-check",
-    "stop if the generated skills don't match their declarations (diff and deploy run it)",
-)
-def skills_check() -> None:
-    run("uv", "run", "--all-packages", "python", "-m", "hostctl.skills", "--check")
 
 
 @command("import-skill", "copy a live skill into the repo: import-skill <hubId>")
@@ -174,13 +152,13 @@ def status() -> None:
 
 @command(
     "health",
-    "check every app's units, ports and runners, and each MCP server (e.g. after a reboot)",
+    "check every app's units, ports and runners (e.g. after a reboot)",
 )
 def health() -> None:
     run(str(ROOT / "packages" / "hostctl" / "health.sh"))
 
 
-@command("test", "run tests for all MCP servers and agent skills")
+@command("test", "run every package's tests and the agent skills'")
 def test() -> None:
     run("uv", "run", "--all-packages", "--all-extras", "pytest", "-q")
     test_skills()
@@ -195,26 +173,6 @@ def test_skills() -> None:
         "podman", "exec", "-e", "NODE_OPTIONS=", "-w", "/tmp", CONTAINER,
         "node", "--test", "/mcp/anythingllm/",
     )  # fmt: skip
-
-
-@command(
-    "mcp-sync",
-    "install/refresh the MCP servers' deps inside the AnythingLLM container, and only theirs",
-)
-def mcp_sync() -> None:
-    """The container's uv syncs one --package at a time: the first sync is exact (it removes
-    whatever no MCP server needs), the rest only add."""
-    from hostctl import sync
-
-    for i, pkg in enumerate(sync.mcp_packages()):
-        run(
-            "podman", "exec", "-w", "/tmp",
-            "-e", f"UV_PROJECT_ENVIRONMENT={MCP}/venv",
-            "-e", f"UV_CACHE_DIR={MCP}/uv-cache",
-            "-e", "UV_PYTHON_DOWNLOADS=never",
-            CONTAINER, "uv", "sync", "--frozen", "--no-dev", "--package", pkg,
-            *(["--inexact"] if i else []), "--project", "/mcp",
-        )  # fmt: skip
 
 
 @command("apps", "list the apps, for <app>-setup and <app>-logs")
@@ -370,15 +328,6 @@ def browser_reset(workspace: str) -> None:
         print(f"removed {profile}")
     else:
         print(f"{workspace} has no browser profile")
-
-
-@command(
-    "sites-build",
-    "rebuild all Zola sites by hand (sites-runner does this on every write)",
-)
-def sites_build() -> None:
-    os.environ["ANYTHINGLLM_STORAGE"] = str(units.storage())  # stops here without it
-    run("uv", "run", "--package", "sites", "sites-build")
 
 
 def lookup(name: str) -> tuple[Callable[..., None], list[str]]:

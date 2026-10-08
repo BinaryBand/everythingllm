@@ -1,4 +1,4 @@
-# uv workspace for the MCP servers, host services and libraries: one member per packages/
+# uv workspace for the host services, the MCP gateway and libraries: one member per packages/
 # subdirectory, all locked in uv.lock. `uv sync --all-packages` puts the dev venv at .venv,
 # where editors look.
 [tool.uv.workspace]
@@ -18,7 +18,6 @@ publicweb = { workspace = true }
 research = { workspace = true }
 runs = { workspace = true }
 sandbox = { workspace = true }
-sites = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -28,8 +27,8 @@ dev = [
     "ty>=0.0.84",
 ]
 
-# Makes the repo root pytest's rootdir however tests are picked (`pytest packages/sites`, a
-# single file), so packages/conftest.py, which keeps host.env out of the tests, always loads.
+# Makes the repo root pytest's rootdir however tests are picked (`pytest packages/sandbox`,
+# a single file), so packages/conftest.py, which keeps host.env out of the tests, always loads.
 # One ruff cache at the root, wherever ruff is run from.
 [tool.ruff]
 cache-dir = ".ruff_cache"
@@ -37,10 +36,9 @@ cache-dir = ".ruff_cache"
 [tool.pytest.ini_options]
 testpaths = ["packages"]
 
-# An MCP server's tools are signatures whose bodies hostrpc.forwarder supplies.
+# The gateway's fronts' tools are signatures whose bodies hostrpc.forwarder supplies.
 [[tool.ty.overrides]]
 include = [
-  "packages/*/src/*/server.py",
   "packages/gateway/src/gateway/agents.py",
   "packages/gateway/src/gateway/research.py",
   "packages/gateway/src/gateway/sandbox.py",

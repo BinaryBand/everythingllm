@@ -38,7 +38,7 @@ def test_a_file_without_a_token_stops_the_setup(monkeypatch, tmp_path):
 @pytest.fixture
 def grants(tmp_path):
     path = tmp_path / "grants.toml"
-    path.write_text('[clients.laptop]\ntools = ["sites", "sandbox"]\n')
+    path.write_text('[clients.laptop]\ntools = ["agents", "sandbox"]\n')
     return path
 
 
@@ -69,7 +69,7 @@ def test_a_client_gets_a_token_and_the_command_to_use_it(
         f"--header 'Authorization: Bearer {token}'"
     ) in out
     assert "theirs" not in out  # only this client's token
-    assert "Its grant in grants.toml: sites, sandbox." in out
+    assert "Its grant in grants.toml: agents, sandbox." in out
     assert "systemctl --user restart gateway" in out
 
 

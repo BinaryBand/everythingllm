@@ -48,13 +48,13 @@ test("remind-once sends its tools as a list, whether the model gives a list or J
     const { handler } = require("../../remind-once/handler").runtime;
     const base = { name: "stretch", prompt: "Remind the user to stretch.", at: "2026-10-07 14:05" };
     assert.equal(await handler.call(chat("career"), base), "remind_once ok");
-    await handler.call(chat("career"), { ...base, tools: '["@@mcp_sites"]', apply: true });
+    await handler.call(chat("career"), { ...base, tools: '["@@run-code"]', apply: true });
     await handler.call(chat("career"), { ...base, tools: ["web-browsing"], apply: "false" });
     assert.deepEqual(
       agents.requests.map((r) => [r.op, r.args.tools, r.args.apply]),
       [
         ["remind_once", [], false],
-        ["remind_once", ["@@mcp_sites"], true],
+        ["remind_once", ["@@run-code"], true],
         ["remind_once", ["web-browsing"], false],
       ]
     );
@@ -70,10 +70,10 @@ test("schedule-job sends the invocation's workspace, its cron as text and its to
     const { handler } = require("../../schedule-job/handler").runtime;
     const base = { name: "news", prompt: "Summarize the headlines.", schedule: "0 6 * * 1-5" };
     assert.equal(await handler.call(chat("career"), base), "schedule_job ok");
-    await handler.call(chat("career"), { ...base, tools: '["@@mcp_sites"]', apply: "true" });
+    await handler.call(chat("career"), { ...base, tools: '["@@run-code"]', apply: "true" });
     assert.deepEqual(agents.requests.map((r) => [r.op, r.args.tools, r.args.apply]), [
       ["schedule_job", [], false],
-      ["schedule_job", ["@@mcp_sites"], true],
+      ["schedule_job", ["@@run-code"], true],
     ]);
     assert.deepEqual(agents.requests[0].args, { scope: { workspace: "career", thread: "3" }, ...base, tools: [], apply: false });
   } finally {

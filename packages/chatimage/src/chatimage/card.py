@@ -1,11 +1,9 @@
 """Link cards: a big clickable picture for a page the agent links in the chat, like the
 Claude app's artifact cards.
 
-When a page is published (sandbox.runner's publish, the sites tools, deep research), or the
-agent asks for a site or an entry that's already there (the sites tools' list_sites,
-list_entries and get_entry), the host draws a card with the page's title, where it lives
-and a line about it, saves it on the pages site in `_cards/`, and hands the agent a line to
-paste as is:
+When a page is published (sandbox.runner's publish), the host draws a card with the page's
+title, where it lives and a line about it, saves it on the pages site in `_cards/`, and
+hands the agent a line to paste as is:
 
     [![Title](https://<host>:8445/_cards/<name>.png?v=<hash>)](<page url>)
 
@@ -15,9 +13,9 @@ isn't drawn again and keeps its URL, and one that has gets a new URL, so the cha
 show an old card from its cache. Each card is saved twice, `<name>.png` in the dark theme and
 `<name>.light.png` in the light one; the pages site's Caddyfile serves the light one when
 the address asks for it (`&theme=light` after the ?v=), and the dark one for a card drawn
-before there were two. No page or site can be called `_cards`: their slugs start
-with a letter or digit. The sites and research containers can write the pages site, so a
-card is read and written without following a symlink one put there (`save`, `drawn`).
+before there were two. A card is read and written without following a symlink (`save`,
+`drawn`): service containers could once write the pages site, and a symlink one left there
+mustn't send the host's write elsewhere.
 """
 
 import contextlib

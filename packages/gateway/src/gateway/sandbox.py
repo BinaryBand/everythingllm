@@ -35,7 +35,7 @@ from gateway import grants
 
 mcp = MCPServer("sandbox")
 
-# The gateway serves each tool here as PREFIX + its name, apart from the fronts' tools.
+# The gateway serves each tool here as PREFIX + its name.
 PREFIX = "sandbox_"
 
 # A client's sandbox workspace is WORKSPACE + its name, its one thread THREAD.
@@ -59,10 +59,9 @@ RunId = Annotated[
     ),
 ]
 
-skills = hostrpc.Skills("sandbox", "SANDBOX_SOCKET")
-runner = hostrpc.caller(
-    skills.folder, skills.env, "sandbox runner", error=ToolError, limit=LIMIT
-)
+# The runner's socket: $SANDBOX_SOCKET, else storage/everythingllm/sandbox/runner.sock.
+FOLDER, ENV = "sandbox", "SANDBOX_SOCKET"
+runner = hostrpc.caller(FOLDER, ENV, "sandbox runner", error=ToolError, limit=LIMIT)
 
 
 def client_key(what: str) -> str:

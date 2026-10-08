@@ -1,5 +1,5 @@
 name = "agent-site"
-description = "Shared theme for the agent-fed sites: no JavaScript or inline styles, so it works under the pages site's CSP"
+description = "Shared theme for the agent's Zola sites (build-site): no JavaScript or inline styles"
 license = "MIT"
 min_version = "0.23.0"
 

@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
 
-const { asObject, asFlag, asInteger, forwardSkill } = require("../runner");
+const { asObject, asFlag, asInteger, forward } = require("../runner");
 const { fakeService } = require("./fakeservice");
 
 const SKILLS = path.join(__dirname, "..", "..");
@@ -17,11 +17,11 @@ function agent(workspace) {
 
 test("every skill that writes, acts or delegates refuses a delegated task, before reaching any service", async () => {
   const service = await fakeService(() => ({ ok: true, result: "done" }));
-  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "SITES_SOCKET", "AGENTS_SOCKET", "BROWSER_SOCKET"];
+  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "AGENTS_SOCKET", "BROWSER_SOCKET"];
   for (const env of envs) process.env[env] = service.socket;
   try {
     const skills = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, "plugin.json")));
-    assert.ok(skills.includes("write-entry") && skills.includes("run-code"));
+    assert.ok(skills.includes("delegate") && skills.includes("run-code"));
     for (const skill of skills) {
       if (READS.has(skill)) continue;
       const { handler } = require(path.join(SKILLS, skill, "handler.js")).runtime;
@@ -37,56 +37,29 @@ test("every skill that writes, acts or delegates refuses a delegated task, befor
 
 test("forward sends the op and its args to the service and gives back its text", async () => {
   const service = await fakeService((op, args) =>
-    args.slug === "nope" ? { ok: false, error: "there's no entry 'nope'" } : { ok: true, result: `${op} ok` }
+    args.slug === "nope" ? { ok: false, error: "there's no page 'nope'" } : { ok: true, result: `${op} ok` }
   );
-  process.env.SITES_SOCKET = service.socket;
+  const spec = { service: "probe", env: "PROBE_RUNNER", op: "show" };
+  process.env.PROBE_RUNNER = service.socket;
   try {
-    const writeEntry = require("../../write-entry/handler").runtime;
-    const reply = await writeEntry.handler.call(agent("career"), {
-      site: "news", section: "editions", slug: "2026-10-06", title: "T", date: "2026-10-06",
-      extra: '{"lede": "x"}', overwrite: "true",
-    });
-    assert.equal(reply, "write_entry ok");
-    assert.deepEqual(service.requests[0], {
-      op: "write_entry",
-      args: { site: "news", section: "editions", slug: "2026-10-06", title: "T", date: "2026-10-06", extra: { lede: "x" }, overwrite: true },
-    });
-    const deleteEntry = require("../../delete-entry/handler").runtime;
-    assert.equal(await deleteEntry.handler.call(agent("career"), { site: "news", section: "editions", slug: "nope" }), "Error: there's no entry 'nope'");
+    assert.equal(await forward(agent("career"), { ...spec, args: { slug: "a" } }), "show ok");
+    assert.deepEqual(service.requests[0], { op: "show", args: { slug: "a" } });
+    assert.equal(await forward(agent("career"), { ...spec, args: { slug: "nope" } }), "Error: there's no page 'nope'");
     // Scheduled jobs have no workspace, and go ahead.
     const job = { logger: () => {}, super: { handlerProps: { invocation: {} } } };
-    assert.equal(await deleteEntry.handler.call(job, { site: "news", section: "editions", slug: "x" }), "delete_entry ok");
+    assert.equal(await forward(job, { ...spec, args: {} }), "show ok");
+    // A delegated task doesn't reach the service.
+    assert.match(await forward(agent("agents-worker"), { ...spec, args: {} }), /^Error: this tool isn't available to a delegated task/);
+    assert.equal(service.requests.length, 3);
   } finally {
-    delete process.env.SITES_SOCKET;
+    delete process.env.PROBE_RUNNER;
     await service.close();
   }
-  process.env.SITES_SOCKET = "/nonexistent/sites.sock";
+  process.env.PROBE_RUNNER = "/nonexistent/probe.sock";
   try {
-    const writeEntry = require("../../write-entry/handler").runtime;
-    assert.match(await writeEntry.handler.call(agent("career"), { site: "news", section: "editions", slug: "x" }), /sites service isn't running.*uv run hostctl sites-setup/);
+    assert.match(await forward(agent("career"), { ...spec, args: {} }), /probe service isn't running.*uv run hostctl probe-setup/);
   } finally {
-    delete process.env.SITES_SOCKET;
-  }
-});
-
-test("a generated skill sends what's set, coerced, and leaves the rest to the op's defaults", async () => {
-  const service = await fakeService(() => ({ ok: true, result: "added" }));
-  process.env.SITES_SOCKET = service.socket;
-  // Every kind hostrpc.skillgen writes, as a generated handler's SPEC declares them.
-  const spec = { service: "sites", env: "SITES_SOCKET", op: "add", params: { url: "string", keep: "integer", scrub_ads: "boolean", transcribe: "boolean", ad_words: "enum", rules: "string" } };
-  const skill = (params) => forwardSkill(agent("career"), spec, params);
-  try {
-    await skill({ url: "u", keep: "12" });
-    await skill({ url: "u", keep: "all", scrub_ads: false, transcribe: "true" });
-    await skill({ url: "u", keep: null, ad_words: "", rules: "", other: 1 });
-    assert.deepEqual(service.requests.map((r) => r.args), [
-      { url: "u", keep: 12 },
-      { url: "u", keep: "all", scrub_ads: false, transcribe: true },
-      { url: "u", rules: "" }, // "" is a setting (every episode); an enum's "" isn't
-    ]);
-  } finally {
-    delete process.env.SITES_SOCKET;
-    await service.close();
+    delete process.env.PROBE_RUNNER;
   }
 });
 

@@ -45,7 +45,7 @@ def test_a_container_gets_only_its_keys(tmp_path, capsys):
 
 
 def test_an_unreadable_env_gives_an_empty_file(tmp_path, capsys):
-    out = tmp_path / "ctr" / "sites-runner.env"
+    out = tmp_path / "ctr" / "research-runner.env"
     ctr_env.main([str(tmp_path / "missing"), str(out), "DEEPSEEK_API_KEY"])
     assert out.read_text() == ""
     assert "nothing read" in capsys.readouterr().out

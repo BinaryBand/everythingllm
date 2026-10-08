@@ -31,7 +31,6 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
     assert config.ips() == {
         "relay": "10.89.79.10",
         "research-runner": "10.89.79.11",
-        "sites-runner": "10.89.79.12",
         "browser-1": "10.89.79.32",
         "browser-2": "10.89.79.33",
         "browser-3": "10.89.79.34",
@@ -51,8 +50,6 @@ def test_the_profiles_fill_in_the_hosts_and_keep_to_their_addresses():
     assert {(HOST, 3001), ("ntfy.sh", 443)} <= relay.allow
     assert (HOST, 8888) in research.allow
     assert (HOST, 3001) not in research.allow
-    assert (HOST, 8888) in config.profiles["sites"].allow
-    assert (HOST, 3001) not in config.profiles["sites"].allow
     for p in config.profiles.values():  # uv's first sync, for every container
         assert {("pypi.org", 443), ("files.pythonhosted.org", 443)} <= p.allow
     for name in ("relay", "research"):  # both tell the Nilson app through ntfy
@@ -66,13 +63,13 @@ def test_a_profile_without_its_host_doesnt_load(tmp_path):
         egress_config.load(env={})
     bad = tmp_path / "egress.toml"
     text = egress_config.FILE.read_text()
-    bad.write_text(text.replace('"10.89.79.12"', '"10.89.79.11"'))
+    bad.write_text(text.replace('"10.89.79.10"', '"10.89.79.11"'))
     with pytest.raises(ValueError, match="used twice"):
         egress_config.load(bad, env={"PUBLIC_HOST": HOST})
-    bad.write_text(text.replace('"10.89.79.12"', '"10.89.80.12"'))
+    bad.write_text(text.replace('"10.89.79.10"', '"10.89.80.10"'))
     with pytest.raises(ValueError, match="isn't in 10.89.79.0/24"):
         egress_config.load(bad, env={"PUBLIC_HOST": HOST})
-    bad.write_text(text.replace('"10.89.79.12"', '"10.89.79.200"'))
+    bad.write_text(text.replace('"10.89.79.10"', '"10.89.79.200"'))
     with pytest.raises(ValueError, match="which podman hands out"):
         egress_config.load(bad, env={"PUBLIC_HOST": HOST})
     bad.write_text(text.replace("public_port = 3129", "public_port = 3128"))
@@ -104,7 +101,7 @@ def test_a_connection_is_known_by_its_address():
     config = loaded()
     assert config.profile_for("10.89.79.11").name == "research"
     assert config.profile_for("::ffff:10.89.79.10").name == "relay"
-    assert config.profile_for("10.89.79.12").name == "sites"
+    assert config.profile_for("10.89.79.12") is None  # no container's
     assert config.profile_for("10.89.79.2") is None  # the proxy itself
     assert config.profile_for("10.88.0.5") is None
     assert config.profile_for("not an address") is None

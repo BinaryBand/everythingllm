@@ -19,12 +19,7 @@ symlink, so a theme's `static/x -> /project` would publish them. So a theme come
 without its symlinks, and must be a folder in its workspace's /shared, not one reached
 through a symlink.
 
-A system site (research: Runner.op_build_system_site) is its repo source plus
-its entries, which stay on the host and come in read-only; they're copied into its content/
-the way sites.build assembles it on the host (entries only: the sections' _index.md files
-come from the repo).
-
-  python sitebuild.py <site folder> <base url> [<entries folder>]
+  python sitebuild.py <site folder> <base url>
 """
 
 import os
@@ -128,10 +123,8 @@ def assemble(
     work: Path,
     system: Path = SYSTEM,
     shared: Path = SHARED,
-    entries: Path | None = None,
 ) -> None:
-    """Copy the site to `work` (leaving out .git and an old public/) with its theme in place,
-    and a system site's entries in its content/."""
+    """Copy the site to `work` (leaving out .git and an old public/) with its theme in place."""
     if not (source / "zola.toml").is_file():
         raise BuildError(f"{source} has no zola.toml, so it isn't a Zola site")
     try:
@@ -154,20 +147,12 @@ def assemble(
             shutil.copytree(theme, dest, symlinks=True)
         else:
             copy_shared_theme(shared, origin, theme.name, dest)
-    if entries is not None and entries.is_dir():
-        shutil.copytree(
-            entries,
-            work / "content",
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns("_index.md", ".*"),
-        )
 
 
 def main() -> None:
     source, base_url = Path(sys.argv[1]), sys.argv[2]
-    entries = Path(sys.argv[3]) if len(sys.argv) > 3 else None
     try:
-        assemble(source, WORK, entries=entries)
+        assemble(source, WORK)
     except BuildError as e:
         print(e, file=sys.stderr)
         sys.exit(2)

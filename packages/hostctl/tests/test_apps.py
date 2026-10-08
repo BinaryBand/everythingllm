@@ -125,7 +125,6 @@ def test_the_registrys_views():
         "browser-runner": "browser",
         "research-runner": "research",
         "agents-runner": "agents",
-        "sites-runner": "sites",
     }
     guarded = apps.guarded()
     assert {u: (g.runs, g.noun) for u, g in guarded.items()} == {
@@ -138,8 +137,8 @@ def test_the_registrys_views():
     }
     app = apps.app_of("static_agent.service")
     assert app is not None and app.name == "pages"
-    app = apps.app_of("sites-runner.service")
-    assert app is not None and app.name == "sites"
+    app = apps.app_of("research-runner.service")
+    assert app is not None and app.name == "research"
     assert apps.app_of("nothing.service") is None
 
 
@@ -159,8 +158,8 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     from publicweb.pages import SEARXNG
     from relay.app import PREFIX as RELAY_PREFIX
     from relay.app import Config as RelayConfig
+    from research.job import PAGES_PORT
     from research.job import Settings as ResearchSettings
-    from sites.store import PAGES_PORT
 
     assert port_of("research", "/_live/research") == ResearchSettings.live_port
     assert port_of("agents", "/_live/agents") == AgentsSettings.live_port

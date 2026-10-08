@@ -11,7 +11,6 @@ import hostrpc
 import pytest
 import research.job
 import sandbox.runner
-import sites.server
 from gateway import agents as gateway_agents
 from gateway import app, grants
 from gateway import research as gateway_research
@@ -91,9 +90,6 @@ def test_the_public_host_is_allowed():
         assert "tools" in rpc(c, "tools/list")["result"]
 
 
-FRONTS = (sites.server,)
-READS = {fn.__name__ for front in FRONTS for fn in front.tool.registered}
-WRITES = {fn.__name__ for front in FRONTS for fn in front.skills}
 AGENTS = {"agents_delegate", "agents_wait", "agents_runs", "agents_cancel"}
 RESEARCH = {"research_start", "research_wait", "research_runs"}
 SANDBOX = {
@@ -105,26 +101,16 @@ SANDBOX = {
 }
 
 
-def test_claude_code_has_the_fronts_tools_their_skills_and_the_gateways_own(client):
-    assert {"list_sites", "list_entries"} <= READS
-    assert {"write_entry", "delete_entry"} <= WRITES
+def test_claude_code_has_every_fronts_tools(client):
     names = tool_names(client)
-    assert names == READS | WRITES | AGENTS | RESEARCH | SANDBOX
+    assert names == AGENTS | RESEARCH | SANDBOX
     # prefixed instead
     assert not {"delegate", "wait", "runs", "cancel", "start", "run"} & names
 
 
-def test_the_groups_are_the_fronts_reads_and_skills_and_the_gateways_own():
+def test_the_groups_are_the_fronts():
     groups = app.tool_groups()
-    assert set(groups) == {
-        "sites",
-        "sites:write",
-        "agents",
-        "research",
-        "sandbox",
-    }
-    assert set(groups["sites"]) == {f.__name__ for f in sites.server.tool.registered}
-    assert set(groups["sites:write"]) == {"write_entry", "delete_entry"}
+    assert set(groups) == {"agents", "research", "sandbox"}
     assert set(groups["agents"]) == AGENTS
     assert set(groups["research"]) == RESEARCH
     assert set(groups["sandbox"]) == SANDBOX
@@ -137,10 +123,10 @@ def test_the_repos_grants_give_claude_code_every_group():
 
 def test_a_client_sees_only_the_groups_its_granted():
     config = Config(clients={"reader": TOKEN})
-    granted = {"reader": ["sites", "agents"]}
+    granted = {"reader": ["research", "agents"]}
     with TestClient(create_app(config, granted), base_url=BASE) as c:
         names = tool_names(c)
-    assert names == {f.__name__ for f in sites.server.tool.registered} | AGENTS
+    assert names == RESEARCH | AGENTS
 
 
 def test_a_client_with_a_token_but_no_grant_sees_nothing(client):
@@ -148,35 +134,25 @@ def test_a_client_with_a_token_but_no_grant_sees_nothing(client):
 
 
 def refusal(client, name, headers=MCP_HEADERS):
-    params = {"name": name, "arguments": {"site": "secret-site-name"}}
+    params = {"name": name, "arguments": {"question": "a secret question"}}
     return post(client, "tools/call", params, headers)["error"]
 
 
 def test_a_call_outside_the_grant_is_refused_and_logged(caplog):
     caplog.set_level("INFO", logger="gateway")
     config = Config(clients={"reader": TOKEN, "other": "another-token"})
-    with TestClient(create_app(config, {"reader": ["sites"]}), base_url=BASE) as c:
-        error = refusal(c, "write_entry")
+    with TestClient(create_app(config, {"reader": ["agents"]}), base_url=BASE) as c:
+        error = refusal(c, "research_start")
         assert error["code"] == -32602
         assert (
-            "'write_entry' isn't one this gateway client (reader) may call"
+            "'research_start' isn't one this gateway client (reader) may call"
             in error["message"]
         )
-        assert "(other)" in refusal(c, "list_sites", OTHER)["message"]
+        assert "(other)" in refusal(c, "agents_runs", OTHER)["message"]
         assert "(reader)" in refusal(c, "no_such_tool")["message"]
-    assert "reader was refused 'write_entry'" in caplog.text
-    assert "other was refused 'list_sites'" in caplog.text
-    assert "secret-site-name" not in caplog.text
-
-
-class FakeSites(hostrpc.Service):
-    async def op_list_entries(self, site, section, limit):
-        return f"entries of {site}/{section or 'all'} ({limit})"
-
-    async def op_write_entry(
-        self, site, section, slug, title, date, extra, body, overwrite
-    ):
-        return f"wrote {site}/{section}/{slug}: {title} ({date}, {extra}, {overwrite})"
+    assert "reader was refused 'research_start'" in caplog.text
+    assert "other was refused 'agents_runs'" in caplog.text
+    assert "a secret question" not in caplog.text
 
 
 class Recording(hostrpc.Service):
@@ -232,42 +208,21 @@ def fake_runner(monkeypatch, env, service):
         sock.unlink(missing_ok=True)
 
 
-@pytest.fixture
-def sites_runner(monkeypatch):
-    with fake_runner(monkeypatch, "SITES_SOCKET", FakeSites()):
-        yield
-
-
 def test_a_call_goes_to_the_runner_and_the_log_names_only_client_and_tool(
-    client, sites_runner, caplog
+    client, monkeypatch, caplog
 ):
     caplog.set_level("INFO", logger="gateway")
-    reply = rpc(
-        client,
-        "tools/call",
-        {"name": "list_entries", "arguments": {"site": "secret-site-name"}},
-    )
-    assert text_of(reply) == "entries of secret-site-name/all (20)"
-    assert "claude-code called list_entries" in caplog.text
-    assert "secret-site-name" not in caplog.text
+    fake = FakeAgents()
+    goal = {"goal": "a secret goal", "tasks": [{"name": "a", "profile": "worker"}]}
+    with fake_runner(monkeypatch, "AGENTS_SOCKET", fake):
+        reply = rpc(
+            client, "tools/call", {"name": "agents_delegate", "arguments": goal}
+        )
+    assert json.loads(text_of(reply))["run_id"] == "dg-2"
+    assert fake.calls[0][1]["goal"] == "a secret goal"
+    assert "claude-code called agents_delegate" in caplog.text
+    assert "a secret goal" not in caplog.text
     assert TOKEN not in caplog.text
-
-
-def test_a_skill_is_a_tool_forwarded_to_its_runner(client, sites_runner, caplog):
-    caplog.set_level("INFO", logger="gateway")
-    arguments = {
-        "site": "news",
-        "section": "notes",
-        "slug": "a-note",
-        "title": "Secret title",
-        "date": "2026-10-06",
-    }
-    reply = rpc(client, "tools/call", {"name": "write_entry", "arguments": arguments})
-    assert text_of(reply) == (
-        "wrote news/notes/a-note: Secret title (2026-10-06, None, False)"
-    )
-    assert "claude-code called write_entry" in caplog.text
-    assert "Secret title" not in caplog.text
 
 
 def test_a_prefixed_tool_sends_the_ops_own_name(client, monkeypatch):
@@ -314,7 +269,8 @@ async def whoami() -> str:
 def test_a_tool_knows_which_client_called_it(monkeypatch):
     probe = SimpleNamespace(
         __name__="probe",
-        skills=hostrpc.Skills("probe", "PROBE_SOCKET"),
+        FOLDER="probe",
+        PREFIX="",
         tool=SimpleNamespace(registered=[whoami]),
     )
     monkeypatch.setattr(app, "FRONTS", (*app.FRONTS, probe))
@@ -330,17 +286,18 @@ def test_a_tool_knows_which_client_called_it(monkeypatch):
 def test_two_fronts_with_one_tool_name_dont_start(monkeypatch):
     twin = SimpleNamespace(
         __name__="twin",
-        skills=hostrpc.Skills("twin", "TWIN_SOCKET"),
-        tool=SimpleNamespace(registered=sites.server.tool.registered),
+        FOLDER="twin",
+        PREFIX=gateway_agents.PREFIX,
+        tool=SimpleNamespace(registered=gateway_agents.tool.registered),
     )
-    monkeypatch.setattr(app, "FRONTS", (sites.server, twin))
-    with pytest.raises(RuntimeError, match="both have a tool list_sites"):
+    monkeypatch.setattr(app, "FRONTS", (gateway_agents, twin))
+    with pytest.raises(RuntimeError, match="both have a tool agents_delegate"):
         app.tool_groups()
 
 
 def test_a_grant_of_a_group_there_isnt_doesnt_start():
-    with pytest.raises(ValueError, match=r"unknown group\(s\) \['sitez'\]"):
-        create_app(Config(clients={"c": TOKEN}), {"c": ["sitez"]})
+    with pytest.raises(ValueError, match=r"unknown group\(s\) \['agentz'\]"):
+        create_app(Config(clients={"c": TOKEN}), {"c": ["agentz"]})
 
 
 def grants_file(tmp_path, text):
@@ -352,10 +309,10 @@ def grants_file(tmp_path, text):
 def test_grants_name_each_clients_groups(tmp_path):
     path = grants_file(
         tmp_path,
-        '[clients.laptop]\ntools = ["sites", "agents"]\n[clients.none]\ntools = []\n',
+        '[clients.laptop]\ntools = ["sandbox", "agents"]\n[clients.none]\ntools = []\n',
     )
-    assert grants.load(["sites", "agents", "research"], path) == {
-        "laptop": frozenset({"sites", "agents"}),
+    assert grants.load(["sandbox", "agents", "research"], path) == {
+        "laptop": frozenset({"sandbox", "agents"}),
         "none": frozenset(),
     }
 
@@ -363,26 +320,26 @@ def test_grants_name_each_clients_groups(tmp_path):
 @pytest.mark.parametrize(
     "text, error",
     [
-        ('[clients.laptop]\ntools = ["sitez"]\n', r"unknown group\(s\) \['sitez'\]"),
-        ('[clients.laptop]\ntool = ["sites"]\n', r"unknown field\(s\) \['tool'\]"),
-        ('[client.laptop]\ntools = ["sites"]\n', r"unknown key\(s\) \['client'\]"),
-        ('[clients.laptop]\ntools = "sites"\n', "must be a list"),
+        ('[clients.laptop]\ntools = ["agentz"]\n', r"unknown group\(s\) \['agentz'\]"),
+        ('[clients.laptop]\ntool = ["agents"]\n', r"unknown field\(s\) \['tool'\]"),
+        ('[client.laptop]\ntools = ["agents"]\n', r"unknown key\(s\) \['client'\]"),
+        ('[clients.laptop]\ntools = "agents"\n', "must be a list"),
         ("clients = { laptop = 1 }\n", "not a table"),
     ],
 )
 def test_grants_refuse_what_they_dont_know(tmp_path, text, error):
     with pytest.raises(ValueError, match=error):
-        grants.load(["sites"], grants_file(tmp_path, text))
+        grants.load(["agents"], grants_file(tmp_path, text))
 
 
 def test_host_sockets_points_the_fronts_at_the_hosts_storage(monkeypatch, tmp_path):
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", str(tmp_path))
     for front in app.FRONTS:
-        monkeypatch.delenv(front.skills.env, raising=False)
+        monkeypatch.delenv(front.ENV, raising=False)
     monkeypatch.setenv("SANDBOX_SOCKET", "/elsewhere.sock")
     app.host_sockets()
-    assert os.environ["SITES_SOCKET"] == str(
-        tmp_path / "everythingllm/sites/runner.sock"
+    assert os.environ["RESEARCH_SOCKET"] == str(
+        tmp_path / "everythingllm/research/runner.sock"
     )
     assert os.environ["AGENTS_SOCKET"] == str(
         tmp_path / "everythingllm/agents/runner.sock"

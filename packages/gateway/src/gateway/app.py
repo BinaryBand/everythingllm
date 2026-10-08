@@ -2,12 +2,9 @@
 AnythingLLM (Claude Code, …), served by uvicorn on the host and reached over HTTPS
 through the machine's route (apps.toml). See the README's "MCP gateway".
 
-Its tools are the fronts' own, in groups a client is granted (gateway.grants, grants.toml):
-each front's read tools (its `tool.registered`, so the same schemas and docstrings
-AnythingLLM sees) as `<front>`, its skills (the ops that write or act, signatures as its
-tools are) as `<front>:write`, and the fronts declared in the gateway (gateway.agents,
-gateway.research, gateway.sandbox), whose tools are named with their PREFIX. Each call goes
-to its runner's socket as the host sees it. The sandbox's tools take the client's scope
+Its tools are its fronts' (gateway.agents, gateway.research, gateway.sandbox), each front a
+group a client may be granted (gateway.grants, grants.toml), its tools named with its
+PREFIX. Each call goes to its runner's socket as the host sees it. The sandbox's tools take the client's scope
 from its name (grants.client), never from the model.
 
 Every path but /health needs `Authorization: Bearer <token>`, one token per client. A client
@@ -35,10 +32,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 import hostrpc
-import sites.server
 import uvicorn
 from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -49,9 +44,8 @@ from gateway.grants import CLIENT_KEY
 
 log = logging.getLogger("gateway")
 
-# Each front's read tools are the group named after it (its skills' folder), its skills
-# `<that>:write`. A front declared in the gateway names its tools with its PREFIX.
-FRONTS = (sites.server, agents, research, sandbox)
+# Each front's tools are the group named after its runner's folder, named with its PREFIX.
+FRONTS = (agents, research, sandbox)
 
 TOKEN_PREFIX = "GATEWAY_TOKEN_"
 # A client's name: it names the client's sandbox workspace too (gateway.sandbox), so it
@@ -96,8 +90,9 @@ def host_sockets() -> None:
     """Point each front at its runner's socket as the host sees it: the fronts' caller
     otherwise falls back to the container's storage path."""
     for front in FRONTS:
-        env = front.skills.env
-        os.environ.setdefault(env, str(hostrpc.socket_path(front.skills.folder, env)))
+        os.environ.setdefault(
+            front.ENV, str(hostrpc.socket_path(front.FOLDER, front.ENV))
+        )
 
 
 class RequireToken:
@@ -125,44 +120,21 @@ class RequireToken:
         await self.app(scope, receive, send)
 
 
-def write_tools(front) -> list:
-    """A front's skills as tools: each forwarded to the front's runner, as its tools are,
-    by the op's own name."""
-    skills = front.skills
-    tool = hostrpc.forwarder(
-        hostrpc.caller(
-            skills.folder, skills.env, f"{skills.folder} runner", error=ToolError
-        ),
-        lambda fn: None,  # build_mcp registers them, under their names
-    )
-    for fn in skills:
-        tool(fn)
-    return tool.registered
-
-
 def tool_groups() -> dict[str, dict[str, Callable]]:
     """Every group a client may be granted: group -> {tool name -> function}. Two fronts
     with a tool of the same name stop the gateway from starting."""
     groups: dict[str, dict[str, Callable]] = {}
     owner: dict[str, str] = {}
     for front in FRONTS:
-        group = front.skills.folder
-        prefix = getattr(front, "PREFIX", "")
-        for name, fns in (
-            (group, front.tool.registered),
-            (f"{group}:write", write_tools(front) if front.skills else ()),
-        ):
-            if not fns:
-                continue
-            tools = groups.setdefault(name, {})
-            for fn in fns:
-                tool = prefix + fn.__name__
-                if tool in owner:
-                    raise RuntimeError(
-                        f"{front.__name__} and {owner[tool]} both have a tool {tool}"
-                    )
-                owner[tool] = front.__name__
-                tools[tool] = fn
+        tools = groups.setdefault(front.FOLDER, {})
+        for fn in front.tool.registered:
+            tool = front.PREFIX + fn.__name__
+            if tool in owner:
+                raise RuntimeError(
+                    f"{front.__name__} and {owner[tool]} both have a tool {tool}"
+                )
+            owner[tool] = front.__name__
+            tools[tool] = fn
     return groups
 
 
@@ -180,9 +152,9 @@ def build_mcp(
     mcp = MCPServer(
         "everythingllm",
         instructions=(
-            "EverythingLLM's runners: the sites' entries, "
-            "delegations to AnythingLLM's own agents, deep research runs and a code "
-            "sandbox of the client's own. A client has the tools it was granted."
+            "EverythingLLM's runners: delegations to AnythingLLM's own agents, deep "
+            "research runs and a code sandbox of the client's own. A client has the "
+            "tools it was granted."
         ),
         middleware=[grants.Grants(allowed)],
     )

@@ -25,7 +25,7 @@ from gateway.sandbox import client_key
 
 mcp = MCPServer("agents")
 
-# The gateway serves each tool here as PREFIX + its name, apart from the fronts' tools.
+# The gateway serves each tool here as PREFIX + its name.
 PREFIX = "agents_"
 
 RunId = Annotated[
@@ -35,11 +35,9 @@ RunId = Annotated[
 # The runner's own line limit (agents.runner.LIMIT): a finished wait can be 6 MB.
 LIMIT = 8 * 1024 * 1024
 
-# The runner's socket; there are no skills here, only tools.
-skills = hostrpc.Skills("agents", "AGENTS_SOCKET")
-runner = hostrpc.caller(
-    skills.folder, skills.env, "agents runner", error=ToolError, limit=LIMIT
-)
+# The runner's socket: $AGENTS_SOCKET, else storage/everythingllm/agents/runner.sock.
+FOLDER, ENV = "agents", "AGENTS_SOCKET"
+runner = hostrpc.caller(FOLDER, ENV, "agents runner", error=ToolError, limit=LIMIT)
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:

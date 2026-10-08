@@ -34,7 +34,6 @@ from hostctl.units import ROOT, anythingllm_headers, replace_file, storage
 STORAGE = storage()
 REPO = ROOT / "anythingllm"
 LIVE_SKILLS = STORAGE / "plugins" / "agent-skills"
-LIVE_MCP = STORAGE / "plugins" / "anythingllm_mcp_servers.json"
 API = os.environ.get("ANYTHINGLLM_API", "http://127.0.0.1:3001/api")
 
 
@@ -66,7 +65,6 @@ def planned_files() -> dict[Path, str]:
                     text, dest.read_text() if dest.exists() else None
                 )
             out[dest] = text
-    out[LIVE_MCP] = (REPO / "mcp_servers.json").read_text()
     return out
 
 
@@ -215,18 +213,6 @@ def import_skill(name: str) -> None:
     print(f"imported {src} -> {dest.relative_to(ROOT)}")
 
 
-def mcp_packages() -> list[str]:
-    """The workspace members the MCP servers run (each one's `--package`), so `uv run hostctl mcp-sync`
-    installs what they need into the container's venv and nothing else."""
-    servers = json.loads((REPO / "mcp_servers.json").read_text())["mcpServers"]
-    names = [
-        s["args"][s["args"].index("--package") + 1]
-        for s in servers.values()
-        if "--package" in s["args"]
-    ]
-    return list(dict.fromkeys(names))
-
-
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -234,14 +220,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("deploy", help="write repo config into live storage")
     imp = sub.add_parser("import-skill", help="copy a live skill into the repo")
     imp.add_argument("name")
-    sub.add_parser(
-        "mcp-packages", help="print the workspace members the MCP servers run"
-    )
     args = parser.parse_args(argv)
 
-    if args.cmd == "mcp-packages":
-        print(" ".join(mcp_packages()))
-    elif args.cmd == "diff":
+    if args.cmd == "diff":
         diff()
     elif args.cmd == "deploy":
         deploy()

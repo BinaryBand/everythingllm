@@ -30,15 +30,16 @@ from gateway.sandbox import client_key
 
 mcp = MCPServer("research")
 
-# The gateway serves each tool here as PREFIX + its name, apart from the fronts' tools.
+# The gateway serves each tool here as PREFIX + its name.
 PREFIX = "research_"
 
 RunId = Annotated[
     str, Field(description="The run id research_start gave, e.g. 'dr-1a2b3c4d'.")
 ]
 
-skills = hostrpc.Skills("research", "RESEARCH_SOCKET")
-runner = hostrpc.caller(skills.folder, skills.env, "research runner", error=ToolError)
+# The runner's socket: $RESEARCH_SOCKET, else storage/everythingllm/research/runner.sock.
+FOLDER, ENV = "research", "RESEARCH_SOCKET"
+runner = hostrpc.caller(FOLDER, ENV, "research runner", error=ToolError)
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:

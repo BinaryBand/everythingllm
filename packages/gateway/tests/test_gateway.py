@@ -6,11 +6,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import agents.runner
 import hostrpc
 import pytest
 import research.job
 import sandbox.runner
 import sites.server
+from gateway import agents as gateway_agents
 from gateway import app, grants
 from gateway import research as gateway_research
 from gateway import sandbox as gateway_sandbox
@@ -210,15 +212,18 @@ def fake_runner(monkeypatch, env, service):
     monkeypatch.setenv(env, str(sock))
     loop = asyncio.new_event_loop()
     stop = asyncio.Event()
-    thread = threading.Thread(
-        target=loop.run_until_complete,
-        args=(hostrpc.serve(service, sock, stop=stop),),
-    )
+    ready = threading.Event()
+
+    async def main():
+        # serving() hands over the socket once it listens; from this thread, its file
+        # showing up could come before that, and a call then went unanswered.
+        async with hostrpc.serving(service, sock):
+            ready.set()
+            await stop.wait()
+
+    thread = threading.Thread(target=loop.run_until_complete, args=(main(),))
     thread.start()
-    for _ in range(200):
-        if sock.exists():
-            break
-        threading.Event().wait(0.01)
+    assert ready.wait(10), "the fake runner didn't start"
     try:
         yield
     finally:
@@ -551,6 +556,7 @@ def test_the_gateways_copies_of_the_sandboxs_limits_match_it():
     assert gateway_sandbox.KEY_RE.pattern == sandbox.runner.KEY_RE.pattern
     assert gateway_sandbox.RUNNER_WAIT == sandbox.runner.WAIT
     assert gateway_sandbox.LIMIT == sandbox.runner.LIMIT
+    assert gateway_agents.LIMIT == agents.runner.LIMIT  # a finished wait can be 6 MB
     # The longest client name the gateway takes still makes a sandbox key.
     longest = "a" * 63
     assert app.CLIENT_RE.fullmatch(longest) and not app.CLIENT_RE.fullmatch(

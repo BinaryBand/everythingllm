@@ -32,9 +32,14 @@ RunId = Annotated[
     str, Field(description="The run id agents_delegate gave, e.g. 'dg-1a2b3c4d'.")
 ]
 
+# The runner's own line limit (agents.runner.LIMIT): a finished wait can be 6 MB.
+LIMIT = 8 * 1024 * 1024
+
 # The runner's socket; there are no skills here, only tools.
 skills = hostrpc.Skills("agents", "AGENTS_SOCKET")
-runner = hostrpc.caller(skills.folder, skills.env, "agents runner", error=ToolError)
+runner = hostrpc.caller(
+    skills.folder, skills.env, "agents runner", error=ToolError, limit=LIMIT
+)
 
 
 async def call(op: str, args: dict[str, Any]) -> Any:

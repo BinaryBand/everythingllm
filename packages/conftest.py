@@ -39,9 +39,19 @@ def no_host_settings(monkeypatch, tmp_path_factory):
         "ARTICLES_HOST",
     ):
         monkeypatch.delenv(key, raising=False)
-    # Nor does any test reach this machine's sandbox runner (site builds would ask it).
-    monkeypatch.setenv("SANDBOX_SOCKET", "/nonexistent/sandbox/runner.sock")
-    monkeypatch.setenv("SANDBOX_BUILD_SOCKET", "/nonexistent/sandbox-build/runner.sock")
+    # Nor does any test reach this machine's runners (site builds would ask the sandbox's).
+    # Set, not just left out, so what a test sets with os.environ.setdefault (the
+    # gateway's host_sockets) is undone after it rather than left for the tests after.
+    for folder in (
+        "sandbox",
+        "sandbox-build",
+        "sites",
+        "agents",
+        "research",
+        "browser",
+    ):
+        env = f"{folder.replace('-', '_').upper()}_SOCKET"
+        monkeypatch.setenv(env, f"/nonexistent/{folder}/runner.sock")
     try:
         from sites import store
     except ImportError:  # a package that doesn't use the sites

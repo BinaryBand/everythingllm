@@ -1232,3 +1232,45 @@ def test_a_run_within_its_limits_isnt_watched_to_death(cfg, monkeypatch):
     res = go(r.op_run(A, "bash", "sleep 1"))
     assert not [c for c in r.podman.calls if c[0][0] == "kill"]
     assert "stopped" not in res["stderr"]
+
+
+def test_a_snapshot_sees_the_scopes_mounts_and_counts_the_rest(cfg):
+    s = workspace.make_scope(cfg, A)
+    home = cfg.root / "career"
+    tree = {
+        work(cfg, A) / "a.txt": 3,
+        work(cfg, A) / "sub" / "deep" / "b.txt": 5,
+        work(cfg, A) / ".local" / "lib" / "c.py": 7,  # hidden: its size only
+        home / "threads" / "other" / "d.txt": 11,  # another chat's /work
+        project(cfg, A) / "e.md": 13,
+        shared(cfg, A) / "f" / "g.txt": 17,
+        public(cfg, A) / "site" / "index.html": 19,
+        home / "loose.txt": 23,  # in none of the mounts
+        home / "threads" / "stray.txt": 29,
+    }
+    for path, size in tree.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * size)
+    for files in (True, False):
+        usage = workspace.snapshot(s, files=files)
+        assert usage.total == sum(tree.values())
+        assert usage.count == 20  # every file and folder under the workspace and /public
+        assert usage.tops == {
+            "/work/a.txt": 3,
+            "/work/sub/": 5,
+            "/work/.local/": 7,
+            "other chats' /work": 11 + 23 + 29,
+            "/project/e.md": 13,
+            "/shared/career/f/": 17,
+            "/public/site/": 19,
+        }
+        expected = {
+            "/work/a.txt": 3,
+            "/work/sub/deep/b.txt": 5,
+            "/project/e.md": 13,
+            "/shared/career/f/g.txt": 17,
+            "/public/site/index.html": 19,
+        }
+        assert {p: size for p, (_, size) in usage.files.items()} == (
+            expected if files else {}
+        )

@@ -43,7 +43,6 @@ import shutil
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -174,14 +173,6 @@ class Scope:
             "/public": self.public,
         }
 
-    def mount_of(self, folder: Path) -> tuple[str, tuple[str, ...]] | None:
-        """A folder as its mount and its parts inside that; None outside them all
-        (another thread's /work)."""
-        for mount, root in self.roots.items():
-            if folder.is_relative_to(root):
-                return mount, folder.relative_to(root).parts
-        return None
-
 
 def make_scope(config: Config, scope: dict[str, Any]) -> Scope:
     """The caller's folders, made on first use; using the thread's /work keeps it from gc."""
@@ -288,33 +279,52 @@ class Usage:
         return ", ".join(f"{k} {v >> 20} MB" for k, v in ranked)
 
 
-def snapshot(scope: Scope) -> Usage:
+def snapshot(scope: Scope, files: bool = True) -> Usage:
     """Every visible file in the workspace's mounts by its path in the sandbox, and the size
     of the whole workspace (its other threads and its /public too). Hidden top-level entries
-    (.local with pip installs, .cache…) count toward the size only."""
+    (.local with pip installs, .cache…) count toward the size only. Without `files`, only
+    the sizes and the count, for a check against the limits."""
     usage = Usage()
-    walk = chain(os.walk(scope.home), os.walk(scope.public))
-    for dirpath, dirnames, filenames in walk:
+    roots = scope.roots
+    for mount, root in roots.items():
+        if not root.is_symlink():  # as os.walk from the folder above would leave it
+            _walk_mount(usage, mount, os.fspath(root), files)
+    # The rest of the workspace's folder: other chats' /work, and anything loose.
+    mounted = {os.fspath(root) for root in roots.values()}
+    for dirpath, dirnames, filenames in os.walk(scope.home):
         usage.count += len(dirnames) + len(filenames)
-        where = scope.mount_of(Path(dirpath))
+        dirnames[:] = [d for d in dirnames if os.path.join(dirpath, d) not in mounted]
+        for name in filenames:
+            try:
+                size = os.lstat(os.path.join(dirpath, name)).st_size
+            except FileNotFoundError:
+                continue
+            usage.total += size
+            usage.tops["other chats' /work"] = (
+                usage.tops.get("other chats' /work", 0) + size
+            )
+    return usage
+
+
+def _walk_mount(usage: Usage, mount: str, root: str, files: bool) -> None:
+    """snapshot's walk of one mount's folder, by its paths as strings: a Path for each of
+    thousands of folders is most of the time a walk takes."""
+    cut = len(root) + 1
+    for dirpath, dirnames, filenames in os.walk(root):
+        usage.count += len(dirnames) + len(filenames)
+        inside = dirpath[cut:]  # "" in the mount's own folder
+        top = inside.split(os.sep, 1)[0]
         for name in filenames:
             try:
                 st = os.lstat(os.path.join(dirpath, name))
             except FileNotFoundError:
                 continue
             usage.total += st.st_size
-            if where is None:
-                key = "other chats' /work"
-            else:
-                mount, parts = where[0], (*where[1], name)
-                key = f"{mount}/{parts[0]}" + ("/" if len(parts) > 1 else "")
-                if not parts[0].startswith("."):
-                    usage.files[f"{mount}/{'/'.join(parts)}"] = (
-                        st.st_mtime_ns,
-                        st.st_size,
-                    )
+            key = f"{mount}/{top}/" if top else f"{mount}/{name}"
             usage.tops[key] = usage.tops.get(key, 0) + st.st_size
-    return usage
+            if files and not (top or name).startswith("."):
+                path = f"{mount}/{inside}/{name}" if inside else f"{mount}/{name}"
+                usage.files[path] = (st.st_mtime_ns, st.st_size)
 
 
 def public_changes(before: Usage, after: Usage) -> set[str]:

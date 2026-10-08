@@ -222,7 +222,7 @@ def fill_attachments(
         taken = there | set(manifest) | {n for _, n, _ in new}
         new.append((file, old or attachment_name(title, taken), text))
     if new:
-        usage = snapshot(scope)
+        usage = snapshot(scope, files=False)
         room = workspace.WORKSPACE_MAX_BYTES - usage.total
         for file, name, text in new:
             if len(text) > room:

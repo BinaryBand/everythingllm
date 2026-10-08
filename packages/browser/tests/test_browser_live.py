@@ -256,6 +256,7 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
                 "tab": {
                     "card": f"{cards}/{tab.id}.jpg",
                     "page": f"{cards}/{tab.id}",
+                    "frame": f"{cards}/chat/career/chat-7/card.jpg",
                     "state": "idle",  # an op called here, not through reply
                     "title": r.subject(tab),
                     "last": tab.last,
@@ -285,11 +286,85 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
             main = r.threads[("career", "default")]
             _, body = await ask(port, "/_live/browser/chat/career", key="GOOD")
             assert body["tab"]["page"] == f"{cards}/{main.id}"
+            assert body["tab"]["frame"] == f"{cards}/chat/career/card.jpg"
             head, body = await ask(port, "/chat/nowhere", key="GOOD")
             assert b"404" in head and body == {"error": "No such chat."}
             await r.stop("career")
             _, body = await ask(port, route, key="GOOD")
             assert body["tab"]["state"] == "closed"
+        finally:
+            server.close()
+            await podman.close()
+
+    asyncio.run(main())
+
+
+def test_a_client_with_a_key_gets_its_chats_card_from_any_origin(tmp_path):
+    """The chat's card.jpg is the tab's card as it is now, one JPEG any origin may read, for
+    a key; the card's own address still says nothing of CORS."""
+    from browser.chats import Chats
+
+    async def check(key):
+        return None if key == "GOOD" else (403, "No valid api key found.")
+
+    async def lookup(workspace, slug):
+        return {("career", "chat-7"): "7", ("career", None): "default"}.get(
+            (workspace, slug)
+        )
+
+    async def fetch(port, path, key=None):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        auth = f"Authorization: Bearer {key}\r\n" if key is not None else ""
+        writer.write(f"GET {path} HTTP/1.1\r\nHost: h\r\n{auth}\r\n".encode())
+        await writer.drain()
+        head, _, body = (await reader.read()).partition(b"\r\n\r\n")
+        return head, body
+
+    async def main():
+        podman = FakePodman()
+        r = Runner(config(tmp_path), podman=podman, now=Clock())
+        server = await live.Live(r, Chats(r, check, lookup)).serve(0)
+        port = server.sockets[0].getsockname()[1]
+        route = "/_live/browser/chat/career/chat-7/card.jpg"
+        try:
+            head, body = await fetch(port, route)
+            assert b"401" in head and json.loads(body) == {
+                "error": "No valid api key found."
+            }
+            assert b"Access-Control-Allow-Origin: *" in head
+            head, _ = await fetch(port, route, "BAD")
+            assert b"403" in head
+            head, body = await fetch(port, "/chat/career/nope/card.jpg", "GOOD")
+            assert b"404" in head and json.loads(body) == {"error": "No such chat."}
+            head, body = await fetch(port, route, "GOOD")  # no tab yet
+            assert b"404" in head and json.loads(body) == {
+                "error": "This chat has no browser tab."
+            }
+            await r.op_open(scope(), "https://linkedin.com/login")
+            tab = r.threads[("career", "7")]
+            head, body = await fetch(port, route, "GOOD")
+            assert b"200 OK" in head and b"Content-Type: image/jpeg" in head
+            assert b"Access-Control-Allow-Origin: *" in head
+            assert b"Cache-Control: no-store" in head
+            image = Image.open(io.BytesIO(body))
+            assert image.format == "JPEG" and image.width == live.WIDTH
+            light = THEMES["light"].panel
+            _, body = await fetch(
+                port, "/chat/career/chat-7/card.jpg?theme=light", "GOOD"
+            )
+            corner = Image.open(io.BytesIO(body)).convert("RGB").getpixel((40, 8))
+            assert all(abs(x - y) <= 6 for x, y in zip(corner, light, strict=True))
+            # The main chat's, from the workspace's route.
+            head, _ = await fetch(port, "/chat/career/card.jpg", "GOOD")
+            assert b"404" in head
+            await r.op_open(scope(thread="default"), "https://example.com/")
+            head, _ = await fetch(port, "/chat/career/card.jpg", "GOOD")
+            assert b"200 OK" in head and b"image/jpeg" in head
+            # The card's own address, which needs no key, gives no other origin a read.
+            reader, writer = await get(port, f"/_live/browser/{tab.id}.jpg")
+            head, part, _ = await first_frame(reader)
+            writer.close()
+            assert b"image/jpeg" in part and b"Access-Control-Allow-Origin" not in head
         finally:
             server.close()
             await podman.close()

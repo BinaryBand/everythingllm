@@ -32,7 +32,8 @@ The agent's request for a login (Runner.op_ask_login) has a card too:
 A tab's id is `bw-` and 16 hex digits, not guessable, and a request's `lr-` and 32: the
 card and its link are the only way to either, but for a client with an AnythingLLM
 developer API key, which `chat/<workspace>/<thread>` (or `chat/<workspace>` for its main
-chat) tells a chat's cards and how they stand (browser.chats). A connection from anywhere but loopback or the server's own address
+chat) tells a chat's cards and how they stand, and whose `card.jpg` is the tab's card as it
+is now, readable from any origin (browser.chats). A connection from anywhere but loopback or the server's own address
 is refused (hostrpc.local_peer).
 
 Config (environment):
@@ -166,7 +167,9 @@ class Live:
         ):
             return await live.send(writer, "403 Forbidden", b"Not from here.\n")
         if chat := chats.ROUTE.fullmatch(path):
-            return await self.chat(writer, method, chat[1], chat[2], headers)
+            return await self.chat(
+                writer, method, chat[1], chat[2], headers, bool(chat[3]), query
+            )
         if method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET only.\n")
         theme = live.theme(query)
@@ -214,8 +217,11 @@ class Live:
         workspace: str,
         thread: str | None,
         headers: dict[str, str],
+        card: bool = False,
+        query: str = "",
     ) -> None:
-        """A chat's cards and how they stand, for a client with a key (browser.chats)."""
+        """A chat's cards and how they stand, or (`card`) its tab's card as it is now, for
+        a client with a key (browser.chats)."""
         # A web client's preflight, for the Authorization header.
         if method == "OPTIONS":
             return await live.send(writer, "204 No Content", headers=chats.CORS)
@@ -224,7 +230,18 @@ class Live:
                 writer, "405 Method Not Allowed", b"GET only.\n", headers=chats.CORS
             )
         try:
+            if card:
+                tab = await self.chats.tab(workspace, thread, headers)
+                shot = await self.runner.screenshot(tab, self.GAP)
+                frame = await self.draw(
+                    tab, shot, self.runner.state(tab), live.theme(query)
+                )
+                return await live.send(
+                    writer, "200 OK", frame, "image/jpeg", headers=chats.CORS
+                )
             status, body = await self.chats.answer(workspace, thread, headers)
+        except chats.Refused as e:
+            status, body = e.status, {"error": e.error}
         except Exception:
             self.runner.log.exception("a chat's browser for a client failed")
             status, body = (
@@ -260,7 +277,8 @@ class Live:
         watcher = asyncio.create_task(watch())
         try:
             # No CORS: the tab may be logged in somewhere, and a page that knew the card's
-            # address could read its screenshots. A web client shows its description.
+            # address could read its screenshots. A web client with a key has the chat's
+            # card.jpg (browser.chats).
             await live.push(
                 writer, self.frames(tab, gone, theme), "image/jpeg", cors=False
             )
@@ -284,16 +302,7 @@ class Live:
                 now = (hash(shot), state, tab.title, tab.url, tab.last)
                 if now != shown or loop.time() - sent >= self.TICK:
                     shown, sent = now, loop.time()
-                    yield await asyncio.to_thread(
-                        picture,
-                        shot,
-                        tab.workspace,
-                        state,
-                        tab.title,
-                        tab.url,
-                        tab.last,
-                        theme,
-                    )
+                    yield await self.draw(tab, shot, state, theme)
                 left = deadline - loop.time()
                 if left <= 0 or gone.is_set():
                     return
@@ -318,6 +327,12 @@ class Live:
                     return
         finally:
             tab.viewers -= 1
+
+    async def draw(self, tab: Tab, shot: bytes, state: str, theme: str) -> bytes:
+        """The tab's frame from its screenshot (picture), drawn off the loop."""
+        return await asyncio.to_thread(
+            picture, shot, tab.workspace, state, tab.title, tab.url, tab.last, theme
+        )
 
     async def asked(
         self,

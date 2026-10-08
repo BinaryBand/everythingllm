@@ -150,6 +150,9 @@ class Vault:
         # save, which two at once would lose one of.
         self.lock = threading.RLock()
         self._key: bytes | None = None
+        # workspace -> its file as last listed (mtime, size, inode) and its logins' public():
+        # the take-over view lists them every few seconds, mostly of a file that's the same.
+        self.listed: dict[str, tuple[tuple[int, int, int], list[dict[str, Any]]]] = {}
 
     def key(self) -> bytes:
         """The vault's key, made (0600, in a 0700 folder) the first time it's needed."""
@@ -203,6 +206,7 @@ class Vault:
         return entries
 
     def save(self, workspace: str, logins: list[dict[str, Any]]) -> None:
+        self.listed.pop(workspace, None)  # not left to the clock's grain
         nonce = secrets.token_bytes(12)
         sealed = AESGCM(self.key()).encrypt(
             nonce, json.dumps(logins).encode(), self.aad(workspace)
@@ -233,7 +237,25 @@ class Vault:
     # --- what the runner asks ---
 
     def logins(self, workspace: str) -> list[dict[str, Any]]:
-        return [public(login) for login in self.load(workspace)]
+        """The workspace's logins as public() shows them, decrypted again only when its
+        file changed; copies, which the caller may change."""
+        with self.lock:
+            try:
+                st = self.file(workspace).stat()
+            except FileNotFoundError:
+                self.listed.pop(workspace, None)
+                return []
+            except OSError:
+                st = None  # load says why
+            stamp = (st.st_mtime_ns, st.st_size, st.st_ino) if st else None
+            cached = self.listed.get(workspace)
+            if stamp is not None and cached is not None and cached[0] == stamp:
+                listed = cached[1]
+            else:
+                listed = [public(login) for login in self.load(workspace)]
+                if stamp is not None:
+                    self.listed[workspace] = (stamp, listed)
+            return [dict(login) for login in listed]
 
     def get(
         self, workspace: str, login_id: str, kind: str | None = None

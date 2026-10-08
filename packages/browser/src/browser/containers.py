@@ -63,6 +63,9 @@ class Session:
     reason: str = ""  # why the user has it
     asked: bool = False  # whether the agent asked for it (a handoff)
     viewers: int = 0  # take-over views open
+    # Whether the driver may have logins the user sent to offer for saving: from when the
+    # user has the browser until, the agent's again, it says it has none.
+    offering: bool = False
     # id -> an OK the agent waits for, at most one per chat, in the order asked
     approvals: dict[str, Approval] = field(default_factory=dict)
     # (thread, login id) -> OK until: one chat's OK isn't another's

@@ -247,6 +247,7 @@ def test_the_view_answers_the_agents_request_and_saves_offers(tmp_path):
         assert "200 OK" in head and json.loads(body)["approvals"] == []
         assert (await r.op_login(scope(), saved["id"], "e1", "e2"))["page"]
         driver = podman.drivers[s.name]
+        await r.take(s)  # logins are sent, and offered, while the user has it
         driver.offers["0a1b2c3d"] = {
             "site": "example.com",
             "username": "bob",
@@ -266,6 +267,42 @@ def test_the_view_answers_the_agents_request_and_saves_offers(tmp_path):
         )
         head, body = await post(port, f"/{s.token}/offers/0a1b2c3d/save", {})
         assert "400" in head and "isn't waiting" in json.loads(body)["error"]
+
+    test(tmp_path)
+
+
+def test_the_views_poll_asks_the_driver_for_offers_only_while_there_can_be_some(
+    tmp_path,
+):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        driver = podman.drivers[s.name]
+
+        async def poll():
+            before = driver.calls.count(("offers", {}))
+            state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
+            return state["offers"], driver.calls.count(("offers", {})) - before
+
+        # The agent has it and nothing was ever captured: nothing to ask.
+        assert await poll() == ([], 0)
+        assert await poll() == ([], 0)
+        await r.op_handoff(scope(), "log in")
+        assert await poll() == ([], 1)
+        driver.offers["0a1b2c3d"] = {
+            "site": "example.com",
+            "username": "bob",
+            "password": "typed",
+        }
+        await r.op_handoff(scope(), done=True)
+        # Back with the agent, what the user sent is still offered until it's gone.
+        offer = {"id": "0a1b2c3d", "site": "example.com", "username": "bob"}
+        assert await poll() == ([offer], 1)
+        driver.offers.clear()  # dropped, or ran out
+        assert await poll() == ([], 1)
+        assert await poll() == ([], 0)
+        await r.take(s)
+        assert await poll() == ([], 1)
 
     test(tmp_path)
 

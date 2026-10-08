@@ -134,6 +134,7 @@ class FakeDriver(hostrpc.Service):
         return {"making": self.making, "made": made}
 
     async def op_offers(self):
+        self.calls.append(("offers", {}))
         return [
             {"id": k, "site": o["site"], "username": o["username"]}
             for k, o in self.offers.items()

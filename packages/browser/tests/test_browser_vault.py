@@ -287,3 +287,43 @@ def test_only_https_on_its_usual_port_is_secure():
         "ws://x",
     ):
         assert not origin.secure(url)
+
+
+def test_listing_opens_the_file_again_only_once_it_changed(vault, monkeypatch):
+    load, loads = vault.load, []
+
+    def counted(workspace):
+        loads.append(workspace)
+        return load(workspace)
+
+    monkeypatch.setattr(vault, "load", counted)
+    assert vault.logins("career") == [] and loads == []  # no file, nothing to open
+    saved = vault.add("career", "x.com", "alice", "pw")
+    loads.clear()
+    assert vault.logins("career") == vault.logins("career") == [public(saved)]
+    assert loads == ["career"]
+    # What a caller does to a listing is its own.
+    vault.logins("career")[0]["here"] = True
+    assert vault.logins("career") == [public(saved)] and loads == ["career"]
+    # The vault's own changes are seen at once, whatever the clock's grain.
+    vault.update("career", saved["id"], ask=True)
+    assert vault.logins("career")[0]["ask"]
+    bob = vault.add("career", "x.com", "bob", "pw")
+    assert [x["username"] for x in vault.logins("career")] == ["alice", "bob"]
+    vault.delete("career", bob["id"])
+    assert [x["username"] for x in vault.logins("career")] == ["alice"]
+    # And so are changes from outside: another file in its place, or the same one touched.
+    Vault(vault.folder, vault.key_file).add("career", "y.com", "carol", "pw")
+    assert [x["username"] for x in vault.logins("career")] == ["alice", "carol"]
+    loads.clear()
+    st = vault.file("career").stat()
+    os.utime(vault.file("career"), ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+    vault.logins("career")
+    assert loads == ["career"]
+    # An error isn't kept: it's said each time.
+    vault.file("career").write_bytes(b"nope")
+    for _ in range(2):
+        with pytest.raises(VaultError, match="isn't a vault"):
+            vault.logins("career")
+    vault.file("career").unlink()
+    assert vault.logins("career") == []

@@ -42,12 +42,6 @@ The relay and research-runner went live in their containers on 2026-10-07 (see t
   - Run one Nilson chat to the end through the relay, with its ntfy notice.
 - **Once the containers have run for a week:** delete the old host venvs `~/.local/share/everythingllm/venvs/{relay,research}`, and the leftover `browser-net` network (`podman network rm browser-net`).
 
-## Saved logins in the browser: loose ends
-
-Left open by the code review of the browser's saved logins (2026-10-07):
-
-- **The view's poll does more than it needs.** `Takeover.state()` (`takeover.py`) runs every 2 s per open view and each time decrypts the vault and asks the driver for its offers, even when nothing is being captured. Cheap today; caching on the vault file's mtime and returning offers only while one is pending would cut it.
-
 ## Typing in the take-over view, for SSO and other handoffs
 
 Decided 2026-10-08: SSO ("Continue with Google"), logins the vault doesn't have and 2FA prompts stay with the user through `browser-handoff`. No saved identity-provider logins, and no agent in an SSO popup or on a consent screen. That makes the handoff the path that has to work, and its weak point is typing: on 2026-10-08 the keyboard was hard to use in the view.

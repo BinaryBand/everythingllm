@@ -804,16 +804,26 @@ class Runner(hostrpc.Service):
         """Whether logins the user sends in the browser are offered for saving: while they
         have it. `user`: they took it in the take-over view, which unlocks a browser the
         agent sent part of a secret to (browser.driver)."""
+        if on:
+            s.offering = True
         try:
             await self.call(s, "capture", {"on": on, "user": user})
         except RunnerError:
             pass  # a browser that's gone captures nothing
 
     async def offers(self, s: Session) -> list[dict[str, Any]]:
+        """The logins the user sent that the driver offers for saving. Only while they
+        have the browser can it get new ones, so once the agent has it back and the driver
+        has none left (saved, dropped or run out), it isn't asked again until then."""
+        if s.control != "user" and not s.offering:
+            return []
         try:
-            return await self.call(s, "offers", {})
+            offers = await self.call(s, "offers", {})
         except RunnerError:
             return []
+        if not offers and s.control != "user":
+            s.offering = False
+        return offers
 
     async def save_offer(
         self, s: Session, offer: str, username: str | None, ask: bool

@@ -64,6 +64,8 @@ def cfg(tmp_path):
         web_ips=("10.89.79.42", "10.89.79.43"),
         public_proxy="http://10.89.79.2:3129",
         access_file=tmp_path / "data" / "access.json",
+        model_log=tmp_path / "data" / "models",
+        app_state=tmp_path / "data" / "apps",
         public_root=tmp_path / "public",
         public_url="https://ws.example/",
     )

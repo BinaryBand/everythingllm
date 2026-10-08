@@ -124,7 +124,7 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -141,6 +141,7 @@ from sandbox import appsweb
 from sandbox import models as model_access
 from sandbox.apps.tokens import Tokens
 from sandbox.errors import Busy, NoSuchApp, SandboxError
+from sandbox.names import KEY, SLUG
 
 log = logging.getLogger("sandbox-runner")
 # Big enough for a run's output, which the runner caps well below this.
@@ -155,12 +156,12 @@ PROXY_CONTAINER = "systemd-egress-proxy"  # the egress proxy, as Quadlet names i
 LABEL = "everythingllm-sandbox=1"
 
 LANGUAGES = {"python": ("main.py", "python"), "bash": ("main.sh", "bash")}
-KEY_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")  # workspace slugs and thread ids
+KEY_RE = re.compile(f"^{KEY}$")
 # The MCP gateway's clients' workspaces (gateway.sandbox): kept for scopes that say
 # "gateway": true, which AnythingLLM's skills never do, so a workspace someone happens to
 # name "Client X" can't share a gateway client's folders.
 CLIENT_PREFIX = "client-"
-SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")  # a page's slug
+SLUG_RE = re.compile(f"^{SLUG}$")
 # Shared and system folders are data: nothing in them runs as ./file.
 DATA_RW = "rw,noexec,nosuid,nodev"
 DATA_RO = "ro,noexec,nosuid,nodev"
@@ -195,6 +196,7 @@ IMAGE_MAX_BYTES = 10 << 20
 IMAGES_MAX_BYTES = 500 << 20
 APP_DATA_BYTES = 1 << 20  # an app's data.json, at most
 APP_ACTIONS = ("create", "do", "show", "list", "delete")
+APP_DATA_RE = re.compile(rf"/project/apps/({SLUG})/data\.json")
 THREAD_MAX_AGE = 7 * 24 * 3600
 # The workspace's browser profile, in its folder beside the sandbox's (packages/browser).
 BROWSER = "browser"
@@ -380,12 +382,12 @@ NO_ACCESS = Access()
 MAX_DAILY_TOKENS = 10_000_000
 
 
-def access_fields(access: Access) -> dict[str, Any]:
-    return {
-        "web": access.web,
-        "models": access.models,
-        "daily_tokens": access.daily_tokens,
-    }
+def valid_budget(daily_tokens: Any) -> bool:
+    return (
+        isinstance(daily_tokens, int)
+        and not isinstance(daily_tokens, bool)
+        and 0 < daily_tokens <= MAX_DAILY_TOKENS
+    )
 
 
 @dataclass(frozen=True)
@@ -891,23 +893,21 @@ class Runner(hostrpc.Service):
         """The workspace's access, from access_file; none for a gateway client's, and none
         when the file is missing or can't be read."""
         if scope.gateway:
-            return Access()
+            return NO_ACCESS
         try:
             entry = json.loads(self.config.access_file.read_text()).get(scope.workspace)
         except FileNotFoundError:
-            return Access()
+            return NO_ACCESS
         except (OSError, ValueError, AttributeError) as e:
             log.warning("couldn't read %s: %s", self.config.access_file, e)
-            return Access()
+            return NO_ACCESS
         if not isinstance(entry, dict):
-            return Access()
+            return NO_ACCESS
         budget = entry.get("daily_tokens")
         return Access(
             web=entry.get("web") is True,
             models=entry.get("models") is True,
-            daily_tokens=budget
-            if isinstance(budget, int) and 0 < budget <= MAX_DAILY_TOKENS
-            else model_access.DAILY_TOKENS,
+            daily_tokens=budget if valid_budget(budget) else NO_ACCESS.daily_tokens,
         )
 
     async def op_access(
@@ -932,11 +932,7 @@ class Runner(hostrpc.Service):
         for name, value in (("web", web), ("models", models)):
             if value is not None and not isinstance(value, bool):
                 raise SandboxError(f"{name} must be true, false or left out")
-        if daily_tokens is not None and (
-            not isinstance(daily_tokens, int)
-            or isinstance(daily_tokens, bool)
-            or not 0 < daily_tokens <= MAX_DAILY_TOKENS
-        ):
+        if daily_tokens is not None and not valid_budget(daily_tokens):
             raise SandboxError(f"daily_tokens must be 1 to {MAX_DAILY_TOKENS}")
         current = self.access(s)
         changes = {
@@ -954,11 +950,11 @@ class Runner(hostrpc.Service):
             or (wanted.models and not current.models)
             or wanted.daily_tokens > current.daily_tokens
         )
-        out = {"workspace": s.workspace, **access_fields(current)}
+        out = {"workspace": s.workspace, **asdict(current)}
         if wanted == current:
             return {**out, "changed": False}
         if apply is not True:
-            return {**out, "would": access_fields(wanted), "needs_approval": on}
+            return {**out, "would": asdict(wanted), "needs_approval": on}
         if on and approved is not True:
             raise SandboxError(
                 "turning access on needs the user's approval in the chat, which the "
@@ -966,8 +962,8 @@ class Runner(hostrpc.Service):
             )
         async with self._access_lock:
             await asyncio.to_thread(self.write_access, s.workspace, wanted)
-        log.info("access for %s: %s", s.workspace, access_fields(wanted))
-        return {**out, **access_fields(wanted), "changed": True}
+        log.info("access for %s: %s", s.workspace, asdict(wanted))
+        return {**out, **asdict(wanted), "changed": True}
 
     def write_access(self, workspace: str, access: Access) -> None:
         file = self.config.access_file
@@ -979,10 +975,10 @@ class Runner(hostrpc.Service):
             data = {}
         except (OSError, ValueError) as e:
             raise SandboxError(f"couldn't read the access settings: {e}") from None
-        if access == Access():
+        if access == NO_ACCESS:
             data.pop(workspace, None)
         else:
-            data[workspace] = access_fields(access)
+            data[workspace] = asdict(access)
         file.parent.mkdir(parents=True, exist_ok=True)
         hostrpc.atomic_write(
             file, json.dumps(data, indent=1, sort_keys=True) + "\n", 0o600
@@ -1071,6 +1067,10 @@ class Runner(hostrpc.Service):
                 f"'{path}' is all of {mount}; give a file or folder inside it"
             )
         return target
+
+    def model_dir(self, run: str) -> Path:
+        """The folder of a run's model socket, mounted into its container (MODELS_DIR)."""
+        return self.config.model_sockets / run
 
     def lock(self, workspace: str) -> asyncio.Lock:
         return self._locks.setdefault(workspace, asyncio.Lock())
@@ -1267,7 +1267,7 @@ class Runner(hostrpc.Service):
                     if asking is not None:
                         # The run's own socket, for as long as it runs; its folder goes
                         # once it's closed.
-                        sockets = self.config.model_sockets / name
+                        sockets = self.model_dir(name)
                         stack.callback(shutil.rmtree, sockets, True)
                         await stack.enter_async_context(
                             hostrpc.serving(asking, sockets / "sock")
@@ -1300,9 +1300,14 @@ class Runner(hostrpc.Service):
             published = await asyncio.to_thread(
                 self.page_changes, scope, public_changes(before, after)
             )
-        changed = sorted(
-            p for p, sig in after.files.items() if before.files.get(p) != sig
-        )
+            changed = sorted(
+                p for p, sig in after.files.items() if before.files.get(p) != sig
+            )
+            edited = [m[1] for p in changed if (m := APP_DATA_RE.fullmatch(p))]
+            if edited:
+                await asyncio.to_thread(self.rerender_apps, scope, edited)
+        if edited:
+            await self.app_changed()
         log.info(
             "run workspace=%s thread=%s lang=%s exit=%s timed_out=%s oom=%s %.1fs",
             scope.workspace,
@@ -1538,7 +1543,7 @@ class Runner(hostrpc.Service):
         (run_dir / "code" / script).write_text(code)
         asking = []
         if access.models:  # the run's own socket (served by execute) and the client
-            sockets = self.config.model_sockets / name
+            sockets = self.model_dir(name)
             if len(str(sockets / "sock")) > 100:  # AF_UNIX's limit is 108
                 raise SandboxError(
                     f"{self.config.model_sockets} is too long a path for model sockets"
@@ -2095,6 +2100,14 @@ class Runner(hostrpc.Service):
             raise SandboxError(str(e)) from None
         saved, token = self.save_app(s, name, data)
         return saved, did, token
+
+    def rerender_apps(self, s: Scope, names: list[str]) -> None:
+        """Render the pages of the apps whose data a run changed, so they show it."""
+        for name in names:
+            try:
+                self.save_app(s, name, self.read_app(s, name))
+            except SandboxError as e:  # the run's to fix; show and do say so
+                log.info("app %s/%s after a run: %s", s.workspace, name, e)
 
     def show_app(self, s: Scope, name: str) -> dict[str, Any]:
         data = self.read_app(s, name)

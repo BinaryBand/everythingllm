@@ -56,20 +56,24 @@ def zone() -> ZoneInfo:
 
 
 def provider_ask(env_file: Path) -> Ask:
-    """Ask a model through packages/llm, its key from AnythingLLM's .env at `env_file`."""
+    """Ask a model through packages/llm, its key from AnythingLLM's .env at `env_file`
+    (read on every call, so a new key is used at once; a client is kept per key)."""
+    clients: dict[tuple[str, str, str], llm.Completions] = {}
 
     def ask(model: str, messages: list[dict], max_tokens: int) -> tuple[str, dict]:
         prov = llm.provider(llm.provider_for(model), str(env_file))
         if not prov.key:
             raise RunnerError(f"there's no {prov.key_name} for {model} on the server")
-        client = llm.Completions(prov, timeout=300, retries=1)
+        key = (prov.name, prov.base_url, prov.key)
+        if key not in clients:
+            clients[key] = llm.Completions(prov, timeout=300, retries=1)
         try:
             # DeepSeek's thinking only costs tokens here; GLM can't turn it off.
-            return client.create(model, messages, max_tokens, think=prov.name == "zai")
+            return clients[key].create(
+                model, messages, max_tokens, think=prov.name == "zai"
+            )
         except llm.LLMError as e:
             raise RunnerError(str(e)) from None
-        finally:
-            client.client.close()
 
     return ask
 
@@ -139,11 +143,16 @@ class Models(hostrpc.Service):
         self.now = now or (lambda: datetime.now(zone()))
         self.at_once = asyncio.Semaphore(AT_ONCE)
         self.lock = asyncio.Lock()  # one writer of the log at a time
+        # The day's tokens so far: read from the log once a day, then counted here (a
+        # run holds its workspace, so no other run's calls add to it meanwhile).
+        self.used: tuple[str, int] | None = None
 
     def left(self) -> int:
-        return max(
-            0, self.daily_tokens - spent(self.log_dir, self.workspace, self.now())
-        )
+        now = self.now()
+        day = now.date().isoformat()
+        if self.used is None or self.used[0] != day:
+            self.used = (day, spent(self.log_dir, self.workspace, now))
+        return max(0, self.daily_tokens - self.used[1])
 
     async def op_ask(
         self, messages: Any, model: Any = None, max_tokens: Any = None
@@ -187,3 +196,5 @@ class Models(hostrpc.Service):
         }
         with open(self.log_dir / f"{now:%Y-%m}.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
+        if self.used is not None and self.used[0] == line["day"]:
+            self.used = (line["day"], self.used[1] + tokens)

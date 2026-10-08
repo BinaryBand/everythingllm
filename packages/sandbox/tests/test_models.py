@@ -134,7 +134,6 @@ def test_the_client_runs_with_the_standard_library_alone():
 def test_a_run_with_model_access_gets_its_own_socket_and_never_the_key(cfg):  # noqa: F811
     cfg.access_file.parent.mkdir(parents=True)
     cfg.access_file.write_text('{"career": {"models": true, "daily_tokens": 100}}')
-    cfg.model_log = cfg.access_file.parent / "models"
     cfg.model_sockets = Path("/tmp") / f"models-test-{os.getpid()}"
     asked = Asked()
     seen = {}

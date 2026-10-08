@@ -5,8 +5,8 @@ it does research's and the browser's cards:
 
   GET /_live/apps/<workspace>/<name>.png[?theme=light]
       the app's card, live (chatimage.live's server push): a frame now, and a new one
-      whenever the app changes, through the app op or by a run's edit to its data
-      (looked at every POLL seconds), for at most MAX_STREAM. An app that's gone gets
+      whenever the app changes, through the app op, its page or a run's edit to its
+      data (and any other edit, looked for every POLL seconds), for at most MAX_STREAM. An app that's gone gets
       one frame saying so, so an old chat's card doesn't break.
   GET /_live/apps/<workspace>/<name>
       a redirect to its page, on the workspace pages site (:8447).
@@ -50,6 +50,7 @@ from PIL import Image, ImageDraw
 
 from sandbox import apps
 from sandbox.errors import BadToken, Busy, NoSuchApp, StaleToken
+from sandbox.names import KEY, SLUG
 
 if TYPE_CHECKING:
     from sandbox.runner import Runner
@@ -58,11 +59,9 @@ log = logging.getLogger("sandbox.appsweb")
 
 PORT = 8455
 MAX_STREAM = 30 * 60
-POLL = 2.0
-WORKSPACE = r"[a-z0-9_][a-z0-9_-]{0,99}"  # the sandbox's KEY_RE
-NAME = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"  # its SLUG_RE
-CARD = re.compile(rf"(?:/_live/apps)?/({WORKSPACE})/({NAME})(\.png)?")
-OPS = re.compile(rf"(?:/_apps)?/({WORKSPACE})/({NAME})/ops")
+POLL = 10.0  # a fallback: an op and a run's edit announce themselves
+CARD = re.compile(rf"(?:/_live/apps)?/({KEY})/({SLUG})(\.png)?")
+OPS = re.compile(rf"(?:/_apps)?/({KEY})/({SLUG})/ops")
 MAX_BODY = 4096
 RATE = (10, 10.0)  # ops per app in so many seconds
 PAGE_CORS = {"Access-Control-Allow-Origin": "null", "Vary": "Origin"}

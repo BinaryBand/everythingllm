@@ -22,8 +22,7 @@ GATEWAY = {"workspace": "client-laptop", "thread": "gateway", "gateway": True}
 
 
 @pytest.fixture
-def r(cfg, tmp_path):  # noqa: F811
-    cfg.app_state = tmp_path / "data" / "apps"
+def r(cfg):  # noqa: F811
     return make(cfg)
 
 
@@ -222,6 +221,22 @@ def test_a_second_create_and_a_gateway_client_are_refused(r):
         go(r.op_app(A, "create", "todo"))
     with pytest.raises(runner.SandboxError, match="gateway client"):
         go(r.op_app(GATEWAY, "list"))
+
+
+def test_a_run_that_edits_an_apps_data_rerenders_its_page(cfg):  # noqa: F811
+    go(make(cfg).op_app(A, "create", "todo", args={"item": "a"}))
+
+    def effect(m):
+        file = m["/project"] / "apps" / "todo" / "data.json"
+        data = json.loads(file.read_text())
+        data["title"] = "Chores"
+        file.write_text(json.dumps(data))
+
+    r = make(cfg, effect=effect)
+    go(r.op_run(A, "python", "..."))
+    page = (public(cfg, A) / "apps" / "todo" / "index.html").read_text()
+    assert "Chores" in page
+    assert go(r.op_app(A, "show", "todo"))["version"] == 2
 
 
 def test_a_page_changes_the_app_only_with_its_current_token(r, cfg):  # noqa: F811

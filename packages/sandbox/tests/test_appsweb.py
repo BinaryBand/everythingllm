@@ -10,8 +10,7 @@ from test_runner import A, cfg, make, project  # noqa: F401 - cfg is a fixture
 
 
 @pytest.fixture
-def r(cfg, tmp_path):  # noqa: F811
-    cfg.app_state = tmp_path / "data" / "apps"
+def r(cfg):  # noqa: F811
     return make(cfg)
 
 

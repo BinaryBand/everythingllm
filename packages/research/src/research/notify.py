@@ -1,7 +1,7 @@
 """Tells the Nilson app through ntfy that a research run from one of its chats ended, on the
 topic the relay posts finished answers to (relay.notify), so the app can bring the report
-into the chat that started it. The message is the start of the question and a link to the
-report; the report's text never goes to ntfy.
+into the chat that started it. The message is the start of the question; the report's text
+never goes to ntfy.
 
 Config (environment; the container gets them from ~/.config/everythingllm/relay.env, the
 relay's file, which hostctl.relay_env makes):
@@ -30,8 +30,6 @@ def message(
         # Subscribers get the tags, not other request headers.
         "Tags": f"run={run_id},workspace={chat['workspace']},thread={chat.get('thread', '')}",
     }
-    if result.get("url"):
-        headers["Click"] = result["url"]
     return headers, " ".join(question.split())[:QUESTION_CHARS].encode()
 
 

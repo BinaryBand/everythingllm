@@ -30,6 +30,7 @@ import httpx
 THINKING = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 TIMEOUT = httpx.Timeout(connect=10, read=30, write=30, pool=10)
 CHAT_SECONDS = 600  # one task's agent run, at most
+DOCUMENT_SECONDS = 180  # a document saved and embedded
 
 
 class AnythingLLMError(Exception):
@@ -168,6 +169,23 @@ class AnythingLLM:
         return without_thinking(reply.get("textResponse") or ""), reply.get(
             "metrics"
         ) or {}
+
+    async def add_document(
+        self, text: str, workspace: str, metadata: dict[str, str]
+    ) -> str:
+        """Save `text` as a document (metadata needs a title) and embed it in the
+        workspace; its location in AnythingLLM's documents."""
+        reply = await self.call(
+            "POST",
+            "/document/raw-text",
+            {"textContent": text, "addToWorkspaces": workspace, "metadata": metadata},
+            seconds=DOCUMENT_SECONDS,
+        )
+        docs = reply.get("documents") if isinstance(reply, dict) else None
+        if not (isinstance(reply, dict) and reply.get("success") and docs):
+            error = reply.get("error") if isinstance(reply, dict) else None
+            raise AnythingLLMError(f"AnythingLLM didn't keep the document: {error}")
+        return str(docs[0].get("location") or "")
 
 
 def internal_error(status: int, reply: Any) -> str:

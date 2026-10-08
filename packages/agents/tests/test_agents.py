@@ -31,6 +31,7 @@ class FakeAnythingLLM:
         self.messages: list[tuple[str, str]] = []
         self.posts: list[tuple[str, str | None, str]] = []
         self.created: list[str] = []
+        self.documents: list[dict] = []  # what /document/raw-text was given
         self.running = 0
         self.peak = 0
         self.go = asyncio.Event()
@@ -57,6 +58,12 @@ class FakeAnythingLLM:
             thread = parts[4] if parts[3] == "thread" else None
             self.posts.append((parts[2], thread, body["message"]))
             return httpx.Response(200, json={"textResponse": "It's done."})
+        if path == "/document/raw-text":
+            self.documents.append(body)
+            location = f"custom-documents/raw-{len(self.documents)}.json"
+            return httpx.Response(
+                200, json={"success": True, "documents": [{"location": location}]}
+            )
         if path == "/workspaces":
             have = [
                 {"slug": s, "openAiPrompt": w.get("openAiPrompt")}
@@ -131,6 +138,7 @@ def make(fake, tmp_path, slots=3):
         pages_url="https://h:8445/",
         slots=slots,
         research_runlogs=tmp_path / "research",
+        research_reports=tmp_path / "storage" / "anythingllm-fs" / "research",
     )
     return runner.Runner(settings, client(fake), internal(fake))
 
@@ -737,25 +745,43 @@ def test_a_delegation_from_no_chat_is_refused(fake, tmp_path):
     asyncio.run(main())
 
 
-def test_a_research_run_followed_from_a_chat_is_told_there(fake, tmp_path):
+def test_a_research_runs_report_goes_into_its_workspaces_documents(fake, tmp_path):
+    """From the UI, its chat is told too; from an API chat (a workspace and no chat),
+    only the documents get it."""
     from runs.runlog import append_line
 
     async def main():
         r = make(fake, tmp_path)
+        reports = r.settings.research_reports
+        reports.mkdir(parents=True)
         chat = {"workspace": "career", "thread": 7}
         assert await r.op_follow("dr-0000000a", chat, "", "Bitcoin?") == {
             "following": "dr-0000000a"
         }
+        await r.op_follow("dr-0000000b", None, "", "Ether?", workspace="career")
         started = "2026-10-07T10:00:00.000Z"
-        append_line(
-            tmp_path / "research",
-            started,
-            {"run_id": "dr-0000000a", "status": "ok", "url": "https://h/r/"},
-        )
-        await r.following.sweep(r.tell)
-        [(slug, thread, text)] = fake.posts
+        for run_id, name in (("dr-0000000a", "btc"), ("dr-0000000b", "eth")):
+            (reports / f"{name}.md").write_text(f"# {name}\n\nthe report\n")
+            append_line(
+                tmp_path / "research",
+                started,
+                {
+                    "run_id": run_id,
+                    "status": "ok",
+                    "title": name.upper(),
+                    "file": str(reports / f"{name}.md"),
+                    "summary": ["It went up."],
+                },
+            )
+        await r.following.sweep(r.tell, r.keep)
+        assert sorted(d["metadata"]["title"] for d in fake.documents) == ["BTC", "ETH"]
+        for doc in fake.documents:
+            assert doc["addToWorkspaces"] == "career"
+            assert doc["textContent"].endswith("the report\n")
+        [(slug, thread, text)] = fake.posts  # the API chat's run tells no chat
         assert (slug, thread) == ("career", "chat-seven")
         assert "deep research run dr-0000000a has ended (ok)" in text
         assert "It was for: Bitcoin?" in text
+        assert "in this workspace's documents" in text and "- It went up." in text
 
     asyncio.run(main())

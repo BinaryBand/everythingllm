@@ -10,7 +10,7 @@ const { fakeService } = require("../../_lib/test/fakeservice");
 const NO_AGENTS = path.join(os.tmpdir(), `dr-no-agents-${process.pid}.sock`);
 process.env.AGENTS_SOCKET = NO_AGENTS;
 
-// A fake agents-runner, which follows runs for their chats.
+// A fake agents-runner, which follows runs for their workspaces and chats.
 async function fakeAgents() {
   const service = await fakeService((op) => ({ ok: true, result: { following: op } }));
   process.env.AGENTS_SOCKET = service.socket;
@@ -56,7 +56,7 @@ test("a run is started and the skill answers at once with its live card", async 
       sub_questions: '["Price history", {"goal": "Energy use"}]',
       title: "Bitcoin",
     });
-    assert.match(reply, /^Deep research started \(run dr-1\)\. .*publishes a cited report to the research site, even if the chat closes\./);
+    assert.match(reply, /^Deep research started \(run dr-1\)\. .*writes a cited report, even if the chat closes\./);
     assert.ok(reply.includes(`\n\nCard: ${CARD}\n\n`));
     assert.match(reply, /Put the Card line in your reply exactly as given/);
     assert.doesNotMatch(reply, /waits for/);
@@ -64,17 +64,21 @@ test("a run is started and the skill answers at once with its live card", async 
       {
         op: "start",
         args: {
-          question: "Bitcoin?", depth: "quick", planner: "glm-5.3", worker: null, planner_fallback: null, site: null,
+          question: "Bitcoin?", depth: "quick", planner: "glm-5.3", worker: null, planner_fallback: null,
           sub_questions: ["Price history", { goal: "Energy use" }], title: "Bitcoin",
           // The chat it came from: the runner tells its app when the run ends.
           scope: { workspace: "career", thread: "7" },
         },
       },
     ]);
-    // agents-runner tells the chat when it ends, since research-runner can't.
+    // agents-runner keeps the report and tells the chat when it ends, since research-runner can't.
     assert.deepEqual(agents.requests, [
-      { op: "follow", args: { run_id: "dr-1", chat: { workspace: "career", thread: 7 }, card: CARD, question: "Bitcoin?" } },
+      {
+        op: "follow",
+        args: { run_id: "dr-1", chat: { workspace: "career", thread: 7 }, card: CARD, question: "Bitcoin?", workspace: "career" },
+      },
     ]);
+    assert.match(reply, /the report goes into this workspace's documents/);
     assert.match(reply, /a notice comes back into this chat/);
   } finally {
     await runner.close();
@@ -82,20 +86,26 @@ test("a run is started and the skill answers at once with its live card", async 
   }
 });
 
-test("only a chat in AnythingLLM's UI is followed, its main chat as thread null", async () => {
+test("a run from any of a workspace's chats is followed, and only a UI chat is told", async () => {
   const runner = await fakeRunner(() => ({ ok: true, result: { run_id: "dr-3", queued: 0, card: CARD } }));
   const agents = await fakeAgents();
   try {
     await runtime.handler.call(agent(), { question: "q" });
-    const job = await runtime.handler.call(agent({ chat: false }), { question: "q" });
+    const job = await runtime.handler.call(agent({ chat: false, workspace: null }), { question: "q" });
     const api = await runtime.handler.call(agent({ chat: "api", thread_id: 9 }), { question: "q" });
+    // The main chat as thread null; an API chat for its workspace, with no chat to tell.
     assert.deepEqual(
-      agents.requests.map((r) => r.args.chat),
-      [{ workspace: "career", thread: null }]
+      agents.requests.map((r) => [r.args.workspace, r.args.chat]),
+      [
+        ["career", { workspace: "career", thread: null }],
+        ["career", null],
+      ]
     );
     assert.doesNotMatch(job, /notice/);
+    assert.match(job, /saved in the agent's files, in research\//); // a job has no workspace
     assert.doesNotMatch(api, /notice/); // an API chat's thread scopes it, but it isn't told
-    assert.deepEqual(runner.requests[1].args.scope, { workspace: "career", thread: "default" });
+    assert.match(api, /the report goes into this workspace's documents/);
+    assert.deepEqual(runner.requests[1].args.scope, { workspace: "_jobs", thread: "default" });
     assert.deepEqual(runner.requests[2].args.scope, { workspace: "career", thread: "9" });
   } finally {
     await runner.close();
@@ -123,7 +133,7 @@ test("a queued run says so, and without a card the reply says less", async () =>
     const reply = await runtime.handler.call(agent(), { question: "q" });
     assert.match(reply, /It waits for 2 other research runs to finish first\./);
     assert.doesNotMatch(reply, /Card:/);
-    assert.match(reply, /the report will be on the research site/);
+    assert.match(reply, /saved in the agent's files/); // no agents-runner to follow it
     assert.equal(runner.requests[0].args.sub_questions, null);
     assert.equal(runner.requests[0].args.title, null);
   } finally {

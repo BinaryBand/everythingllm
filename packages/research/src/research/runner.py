@@ -3,8 +3,8 @@ service container (host/quadlet/research-runner.container.in).
 
 The skill (anythingllm/agent-skills/deep-research) asks over its socket (hostrpc):
 
-  start(question, depth?, planner?, worker?, planner_fallback?, site?, sub_questions?,
-        title?, owner?, scope?) -> {run_id, queued, card}
+  start(question, depth?, planner?, worker?, planner_fallback?, sub_questions?, title?,
+        owner?, scope?) -> {run_id, queued, card}
 
 `sub_questions` is the calling agent's own split of the question (each a goal, or {goal,
 queries}), which the planner then doesn't make; `title` is the report's title with them.
@@ -23,7 +23,7 @@ a gateway client's run and a scheduled job's ("_jobs") tell no one.
 this runner serves on its own port); "" without PUBLIC_HOST.
 
 A run belongs to the runner, not to the chat: if the chat closes or AnythingLLM restarts,
-it carries on and publishes as usual. At most MAX_RUNS go at once; the rest wait
+it carries on and saves its report as usual (research.publish). At most MAX_RUNS go at once; the rest wait
 their turn. Finished runs can be fetched for RESULT_KEEP seconds; the run log is the
 record after that. Holding runs and waiting on them is runs.service's (RunService); this
 runner adds `start`, which runs research.job.run in a thread.

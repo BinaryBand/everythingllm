@@ -12,8 +12,8 @@
 #   sites:write              write_entry, delete_entry
 #   agents                   delegations to AnythingLLM's own agents (agents_*), each
 #                            client's its own
-#   research                 deep research runs (research_*), each client's its own; the
-#                            reports go to the research site, which `sites` reads
+#   research                 deep research runs (research_*), each client's its own, with
+#                            their reports
 #   sandbox                  the code sandbox (sandbox_*), in the client's own workspace,
 #                            client-<name>, which reads every workspace's /shared
 

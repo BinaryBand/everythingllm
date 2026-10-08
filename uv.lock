@@ -1281,7 +1281,6 @@ dependencies = [
     { name = "llm" },
     { name = "publicweb" },
     { name = "runs" },
-    { name = "sites" },
 ]
 
 [package.metadata]
@@ -1291,7 +1290,6 @@ requires-dist = [
     { name = "llm", editable = "packages/llm" },
     { name = "publicweb", editable = "packages/publicweb" },
     { name = "runs", editable = "packages/runs" },
-    { name = "sites", editable = "packages/sites" },
 ]
 
 [[package]]

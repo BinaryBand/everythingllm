@@ -9,9 +9,10 @@ gets their results. Callers (the delegate skill, agents-run) ask over its socket
                           -> {run_id, queued, card}, at once; `chat` ({workspace,
                           thread}, the delegate skill's) is told when it ends
                           (agents.postback)
-  follow(run_id, chat, card?, question?)
-                          tell `chat` when the deep research run `run_id` ends (the
-                          deep-research skill; agents.postback)
+  follow(run_id, chat?, card?, question?, workspace?)
+                          when the deep research run `run_id` ends, put its report in
+                          the workspace's documents and tell `chat`, if it's a chat in
+                          the UI (the deep-research skill; agents.postback)
   wait(run_id, since=0, owner?)
                           up to WAIT seconds for news: {events, done, result once done}
   runs(owner?)            the delegations it holds: {run_id, goal, started, done}
@@ -127,9 +128,13 @@ class Settings:
     slots: int = 3
     daily_usd: float = 3.0  # 0: no cap
     timezone: str = DEFAULT_TIMEZONE
-    # research's run log, for the runs followed (research.job.Settings's runlogs)
+    # research's run log, for the runs followed (research.job.Settings's runlogs), and
+    # where it saves the reports (its reports_dir)
     research_runlogs: Path = field(
         default_factory=lambda: hostrpc.data_dir() / "research" / "runs"
+    )
+    research_reports: Path = field(
+        default_factory=lambda: hostrpc.storage() / "anythingllm-fs" / "research"
     )
 
     @property
@@ -326,7 +331,9 @@ class Runner(RunService):
         self.poller: asyncio.Task | None = None
         # A delegation's id -> the chat told when it ends.
         self.chats: dict[str, dict] = {}
-        self.following = Following(settings.followed, settings.research_runlogs)
+        self.following = Following(
+            settings.followed, settings.research_runlogs, settings.research_reports
+        )
         self.watcher: asyncio.Task | None = None
         self.task_slots = asyncio.Semaphore(settings.slots)
         self.cancelled: set[str] = set()
@@ -361,7 +368,9 @@ class Runner(RunService):
         the end of the research runs followed (only runner.main does, so tests don't)."""
         if self.poller is None:
             self.poller = asyncio.create_task(self.scheduled().poll())
-            self.watcher = asyncio.create_task(self.following.watch(self.tell))
+            self.watcher = asyncio.create_task(
+                self.following.watch(self.tell, self.keep)
+            )
 
     async def tell(self, chat: dict, text: str) -> None:
         """Post `text` into the chat (agents.postback); a failure is only logged."""
@@ -371,6 +380,10 @@ class Runner(RunService):
             log.warning("couldn't tell %s: %s", chat, e)
         else:
             log.info("told %s", chat)
+
+    async def keep(self, workspace: str, text: str, metadata: dict) -> str:
+        """A research report into the workspace's documents (agents.postback)."""
+        return await self.anythingllm().add_document(text, workspace, metadata)
 
     async def ended(self, run: Run) -> None:
         if chat := self.chats.pop(run.id, None):
@@ -448,11 +461,17 @@ class Runner(RunService):
         return {"run_id": run.id, "queued": queued, "card": card}
 
     async def op_follow(
-        self, run_id: str, chat: dict, card: str = "", question: str = ""
+        self,
+        run_id: str,
+        chat: dict | None = None,
+        card: str = "",
+        question: str = "",
+        workspace: str | None = None,
     ) -> dict:
-        """Tell `chat` when the deep research run `run_id` ends (the deep-research skill
-        asks, since research-runner can't reach AnythingLLM)."""
-        return await self.following.add(run_id, chat, card, question)
+        """When the deep research run `run_id` ends, put its report in the workspace's
+        documents and tell `chat` (the deep-research skill asks, since research-runner
+        can't reach AnythingLLM)."""
+        return await self.following.add(run_id, chat, card, question, workspace)
 
     async def op_cancel(self, run_id: str, owner: str | None = None) -> dict:
         run = self.held(run_id, owner)

@@ -4,7 +4,7 @@
   "name": "Deep Research",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Multi-source web research that publishes a long cited report to the research site, taking several minutes. Only when the user asks for research, a report, or a review that needs many sources; for quick facts or news, use web search.",
+  "description": "Multi-source web research that writes a long cited report into this workspace's documents, taking several minutes. Only when the user asks for research, a report, or a review that needs many sources; for quick facts or news, use web search.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -37,16 +37,6 @@
         "default": "deepseek-flash",
         "placeholder": "deepseek-flash",
         "hint": "DeepSeek model the planner switches to for the rest of a run when Z.AI says the GLM plan's usage is spent (429 or 1113); 'off' lets the run go on without it."
-      }
-    },
-    "SITE": {
-      "type": "string",
-      "required": false,
-      "input": {
-        "type": "text",
-        "default": "research",
-        "placeholder": "research",
-        "hint": "Zola site the reports are published to (section 'reports')."
       }
     }
   },

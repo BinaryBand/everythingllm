@@ -644,4 +644,4 @@ def test_research_starts_a_run_with_the_runners_defaults(client, monkeypatch):
 
 def test_the_research_tools_say_where_the_report_is_read():
     doc = gateway_research.start.__doc__
-    assert 'get_entry(site="research", section="reports", slug)' in doc
+    assert "the whole report, in a <report> tag" in doc

@@ -7,18 +7,17 @@ CHAT = {"workspace": "career", "thread": "7"}
 TOPIC = "https://ntfy.example/secret-topic"
 
 
-def test_the_message_names_the_run_and_its_chat_and_links_the_report():
+def test_the_message_names_the_run_and_its_chat_but_never_holds_the_report():
     question = " Is   bitcoin\nworth it? " + "x" * 200
-    result = {"status": "ok", "url": "https://h/r/", "reply": "the report's text"}
+    result = {"status": "ok", "file": "/s/research/r.md", "reply": "the report's text"}
     headers, body = notify.message("dr-1", question, CHAT, result)
     assert headers == {
         "Title": "Research ready",
         "Tags": "run=dr-1,workspace=career,thread=7",
-        "Click": "https://h/r/",
     }
     assert body == ("Is bitcoin worth it? " + "x" * 200)[:120].encode()
     headers, _ = notify.message("dr-2", "q", CHAT, {"status": "failed"})
-    assert headers["Title"] == "Research failed" and "Click" not in headers
+    assert headers["Title"] == "Research failed"
 
 
 def published(respond, token=""):

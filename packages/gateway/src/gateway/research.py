@@ -1,16 +1,14 @@
 """The gateway's front for research-runner: deep research runs, for a gateway client.
 
 In AnythingLLM, deep-research is a skill that starts a run. Here research_start does the
-same: the report is published to the research site (and saved to the runner's files), and a
-client reads it with the sites tools,
-get_entry(site="research", section="reports", slug). The models are the runner's defaults
-(research.job.Request), not the skill's setup args.
+same, and research_wait's result holds the whole report, which the runner also saves to the
+agent's files; a run from here has no workspace, so no workspace's documents get it. The
+models are the runner's defaults (research.job.Request), not the skill's setup args.
 
 A client's runs are its own: each call adds the client as their owner (owner:
 "client-<name>", from gateway.grants.client through client_key; never from the
 arguments), so research_wait and research_runs reach only the runs it started
-(runs.service). The reports aren't: they're published to the research site, which any
-client granted `sites` reads.
+(runs.service), and so are their reports.
 
 Declared like a front's tools (a signature and a docstring, no body); gateway.app serves
 them as the `research` group, named with PREFIX (research_start, …), while the op each
@@ -86,13 +84,12 @@ async def start(
     ] = None,
 ) -> dict:
     """Start an in-depth, multi-source web research run on the server, which plans the
-    question, researches it with parallel workers and publishes a long cited report to the
-    research site. It takes minutes; use it only for deep research, a report, or a review
-    that needs many sources. Answers at once with {run_id, queued (runs it waits for),
-    card (a Markdown link to its live progress card)}. Follow it with research_wait; once
-    done, its result has the report's url and title, and the report itself is
-    get_entry(site="research", section="reports", slug), the slug being the url's last
-    part. Don't start the same question twice."""
+    question, researches it with parallel workers and writes a long cited report. It takes
+    minutes; use it only for deep research, a report, or a review that needs many
+    sources. Answers at once with {run_id, queued (runs it waits for), card (a Markdown
+    link to its live progress card)}. Follow it with research_wait; once done, its
+    result's reply has the key findings and the whole report, in a <report> tag. Don't
+    start the same question twice."""
 
 
 @tool
@@ -104,7 +101,7 @@ async def wait(
 ) -> dict:
     """Wait up to 45 seconds for a research run's news: {events (progress lines from
     `since` on), done, result}. Call it again with since increased by len(events) until
-    done is true; result is then {status, reply, sources, url, title, error}. Runs are
+    done is true; result is then {status, reply, sources, title, file, error}. Runs are
     kept an hour after they end."""
 
 

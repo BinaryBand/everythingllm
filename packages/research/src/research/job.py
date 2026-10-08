@@ -1,5 +1,5 @@
-"""One research run from start to finish: research the question, save and publish the
-report, write the run log, and say what to tell the user.
+"""One research run from start to finish: research the question, save the report, write the
+run log, and say what to tell the user.
 
 research-runner runs these for the skill; `research-run` runs one by hand:
     research-run "Why is the sky blue?" --depth quick
@@ -9,6 +9,8 @@ Config (environment, from host.env and the unit; Settings.from_env):
   ANYTHINGLLM_ENV      AnythingLLM's .env, for the model keys (default <storage>/.env)
   SEARXNG_URL          the SearXNG to search (default the host's; publicweb.pages)
   RESEARCH_LIVE_PORT   where the live cards listen (default 8450)
+  PUBLIC_HOST          the machine's HTTPS name, for the live cards' URLs
+  USER_TIMEZONE        the user's time zone, for the report's date (default Europe/Stockholm)
 """
 
 import argparse
@@ -18,16 +20,14 @@ import sys
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import hostrpc
 from llm import provider_for
 from publicweb.pages import make_search, searxng_client, searxng_url
 from runs.runlog import RunLog
-from sites import cards
-from sites.build import Builder
-from sites.store import SiteStore, pages_url
-from sites.store import today as sites_today
 
 from research import publish
 from research.config import RESULTS_PER_SEARCH, SEARCH_GAP
@@ -36,6 +36,23 @@ from research.pipeline import Context, research
 from research.web import make_reader, page_client
 
 OFF = re.compile(r"^(no|off|none|false|0)$", re.IGNORECASE)
+PAGES_PORT = 8445  # the pages site, where the live cards are routed
+KEY_FINDINGS = 12  # summary bullets kept in the run log, for the chat's notice
+
+
+def today(now: datetime | None = None) -> str:
+    """Today's date in the user's time zone (USER_TIMEZONE)."""
+    try:
+        tz = ZoneInfo(os.environ.get("USER_TIMEZONE") or "Europe/Stockholm")
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = ZoneInfo("Europe/Stockholm")
+    return (now or datetime.now(tz)).astimezone(tz).date().isoformat()
+
+
+def pages_url() -> str:
+    """The pages site's public URL, from PUBLIC_HOST; "" without it (and no live cards)."""
+    host = os.environ.get("PUBLIC_HOST", "").strip()
+    return f"https://{host}:{PAGES_PORT}/" if host else ""
 
 
 @dataclass
@@ -58,7 +75,7 @@ class Settings:
             searxng_url=searxng_url(),
             env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
             runlogs=hostrpc.data_dir() / "research" / "runs",
-            pages_url=pages_url(Builder.from_env().source),
+            pages_url=pages_url(),
             live_port=int(get("RESEARCH_LIVE_PORT", "8450")),
         )
 
@@ -77,7 +94,6 @@ class Request:
     planner: str = "glm-5.3"
     worker: str = "deepseek-flash"
     planner_fallback: str = "deepseek-flash"
-    site: str = "research"
     # The calling agent's own split of the question, and the report's title then.
     sub_questions: list | None = None
     title: str | None = None
@@ -116,15 +132,14 @@ def run(
     progress: Callable[[str], None],
     chat_closed: Callable[[], bool] = lambda: False,
     meter: Callable[[float], None] = lambda _: None,
-    builder: Builder | None = None,
     llm: LLM | None = None,
     search=None,
     read=None,
 ) -> dict:
-    """Run it; never raises. Returns {status, reply, sources, url, title, error}: `reply`
-    is what the agent is told, `sources` the cited pages, for the chat's citations, `url`
-    and `title` the published report's, when there is one, and `error` why it failed. `meter` hears how far along the
-    run is, from 0 to 1."""
+    """Run it; never raises. Returns {status, reply, sources, title, file, error}: `reply`
+    is what the caller is told (with the whole report), `sources` the cited pages, `title`
+    and `file` the saved report's, and `error` why it failed. `meter` hears how far along
+    the run is, from 0 to 1."""
     runlog = RunLog(settings.runlogs)
     record = {"question": req.question, "depth": req.depth, "models": req.models}
     if req.run_id:
@@ -147,7 +162,6 @@ def run(
                 outcome,
                 sources,
                 clients,
-                builder,
                 llm,
                 search,
                 read,
@@ -165,8 +179,8 @@ def run(
         "status": outcome["status"],
         "reply": reply,
         "sources": sources,
-        "url": outcome.get("url"),
         "title": outcome.get("title"),
+        "file": outcome.get("file"),
         "error": outcome.get("error"),
     }
 
@@ -179,17 +193,12 @@ def _run(
     outcome,
     sources,
     clients: ExitStack,
-    builder,
     llm,
     search,
     read,
 ) -> str:
     """The run itself; what it opens goes on `clients`, closed when the run ends."""
-    builder = builder or Builder.from_env()
-    # Fail before spending tokens if there's nowhere to publish.
-    if not (builder.source / req.site / "zola.toml").is_file():
-        raise RuntimeError(f"no Zola site named '{req.site}' in {builder.source}.")
-    today = sites_today()
+    date = today()
     if llm is None:
         llm = LLM.for_models(
             [req.planner, req.worker],
@@ -212,7 +221,7 @@ def _run(
         read=read or make_reader(clients.enter_context(page_client())),
         progress=progress,
         models=req.models,
-        today=today,
+        today=date,
         meter=meter,
     )
     report = research(req.question, req.depth, ctx, req.sub_questions, req.title)
@@ -229,91 +238,44 @@ def _run(
         )
     )
 
-    def in_files(file: str) -> str:
-        return os.path.relpath(file, settings.storage / "anythingllm-fs")
-
-    # The file is saved before publishing: the site doesn't keep an entry it couldn't
-    # build, and the research shouldn't be lost with it.
-    def file_text(url: str | None) -> str:
-        return publish.report_file(
-            report["title"], today, report["question"], url, report["markdown"]
-        )
-
     meter(0.95)
-    store = SiteStore(builder.source, builder.content, build=builder.build, agent=True)
-    copies = publish.save_then_publish(
-        settings.reports_dir,
-        report["title"],
-        file_text,
-        lambda: store.write(
-            req.site,
-            "reports",
-            None,
-            report["title"],
-            today,
-            {
-                "question": report["question"],
-                "depth": report["depth"],
-                "models": req.models,
-                "stats": stats,
-            },
-            report["markdown"],
-        ),
+    text = publish.report_file(
+        report["title"], date, report["question"], report["markdown"]
     )
-    build = copies.pop("build", None)
-    publish_error = copies.pop("publish_error", None)
-    if not build and "file" not in copies:
-        raise RuntimeError(
-            f"couldn't publish the report ({publish_error}) or save it ({copies.get('file_error')})"
-        )
+    try:
+        file = publish.save_report(settings.reports_dir, report["title"], text)
+    except OSError as e:
+        raise RuntimeError(f"couldn't save the report: {e}") from None
+    saved = os.path.relpath(file, settings.storage / "anythingllm-fs")
+    progress(f"saved the report as {saved}")
     outcome.update(
-        status="ok", depth=report["depth"], title=report["title"], stats=stats
+        status="ok",
+        depth=report["depth"],
+        title=report["title"],
+        stats=stats,
+        file=str(file),
+        summary=[re.sub(r"\s*\[\d+\]", "", b) for b in report["summary"]][
+            :KEY_FINDINGS
+        ],
     )
-    if not build:
-        progress(
-            f"couldn't publish the report ({publish_error}); saved it as {in_files(copies['file'])}"
-        )
-        outcome.update(published=False, build_error=publish_error, file=copies["file"])
-        return "\n\n".join(
-            filter(
-                None,
-                [
-                    f'Research report "{report["title"]}" couldn\'t be published to the research site: {publish_error}',
-                    f"The report is saved as {in_files(copies['file'])} in the agent's files.",
-                    f"Key findings:\n{bullets}" if bullets else "",
-                    basis,
-                    (
-                        "Tell the user where the report is saved and why it wasn't published, and give the key findings in "
-                        "your own words. The research is finished; don't search again or retry publishing."
-                    ),
-                ],
-            )
-        )
-    url = build.url
-    progress(f"published {url}")
-    card = cards.entry_card(
-        builder.output,
-        store,
-        req.site,
-        build,
-        {"question": report["question"]},
-        report["markdown"],
-    )
-
-    outcome.update(url=url, published=True, build_error=None, **copies)
     return "\n\n".join(
         filter(
             None,
             [
-                f'Research report published: "{report["title"]}"',
-                f"Link: {url}",
-                f"Card: {card}" if card else "",
-                f"Saved as {in_files(copies['file'])} in the agent's files."
-                if "file" in copies
-                else f"Couldn't save a copy to the agent's files: {copies.get('file_error')}",
+                f'Research report done: "{report["title"]}"',
+                (
+                    f"Saved as {saved} in the agent's files. A run from a workspace's "
+                    "chat is added to that workspace's documents too."
+                ),
                 f"Key findings:\n{bullets}" if bullets else "",
                 basis,
-                "Give the user the link and the key findings in your own words. The research is finished; don't search again.",
+                (
+                    "Give the user the key findings in your own words; the whole report "
+                    "follows. The research is finished; don't search again."
+                ),
+                "<report>\n"
+                + re.sub(r"(?i)</\s*report", r"<\\/report", text)
+                + "</report>",
             ],
         )
     )

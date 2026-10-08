@@ -36,7 +36,7 @@ Environment=LIVE_HOST=0.0.0.0
 # The host's loopback isn't reachable from here: SearXNG by PUBLIC_HOST, through the
 # proxy. Not AnythingLLM, so it holds no AnythingLLM login.
 Environment=SEARXNG_URL=https://@PUBLIC_HOST@:8888/search
-# Everything at its host path. The repo, read-only (the code, the sites' sources, host.env).
+# Everything at its host path. The repo, read-only (the code, host.env).
 Volume=@REPO@:@REPO@:ro
 # Its venv and uv's cache, in one folder (one mount, so uv can hardlink from the cache).
 Volume=%h/.local/share/everythingllm/venvs/research-runner-ctr:%h/.local/share/everythingllm/venvs/research-runner-ctr
@@ -45,25 +45,16 @@ Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/research-
 Environment=UV_CACHE_DIR=%h/.local/share/everythingllm/venvs/research-runner-ctr/uv-cache
 # The run log and live runs' markers (the run guard reads them on the host).
 Volume=%h/.local/share/everythingllm/research:%h/.local/share/everythingllm/research
-# The research site's entries, and the lock every site build holds (sites.build).
-Volume=%h/.local/share/everythingllm/pages/entries/research:%h/.local/share/everythingllm/pages/entries/research
-Volume=%h/.local/share/everythingllm/pages/entries/.build.lock:%h/.local/share/everythingllm/pages/entries/.build.lock
-# The pages site, whole: the sandbox builds the research site into .research.new there,
-# which is renamed into place (one mount, or the rename fails), and the link cards go in
-# _cards/.
-Volume=%h/.local/share/everythingllm/pages/public:%h/.local/share/everythingllm/pages/public
-# Its socket's folder, and the folder of the sandbox runner's build socket, which serves
-# build_system_site and nothing else (never its runner.sock, which takes any workspace's
-# scope); connecting needs no write access to the folder.
+# Its socket's folder.
 Volume=@ANYTHINGLLM_STORAGE@/everythingllm/research:@ANYTHINGLLM_STORAGE@/everythingllm/research
-Volume=@ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build:@ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build:ro
 # Its share of AnythingLLM's .env, read-only (ExecStartPre writes it): the model keys, never
 # AnythingLLM's password or JWT secret.
 Volume=%h/.config/everythingllm/ctr/research-runner.env:%h/.config/everythingllm/ctr/research-runner.env:ro
 Environment=ANYTHINGLLM_ENV=%h/.config/everythingllm/ctr/research-runner.env
-# Where the report is saved for the agent's files.
+# Where the report is saved, for the agent's files and for agents-runner to add to the
+# workspace's documents.
 Volume=@ANYTHINGLLM_STORAGE@/anythingllm-fs/research:@ANYTHINGLLM_STORAGE@/anythingllm-fs/research
-# ANYTHINGLLM_STORAGE and PUBLIC_HOST.
+# ANYTHINGLLM_STORAGE, PUBLIC_HOST and USER_TIMEZONE.
 EnvironmentFile=@REPO@/host.env
 # The relay's ntfy topic and token (NTFY_URL, NTFY_TOKEN; research.notify), as values podman
 # reads on the host, not a file it can see. hostctl.relay_env makes the file.
@@ -75,8 +66,7 @@ EnvironmentFile=%h/.config/everythingllm/relay.env
 # restart takes up a changed key.
 ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/research-runner.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF GENERIC_OPEN_AI_BASE_PATH GENERIC_OPEN_AI_API_KEY ZAI_API_KEY
 # podman won't bind-mount what isn't there.
-ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research %h/.local/share/everythingllm/pages/entries/research %h/.local/share/everythingllm/pages/public @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/sandbox-build @ANYTHINGLLM_STORAGE@/anythingllm-fs/research
-ExecStartPre=/usr/bin/touch %h/.local/share/everythingllm/pages/entries/.build.lock
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/anythingllm-fs/research
 # A run is mostly waiting on the models; what CPU it takes (page parsing) can give way.
 # The container's processes inherit it from podman.
 Nice=10

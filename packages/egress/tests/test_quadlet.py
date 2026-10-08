@@ -154,13 +154,9 @@ RESEARCH = {
     "@REPO@": True,
     f"{DATA}/venvs/research-runner-ctr": False,
     f"{DATA}/research": False,  # runs/: the run log and live runs' markers
-    f"{DATA}/pages/entries/research": False,
-    f"{DATA}/pages/entries/.build.lock": False,
-    f"{DATA}/pages/public": False,  # one mount: a build's rename stays inside it
     f"{STORAGE}/everythingllm/research": False,  # its socket
-    f"{STORAGE}/everythingllm/sandbox-build": True,  # the sandbox's build_system_site
     f"{CTR_ENV}/research-runner.env": True,  # its share of AnythingLLM's .env
-    f"{STORAGE}/anythingllm-fs/research": False,
+    f"{STORAGE}/anythingllm-fs/research": False,  # the reports
 }
 
 
@@ -181,7 +177,7 @@ def test_research_mounts_only_what_it_uses():
     assert keys["PublishPort"] == ["127.0.0.1:8450:8450"]
     # What it mounts from the host is made first: podman won't mount what isn't there.
     made = re.findall(
-        r"^ExecStartPre=/usr/bin/(?:mkdir -p|touch) (.+)$",
+        r"^ExecStartPre=/usr/bin/mkdir -p (.+)$",
         template.read_text(),
         re.MULTILINE,
     )
@@ -193,7 +189,6 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     """Every path research-runner's code uses outside the repo, under the mount it needs."""
     import hostrpc
     from research import job
-    from sites.build import LOCK, Builder
 
     home, storage = tmp_path / "home", tmp_path / "storage"
     monkeypatch.setenv("HOME", str(home))
@@ -203,16 +198,8 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     monkeypatch.setenv(
         "ANYTHINGLLM_ENV", env["ANYTHINGLLM_ENV"].replace("%h", str(home))
     )
-    for var in (
-        "SITES_CONTENT",
-        "SITES_OUTPUT",
-        "RESEARCH_SOCKET",
-        "SANDBOX_BUILD_SOCKET",
-        "RESEARCH_EMBED_SOCKET",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    settings, builder = job.Settings.from_env(), Builder.from_env()
-    site = job.Request("q").site
+    monkeypatch.delenv("RESEARCH_SOCKET", raising=False)
+    settings = job.Settings.from_env()
 
     def read_only(path: Path) -> bool:
         """Whether the mount `path` is under is read-only; fails if it isn't mounted."""
@@ -224,21 +211,10 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     for path in (
         settings.runlogs,
         settings.reports_dir,
-        builder.content / site / "reports",
-        builder.content / LOCK,
-        builder.output / f".{site}.new",
-        builder.output / site,
-        builder.output / "_cards",
         hostrpc.socket_path("research", "RESEARCH_SOCKET"),
     ):
         assert not read_only(path), path
-    for path in (
-        settings.env_file,
-        hostrpc.socket_path("sandbox-build", "SANDBOX_BUILD_SOCKET"),
-    ):
-        read_only(path)  # mounted; read-only will do
-    # The research site is built in the sandbox, so the container needs no zola.
-    assert builder.theme_from(site) == "system"
+    read_only(settings.env_file)  # mounted; read-only will do
 
 
 def test_research_reaches_searxng_through_the_proxy_and_never_anythingllm(egress):

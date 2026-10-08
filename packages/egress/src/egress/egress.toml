@@ -59,3 +59,10 @@ ips = { browser-1 = "10.89.79.32", browser-2 = "10.89.79.33", browser-3 = "10.89
 public = false
 allow = []
 ips = { sandbox-1 = "10.89.79.40", sandbox-2 = "10.89.79.41" }
+
+# The runs of a workspace the user gave web access (the sandbox-access skill): public
+# hosts, which they reach through the public port alone (:3129), so no exception counts.
+[profiles.sandbox-web]
+public = true
+allow = []
+ips = { sandbox-web-1 = "10.89.79.42", sandbox-web-2 = "10.89.79.43" }

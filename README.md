@@ -156,6 +156,7 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
   sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
                        shared/), and beside them the workspace's browser profile
                        (browser/, browser-runner's)
+  sandbox/access.json  each workspace's web access (sandbox-access)
   browser/             browser-runner's: each running browser's sockets (sockets/<slot>/),
                        noVNC for the take-over view (novnc/) and the saved logins
                        (vault/<workspace>.vault, sealed)
@@ -276,6 +277,7 @@ Quadlet in podman 5.4 has no `Memory=` or `Umask=`; `PodmanArgs` carries them, a
 | research | research-runner (.11) | yes | `PUBLIC_HOST:8888`, ntfy :443 |
 | browser | the workspaces' browsers (.32--.35, one per slot) | yes | none |
 | sandbox | the code sandbox's runs (.40--.41, one per slot) | no | none (PyPI, as every profile) |
+| sandbox-web | the runs of a workspace with web access (.42--.43, one per slot), on the public port alone | yes | none |
 
 - A public host must resolve to public addresses only, all of them: the rule is `publicweb.public_address`, the one the services use on the host, so loopback, the LAN, link-local, the CGNAT range (Tailscale's) and IPv4-mapped forms of them are all refused. The proxy resolves each name once and connects to the address it checked, so a name that answers differently the second time (DNS rebinding) gets nowhere.
 
@@ -285,13 +287,14 @@ In a container, `EGRESS_PROXY` puts `publicweb.public_client` in proxy mode: eve
 
 ## Code sandbox
 
-Five agent skills give the agent a small Linux machine to run code in, like the Claude app's, and ways to show and publish what it makes:
+Six agent skills give the agent a small Linux machine to run code in, like the Claude app's, ways to show and publish what it makes, and a switch for what it may reach:
 
 - `run-code` runs a Python or bash script and replies with its output. It waits for the whole run (up to 300 s), showing in the chat that it's still going; skills, unlike MCP tools, have no 60 s limit. Reading, listing, moving and deleting files is bash.
 - `write-file` writes a text file, or deletes a file or folder (deleting exactly one of the workspace's folders empties it).
 - `publish` gives a page's link and card, lists the workspace's pages, copies a file or folder from elsewhere into `/public`, or removes a page.
 - `show-image` shows an image file from the sandbox in the chat (see "Images in the chat").
 - `build-site` builds a Zola site from the workspace's folders into `/public/<slug>`, which puts it live (see "Building sites").
+- `sandbox-access` shows whether the workspace's runs can reach the web, and turns that on (once the user approves it) or off (see "Web access").
 
 **Pages are `/public`, served as they are.** A workspace's `/public` is its pages on the web, at `https://<PUBLIC_HOST>:8447/<workspace>/`: `public/notes/index.html` is `/<workspace>/notes/`, and any other file is served as it is. Whatever is written there is live at once, and deleting it takes it down; there's no copy, no sync and no page names to claim, since each workspace owns its prefix. A half-written or broken page is the workspace's own business. The replies of `run-code`, `write-file` and `build-site` list the pages they changed, with their URLs, what in them the CSP blocks and their notices (scripts, and the sandbox's limits on them). Caddy's directory listing is the index, of the workspaces at the root and of a workspace's pages under it; dotfiles aren't served.
 
@@ -339,6 +342,13 @@ The runner copies the output into `/public/<slug>` (plain files only, in place o
 The host never follows a symlink out of a mount when it reads, writes or copies for the agent, won't write into a FIFO or device there, and leaves symlinks out of what `publish` or a build copies into `/public`; the sandbox can create any symlink it likes in its own folders.
 
 **Network.** A run sits on `egress-net` (see "Service containers"), with no route out and no DNS (`--dns none`), at one of the egress profile `sandbox`'s addresses (`10.89.79.40`, `.41`): each is a slot, held from writing the run's script until its container is removed, so at most two run at once and an address is never handed on while a stopped container still has it (a build, with no network, holds a slot too, for its turn). The runner points `http_proxy` and `https_proxy` at the egress proxy (`:3128`), whose `sandbox` profile has no `public` and no exceptions of its own, only what every profile may reach: `pypi.org:443` and `files.pythonhosted.org:443`. So `pip install` works, and the internet, the LAN, CGNAT (a tailnet's AnythingLLM API, Ollama, ...) and the host's own ports don't. `upload.pypi.org` stays blocked, so code can't push data out through a package upload either. To allow another host, add it to the profile's `allow` in `egress.toml` and restart `egress-proxy`.
+
+**Web access.** A workspace's runs can reach the public web once the user turns it on for that workspace. Off is the default, and a gateway client's `client-*` workspace can't have it. The `sandbox-access` skill shows it and changes it, through the runner's `access` op, which keeps each workspace's setting in `~/.local/share/everythingllm/sandbox/access.json` (mode 600, outside every workspace's folders, so no run can write it), read at each run:
+
+- Turning it off works from any chat. Turning it on works only from a chat in AnythingLLM's own window, and only once the user approves it in AnythingLLM's tool approval prompt (`requestToolApproval`), which says what it means. AnythingLLM answers "approved" without asking anyone for a scheduled job, a skill set to run without asking, and a channel with no prompt (an API or Telegram chat), so the skill takes only its "User approved the tool execution." and refuses the rest with the reason. The runner refuses to turn it on unless the skill says the user approved.
+- A run with web access takes an address of the egress profile `sandbox-web` (`10.89.79.42`, `.43`; its own two slots), which may reach public hosts, and goes out through the proxy's public port (`:3129`), where no exception counts: public hosts only, on 80 and 443, PyPI included, never the LAN, CGNAT or the host.
+- It doesn't see other workspaces' `/shared` folders, since a run that reads the web could send whatever it can read to any website; its own folders are as ever. Its reply says that web access was on.
+- What's left is the user's call, made when they approve it: a page a run reads could carry instructions for the agent, and a run could send the workspace's own files anywhere public.
 
 `uv run hostctl health` checks the unit and pings the runner, which reports a missing image or network and an egress proxy that isn't running.
 

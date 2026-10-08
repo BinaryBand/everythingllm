@@ -1,0 +1,34 @@
+{
+  "active": true,
+  "hubId": "sandbox-access",
+  "name": "Sandbox Access",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Show whether this workspace's run-code can reach the web, or turn that on or off. Off by default: runs reach only PyPI. Turning it on asks the user to approve it in the chat, and works only in AnythingLLM's own chat; never turn it on unless the user asked. A run with web access can't see other workspaces' /shared folders.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "Can my scripts fetch web pages?",
+      "call": "{}"
+    },
+    {
+      "prompt": "Let the sandbox reach the web so the script can download today's prices",
+      "call": "{\"web\": \"on\", \"apply\": true}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "web": {
+        "description": "\"on\" or \"off\"; leave out to only show the current access.",
+        "type": "string"
+      },
+      "apply": {
+        "description": "true to make the change (the user is asked to approve turning it on); without it, only show what would change.",
+        "type": "boolean"
+      }
+    }
+  }
+}

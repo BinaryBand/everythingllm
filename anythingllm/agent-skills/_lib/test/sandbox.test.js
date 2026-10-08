@@ -10,6 +10,7 @@ const writeFile = require("../../write-file/handler").runtime;
 const publish = require("../../publish/handler").runtime;
 const buildSite = require("../../build-site/handler").runtime;
 const showImage = require("../../show-image/handler").runtime;
+const sandboxAccess = require("../../sandbox-access/handler").runtime;
 
 // A fake sandbox-runner: answers each request with respond(op, args); an array of Buffers
 // is sent as separate chunks, a moment apart, and undefined means never.
@@ -218,6 +219,94 @@ test("build-site sends the path and slug, waits out a long build and says what w
     assert.deepEqual(runner.requests[0].args, { scope: { workspace: "career", thread: "12" }, path: "/shared/career/sites/lab", slug: "lab" });
     assert.deepEqual(runner.requests[1], { op: "wait", args: { scope: { workspace: "career", thread: "12" }, run_id: "r-9" } });
     assert.match(lines[0], /Still building \(45 s\)/);
+  } finally {
+    await runner.close();
+  }
+});
+
+// A UI chat (its invocation row's uuid), asking the user with `answer` when a skill wants approval.
+function uiChat(answer) {
+  const asked = [];
+  return {
+    asked,
+    self: {
+      introspect: () => {},
+      logger: () => {},
+      super: { handlerProps: { invocation: { uuid: "inv-1", workspace: { slug: "career" }, thread_id: 12 } } },
+      requestToolApproval: async (request) => {
+        asked.push(request);
+        return answer;
+      },
+    },
+  };
+}
+
+function accessRunner(web = false) {
+  return fakeRunner((op, args) => {
+    if (op !== "access") return { ok: false, error: "?" };
+    if (args.web === undefined || args.web === web) return { ok: true, result: { workspace: "career", web, changed: false } };
+    if (!args.apply) return { ok: true, result: { workspace: "career", web, would: { web: args.web }, needs_approval: args.web } };
+    if (args.web && !args.approved) return { ok: false, error: "turning web access on needs the user's approval" };
+    return { ok: true, result: { workspace: "career", web: args.web, changed: true } };
+  });
+}
+
+test("sandbox-access turns web on only with the user's own approval in a UI chat", async () => {
+  const runner = await accessRunner();
+  try {
+    const { self, asked } = uiChat({ approved: true, message: "User approved the tool execution." });
+    assert.match(await sandboxAccess.handler.call(self, {}), /web access is off/);
+    assert.match(await sandboxAccess.handler.call(self, { web: "on" }), /apply true would turn it on, after the user approves/);
+    assert.equal(asked.length, 0);
+    assert.match(await sandboxAccess.handler.call(self, { web: "on", apply: true }), /^Done\. In this workspace, web access is on/);
+    assert.equal(asked.length, 1);
+    assert.match(asked[0].description, /reach public websites/);
+    const last = runner.requests.at(-1);
+    assert.deepEqual(last.args, { web: true, apply: true, approved: true, scope: { workspace: "career", thread: "12" } });
+  } finally {
+    await runner.close();
+  }
+});
+
+test("sandbox-access never counts an approval AnythingLLM gave without asking", async () => {
+  for (const message of [
+    "Skill is whitelisted - auto-approved.",
+    "Skill is auto-approved.",
+    "Approval not required in this context.",
+    "Auto-approved by scheduled job runner.",
+  ]) {
+    const runner = await accessRunner();
+    try {
+      const reply = await sandboxAccess.handler.call(uiChat({ approved: true, message }).self, { web: "on", apply: true });
+      assert.match(reply, /stays off: AnythingLLM approved it without asking/, message);
+      assert.equal(runner.requests.filter((r) => r.args.apply).length, 0, message);
+    } finally {
+      await runner.close();
+    }
+  }
+  const runner = await accessRunner();
+  try {
+    const reply = await sandboxAccess.handler.call(uiChat({ approved: false, message: "Tool call was rejected by the user." }).self, { web: "on", apply: true });
+    assert.match(reply, /stays off: Tool call was rejected by the user\./);
+    // An API or Telegram chat (no invocation row) can't turn it on, and never asks.
+    const api = uiChat({ approved: true, message: "User approved the tool execution." });
+    delete api.self.super.handlerProps.invocation.uuid;
+    assert.match(await sandboxAccess.handler.call(api.self, { web: "on", apply: true }), /only be turned on from a chat in AnythingLLM's own window/);
+    assert.equal(api.asked.length, 0);
+    assert.equal(runner.requests.filter((r) => r.args.apply).length, 0);
+  } finally {
+    await runner.close();
+  }
+});
+
+test("sandbox-access turns web off from any chat, without asking", async () => {
+  const runner = await accessRunner(true);
+  try {
+    const api = uiChat(null);
+    delete api.self.super.handlerProps.invocation.uuid;
+    assert.match(await sandboxAccess.handler.call(api.self, { web: "off", apply: "true" }), /^Done\. In this workspace, web access is off/);
+    assert.equal(api.asked.length, 0);
+    assert.match(await sandboxAccess.handler.call(api.self, { web: "maybe" }), /web must be "on" or "off"/);
   } finally {
     await runner.close();
   }

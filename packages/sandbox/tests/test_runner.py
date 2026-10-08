@@ -61,6 +61,9 @@ def cfg(tmp_path):
         network="egress-net",
         ips=("10.89.79.40", "10.89.79.41"),
         proxy="http://10.89.79.2:3128",
+        web_ips=("10.89.79.42", "10.89.79.43"),
+        public_proxy="http://10.89.79.2:3129",
+        access_file=tmp_path / "data" / "access.json",
         public_root=tmp_path / "public",
         public_url="https://ws.example/",
     )
@@ -173,6 +176,75 @@ def test_each_workspace_writes_its_own_shared_folder_and_reads_the_others(cfg):
     assert f"{shared(cfg, A)}:/shared/career:ro,noexec,nosuid,nodev" in args
     assert f"{cfg.system_themes}:/system/themes:ro,noexec,nosuid,nodev" in args
     assert not any(a.endswith(":/shared") or ":/shared:" in a for a in args)
+
+
+# --- web access ---
+
+GATEWAY = {"workspace": "client-laptop", "thread": "gateway", "gateway": True}
+
+
+def test_a_workspace_reaches_the_web_only_once_the_user_approved_it(cfg):
+    r = make(cfg)
+    go(r.op_write(B, "/shared/home/notes.txt", "home's"))
+    assert go(r.op_access(A)) == {"workspace": "career", "web": False, "changed": False}
+    shown = go(r.op_access(A, web=True))
+    assert shown["would"] == {"web": True} and shown["needs_approval"] is True
+    with pytest.raises(runner.SandboxError, match="needs the user's approval"):
+        go(r.op_access(A, web=True, apply=True))
+    assert not cfg.access_file.exists()
+    on = go(r.op_access(A, web=True, apply=True, approved=True))
+    assert on == {"workspace": "career", "web": True, "changed": True}
+    assert cfg.access_file.stat().st_mode & 0o777 == 0o600
+    assert go(r.op_access(A2)) == {"workspace": "career", "web": True, "changed": False}
+
+    res = go(r.op_run(A2, "bash", "curl https://example.com"))
+    assert res["web"] is True
+    args = r.podman.runs()[0][0]
+    joined = " ".join(args)
+    assert "--network egress-net:ip=10.89.79.42" in joined
+    assert "-e https_proxy=http://10.89.79.2:3129" in joined
+    seen = mounts(args)
+    assert "/shared/home" not in seen  # what a run that reads the web could send out
+    assert seen["/shared/career"] == shared(cfg, A) and "/system/themes" in seen
+
+    # Another workspace is as it was: PyPI only, every /shared.
+    res = go(r.op_run(B, "bash", "ls"))
+    args = r.podman.runs()[1][0]
+    assert res["web"] is False and "ip=10.89.79.40" in " ".join(args)
+    assert "-e https_proxy=http://10.89.79.2:3128" in " ".join(args)
+    assert "/shared/career" in mounts(args)
+
+    # Off needs no approval.
+    off = go(r.op_access(A, web=False, apply=True))
+    assert off["web"] is False and json.loads(cfg.access_file.read_text()) == {}
+    go(r.op_run(A, "bash", "ls"))
+    assert "ip=10.89.79.4" in " ".join(r.podman.runs()[2][0])
+    assert "/shared/home" in mounts(r.podman.runs()[2][0])
+
+
+def test_a_gateway_client_reaches_only_pypi(cfg):
+    r = make(cfg)
+    cfg.access_file.parent.mkdir(parents=True)
+    cfg.access_file.write_text('{"client-laptop": {"web": true}}')
+    with pytest.raises(runner.SandboxError, match="gateway client"):
+        go(r.op_access(GATEWAY, web=True, apply=True, approved=True))
+    assert go(r.op_run(GATEWAY, "bash", "ls"))["web"] is False
+
+
+@pytest.mark.parametrize(
+    "text", ["not json", "[1]", '{"career": "on"}', '{"career": {"web": "yes"}}']
+)
+def test_access_that_cant_be_read_is_none(cfg, text):
+    cfg.access_file.parent.mkdir(parents=True)
+    cfg.access_file.write_text(text)
+    r = make(cfg)
+    assert go(r.op_access(A))["web"] is False
+    assert go(r.op_run(A, "bash", "ls"))["web"] is False
+
+
+def test_web_access_takes_only_true_or_false(cfg):
+    with pytest.raises(runner.SandboxError, match="web must be"):
+        go(make(cfg).op_access(A, web="on"))
 
 
 def test_another_workspaces_shared_folder_is_read_only_to_the_runner_too(cfg):

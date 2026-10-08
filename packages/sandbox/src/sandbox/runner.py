@@ -105,7 +105,7 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -129,6 +129,7 @@ class SandboxError(hostrpc.RunnerError):
 # Also named in hostctl's sandbox-images (cli.py).
 IMAGE = "localhost/everythingllm-sandbox"
 PROFILE = "sandbox"  # egress.toml's profile, whose addresses the runs take
+WEB_PROFILE = "sandbox-web"  # its profile for the runs of a workspace with web access
 PROXY_CONTAINER = "systemd-egress-proxy"  # the egress proxy, as Quadlet names it
 LABEL = "everythingllm-sandbox=1"
 
@@ -270,10 +271,14 @@ class Config:
     system_themes: Path
     site_dir: Path
     site_url: str
-    # egress-net, the sandbox profile's addresses (one slot each) and the proxy's URL.
+    # egress-net, the sandbox profile's addresses (one slot each) and the proxy's URL; and
+    # for a workspace with web access, its profile's and the proxy's public-only port.
     network: str = ""
     ips: tuple[str, ...] = ()
     proxy: str = ""
+    web_ips: tuple[str, ...] = ()
+    public_proxy: str = ""
+    access_file: Path = Path("/nonexistent/access.json")  # each workspace's Access
     public_root: Path = Path("/nonexistent")
     public_url: str = "http://127.0.0.1:8447/"
     uploads: Path = Path("/nonexistent")  # AnythingLLM's direct-uploads
@@ -292,6 +297,13 @@ class Config:
             network=egress.network,
             ips=tuple(egress.profiles[PROFILE].ips.values()),
             proxy=egress.url,
+            web_ips=tuple(
+                egress.profiles[WEB_PROFILE].ips.values()
+                if WEB_PROFILE in egress.profiles
+                else ()
+            ),
+            public_proxy=egress.public_url,
+            access_file=hostrpc.data_dir() / "sandbox" / "access.json",
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
@@ -310,6 +322,17 @@ class Config:
             ),
             uploads=Path(get("SANDBOX_UPLOADS", hostrpc.storage() / "direct-uploads")),
         )
+
+
+@dataclass(frozen=True)
+class Access:
+    """What a workspace's runs may reach beyond PyPI: the public web (`web`). Off unless
+    the user turned it on (op_access, the sandbox-access skill)."""
+
+    web: bool = False
+
+
+NO_ACCESS = Access()
 
 
 @dataclass(frozen=True)
@@ -769,26 +792,111 @@ class Runner(hostrpc.Service):
     podman: Podman = podman
     now: Callable[[], float] = time.time
     _free: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
+    _free_web: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
+    _access_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     _jobs: dict[str, Job] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for ip in self.config.ips:
             self._free.put_nowait(ip)
+        for ip in self.config.web_ips:
+            self._free_web.put_nowait(ip)
 
     @contextlib.asynccontextmanager
-    async def slot(self) -> AsyncIterator[str]:
+    async def slot(self, web: bool = False) -> AsyncIterator[str]:
         """One of the sandbox profile's addresses, held until the block ends: a run's
-        container takes it on egress-net, a build's (no network) only its turn."""
-        if not self.config.ips:
+        container takes it on egress-net, a build's (no network) only its turn. With
+        `web`, one of the sandbox-web profile's, which the egress proxy lets reach public
+        hosts."""
+        ips, free = (
+            (self.config.web_ips, self._free_web)
+            if web
+            else (self.config.ips, self._free)
+        )
+        if not ips:
             raise SandboxError(
-                "the sandbox has no addresses on egress-net (egress.toml's sandbox profile)"
+                f"the sandbox has no addresses on egress-net (egress.toml's "
+                f"{WEB_PROFILE if web else PROFILE} profile)"
             )
-        ip = await self._free.get()
+        ip = await free.get()
         try:
             yield ip
         finally:
-            self._free.put_nowait(ip)
+            free.put_nowait(ip)
+
+    # --- access ---
+
+    def access(self, scope: Scope) -> Access:
+        """The workspace's access, from access_file; none for a gateway client's, and none
+        when the file is missing or can't be read."""
+        if scope.gateway:
+            return Access()
+        try:
+            entry = json.loads(self.config.access_file.read_text()).get(scope.workspace)
+        except FileNotFoundError:
+            return Access()
+        except (OSError, ValueError, AttributeError) as e:
+            log.warning("couldn't read %s: %s", self.config.access_file, e)
+            return Access()
+        if not isinstance(entry, dict):
+            return Access()
+        return Access(web=entry.get("web") is True)
+
+    async def op_access(
+        self,
+        scope: dict[str, Any],
+        web: Any = None,
+        apply: bool = False,
+        approved: bool = False,
+    ) -> dict[str, Any]:
+        """The workspace's access, and with `web` (true or false) what it would be. With
+        `apply` it's changed: turning anything on also needs `approved`, the user's own
+        approval in the chat, which the sandbox-access skill asks AnythingLLM for; turning
+        it off needs nothing more."""
+        s = self.scope(scope)
+        if s.gateway:
+            raise SandboxError(
+                "a gateway client's sandbox reaches only PyPI; its access can't change"
+            )
+        if web not in (None, True, False):
+            raise SandboxError("web must be true, false or left out")
+        current = self.access(s)
+        wanted = current if web is None else replace(current, web=web)
+        on = wanted.web and not current.web
+        out = {"workspace": s.workspace, "web": current.web}
+        if wanted == current:
+            return {**out, "changed": False}
+        if apply is not True:
+            return {**out, "would": {"web": wanted.web}, "needs_approval": on}
+        if on and approved is not True:
+            raise SandboxError(
+                "turning web access on needs the user's approval in the chat, which the "
+                "sandbox-access skill asks for"
+            )
+        async with self._access_lock:
+            await asyncio.to_thread(self.write_access, s.workspace, wanted)
+        log.info("access for %s: web=%s", s.workspace, wanted.web)
+        return {**out, "web": wanted.web, "changed": True}
+
+    def write_access(self, workspace: str, access: Access) -> None:
+        file = self.config.access_file
+        try:
+            data = json.loads(file.read_text())
+            if not isinstance(data, dict):
+                data = {}
+        except FileNotFoundError:
+            data = {}
+        except (OSError, ValueError) as e:
+            raise SandboxError(f"couldn't read the access settings: {e}") from None
+        if access == Access():
+            data.pop(workspace, None)
+        else:
+            data[workspace] = {"web": access.web}
+        file.parent.mkdir(parents=True, exist_ok=True)
+        hostrpc.atomic_write(
+            file, json.dumps(data, indent=1, sort_keys=True) + "\n", 0o600
+        )
 
     # --- scopes and paths ---
 
@@ -915,6 +1023,11 @@ class Runner(hostrpc.Service):
             problems.append(
                 "the egress proxy isn't running (systemctl --user status egress-proxy)"
             )
+        if not self.config.web_ips:
+            problems.append(
+                f"egress.toml has no {WEB_PROFILE} profile, so no workspace's runs can "
+                "reach the web"
+            )
         return {"problems": problems}
 
     def prune(self) -> None:
@@ -1020,10 +1133,11 @@ class Runner(hostrpc.Service):
             before = await asyncio.to_thread(snapshot, scope)
             if before.total > WORKSPACE_MAX_BYTES:
                 raise self.over_quota(before, "run code")
-            async with self.slot() as ip:
+            access = self.access(scope)
+            async with self.slot(web=access.web) as ip:
                 try:
                     args = await asyncio.to_thread(
-                        self.prepare, name, scope, run_dir, script, code, ip
+                        self.prepare, name, scope, run_dir, script, code, ip, access
                     )
                     started = self.now()
                     watch = asyncio.create_task(self.watch(scope, name))
@@ -1085,6 +1199,7 @@ class Runner(hostrpc.Service):
             else None,
             "attachments": copies,
             "attachment_notes": notes,
+            "web": access.web,
         }
 
     def sync_attachments(
@@ -1253,12 +1368,13 @@ class Runner(hostrpc.Service):
             "keep-id",
         ]
 
-    def read_only_mounts(self, workspace: str) -> list[str]:
-        """Every other workspace's shared folder and the repo's themes, read-only."""
+    def read_only_mounts(self, workspace: str, others: bool = True) -> list[str]:
+        """Every other workspace's shared folder (without `others`, none) and the repo's
+        themes, read-only."""
         return [
             *(
                 a
-                for other, folder in self.others_shared(workspace)
+                for other, folder in (self.others_shared(workspace) if others else ())
                 for a in ("-v", f"{folder}:/shared/{other}:{DATA_RO}")
             ),
             "-v",
@@ -1266,11 +1382,21 @@ class Runner(hostrpc.Service):
         ]
 
     def prepare(
-        self, name: str, scope: Scope, run_dir: Path, script: str, code: str, ip: str
+        self,
+        name: str,
+        scope: Scope,
+        run_dir: Path,
+        script: str,
+        code: str,
+        ip: str,
+        access: Access = NO_ACCESS,
     ) -> list[str]:
         """Write the run's script and return its podman arguments: egress-net at `ip`,
         with the egress proxy as its only way out; the workspace's own folders read-write,
-        every other workspace's shared folder and the repo's themes read-only."""
+        every other workspace's shared folder and the repo's themes read-only. With web
+        access, through the proxy's public-only port, and without the other workspaces'
+        shared folders, which a run that reads the web could send anywhere."""
+        proxy = self.config.public_proxy if access.web else self.config.proxy
         (run_dir / "code").mkdir(parents=True)
         (run_dir / "code" / script).write_text(code)
         # No --rm: the container is kept until execute has asked podman whether it ran out of memory.
@@ -1281,9 +1407,9 @@ class Runner(hostrpc.Service):
             "--dns",
             "none",
             "-e",
-            f"http_proxy={self.config.proxy}",
+            f"http_proxy={proxy}",
             "-e",
-            f"https_proxy={self.config.proxy}",
+            f"https_proxy={proxy}",
             *(
                 a
                 for mount, root in scope.roots.items()
@@ -1297,7 +1423,7 @@ class Runner(hostrpc.Service):
                     ),
                 )
             ),
-            *self.read_only_mounts(scope.workspace),
+            *self.read_only_mounts(scope.workspace, others=not access.web),
             "-v",
             f"{run_dir / 'code'}:/sandbox:ro",
             IMAGE,

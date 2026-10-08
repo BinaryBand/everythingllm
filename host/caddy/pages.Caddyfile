@@ -11,6 +11,7 @@
 # The system site (research: Zola, built from the repo's templates) and the link
 # cards. No scripts, no inline styles.
 :8445 {
+  encode zstd gzip
   root * /srv/site
   # Workspace pages moved to :8447 on 2026-10-06; the front page and education's old
   # addresses point there.
@@ -49,6 +50,7 @@
 # pages), allow-forms or allow-popups. packages/sandbox/tests/test_pages_browser.py checks
 # this in a real browser.
 :8447 {
+  encode zstd gzip
   root * /srv/workspaces
   header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; sandbox allow-scripts allow-downloads"
   header X-Content-Type-Options nosniff

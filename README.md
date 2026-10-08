@@ -51,7 +51,9 @@ The network is the machine's, not the repo's. Nothing here runs `tailscale serve
 | 8445 | `/_live/browser` | :8453 | browser live cards |
 | 8445 | `/_live/research` | :8450 | research live cards |
 | 8445 | `/_live/agents` | :8451 | delegation live cards (when set up) |
+| 8445 | `/_live/apps` | :8455 | app cards (the sandbox runner's apps server) |
 | 8447 | `/` | :8447 | the workspace pages (Caddy) |
+| 8447 | `/_apps` | :8455 | apps' write-back (the sandbox runner's apps server) |
 | 8452 | `/` | :8452 | the MCP gateway (when set up) |
 | 8454 | `/` | :8454 | the browser take-over view |
 | 8888 | `/` | :8888 | SearXNG |
@@ -157,6 +159,7 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
                        shared/), and beside them the workspace's browser profile
                        (browser/, browser-runner's)
   sandbox/access.json  each workspace's web and model access (sandbox-access)
+  sandbox/apps/        each app's write-back token (<workspace>/<name>.json, mode 600)
   sandbox/models/      the model calls runs made (YYYY-MM.jsonl), and sandbox/m/ their sockets
   browser/             browser-runner's: each running browser's sockets (sockets/<slot>/),
                        noVNC for the take-over view (novnc/) and the saved logins
@@ -288,12 +291,13 @@ In a container, `EGRESS_PROXY` puts `publicweb.public_client` in proxy mode: eve
 
 ## Code sandbox
 
-Six agent skills give the agent a small Linux machine to run code in, like the Claude app's, ways to show and publish what it makes, and a switch for what it may reach:
+Seven agent skills give the agent a small Linux machine to run code in, like the Claude app's, ways to show and publish what it makes, apps it keeps from templates, and a switch for what it may reach:
 
 - `run-code` runs a Python or bash script and replies with its output. It waits for the whole run (up to 300 s), showing in the chat that it's still going; skills, unlike MCP tools, have no 60 s limit. Reading, listing, moving and deleting files is bash.
 - `write-file` writes a text file, or deletes a file or folder (deleting exactly one of the workspace's folders empties it).
 - `publish` gives a page's link and card, lists the workspace's pages, copies a file or folder from elsewhere into `/public`, or removes a page.
 - `show-image` shows an image file from the sandbox in the chat (see "Images in the chat").
+- `app` keeps the workspace's apps, lists first: one call makes a list, adds, ticks off or removes items, and replies with the list's live card (see "Apps").
 - `build-site` builds a Zola site from the workspace's folders into `/public/<slug>`, which puts it live (see "Building sites").
 - `sandbox-access` shows whether the workspace's runs can reach the web and ask a model, and turns either on (once the user approves it) or off (see "Web and model access").
 
@@ -302,6 +306,12 @@ Six agent skills give the agent a small Linux machine to run code in, like the C
 What keeps this safe is where `/public` lives: in `~/.local/share/everythingllm/sandbox/public/<workspace>/`, apart from the workspace's other folders, in a tree that holds nothing but `/public` folders. Caddy mounts that tree read-only, so a symlink in a workspace's pages can only reach other workspaces' pages (public already) or Caddy's own container, never a workspace's `/project`, `/work` or `/shared`. `/public` counts toward the workspace's size limit.
 
 **Link cards.** AnythingLLM's chat shows a Markdown image up to 800 px wide, and keeps it a link when it's inside one, even with "Render HTML in chat" off. That setting is per browser and off by default, and the HTML it lets through is sanitized (DOMPurify: no scripts, handlers or iframes), so anything richer than text that has to show wherever the chat does is a picture the host draws: `packages/chatimage`, whose link cards are one kind and deep research's live progress cards another. `publish` has `chatimage.card` draw a card of a page (its title, its workspace, a line about it, its address) into `_cards/` on the pages site, and adds a `Card: [![title](card.png?v=…)](page)` line to its reply, which the system prompt has the agent paste as is, and link a page through rather than from memory. The `?v=` is a hash of what the card says, kept in the PNG too, so an unchanged card isn't redrawn and a changed one gets a new URL the chat hasn't cached. Removing a page deletes its card.
+
+**Apps.** An app is a template from the repo plus a workspace's data for it (`docs/.proposals/sandbox-apps.md`): the agent changes the data in one call to the `app` skill, and the host renders the page, so no page is written by hand and every list looks and works the same. Templates are in `packages/sandbox/src/sandbox/apps/` (a list is the first: `list/template.py`, its ops and its card, and `list/page.html`), reviewed with the runner, never changed by a workspace (a workspace's own templates are a TODO).
+
+- An app's data is `/project/apps/<name>/data.json` and its page `/public/apps/<name>/` (at `https://<PUBLIC_HOST>:8447/<workspace>/apps/<name>/`). The runner's `app` op (`create`, `do`, `show`, `list`, `delete`) reads the data without following a symlink and checks it against the template (a run may have edited it), applies one of the template's ops, and renders the page: the template's page with the data embedded as JSON, `<`, `>` and `&` escaped, drawn by its own script with `textContent`, so no HTML is built from what the data says.
+- Its card is live and per app: `https://<PUBLIC_HOST>:8445/_live/apps/<workspace>/<name>.png`, linking to the page, served by the sandbox runner's apps server on 127.0.0.1:8455 (`sandbox.appsweb`, `APPS_PORT`). It pushes a new frame whenever the app changes, through the op or by a run's edit to its data (looked at every 2 s), for 30 minutes a view; an old chat's card shows the app as it is now, and a deleted app's says so.
+- The page saves what the user does: it posts the template's ops to `/_apps/<workspace>/<name>/ops` on its own host, which the machine routes to the same server. Pages run in an opaque origin, so it posts `text/plain` and the answer allows origin `null`; `default-src 'self'` already lets a page connect to its own host. What makes a post the page's is its token: each render makes a new one (kept host-only in `sandbox/apps/` in the data dir, mode 600), a page rendered before gets 409 ("reload"), anything else 403. At most 4 KB a post and 10 ops in 10 s per app, none while a run holds the workspace, and the answer carries the next token, so the page goes on without reloading. `packages/sandbox/tests/test_pages_browser.py` checks the post in a real Chromium. App pages are served with `Cache-Control: no-cache`, and both pages sites with zstd or gzip.
 
 **Images in the chat.** `show-image` puts an image the sandbox has (a chart `run-code` saved, a photo in `/project`) in the chat, as a Markdown image in a link to itself, on an `Image:` line the agent pastes as it does a card. The runner (`op_show_image`) reads the file from the caller's own folders without following a symlink, at most 10 MB, and takes it only if Pillow reads a PNG, JPEG, GIF or WebP header in it (nothing is decoded); an SVG is refused, since opened by itself it's a page, so the agent converts one with `run-code`. It copies the file to the pages site's `_images/<workspace>/`, named by a hash of its bytes and its format: the address can't be guessed, the same image keeps its address, and a changed one gets a new one the chat hasn't cached. They're served under the pages site's CSP and `nosniff`, with no CORS header, since a picture can show anything the workspace has: a page on another origin can show one in an `<img>`, but not read it. The images aren't in the workspace's folders, so they don't count toward its size limit; past 500 MB a workspace's least recently shown go, and old chats show them broken.
 

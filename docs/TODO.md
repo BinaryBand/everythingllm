@@ -2,6 +2,15 @@
 
 Work that's been looked into but not done yet. Remove an entry when it lands.
 
+## Workspace templates
+
+Important, and next for apps once the list template has been used for a while. Today every app template is the repo's (`packages/sandbox/src/sandbox/apps/`), reviewed with the runner and the same in every workspace. Users will want looks and kinds of app of their own (a habit tracker, a reading log, a family's chores board) without a repo change, and a list duct-taped together per request is what templates replaced, so the way to add one has to keep that consistency.
+
+- **Where they'd live:** a workspace's `/shared/<workspace>/apps/<template>/`, beside its Zola themes, so other workspaces can read and copy one.
+- **What has to hold:** a workspace template's page runs under the same pages CSP sandbox as any page; its ops and card can't run on the host as the repo's do (they're Python the runner imports), so either the ops become a declarative schema the runner applies (add/remove/toggle/set on typed fields) and the card a declarative layout `chatimage` draws, or both run in a sandbox container per change, which costs a container start (a second or two) on every tick.
+- **Opt-in per workspace,** turned on the way web access is (the user approves it), and a template pinned by its hash when an app is made, so the workspace changing its template doesn't silently change apps already made.
+- **The declarative route first:** it keeps a tick instant and the host free of workspace code; the repo's list template would be rewritten in it to prove it.
+
 ## Finish putting 2026-10-08's changes live
 
 Done live on 2026-10-08: sandbox-runner, agents-runner, research-runner, the gateway, the egress proxy (it knows `sandbox-web`) and the static server restarted onto the new code; sites-runner stopped and its installed unit removed; `sites` dropped from AnythingLLM's MCP servers and the `write-entry` and `delete-entry` skills from storage; the "Daily News Page" job deleted; the news data deleted; the research entries moved to `~/archive/everythingllm/sites/`; sites-runner's venv and `.env` share, and storage's `sites/`, `sandbox-build/` and `mcp/` removed. Web and model access checked end to end through the runner's socket (a web workspace reaches example.com but not the tailnet and sees only its own `/shared`; another doesn't; a model call answers with no key in the run, is logged, and its socket goes after the run). Left, since the auto-mode check refused them or they need a person:
@@ -9,6 +18,8 @@ Done live on 2026-10-08: sandbox-runner, agents-runner, research-runner, the gat
 - **`uv run hostctl deploy`.** Ships the skills (the new `sandbox-access`; deep-research, run-code, remind-once and schedule-job changed; `_lib`), the system prompt and its version, and restarts AnythingLLM. Until then the agent has no `sandbox-access` skill and its deep-research skill still says reports go to the research site (the runner ignores the `site` it sends).
 - **`uv run hostctl units`.** Renders research-runner's template (its pages, entries and `sandbox-build` mounts are gone; until then its old unit's `ExecStartPre` makes those folders again on a restart) and the static server's (`ExecStartPre` makes its bind sources).
 - **The machine's route for the article writer.** `tailscale serve --https=8445 --set-path=/news/write off` (nothing listens on :8448 now).
+- **The machine's routes for apps** (the sandbox runner's apps server, `sandbox.appsweb`): `https://<PUBLIC_HOST>:8445/_live/apps/` and `https://<PUBLIC_HOST>:8447/_apps/` to `http://127.0.0.1:8455` (with tailscale serve: `tailscale serve --bg --https=8445 --set-path=/_live/apps http://127.0.0.1:8455` and the same with `--https=8447 --set-path=/_apps`). `uv run hostctl routes` checks them. Until then an app's card doesn't load in the chat and its page can't save.
+- **Apps, end to end, once deployed and routed:** "put oat milk on the groceries list" makes the app and shows its card; ticking on its page moves the card in the chat; an older tab of the page says to reload.
 - **Each workspace's prompt.** career, cloud, algorithms and education have their own copy of the block (`uv run hostctl health` lists them); `update-prompt` in each, the user's call.
 - **Checks that need a person in a chat:** `sandbox-access` turning web on shows AnythingLLM's approval prompt, and a "no" or an always-allowed skill leaves it off; a deep research run from a UI chat lands in the workspace's documents with a notice quoting its findings; `show-image` puts a chart in the chat.
 - **The Nilson app** no longer gets a report link (ntfy's `Click`) when a research run ends, since there's no report page; check what it shows instead.

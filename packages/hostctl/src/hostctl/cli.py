@@ -163,7 +163,13 @@ def health() -> None:
 
 @command("test", "run every package's tests and the agent skills'")
 def test() -> None:
-    run("uv", "run", "--all-packages", "--all-extras", "pytest", "-q")
+    # In parallel (pytest-xdist): a test marked xdist_group("podman") or ("timing") shares
+    # its group's worker. The base folder is short, since a test's tmp_path holds Unix
+    # sockets (at most 108 bytes) and xdist adds a level; pytest empties it each run.
+    run(
+        "uv", "run", "--all-packages", "--all-extras", "pytest", "-q",
+        "-n", "auto", "--dist", "loadgroup", f"--basetemp=/tmp/everythingllm-tests-{os.getuid()}",
+    )  # fmt: skip
     test_skills()
 
 

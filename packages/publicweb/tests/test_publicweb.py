@@ -253,6 +253,7 @@ def test_cap_from_content_length_and_while_reading():
         )
 
 
+@pytest.mark.xdist_group("timing")
 def test_deadline_bounds_the_whole_read():
     with pytest.raises(Refused, match="gave up"):
         read(

@@ -481,6 +481,7 @@ QUIET = 0.3  # IDLE_SECONDS, for these tests
 CHUNKS = 8  # one each 0.1 s: longer than QUIET
 
 
+@pytest.mark.xdist_group("timing")
 def test_a_download_keeps_the_quiet_way_up_open(monkeypatch):
     fake_dns(monkeypatch, PUBLIC)
     monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)
@@ -507,6 +508,7 @@ def test_a_download_keeps_the_quiet_way_up_open(monkeypatch):
     assert seen == {"ended": False, "after": b"next request"}
 
 
+@pytest.mark.xdist_group("timing")
 def test_an_upload_keeps_the_quiet_way_down_open(monkeypatch):
     fake_dns(monkeypatch, PUBLIC)
     monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)
@@ -527,6 +529,7 @@ def test_an_upload_keeps_the_quiet_way_down_open(monkeypatch):
     asyncio.run(tunnel(upload, client))
 
 
+@pytest.mark.xdist_group("timing")
 def test_a_tunnel_quiet_both_ways_is_closed(monkeypatch):
     fake_dns(monkeypatch, PUBLIC)
     monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)

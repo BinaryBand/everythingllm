@@ -586,6 +586,7 @@ def test_fast_run_answers_inline(cfg):
     )
 
 
+@pytest.mark.xdist_group("timing")
 def test_slow_run_goes_to_the_background(cfg, monkeypatch):
     monkeypatch.setattr(runner, "WAIT", 0.05)
 
@@ -1202,6 +1203,7 @@ def test_a_run_cant_write_one_huge_file_or_too_many_open(cfg):
 
 
 @pytest.mark.parametrize("what", ["bytes", "files", "hidden files"])
+@pytest.mark.xdist_group("timing")
 def test_a_run_that_fills_the_disk_is_stopped_while_it_runs(cfg, monkeypatch, what):
     monkeypatch.setattr(runner, "WATCH_SECONDS", 0.01)
     if what == "bytes":
@@ -1223,6 +1225,7 @@ def test_a_run_that_fills_the_disk_is_stopped_while_it_runs(cfg, monkeypatch, wh
     assert "the sandbox stopped this run: the workspace went over" in res["stderr"]
 
 
+@pytest.mark.xdist_group("timing")
 def test_a_run_within_its_limits_isnt_watched_to_death(cfg, monkeypatch):
     monkeypatch.setattr(runner, "WATCH_SECONDS", 0.01)
     r = make(cfg, delay=0.1)

@@ -79,6 +79,7 @@ def test_assemble_copies_the_site_with_its_theme_but_not_git_or_old_output(
         assemble(tmp_path / "bad", tmp_path / "w3", *roots)
 
 
+@pytest.mark.xdist_group("podman")
 def test_a_site_builds_with_the_repos_theme(tmp_path, sandbox_zola):
     """sitebuild.py for real, in the sandbox image (the only zola there is)."""
     site = tmp_path / "site"

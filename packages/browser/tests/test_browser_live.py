@@ -59,6 +59,7 @@ async def first_frame(reader):
     return head, part, await reader.readexactly(length)
 
 
+@pytest.mark.xdist_group("timing")
 def test_the_card_streams_the_tab_and_links_to_the_take_over_view(tmp_path):
     async def main():
         podman = FakePodman()
@@ -110,6 +111,7 @@ def test_the_card_streams_the_tab_and_links_to_the_take_over_view(tmp_path):
     asyncio.run(main())
 
 
+@pytest.mark.xdist_group("timing")
 def test_a_closed_tab_shows_its_last_look_until_its_opened_again(tmp_path):
     async def main():
         podman = FakePodman()

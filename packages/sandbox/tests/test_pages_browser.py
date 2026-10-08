@@ -36,7 +36,11 @@ def _missing() -> str:
     return ""
 
 
-pytestmark = pytest.mark.skipif(bool(_missing()), reason=_missing() or "ok")
+pytestmark = [
+    pytest.mark.skipif(bool(_missing()), reason=_missing() or "ok"),
+    # One worker for the module's pod: under xdist each worker would start its own.
+    pytest.mark.xdist_group("podman"),
+]
 
 PAGE = """<!doctype html>
 <title>App</title>

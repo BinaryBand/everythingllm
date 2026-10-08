@@ -28,7 +28,7 @@ uv run hostctl <app>-logs / <app>-setup  # follow an app, or (re)start it (`uv r
 The repo root is one uv workspace (a member per `packages/` subdirectory, one `uv.lock`, the dev venv in `.venv`). The root `pyproject.toml` holds what every member shares (the `workspace = true` sources and the dev group); a member's own lists its dependencies, extras and scripts. Run these from the repo root:
 
 ```sh
-uv run --all-packages --all-extras pytest -q                       # what hostctl test runs
+uv run --all-packages --all-extras pytest -q -n auto --dist loadgroup   # about what hostctl test runs (in parallel)
 uv run --package sandbox pytest packages/sandbox -q                 # one member
 uv run --package sandbox pytest packages/sandbox/tests/test_runner.py::test_name -q
 uv lock                                                            # after editing a pyproject.toml

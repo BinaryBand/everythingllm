@@ -2,6 +2,7 @@
 modules faked, so each test reads as the steps a command takes, in order."""
 
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -200,7 +201,10 @@ def test_test_runs_without_host_env(ran, monkeypatch):
     monkeypatch.delenv("ANYTHINGLLM_STORAGE")
     monkeypatch.setattr(cli, "ROOT", cli.ROOT / "no-such-dir")
     cli.main(["test"])
-    assert ran[0] == "uv run --all-packages --all-extras pytest -q"
+    assert ran[0] == (
+        "uv run --all-packages --all-extras pytest -q -n auto --dist loadgroup "
+        f"--basetemp=/tmp/everythingllm-tests-{os.getuid()}"
+    )
 
 
 def test_browser_images_builds_the_image_and_puts_its_novnc_in_place(

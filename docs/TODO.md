@@ -21,19 +21,6 @@ Everything that could be done without a person is live: the runners, gateway, eg
 - **Checks that need a person in a chat:** `sandbox-access` turning web on shows AnythingLLM's approval prompt, and a "no" or an always-allowed skill leaves it off; a deep research run from a UI chat lands in the workspace's documents with a notice quoting its findings; `show-image` puts a chart in the chat.
 - **The Nilson app** no longer gets a report link (ntfy's `Click`) when a research run ends, since there's no report page; check what it shows instead.
 
-## Make the test suite faster
-
-`uv run hostctl test` takes about 55 s: `pytest` for 785 tests, plus 0.4 s for the skill tests. Measured on 2026-10-07, by package:
-
-| Package | Time | Where it goes |
-| --- | --- | --- |
-| egress | ~4 s | the tunnel idle tests wait out a 0.3 s limit, 0.8 s each |
-| others | \<4 s each | |
-
-- **Parallel runs with pytest-xdist** (`-n auto`, 4 cores here): this might bring the suite to roughly 15 s. First look for timing-sensitive tests that flake under load, and check that no two tests share a fixed port or path.
-
-Tests are a small part of how long sessions take. Run one package's tests while iterating (1--3 s), and the full suite before committing.
-
 ## Finish the service-container rollout
 
 The relay and research-runner went live in their containers on 2026-10-07 (see the proposal's status and the README's "Service containers"). The checks a script couldn't make, and the cleanup once they've held:

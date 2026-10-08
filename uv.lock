@@ -1312,20 +1312,24 @@ name = "research"
 version = "0.1.0"
 source = { editable = "packages/research" }
 dependencies = [
+    { name = "chatimage" },
     { name = "hostenv" },
     { name = "hostrpc" },
     { name = "httpx" },
     { name = "llm" },
+    { name = "pillow" },
     { name = "publicweb" },
     { name = "runs" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "chatimage", editable = "packages/chatimage" },
     { name = "hostenv", editable = "packages/hostenv" },
     { name = "hostrpc", editable = "packages/hostrpc" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "llm", editable = "packages/llm" },
+    { name = "pillow", specifier = ">=11" },
     { name = "publicweb", editable = "packages/publicweb" },
     { name = "runs", editable = "packages/runs" },
 ]

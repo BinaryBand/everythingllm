@@ -3,7 +3,7 @@ name = "research"
 version = "0.1.0"
 description = "Deep research on the host: plans a question, researches it with parallel workers over SearXNG, and writes a cited report"
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.27", "hostenv", "hostrpc", "llm", "publicweb", "runs"]
+dependencies = ["chatimage", "httpx>=0.27", "hostenv", "hostrpc", "llm", "pillow>=11", "publicweb", "runs"]
 
 [project.scripts]
 research-runner = "research.runner:main"

@@ -1,0 +1,42 @@
+{
+  "active": true,
+  "hubId": "image-search",
+  "name": "Image Search",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Show pictures from the web in the chat: search for pictures of something (query), or show one picture whose address you found on a page (url). The server fetches them and serves copies from its own site, so they show in every client. Gives Image: lines to put in your reply.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "What does a red panda look like?",
+      "call": "{\"query\": \"red panda\", \"count\": 3}"
+    },
+    {
+      "prompt": "Show me the photo from that article",
+      "call": "{\"url\": \"https://example.org/photos/bridge.jpg\", \"alt\": \"The new bridge at dusk\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "query": {
+        "description": "What to find pictures of, e.g. 'red panda'. Leave empty when giving url.",
+        "type": "string"
+      },
+      "count": {
+        "description": "How many pictures, 1 to 6 (default 4).",
+        "type": "number"
+      },
+      "url": {
+        "description": "The address of one picture (a .jpg, .png, .gif or .webp) to show instead of searching.",
+        "type": "string"
+      },
+      "alt": {
+        "description": "What the picture at url shows, in a few words.",
+        "type": "string"
+      }
+    }
+  }
+}

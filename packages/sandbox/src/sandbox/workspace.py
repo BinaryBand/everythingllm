@@ -36,7 +36,6 @@ Config (environment):
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import re
@@ -395,23 +394,6 @@ def copy_regular(source: Path, dest: Path) -> None:
             raise SandboxError(f"'{source.name}' isn't a regular file")
         with open(dest, "wb") as out:
             shutil.copyfileobj(src, out)
-
-
-def trim_images(folder: int, limit: int) -> None:
-    """Delete the oldest plain files in the open folder `folder` until the rest are within
-    `limit` bytes; whatever else is there is left alone."""
-    files = []
-    for entry in os.scandir(folder):
-        st = entry.stat(follow_symlinks=False)
-        if stat.S_ISREG(st.st_mode) and not entry.name.startswith("."):
-            files.append((st.st_mtime, entry.name, st.st_size))
-    total = sum(size for _, _, size in files)
-    for _, name, size in sorted(files):
-        if total <= limit:
-            break
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(name, dir_fd=folder)
-        total -= size
 
 
 def remove_path(path: Path) -> None:

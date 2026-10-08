@@ -118,6 +118,7 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
 - `anythingllm/agent-skills/<hubId>/` -- custom agent skills (`plugin.json` + `handler.js`)
 
   - `deep-research/` -- multi-source web research with GLM and DeepSeek, its report put in the workspace's documents; hands the work to `research-runner` on the host (see "Deep research")
+  - `image-search/` -- pictures from the web in the chat, found by SearXNG's image search or given by their address, fetched and saved anew on the pages site by `research-runner` (see "Pictures from the web")
   - `run-code/`, `write-file/`, `publish/`, `show-image/`, `build-site/` -- the code sandbox, run by `sandbox-runner` on the host (see "Code sandbox")
   - `browse/`, `browser-act/`, `browser-read/`, `browser-handoff/`, `browser-login/` -- the workspace's browser and its saved logins, run by `browser-runner` on the host (see "Browser")
   - `update-prompt/` -- refreshes the calling workspace's EverythingLLM block in its system prompt (below), through `agents-runner`'s `update_prompt`; it shows what would change first and writes only with `apply`
@@ -156,7 +157,8 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
   venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/):
                        egress-proxy, relay, research-runner
   pages/public/        the pages site Caddy serves: link cards (_cards/), shown images
-                       (_images/) and the research site's old reports (research/)
+                       (_images/), pictures from the web (_webimages/) and the research
+                       site's old reports (research/)
   sandbox/workspaces/  the sandbox's folders, one per workspace (threads/, project/,
                        shared/)
   sandbox/access.json  each workspace's web and model access (sandbox-access)
@@ -324,7 +326,7 @@ What keeps this safe is where `/public` lives: in `~/.local/share/everythingllm/
 
 **Card themes.** Every card the host draws, link card or live, comes in a dark and a light theme (`chatimage.THEMES`, with a 2 px outline so a card stands off a background of its own colour). It's dark unless its address asks for light with `theme=light`, so AnythingLLM's chat always shows the dark one, and a client in a light theme (the Nilson app) adds `theme=light` to each card's image address: `…/_cards/<name>.png?v=…&theme=light`, `…/_live/research/<id>.png?theme=light`. A link card is saved twice, `<name>.png` and `<name>.light.png`, and the pages site's Caddyfile serves the light one for `theme=light`, or the dark one for a card drawn before there were two; the live cards draw the theme they're asked for (`chatimage.live.theme`).
 
-**Cards from another origin.** A client's web build (the Nilson app's) fetches the cards to draw them, from a page on an origin of its own, so card images say `Access-Control-Allow-Origin: *`: the link cards by the Caddyfile's `@cards` rule, the live ones by `chatimage.live` (images only, never a card's link page or redirect). It's asked for without credentials, so nothing more is needed. A browser tab's card is the exception: it's a screenshot of whatever the tab is logged into, and a page that learned its address (from the agent, say, talked into it by a page) could read it, so it says nothing of CORS. A web client with a developer API key draws it from the chat's `card.jpg` instead ("A chat's browser for a client app"); a native client isn't held to CORS and draws it.
+**Cards from another origin.** A client's web build (the Nilson app's) fetches the cards to draw them, from a page on an origin of its own, so card images say `Access-Control-Allow-Origin: *`: the link cards by the Caddyfile's `@anyorigin` rule, the live ones by `chatimage.live` (images only, never a card's link page or redirect). It's asked for without credentials, so nothing more is needed. A browser tab's card is the exception: it's a screenshot of whatever the tab is logged into, and a page that learned its address (from the agent, say, talked into it by a page) could read it, so it says nothing of CORS. A web client with a developer API key draws it from the chat's `card.jpg` instead ("A chat's browser for a client app"); a native client isn't held to CORS and draws it.
 
 Code never runs in the AnythingLLM container, which has SYS_ADMIN, the `.env` keys and all of storage. The skills (`anythingllm/agent-skills/`, sharing `_lib/`) only forward calls over a Unix socket, `storage/everythingllm/sandbox/runner.sock` (see "Services on the host"), to `sandbox-runner` on the host (`host/systemd/sandbox-runner.service`, its own venv in `~/.local/share/everythingllm/venvs/sandbox`).
 
@@ -480,6 +482,7 @@ Every run appends one line to `~/.local/share/everythingllm/research/runs/YYYY-M
 - the repo, read-only: the code and `host.env`
 - in the data dir: `research/` (the run log)
 - in storage: its socket folder, and `anythingllm-fs/research/`, where the reports go
+- the pages site's `_webimages/` (`pages/public/_webimages/` in the data dir), where `image-search`'s pictures go, and nothing else of the site
 - its share of AnythingLLM's `.env` (`~/.config/everythingllm/ctr/research-runner.env`), read-only: the DeepSeek and Z.AI keys and DeepSeek's model, never AnythingLLM's password
 
 It gets the relay's `NTFY_URL` and `NTFY_TOKEN` as values (`EnvironmentFile=`), not the file.
@@ -492,6 +495,14 @@ To run one by hand, in this process rather than the runner (it logs and saves as
 set -a && . ./host.env && set +a && \
   uv run --package research research-run "Why is the sky blue?" --depth quick
 ```
+
+### Pictures from the web
+
+The chat can't show a picture from another site: the Nilson app loads an image only from the server's own host (so an answer, or a page that steered it, can't make the phone fetch any address), and AnythingLLM's web search returns text. `image-search` has the server fetch them instead, and serves copies from the pages site, where they show wherever the chat does. It's research-runner's `images` op (`research.images`), since that container already reads the web: public hosts only, through the egress proxy's public port.
+
+- With `query`, it asks SearXNG's images category (`safesearch=1`, paced with research's searches), fetches the search engines' thumbnails of the first results at once (a result's picture itself when it has none, or its thumbnail fails or is under 240 px a side), and gives back up to `count` (1--6, default 4) in the search's order, each linking to the page it's on. With `url`, it fetches that one picture, which links to its address.
+- A picture is never served as it came: Pillow decodes it (PNG, JPEG, GIF, WebP or AVIF; an SVG is a page, and is refused, as are one under 32 px a side and one over 40 megapixels, before decoding), and it's saved anew at most 480 px a side (1280 for a `url`), its first frame only, as a JPEG, or a PNG when it's see-through. What it carried besides its pixels (EXIF and GPS data, a file glued on) stays behind. At most 5 MB is fetched, and an op's fetches all end within 25 s.
+- They go in the pages site's `_webimages/`, named by a hash of the new bytes, and come back as `Image:` lines the agent pastes, as `show-image`'s do. Past 500 MB the least recently shown go, and old chats show them broken. Unlike `show-image`'s, they're public pictures, so any origin may read one (`Access-Control-Allow-Origin: *`, the Caddyfile's `@anyorigin` rule), and the Nilson app's web build can draw them.
 
 ## Delegation
 

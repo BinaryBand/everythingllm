@@ -28,7 +28,7 @@ from llm import provider_for
 from publicweb.pages import make_search, searxng_client, searxng_url
 from runs.runlog import RunLog
 
-from research import publish
+from research import images, publish
 from research.config import RESULTS_PER_SEARCH, SEARCH_GAP
 from research.llm import LLM
 from research.pipeline import Context, research
@@ -72,6 +72,11 @@ class Settings:
     def reports_dir(self) -> Path:
         # The built-in filesystem tools work in anythingllm-fs; reports go in a folder there.
         return self.storage / "anythingllm-fs" / "research"
+
+    @property
+    def images_dir(self) -> Path:
+        # Where image-search's pictures go on the pages site (research.images).
+        return hostenv.site_dir() / images.FOLDER
 
 
 @dataclass

@@ -12,6 +12,12 @@ queries}), which the planner then doesn't make; `title` is the report's title wi
                           up to WAIT seconds for news: {events (from `since` on), done,
                           result ({status, reply, sources}) once done}
   runs(owner?)            the runs this runner holds: {run_id, question, started, done}
+  images(query? | url?, count?, alt?)
+                          pictures from the web for the chat, saved anew on the pages site
+                          (research.images, for the image-search skill): up to `count`
+                          found for `query`, or the one at `url`; {images: [{image, url,
+                          page, source, width, height}], skipped}, `image` the Markdown
+                          line to paste
 
 `owner` is a gateway client's (gateway.research adds it from the client's token): its runs
 are its own, and it sees no others (runs.service). The skill gives none and sees them all.
@@ -26,7 +32,7 @@ A run belongs to the runner, not to the chat: if the chat closes or AnythingLLM 
 it carries on and saves its report as usual (research.publish). At most MAX_RUNS go at once; the rest wait
 their turn. Finished runs can be fetched for RESULT_KEEP seconds; the run log is the
 record after that. Holding runs and waiting on them is runs.service's (RunService); this
-runner adds `start`, which runs research.job.run in a thread.
+runner adds `start`, which runs research.job.run in a thread, and `images`.
 
 Config (environment, from host.env and the unit):
   ANYTHINGLLM_STORAGE   storage directory (default /srv/anythingllm/storage)
@@ -34,11 +40,13 @@ Config (environment, from host.env and the unit):
   RESEARCH_LIVE_PORT    port for the live cards (default 8450; research.live), on LIVE_HOST
                         (default 127.0.0.1; runs.live)
   SEARXNG_URL           the SearXNG to search (default the host's; publicweb.pages)
+  PUBLIC_HOST           the pages site's host, for the live cards and images' pictures
   NTFY_URL, NTFY_TOKEN  the ntfy topic told about ended runs (research.notify)
   and what research.job.Settings reads.
 """
 
 import asyncio
+import functools
 import logging
 from dataclasses import replace
 from pathlib import Path
@@ -46,10 +54,11 @@ from typing import Any
 
 import hostenv
 from hostrpc import RunnerError
+from publicweb.pages import make_image_search, searxng_client
 from runs.service import Meter, Progress, Run, RunService
 
-from research import job, live, notify
-from research.config import depth_preset
+from research import images, job, live, notify
+from research.config import SEARCH_GAP, depth_preset
 
 log = logging.getLogger("research-runner")
 
@@ -150,6 +159,51 @@ class Runner(RunService):
         log.info("%s started: %s", run.id, req.question[:120])
         # How many runs this one waits for before it can start.
         return {"run_id": run.id, "queued": queued, "card": card}
+
+    def op_images(
+        self,
+        query: str | None = None,
+        url: str | None = None,
+        count: int | None = None,
+        alt: str | None = None,
+    ) -> dict:
+        """Pictures from the web (see the module's docstring): a search when there's a
+        `query`, else the picture at `url`. Not a run: it answers within DEADLINE."""
+        query, url = (query or "").strip(), (url or "").strip()
+        if query and url:
+            raise RunnerError(
+                "give a query to search for, or a picture's url, not both."
+            )
+        if url:
+            return self.pictures.show(url, alt or "")
+        if not query:
+            raise RunnerError(
+                "give a query to search for pictures of, or a picture's url."
+            )
+        if count is None:
+            count = images.COUNT
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or not (1 <= count <= images.MAX_COUNT)
+        ):
+            raise RunnerError(
+                f"count must be a whole number from 1 to {images.MAX_COUNT}."
+            )
+        return self.pictures.search(query, count)
+
+    @functools.cached_property
+    def pictures(self) -> images.Pictures:
+        """images' clients and pool, made at the first call (SearXNG's URL is checked
+        then), for the runner's life."""
+        s = self.settings
+        search = make_image_search(
+            s.searxng_url,
+            searxng_client(),
+            gap=SEARCH_GAP,
+            limit=images.MAX_COUNT * images.CANDIDATES,
+        )
+        return images.Pictures(s.images_dir, s.pages_url, search)
 
     async def ended(self, run: Run) -> None:
         chat = self.chats.pop(run.id, None)

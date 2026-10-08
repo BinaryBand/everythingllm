@@ -20,11 +20,13 @@
   redir /knowledge-protocol-guide/* https://{$PUBLIC_HOST:127.0.0.1}:8447/education{uri}
   header Content-Security-Policy "default-src 'self'; script-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
   header X-Content-Type-Options nosniff
-  # Link cards are images a client may fetch from a page of its own (the Nilson app's web build
-  # does, to draw them), and say nothing that isn't in the picture: any origin may read one.
-  # Asked for without credentials, a simple GET needs nothing more.
-  @cards path /_cards/*
-  header @cards Access-Control-Allow-Origin "*"
+  # Pictures any origin may read: a client may fetch them from a page of its own (the Nilson
+  # app's web build does, to draw them). Link cards say nothing that isn't in the picture,
+  # and image-search's pictures (_webimages/) are public ones from the web, saved without
+  # what they carried besides their pixels. Not show-image's (_images/), which can show
+  # anything a workspace has. Asked for without credentials, a simple GET needs no more.
+  @anyorigin path /_cards/* /_webimages/*
+  header @anyorigin Access-Control-Allow-Origin "*"
   # A link card asked for in the light theme (&theme=light after its ?v=) is the
   # <name>.light.png chatimage.card saves beside it; a card drawn before there were two
   # stays dark.

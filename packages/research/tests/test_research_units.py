@@ -4,7 +4,7 @@ from itertools import pairwise
 
 import httpx
 import pytest
-from publicweb.pages import SearchError, make_search
+from publicweb.pages import SearchError, make_image_search, make_search
 from research.config import depth_preset
 from research.llm import LLM, cached_tokens, out_of_quota
 from research.pipeline import apply_edits, tasks_from
@@ -317,6 +317,44 @@ def test_make_search_fails_naming_the_engines_when_they_refused_us():
     down = searxng(lambda r: httpx.Response(502))
     with pytest.raises(SearchError, match='SearXNG answered 502 for "q"'):
         make_search("https://searx-d/search", down, gap=0)("q")
+
+
+def test_make_image_search_asks_for_safe_pictures_and_keeps_each_picture_once():
+    asked = []
+
+    def handler(request):
+        asked.append(dict(request.url.params))
+        pic = {"url": "https://zoo.example/a", "img_src": "https://zoo.example/a.jpg"}
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {**pic, "title": "A", "thumbnail_src": "https://t.example/a.jpg"},
+                    pic,  # the same picture from another engine
+                    {"url": "javascript:x", "img_src": "data:image/png;base64,AA"},
+                    {"img_src": "https://zoo.example/b.png"},  # no page: the picture
+                ]
+            },
+        )
+
+    found = make_image_search("https://searx-i/search", searxng(handler), gap=0)("q")
+    assert asked == [
+        {"q": "q", "format": "json", "categories": "images", "safesearch": "1"}
+    ]
+    assert found == [
+        {
+            "title": "A",
+            "page": "https://zoo.example/a",
+            "thumb": "https://t.example/a.jpg",
+            "full": "https://zoo.example/a.jpg",
+        },
+        {
+            "title": "",
+            "page": "https://zoo.example/b.png",
+            "thumb": "",
+            "full": "https://zoo.example/b.png",
+        },
+    ]
 
 
 def test_make_reader_reads_each_page_once_and_caps_its_length():

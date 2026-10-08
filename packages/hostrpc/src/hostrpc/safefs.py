@@ -11,6 +11,7 @@ raced. `root` itself is the caller's: it must be a folder no container can repla
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import shutil
 import stat
@@ -114,6 +115,45 @@ def replace(dir_fd: int, name: str, data: bytes, mode: int = 0o644) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp, dir_fd=dir_fd)
         raise
+
+
+def keep(dir_fd: int, data: bytes, ext: str) -> str:
+    """Save `data` in the open folder `dir_fd` under a name from its hash and `ext`, so the
+    same bytes keep their name; if a plain file is there already, only mark it new (its
+    times), so `trim` keeps it longer. Its name."""
+    name = f"{hashlib.sha256(data).hexdigest()[:32]}.{ext}"
+    try:
+        os.utime(name, dir_fd=dir_fd, follow_symlinks=False)
+        there = stat.S_ISREG(
+            os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode
+        )
+    except FileNotFoundError:
+        there = False
+    if not there:
+        replace(dir_fd, name, data)
+    return name
+
+
+def trim(dir_fd: int, limit: int) -> None:
+    """Delete the oldest plain files in the open folder `dir_fd` until the rest are within
+    `limit` bytes; dot files, folders and whatever else is there are left alone."""
+    files = []
+    for entry in os.scandir(dir_fd):
+        if entry.name.startswith("."):  # a write in progress (replace's temp file), say
+            continue
+        try:
+            st = entry.stat(follow_symlinks=False)
+        except FileNotFoundError:  # gone since it was listed
+            continue
+        if stat.S_ISREG(st.st_mode):
+            files.append((st.st_mtime, entry.name, st.st_size))
+    total = sum(size for _, _, size in files)
+    for _, name, size in sorted(files):
+        if total <= limit:
+            break
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(name, dir_fd=dir_fd)
+        total -= size
 
 
 def copy_tree(src: int, dest: Path, limit: int, *, hidden: bool = False) -> int:

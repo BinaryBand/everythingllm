@@ -90,7 +90,7 @@ guard = { runs = "research/runs", noun = "Deep-research runs" }
 serve = [{ https = 8445, path = "/_live/research", port = 8450 }]
 health = { "research live cards" = "http://127.0.0.1:8450/_live/research/dr-00000000.png" }
 install = true
-skills = ["deep-research"]
+skills = ["deep-research", "image-search"]
 
 [agents]
 summary = "agents-runner, which runs delegations (live cards at :8445/_live/agents)"

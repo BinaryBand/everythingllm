@@ -102,3 +102,25 @@ def test_copy_tree_copies_plain_files_and_folders_only(tree, tmp_path):
     ]
     with safefs.folder(root, ("a",)) as d, pytest.raises(OSError, match="over 5"):
         safefs.copy_tree(d, tmp_path / "small", 5)
+
+
+def test_trim_deletes_the_oldest_files_and_leaves_the_rest(tmp_path):
+    for age, name in enumerate(("c", "b", "a")):  # a is the oldest
+        (tmp_path / name).write_bytes(b"x" * 100)
+        os.utime(tmp_path / name, (100 - age, 100 - age))
+    (tmp_path / ".writing.tmp").write_bytes(b"x" * 1000)  # another's write in progress
+    (tmp_path / "folder").mkdir()
+    os.symlink("/etc/passwd", tmp_path / "link")
+    with safefs.folder(tmp_path) as d:
+        safefs.trim(d, 250)
+    assert sorted(os.listdir(tmp_path)) == [".writing.tmp", "b", "c", "folder", "link"]
+
+
+def test_keep_names_bytes_by_their_hash_and_only_marks_them_new_when_kept(tmp_path):
+    with safefs.folder(tmp_path) as d:
+        name = safefs.keep(d, b"picture", "jpg")
+        os.utime(tmp_path / name, (1, 1))
+        assert safefs.keep(d, b"picture", "jpg") == name
+        assert (tmp_path / name).stat().st_mtime > 1  # marked new: trim keeps it longer
+        assert safefs.keep(d, b"another", "png") != name
+    assert name.endswith(".jpg") and len(os.listdir(tmp_path)) == 2

@@ -54,6 +54,9 @@ Environment=ANYTHINGLLM_ENV=%h/.config/everythingllm/ctr/research-runner.env
 # Where the report is saved, for the agent's files and for agents-runner to add to the
 # workspace's documents.
 Volume=@ANYTHINGLLM_STORAGE@/anythingllm-fs/research:@ANYTHINGLLM_STORAGE@/anythingllm-fs/research
+# The pictures image-search fetches from the web, saved anew for the pages site to serve
+# (research.images): that one folder of the site, never the rest of it.
+Volume=%h/.local/share/everythingllm/pages/public/_webimages:%h/.local/share/everythingllm/pages/public/_webimages
 # ANYTHINGLLM_STORAGE, PUBLIC_HOST and USER_TIMEZONE.
 EnvironmentFile=@REPO@/host.env
 # The relay's ntfy topic and token (NTFY_URL, NTFY_TOKEN; research.notify), as values podman
@@ -66,7 +69,7 @@ EnvironmentFile=%h/.config/everythingllm/relay.env
 # restart takes up a changed key.
 ExecStartPre=/usr/bin/env PYTHONPATH=@REPO@/packages/hostctl/src:@REPO@/packages/hostenv/src /usr/bin/python3 -m hostctl.ctr_env @ANYTHINGLLM_STORAGE@/.env %h/.config/everythingllm/ctr/research-runner.env DEEPSEEK_API_KEY DEEPSEEK_MODEL_PREF GENERIC_OPEN_AI_BASE_PATH GENERIC_OPEN_AI_API_KEY ZAI_API_KEY
 # podman won't bind-mount what isn't there.
-ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/anythingllm-fs/research
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/everythingllm/venvs/research-runner-ctr %h/.local/share/everythingllm/research @ANYTHINGLLM_STORAGE@/everythingllm/research @ANYTHINGLLM_STORAGE@/anythingllm-fs/research %h/.local/share/everythingllm/pages/public/_webimages
 # A run is mostly waiting on the models; what CPU it takes (page parsing) can give way.
 # The container's processes inherit it from podman.
 Nice=10

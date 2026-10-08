@@ -101,25 +101,24 @@ def searxng_client() -> httpx.Client:
     )
 
 
-def make_search(
-    url: str, client: httpx.Client, gap: float = 2.0, limit: int = 8
-) -> Search:
-    """search(query) -> [{title, url, snippet}], deduplicated, http(s) only, the first
-    `limit`. Searches through one SearXNG go one at a time, `gap` seconds apart: the
-    engines behind it block bursts."""
+def _searcher(
+    url: str, client: httpx.Client, gap: float, **params
+) -> Callable[[str], dict]:
+    """ask(query) -> SearXNG's JSON answer, with `params` added. Searches through one
+    SearXNG go one at a time, `gap` seconds apart: the engines behind it block bursts."""
     if not url:
         raise SearchError("No SearXNG URL is set.")
     with _paces_lock:
         pace = _paces.setdefault(url, _Pace())
 
-    def search(query: str) -> list[dict]:
+    def ask(query: str) -> dict:
         with pace.lock:
             wait = pace.last_start + gap - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
             pace.last_start = time.monotonic()
             try:
-                resp = client.get(url, params={"q": query, "format": "json"})
+                resp = client.get(url, params={"q": query, "format": "json", **params})
             except httpx.HTTPError as e:
                 raise SearchError(
                     f"couldn't reach SearXNG: {e or type(e).__name__}"
@@ -127,13 +126,40 @@ def make_search(
         if resp.status_code != 200:
             raise SearchError(f'SearXNG answered {resp.status_code} for "{query}"')
         try:
-            data = resp.json()
+            return resp.json()
         except ValueError:
             raise SearchError(f"SearXNG's answer for \"{query}\" wasn't JSON") from None
+
+    return ask
+
+
+def _no_results(data: dict) -> None:
+    """No results because the engines behind SearXNG refused us is a failure, not an
+    empty answer: say which ones, so the user can tell."""
+    down = [f"{name} ({why})" for name, why in (data.get("unresponsive_engines") or [])]
+    if down:
+        raise SearchError(f"no results; engines unavailable: {', '.join(down)}")
+
+
+def _http(value) -> str:
+    """`value` if it's an http(s) URL, else ""."""
+    text = str(value or "").strip()
+    return text if text.startswith(("http://", "https://")) else ""
+
+
+def make_search(
+    url: str, client: httpx.Client, gap: float = 2.0, limit: int = 8
+) -> Search:
+    """search(query) -> [{title, url, snippet}], deduplicated, http(s) only, the first
+    `limit`, paced as `_searcher` says."""
+    ask = _searcher(url, client, gap)
+
+    def search(query: str) -> list[dict]:
+        data = ask(query)
         seen, results = set(), []
         for r in data.get("results") or []:
-            link = (r or {}).get("url") or ""
-            if link in seen or not link.startswith(("http://", "https://")):
+            link = _http((r or {}).get("url"))
+            if not link or link in seen:
                 continue
             seen.add(link)
             results.append(
@@ -145,13 +171,42 @@ def make_search(
             )
             if len(results) >= limit:
                 break
-        # No results because the engines behind SearXNG refused us is a failure, not
-        # an empty answer: say which ones, so the user can tell.
-        down = [
-            f"{name} ({why})" for name, why in (data.get("unresponsive_engines") or [])
-        ]
-        if not results and down:
-            raise SearchError(f"no results; engines unavailable: {', '.join(down)}")
+        if not results:
+            _no_results(data)
+        return results
+
+    return search
+
+
+def make_image_search(
+    url: str,
+    client: httpx.Client,
+    gap: float = 2.0,
+    limit: int = 20,
+) -> Search:
+    """search(query) -> [{title, page, thumb, full}] from SearXNG's images category:
+    `page` is the page the picture is on, `thumb` the search engine's small copy of it
+    ("" if none) and `full` the picture itself, all http(s); deduplicated by picture, the
+    first `limit`, with SearXNG's moderate safe search. Paced with make_search's
+    searches through the same SearXNG."""
+    ask = _searcher(url, client, gap, categories="images", safesearch=1)
+
+    def search(query: str) -> list[dict]:
+        data = ask(query)
+        seen, results = set(), []
+        for r in data.get("results") or []:
+            r = r or {}
+            full, thumb = _http(r.get("img_src")), _http(r.get("thumbnail_src"))
+            if not (full or thumb) or (full or thumb) in seen:
+                continue
+            seen.add(full or thumb)
+            page = _http(r.get("url")) or full or thumb
+            title = str(r.get("title") or "").strip()
+            results.append({"title": title, "page": page, "thumb": thumb, "full": full})
+            if len(results) >= limit:
+                break
+        if not results:
+            _no_results(data)
         return results
 
     return search

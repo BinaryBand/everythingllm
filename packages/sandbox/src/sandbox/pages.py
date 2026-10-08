@@ -12,7 +12,6 @@ files."""
 
 from __future__ import annotations
 
-import hashlib
 import html as htmllib
 import io
 import os
@@ -37,7 +36,6 @@ from sandbox.workspace import (
     regular_files,
     remove_path,
     resolve,
-    trim_images,
 )
 
 WRITE_BYTES = 1_000_000  # op_write's most, and the most of a page's file checked
@@ -376,22 +374,10 @@ class Pages:
                 f"'{path}' isn't a PNG, JPEG, GIF or WebP image; convert it with "
                 "run-code (an SVG with cairosvg, say), or publish it as a page"
             )
-        name = f"{hashlib.sha256(data).hexdigest()[:32]}.{ext}"
         self.config.site_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
-        folder = safefs.open_dir(self.config.site_dir, (IMAGES, workspace), make=True)
-        try:
-            try:  # shown before: only its time, so the trim keeps it
-                os.utime(name, dir_fd=folder, follow_symlinks=False)
-                shown = stat.S_ISREG(
-                    os.stat(name, dir_fd=folder, follow_symlinks=False).st_mode
-                )
-            except FileNotFoundError:
-                shown = False
-            if not shown:
-                safefs.replace(folder, name, data)
-            trim_images(folder, IMAGES_MAX_BYTES)
-        finally:
-            os.close(folder)
+        with safefs.folder(self.config.site_dir, (IMAGES, workspace), make=True) as d:
+            name = safefs.keep(d, data, ext)  # shown before: only its time is new
+            safefs.trim(d, IMAGES_MAX_BYTES)
         url = f"{self.config.site_url.rstrip('/')}/{IMAGES}/{quote(workspace)}/{name}"
         label = " ".join(alt.split()) or Path(path).stem or "image"
         return {

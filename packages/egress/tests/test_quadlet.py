@@ -157,6 +157,7 @@ RESEARCH = {
     f"{STORAGE}/everythingllm/research": False,  # its socket
     f"{CTR_ENV}/research-runner.env": True,  # its share of AnythingLLM's .env
     f"{STORAGE}/anythingllm-fs/research": False,  # the reports
+    f"{DATA}/pages/public/_webimages": False,  # image-search's pictures (research.images)
 }
 
 
@@ -211,6 +212,7 @@ def test_research_mounts_are_where_its_code_goes(monkeypatch, tmp_path):
     for path in (
         settings.runlogs,
         settings.reports_dir,
+        settings.images_dir,
         hostenv.socket_path("research", "RESEARCH_SOCKET"),
     ):
         assert not read_only(path), path

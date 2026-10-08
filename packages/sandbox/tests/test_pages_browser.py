@@ -59,12 +59,42 @@ PAGE = """<!doctype html>
 <a id="download" href="data.csv" download>csv</a>
 """
 
+APP_PAGE = """<!doctype html>
+<title>An app</title>
+<script>
+  fetch("/_apps/ws/x/ops", {method: "POST", headers: {"Content-Type": "text/plain"},
+                            body: JSON.stringify({token: "t", op: "check", args: {item: 1}})})
+    .then((r) => r.json()).then((j) => { window.posted = j.ok ? "read" : "unread"; })
+    .catch((e) => { window.posted = e.name; });
+</script>
+"""
+
 PROBE = """
-import json, sys, time
+import json, sys, threading, time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:8447/ws/"
 out = {}
+seen = []
+
+class Apps(BaseHTTPRequestHandler):
+    # The sandbox runner's write-back, as the machine routes /_apps/ to it.
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        seen.append([self.path, self.headers.get("Origin"), self.headers.get("Content-Type"),
+                     json.loads(body)])
+        reply = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "null")
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+    def log_message(self, *a):
+        pass
+
+threading.Thread(target=HTTPServer(("127.0.0.1", 8455), Apps).serve_forever, daemon=True).start()
 with sync_playwright() as p:
     # The image has Playwright's full Chromium and no headless shell.
     browser = p.chromium.launch(headless=True, channel="chromium")
@@ -118,6 +148,12 @@ with sync_playwright() as p:
     listing.goto(BASE)
     out["listing"] = listing.inner_text("body")
     out["listing_errors"] = errors
+    app = context.new_page()
+    response = app.goto(BASE + "apps/x/")
+    out["app_cache"] = response.headers.get("cache-control")
+    app.wait_for_function("window.posted !== undefined", timeout=5000)
+    out["app_posted"] = app.evaluate("window.posted")
+    out["app_seen"] = seen
     browser.close()
 print(json.dumps(out))
 """
@@ -141,9 +177,17 @@ def browsed(tmp_path_factory) -> dict:
     (app / "other.html").write_text("<title>Other</title>")
     (app / "sink.html").write_text("<title>Sink</title>")
     (app / "data.csv").write_text("a,b\n1,2\n")
+    (tmp / "workspaces" / "ws" / "apps" / "x").mkdir(parents=True)
+    (tmp / "workspaces" / "ws" / "apps" / "x" / "index.html").write_text(APP_PAGE)
     (tmp / "probe.py").write_text(PROBE)
     pod = f"pages-csp-test-{uuid.uuid4().hex[:8]}"
-    caddyfile = REPO / "host" / "caddy" / "pages.Caddyfile"
+    # The repo's Caddyfile, with /_apps/ sent where the machine's route would send it.
+    caddyfile = tmp / "Caddyfile"
+    caddyfile.write_text(
+        (REPO / "host" / "caddy" / "pages.Caddyfile")
+        .read_text()
+        .replace(":8447 {", ":8447 {\n  reverse_proxy /_apps/* 127.0.0.1:8455", 1)
+    )
     try:
         made = podman("pod", "create", "--name", pod, "--network", "none")
         assert made.returncode == 0, made.stderr
@@ -205,3 +249,12 @@ def test_downloads_and_the_directory_listing_work(browsed):
     assert browsed["download"] == "a,b\n1,2\n"
     assert "app/" in browsed["listing"]
     assert browsed["listing_errors"] == []
+
+
+def test_an_app_page_writes_back_to_its_own_host_and_reads_the_answer(browsed):
+    """The sandbox runner's write-back (sandbox.appsweb) answers a page's opaque origin."""
+    assert browsed["app_posted"] == "read"
+    [(path, origin, kind, body)] = browsed["app_seen"]
+    assert (path, origin, kind) == ("/_apps/ws/x/ops", "null", "text/plain")
+    assert body == {"token": "t", "op": "check", "args": {"item": 1}}
+    assert browsed["app_cache"] == "no-cache"

@@ -52,6 +52,12 @@
   root * /srv/workspaces
   header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; sandbox allow-scripts allow-downloads"
   header X-Content-Type-Options nosniff
+  # An app's page (sandbox.apps) embeds its data and a write-back token that each change
+  # replaces, so it's never taken from a cache. It posts its ops to /_apps/ on this origin,
+  # which the machine routes to the sandbox runner (apps.toml): default-src 'self' already
+  # lets a page connect to its own host, and the runner's answer allows the opaque origin.
+  @apppages path_regexp ^/[^/]+/apps/[^/]+/
+  header @apppages Cache-Control "no-cache"
   file_server browse {
     hide .*
   }

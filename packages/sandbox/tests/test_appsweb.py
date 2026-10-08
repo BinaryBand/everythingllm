@@ -4,7 +4,7 @@ import asyncio
 import json
 
 import pytest
-from sandbox import appsweb
+from sandbox import appsweb, runner
 from test_runner import A, cfg, make, project  # noqa: F401 - cfg is a fixture
 
 
@@ -124,6 +124,93 @@ def test_only_loopback_is_answered(r, monkeypatch):
         try:
             answer = await ask(port, b"GET /_live/apps/career/x.png HTTP/1.1")
             assert answer.startswith(b"HTTP/1.1 403")
+        finally:
+            server.close()
+
+    asyncio.run(main())
+
+
+async def post(
+    port, path: str, body: bytes, length: bool = True
+) -> tuple[int, dict, bytes]:
+    head = f"POST {path} HTTP/1.1\r\nHost: x\r\nOrigin: null\r\nContent-Type: text/plain\r\n"
+    if length:
+        head += f"Content-Length: {len(body)}\r\n"
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write(head.encode() + b"\r\n" + body)
+    await writer.drain()
+    answer = await reader.read()
+    writer.close()
+    top, _, payload = answer.partition(b"\r\n\r\n")
+    assert b"\r\nAccess-Control-Allow-Origin: null\r\n" in top  # the page can read it
+    return int(top.split()[1]), json.loads(payload or b"{}"), top
+
+
+def op(token, name="check", **args) -> bytes:
+    return json.dumps({"token": token, "op": name, "args": args}).encode()
+
+
+def test_the_page_writes_back_with_its_current_token(r):
+    async def main():
+        await r.op_app(A, "create", "groceries", args={"items": ["Oat milk", "Eggs"]})
+        first = r.tokens("career", "groceries")["token"]
+        server, port = await started(r)
+        try:
+            path = "/_apps/career/groceries/ops"
+            status, body, _ = await post(port, path, op(first, item=1))
+            assert status == 200 and body["version"] == 2
+            assert body["data"]["items"][0]["done"] and body["token"] != first
+            # The same page's next op, with the token it was given.
+            status, body, _ = await post(
+                port, "/career/groceries/ops", op(body["token"], "add", item="Rye")
+            )
+            assert status == 200 and len(body["data"]["items"]) == 3
+            # A tab that wasn't told: reload. Anyone else: no.
+            status, body, _ = await post(port, path, op(first, item=2))
+            assert (status, body["reload"]) == (409, True)
+            assert (await post(port, path, op("forged", item=2)))[0] == 403
+            page = await ask(port, b"OPTIONS " + path.encode() + b" HTTP/1.1")
+            assert (
+                page.startswith(b"HTTP/1.1 204")
+                and b"Access-Control-Allow-Origin: null" in page
+            )
+        finally:
+            server.close()
+
+    asyncio.run(main())
+
+
+def test_what_the_write_back_refuses(r, monkeypatch):
+    async def main():
+        await r.op_app(A, "create", "todo", args={"item": "a"})
+        token = r.tokens("career", "todo")["token"]
+        server, port = await started(r)
+        path = "/_apps/career/todo/ops"
+        try:
+            assert (await post(port, path, b"x" * 5000))[0] == 413
+            assert (await post(port, path, op(token), length=False))[0] == 411
+            assert (await post(port, path, b"not json"))[0] == 400
+            assert (await post(port, path, json.dumps({"op": "check"}).encode()))[
+                0
+            ] == 400
+            status, body, _ = await post(port, path, op(token, "shuffle"))
+            assert status == 400 and "op must be one of" in body["error"]
+            assert (await post(port, "/_apps/nowhere/todo/ops", op(token)))[0] == 404
+            assert (await post(port, "/_apps/career/gone/ops", op(token)))[0] == 400
+
+            def busy(workspace):
+                raise runner.SandboxError("code is still running in this workspace")
+
+            monkeypatch.setattr(r, "idle", busy)
+            assert (await post(port, path, op(token, item="a")))[0] == 409
+            monkeypatch.undo()
+            monkeypatch.setattr(appsweb, "RATE", (2, 10.0))
+            fresh = appsweb.AppsWeb(r)
+            assert fresh.allowed(("career", "todo")) and fresh.allowed(
+                ("career", "todo")
+            )
+            assert not fresh.allowed(("career", "todo"))
+            assert fresh.allowed(("career", "other"))
         finally:
             server.close()
 

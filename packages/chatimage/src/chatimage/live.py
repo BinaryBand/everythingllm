@@ -40,10 +40,14 @@ class BadRequest(Exception):
     pass
 
 
-async def read_request(reader: asyncio.StreamReader) -> tuple[str, str, str]:
-    """The request's method, path and query (without its ?), once its headers are in.
-    Raises BadRequest for anything that isn't an HTTP/1 request line, or is too big."""
+async def read_head(
+    reader: asyncio.StreamReader,
+) -> tuple[str, str, str, dict[str, str]]:
+    """The request's method, path, query (without its ?) and headers (their names in lower
+    case; a repeated one keeps its last value), once its headers are in. Raises BadRequest
+    for anything that isn't an HTTP/1 request line, or is too big."""
     read = 0
+    headers: dict[str, str] = {}
     try:
         line = await reader.readuntil(b"\n")
         read += len(line)
@@ -54,13 +58,22 @@ async def read_request(reader: asyncio.StreamReader) -> tuple[str, str, str]:
                 raise BadRequest("request too big")
             if header in (b"\r\n", b"\n"):
                 break
+            name, sep, value = header.decode("latin-1").partition(":")
+            if sep:
+                headers[name.strip().lower()] = value.strip()
     except (asyncio.IncompleteReadError, asyncio.LimitOverrunError) as e:
         raise BadRequest("incomplete request") from e
     parts = line.decode("latin-1").split()
     if len(parts) != 3 or not parts[2].startswith("HTTP/1."):
         raise BadRequest("not an HTTP/1 request")
-    method, target, _ = parts
+    method, target = parts[0], parts[1]
     path, _, query = target.partition("?")
+    return method, path, query, headers
+
+
+async def read_request(reader: asyncio.StreamReader) -> tuple[str, str, str]:
+    """read_head without the headers."""
+    method, path, query, _ = await read_head(reader)
     return method, path, query
 
 

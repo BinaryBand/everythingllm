@@ -20,6 +20,7 @@ function format(r) {
   for (const note of r.attachment_notes || []) lines.push(`attachments: ${note}`);
   if (r.warning) lines.push(`warning: ${r.warning}`);
   if (r.web) lines.push("web access: on (this workspace's runs can reach public websites)");
+  if (r.models) lines.push(`model access: on (${r.models.tokens_left} tokens left today)`);
   lines.push(...publishedLines(r.published));
   return lines.join("\n");
 }

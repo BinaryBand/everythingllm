@@ -242,12 +242,16 @@ function uiChat(answer) {
 }
 
 function accessRunner(web = false) {
+  const now = { web, models: false, daily_tokens: 200000 };
   return fakeRunner((op, args) => {
     if (op !== "access") return { ok: false, error: "?" };
-    if (args.web === undefined || args.web === web) return { ok: true, result: { workspace: "career", web, changed: false } };
-    if (!args.apply) return { ok: true, result: { workspace: "career", web, would: { web: args.web }, needs_approval: args.web } };
-    if (args.web && !args.approved) return { ok: false, error: "turning web access on needs the user's approval" };
-    return { ok: true, result: { workspace: "career", web: args.web, changed: true } };
+    const would = { ...now };
+    for (const k of ["web", "models", "daily_tokens"]) if (args[k] !== undefined) would[k] = args[k];
+    if (JSON.stringify(would) === JSON.stringify(now)) return { ok: true, result: { workspace: "career", ...now, changed: false } };
+    const on = (would.web && !now.web) || (would.models && !now.models) || would.daily_tokens > now.daily_tokens;
+    if (!args.apply) return { ok: true, result: { workspace: "career", ...now, would, needs_approval: on } };
+    if (on && !args.approved) return { ok: false, error: "turning access on needs the user's approval" };
+    return { ok: true, result: { workspace: "career", ...would, changed: true } };
   });
 }
 
@@ -256,7 +260,7 @@ test("sandbox-access turns web on only with the user's own approval in a UI chat
   try {
     const { self, asked } = uiChat({ approved: true, message: "User approved the tool execution." });
     assert.match(await sandboxAccess.handler.call(self, {}), /web access is off/);
-    assert.match(await sandboxAccess.handler.call(self, { web: "on" }), /apply true would turn it on, after the user approves/);
+    assert.match(await sandboxAccess.handler.call(self, { web: "on" }), /apply true would make it: web access is on.*after the user approves it in the chat\./);
     assert.equal(asked.length, 0);
     assert.match(await sandboxAccess.handler.call(self, { web: "on", apply: true }), /^Done\. In this workspace, web access is on/);
     assert.equal(asked.length, 1);
@@ -278,7 +282,7 @@ test("sandbox-access never counts an approval AnythingLLM gave without asking", 
     const runner = await accessRunner();
     try {
       const reply = await sandboxAccess.handler.call(uiChat({ approved: true, message }).self, { web: "on", apply: true });
-      assert.match(reply, /stays off: AnythingLLM approved it without asking/, message);
+      assert.match(reply, /Nothing changed: AnythingLLM approved it without asking/, message);
       assert.equal(runner.requests.filter((r) => r.args.apply).length, 0, message);
     } finally {
       await runner.close();
@@ -287,11 +291,11 @@ test("sandbox-access never counts an approval AnythingLLM gave without asking", 
   const runner = await accessRunner();
   try {
     const reply = await sandboxAccess.handler.call(uiChat({ approved: false, message: "Tool call was rejected by the user." }).self, { web: "on", apply: true });
-    assert.match(reply, /stays off: Tool call was rejected by the user\./);
+    assert.match(reply, /Nothing changed: Tool call was rejected by the user\./);
     // An API or Telegram chat (no invocation row) can't turn it on, and never asks.
     const api = uiChat({ approved: true, message: "User approved the tool execution." });
     delete api.self.super.handlerProps.invocation.uuid;
-    assert.match(await sandboxAccess.handler.call(api.self, { web: "on", apply: true }), /only be turned on from a chat in AnythingLLM's own window/);
+    assert.match(await sandboxAccess.handler.call(api.self, { web: "on", apply: true }), /can only be turned on or raised from a chat in AnythingLLM's own window/);
     assert.equal(api.asked.length, 0);
     assert.equal(runner.requests.filter((r) => r.args.apply).length, 0);
   } finally {
@@ -306,7 +310,24 @@ test("sandbox-access turns web off from any chat, without asking", async () => {
     delete api.self.super.handlerProps.invocation.uuid;
     assert.match(await sandboxAccess.handler.call(api.self, { web: "off", apply: "true" }), /^Done\. In this workspace, web access is off/);
     assert.equal(api.asked.length, 0);
-    assert.match(await sandboxAccess.handler.call(api.self, { web: "maybe" }), /web must be "on" or "off"/);
+    assert.match(await sandboxAccess.handler.call(api.self, { web: "maybe" }), /web and models must be "on" or "off"/);
+  } finally {
+    await runner.close();
+  }
+});
+
+test("sandbox-access asks before model access or a bigger budget, and says what it is", async () => {
+  const runner = await accessRunner();
+  try {
+    const { self, asked } = uiChat({ approved: true, message: "User approved the tool execution." });
+    const reply = await sandboxAccess.handler.call(self, { models: "on", daily_tokens: "300000", apply: true });
+    assert.match(reply, /model access is on \(runs can ask a model, up to 300000 tokens a day/);
+    assert.match(asked[0].description, /ask a model on the server's account, up to 300000 tokens a day/);
+    assert.doesNotMatch(asked[0].description, /public websites/);
+    assert.deepEqual(runner.requests.at(-1).args, {
+      models: true, daily_tokens: 300000, apply: true, approved: true, scope: { workspace: "career", thread: "12" },
+    });
+    assert.match(await sandboxAccess.handler.call(self, { daily_tokens: "lots" }), /daily_tokens must be a whole number/);
   } finally {
     await runner.close();
   }

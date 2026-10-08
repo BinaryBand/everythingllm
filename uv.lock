@@ -1433,6 +1433,7 @@ dependencies = [
     { name = "chatimage" },
     { name = "egress" },
     { name = "hostrpc" },
+    { name = "llm" },
 ]
 
 [package.metadata]
@@ -1440,6 +1441,7 @@ requires-dist = [
     { name = "chatimage", editable = "packages/chatimage" },
     { name = "egress", editable = "packages/egress" },
     { name = "hostrpc", editable = "packages/hostrpc" },
+    { name = "llm", editable = "packages/llm" },
 ]
 
 [[package]]

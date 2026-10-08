@@ -6,8 +6,17 @@ egress profile `sandbox`'s addresses (packages/egress/egress.toml), so its only 
 is the egress proxy, which lets it reach PyPI and nothing else; a read-only root,
 CPU/memory/process limits and a time limit. Each address is a slot: a run or a build holds
 one while its container exists, so no more containers run at once than the profile has
-addresses, and a stopped run's container never keeps an address another is given. What it can see depends on where the call came from, which the skills in
-AnythingLLM pass as a scope of {workspace, thread} (never chosen by the model):
+addresses, and a stopped run's container never keeps an address another is given.
+
+A workspace the user gave access (op_access, the sandbox-access skill, approved in
+AnythingLLM's own prompt; kept in SANDBOX_ACCESS) gets more: with web access, its runs take
+an address of the `sandbox-web` profile instead and go out through the proxy's public port,
+public hosts only, without other workspaces' /shared folders; with model access, each run
+asks a model through a socket of its own (sandbox.models), within a daily token budget,
+the key staying here.
+
+What a run can see depends on where the call came from, which the skills in AnythingLLM
+pass as a scope of {workspace, thread} (never chosen by the model):
 
   /work            the thread's scratch folder, deleted a week after the thread last used it
   /project         the workspace's folder, shared by its threads and kept (pip installs go here)
@@ -84,6 +93,10 @@ Config (environment):
   SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
   SANDBOX_UPLOADS   AnythingLLM's chat attachments, whose text a run gets in
                     /work/attachments (default <storage>/direct-uploads)
+  SANDBOX_ACCESS    each workspace's web and model access (default
+                    ~/.local/share/everythingllm/sandbox/access.json)
+  ANYTHINGLLM_ENV   AnythingLLM's .env, for the model keys (default <storage>/.env)
+  USER_TIMEZONE     whose day a model budget is (sandbox.models)
 """
 
 from __future__ import annotations
@@ -116,6 +129,8 @@ import hostrpc
 from egress import config as egress_config
 from hostrpc import safefs
 from PIL import Image
+
+from sandbox import models as model_access
 
 log = logging.getLogger("sandbox-runner")
 # Big enough for a run's output, which the runner caps well below this.
@@ -150,6 +165,8 @@ DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
 BUILD_TIMEOUT = 60  # a site build, assembling included
 SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
+MODEL_CLIENT = Path(__file__).with_name("model_client.py")  # a run's way to ask a model
+MODELS_DIR = "/run/everythingllm"  # where a run with model access finds its socket
 OUTPUT_BYTES = 20_000  # per stream of a run
 WRITE_BYTES = 1_000_000  # op_write
 WORKSPACE_WARN_BYTES = 4 << 30
@@ -278,7 +295,12 @@ class Config:
     proxy: str = ""
     web_ips: tuple[str, ...] = ()
     public_proxy: str = ""
-    access_file: Path = Path("/nonexistent/access.json")  # each workspace's Access
+    access_file: Path = Path("/nonexistent/access.json")  # SANDBOX_ACCESS
+    # Model access: AnythingLLM's .env (the keys, read here, never in a run) and the log.
+    model_env: Path = Path("/nonexistent/.env")
+    model_log: Path = Path("/nonexistent/models")
+    # Each run's model socket, in a folder of its own: a short path, as AF_UNIX's are.
+    model_sockets: Path = Path("/nonexistent/m")
     public_root: Path = Path("/nonexistent")
     public_url: str = "http://127.0.0.1:8447/"
     uploads: Path = Path("/nonexistent")  # AnythingLLM's direct-uploads
@@ -303,7 +325,12 @@ class Config:
                 else ()
             ),
             public_proxy=egress.public_url,
-            access_file=hostrpc.data_dir() / "sandbox" / "access.json",
+            access_file=Path(
+                get("SANDBOX_ACCESS", hostrpc.data_dir() / "sandbox" / "access.json")
+            ),
+            model_env=Path(get("ANYTHINGLLM_ENV", hostrpc.storage() / ".env")),
+            model_log=hostrpc.data_dir() / "sandbox" / "models",
+            model_sockets=hostrpc.data_dir() / "sandbox" / "m",
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
@@ -326,13 +353,25 @@ class Config:
 
 @dataclass(frozen=True)
 class Access:
-    """What a workspace's runs may reach beyond PyPI: the public web (`web`). Off unless
-    the user turned it on (op_access, the sandbox-access skill)."""
+    """What a workspace's runs may reach beyond PyPI: the public web (`web`), and a model
+    (`models`, up to `daily_tokens` a day; sandbox.models). Off unless the user turned it
+    on (op_access, the sandbox-access skill)."""
 
     web: bool = False
+    models: bool = False
+    daily_tokens: int = model_access.DAILY_TOKENS
 
 
 NO_ACCESS = Access()
+MAX_DAILY_TOKENS = 10_000_000
+
+
+def access_fields(access: Access) -> dict[str, Any]:
+    return {
+        "web": access.web,
+        "models": access.models,
+        "daily_tokens": access.daily_tokens,
+    }
 
 
 @dataclass(frozen=True)
@@ -793,6 +832,9 @@ class Runner(hostrpc.Service):
     now: Callable[[], float] = time.time
     _free: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     _free_web: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
+    ask_model: model_access.Ask | None = (
+        None  # by default, the providers' (packages/llm)
+    )
     _access_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     _jobs: dict[str, Job] = field(default_factory=dict)
@@ -802,6 +844,8 @@ class Runner(hostrpc.Service):
             self._free.put_nowait(ip)
         for ip in self.config.web_ips:
             self._free_web.put_nowait(ip)
+        if self.ask_model is None:
+            self.ask_model = model_access.provider_ask(self.config.model_env)
 
     @contextlib.asynccontextmanager
     async def slot(self, web: bool = False) -> AsyncIterator[str]:
@@ -841,43 +885,73 @@ class Runner(hostrpc.Service):
             return Access()
         if not isinstance(entry, dict):
             return Access()
-        return Access(web=entry.get("web") is True)
+        budget = entry.get("daily_tokens")
+        return Access(
+            web=entry.get("web") is True,
+            models=entry.get("models") is True,
+            daily_tokens=budget
+            if isinstance(budget, int) and 0 < budget <= MAX_DAILY_TOKENS
+            else model_access.DAILY_TOKENS,
+        )
 
     async def op_access(
         self,
         scope: dict[str, Any],
         web: Any = None,
+        models: Any = None,
+        daily_tokens: Any = None,
         apply: bool = False,
         approved: bool = False,
     ) -> dict[str, Any]:
-        """The workspace's access, and with `web` (true or false) what it would be. With
-        `apply` it's changed: turning anything on also needs `approved`, the user's own
-        approval in the chat, which the sandbox-access skill asks AnythingLLM for; turning
-        it off needs nothing more."""
+        """The workspace's access, and with `web` or `models` (true or false) or
+        `daily_tokens` what it would be. With `apply` it's changed: turning anything on,
+        or raising the budget, also needs `approved`, the user's own approval in the chat,
+        which the sandbox-access skill asks AnythingLLM for; turning it off needs nothing
+        more."""
         s = self.scope(scope)
         if s.gateway:
             raise SandboxError(
                 "a gateway client's sandbox reaches only PyPI; its access can't change"
             )
-        if web not in (None, True, False):
-            raise SandboxError("web must be true, false or left out")
+        for name, value in (("web", web), ("models", models)):
+            if value is not None and not isinstance(value, bool):
+                raise SandboxError(f"{name} must be true, false or left out")
+        if daily_tokens is not None and (
+            not isinstance(daily_tokens, int)
+            or isinstance(daily_tokens, bool)
+            or not 0 < daily_tokens <= MAX_DAILY_TOKENS
+        ):
+            raise SandboxError(f"daily_tokens must be 1 to {MAX_DAILY_TOKENS}")
         current = self.access(s)
-        wanted = current if web is None else replace(current, web=web)
-        on = wanted.web and not current.web
-        out = {"workspace": s.workspace, "web": current.web}
+        changes = {
+            k: v
+            for k, v in (
+                ("web", web),
+                ("models", models),
+                ("daily_tokens", daily_tokens),
+            )
+            if v is not None
+        }
+        wanted = replace(current, **changes)
+        on = (
+            (wanted.web and not current.web)
+            or (wanted.models and not current.models)
+            or wanted.daily_tokens > current.daily_tokens
+        )
+        out = {"workspace": s.workspace, **access_fields(current)}
         if wanted == current:
             return {**out, "changed": False}
         if apply is not True:
-            return {**out, "would": {"web": wanted.web}, "needs_approval": on}
+            return {**out, "would": access_fields(wanted), "needs_approval": on}
         if on and approved is not True:
             raise SandboxError(
-                "turning web access on needs the user's approval in the chat, which the "
+                "turning access on needs the user's approval in the chat, which the "
                 "sandbox-access skill asks for"
             )
         async with self._access_lock:
             await asyncio.to_thread(self.write_access, s.workspace, wanted)
-        log.info("access for %s: web=%s", s.workspace, wanted.web)
-        return {**out, "web": wanted.web, "changed": True}
+        log.info("access for %s: %s", s.workspace, access_fields(wanted))
+        return {**out, **access_fields(wanted), "changed": True}
 
     def write_access(self, workspace: str, access: Access) -> None:
         file = self.config.access_file
@@ -892,7 +966,7 @@ class Runner(hostrpc.Service):
         if access == Access():
             data.pop(workspace, None)
         else:
-            data[workspace] = {"web": access.web}
+            data[workspace] = access_fields(access)
         file.parent.mkdir(parents=True, exist_ok=True)
         hostrpc.atomic_write(
             file, json.dumps(data, indent=1, sort_keys=True) + "\n", 0o600
@@ -1134,11 +1208,33 @@ class Runner(hostrpc.Service):
             if before.total > WORKSPACE_MAX_BYTES:
                 raise self.over_quota(before, "run code")
             access = self.access(scope)
-            async with self.slot(web=access.web) as ip:
+            asking = (
+                model_access.Models(
+                    scope.workspace,
+                    scope.thread,
+                    access.daily_tokens,
+                    self.config.model_log,
+                    self.ask_model,
+                )
+                if access.models
+                else None
+            )
+            async with (
+                self.slot(web=access.web) as ip,
+                contextlib.AsyncExitStack() as stack,
+            ):
                 try:
                     args = await asyncio.to_thread(
                         self.prepare, name, scope, run_dir, script, code, ip, access
                     )
+                    if asking is not None:
+                        # The run's own socket, for as long as it runs; its folder goes
+                        # once it's closed.
+                        sockets = self.config.model_sockets / name
+                        stack.callback(shutil.rmtree, sockets, True)
+                        await stack.enter_async_context(
+                            hostrpc.serving(asking, sockets / "sock")
+                        )
                     started = self.now()
                     watch = asyncio.create_task(self.watch(scope, name))
                     try:
@@ -1200,6 +1296,9 @@ class Runner(hostrpc.Service):
             "attachments": copies,
             "attachment_notes": notes,
             "web": access.web,
+            "models": {"tokens_left": await asyncio.to_thread(asking.left)}
+            if asking is not None
+            else None,
         }
 
     def sync_attachments(
@@ -1395,10 +1494,26 @@ class Runner(hostrpc.Service):
         with the egress proxy as its only way out; the workspace's own folders read-write,
         every other workspace's shared folder and the repo's themes read-only. With web
         access, through the proxy's public-only port, and without the other workspaces'
-        shared folders, which a run that reads the web could send anywhere."""
+        shared folders, which a run that reads the web could send anywhere. With model
+        access, its socket's folder and the client that asks through it."""
         proxy = self.config.public_proxy if access.web else self.config.proxy
         (run_dir / "code").mkdir(parents=True)
         (run_dir / "code" / script).write_text(code)
+        asking = []
+        if access.models:  # the run's own socket (served by execute) and the client
+            sockets = self.config.model_sockets / name
+            if len(str(sockets / "sock")) > 100:  # AF_UNIX's limit is 108
+                raise SandboxError(
+                    f"{self.config.model_sockets} is too long a path for model sockets"
+                )
+            sockets.mkdir(parents=True)
+            shutil.copyfile(MODEL_CLIENT, run_dir / "code" / "everythingllm_models.py")
+            asking = [
+                "-v",
+                f"{sockets}:{MODELS_DIR}:ro",
+                "-e",
+                f"EVERYTHINGLLM_MODELS={MODELS_DIR}/sock",
+            ]
         # No --rm: the container is kept until execute has asked podman whether it ran out of memory.
         return [
             *self.hardening(name),
@@ -1424,6 +1539,7 @@ class Runner(hostrpc.Service):
                 )
             ),
             *self.read_only_mounts(scope.workspace, others=not access.web),
+            *asking,
             "-v",
             f"{run_dir / 'code'}:/sandbox:ro",
             IMAGE,

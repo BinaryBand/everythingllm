@@ -4,7 +4,7 @@
   "name": "Sandbox Access",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Show whether this workspace's run-code can reach the web, or turn that on or off. Off by default: runs reach only PyPI. Turning it on asks the user to approve it in the chat, and works only in AnythingLLM's own chat; never turn it on unless the user asked. A run with web access can't see other workspaces' /shared folders.",
+  "description": "Show what this workspace's run-code can reach beyond PyPI, or turn it on or off: the web, and a model to ask (with a daily token budget). Off by default. Turning either on, or raising the budget, asks the user to approve it in the chat, and works only in AnythingLLM's own chat; never do it unless the user asked. A run with web access can't see other workspaces' /shared folders.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -16,17 +16,29 @@
     {
       "prompt": "Let the sandbox reach the web so the script can download today's prices",
       "call": "{\"web\": \"on\", \"apply\": true}"
+    },
+    {
+      "prompt": "Let my scripts summarize with an AI model",
+      "call": "{\"models\": \"on\", \"apply\": true}"
     }
   ],
   "entrypoint": {
     "file": "handler.js",
     "params": {
       "web": {
-        "description": "\"on\" or \"off\"; leave out to only show the current access.",
+        "description": "\"on\" or \"off\"; leave out to keep it as it is.",
         "type": "string"
       },
+      "models": {
+        "description": "\"on\" or \"off\": whether runs can ask a model; leave out to keep it as it is.",
+        "type": "string"
+      },
+      "daily_tokens": {
+        "description": "The model budget, tokens a day (default 200000); leave out to keep it.",
+        "type": "number"
+      },
       "apply": {
-        "description": "true to make the change (the user is asked to approve turning it on); without it, only show what would change.",
+        "description": "true to make the change (the user is asked to approve turning on or raising); without it, only show what would change.",
         "type": "boolean"
       }
     }

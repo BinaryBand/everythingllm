@@ -186,16 +186,17 @@ GATEWAY = {"workspace": "client-laptop", "thread": "gateway", "gateway": True}
 def test_a_workspace_reaches_the_web_only_once_the_user_approved_it(cfg):
     r = make(cfg)
     go(r.op_write(B, "/shared/home/notes.txt", "home's"))
-    assert go(r.op_access(A)) == {"workspace": "career", "web": False, "changed": False}
+    off = {"web": False, "models": False, "daily_tokens": 200_000}
+    assert go(r.op_access(A)) == {"workspace": "career", **off, "changed": False}
     shown = go(r.op_access(A, web=True))
-    assert shown["would"] == {"web": True} and shown["needs_approval"] is True
+    assert shown["would"] == {**off, "web": True} and shown["needs_approval"] is True
     with pytest.raises(runner.SandboxError, match="needs the user's approval"):
         go(r.op_access(A, web=True, apply=True))
     assert not cfg.access_file.exists()
     on = go(r.op_access(A, web=True, apply=True, approved=True))
-    assert on == {"workspace": "career", "web": True, "changed": True}
+    assert on == {"workspace": "career", **off, "web": True, "changed": True}
     assert cfg.access_file.stat().st_mode & 0o777 == 0o600
-    assert go(r.op_access(A2)) == {"workspace": "career", "web": True, "changed": False}
+    assert go(r.op_access(A2))["web"] is True
 
     res = go(r.op_run(A2, "bash", "curl https://example.com"))
     assert res["web"] is True
@@ -243,8 +244,14 @@ def test_access_that_cant_be_read_is_none(cfg, text):
 
 
 def test_web_access_takes_only_true_or_false(cfg):
+    r = make(cfg)
     with pytest.raises(runner.SandboxError, match="web must be"):
-        go(make(cfg).op_access(A, web="on"))
+        go(r.op_access(A, web="on"))
+    with pytest.raises(runner.SandboxError, match="models must be"):
+        go(r.op_access(A, models=1))
+    for budget in (0, True, "100", 10**9):
+        with pytest.raises(runner.SandboxError, match="daily_tokens must be"):
+            go(r.op_access(A, daily_tokens=budget))
 
 
 def test_another_workspaces_shared_folder_is_read_only_to_the_runner_too(cfg):

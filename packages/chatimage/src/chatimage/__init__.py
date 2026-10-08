@@ -155,13 +155,25 @@ def font(weight: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont
     return ImageFont.load_default(size)
 
 
+def longest(d: ImageDraw.ImageDraw, text: str, f, width: int, end: str = "") -> int:
+    """How much of `text` fits in `width` with `end` after it: found by halving, since a
+    card's text can be a model's or an error's, thousands of characters long, and
+    measuring it one character shorter each time took a minute."""
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if d.textlength(text[:mid] + end, font=f) <= width:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
 def fit(d: ImageDraw.ImageDraw, text: str, f, width: int) -> str:
     """`text`, cut short with … if it's wider than `width`."""
     if d.textlength(text, font=f) <= width:
         return text
-    while text and d.textlength(text + "…", font=f) > width:
-        text = text[:-1]
-    return text.rstrip() + "…"
+    return text[: longest(d, text, f, width, "…")].rstrip() + "…"
 
 
 def wrap(d: ImageDraw.ImageDraw, text: str, f, width: int, most: int) -> list[str]:
@@ -172,9 +184,7 @@ def wrap(d: ImageDraw.ImageDraw, text: str, f, width: int, most: int) -> list[st
     while words and len(lines) < most:
         line = words.pop(0)
         if d.textlength(line, font=f) > width:  # a word too long for a line on its own
-            cut = len(line)
-            while cut > 1 and d.textlength(line[:cut], font=f) > width:
-                cut -= 1
+            cut = max(1, longest(d, line, f, width))
             words.insert(0, line[cut:])
             line = line[:cut]
         while words and d.textlength(f"{line} {words[0]}", font=f) <= width:

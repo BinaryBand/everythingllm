@@ -49,6 +49,9 @@ function call(socket, op, args, { name, signal = null, timeoutMs = 60_000 }) {
       } catch {
         return finish(reject, new Error(`${name}'s answer wasn't JSON`));
       }
+      // Read in an event handler, where a TypeError (from `null`) would reach AnythingLLM.
+      if (reply === null || typeof reply !== "object")
+        return finish(reject, new Error(`${name}'s answer wasn't a reply`));
       if (reply.ok) finish(resolve, reply.result);
       else finish(reject, new Refused(reply.error || "unknown error"));
     });

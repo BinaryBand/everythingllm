@@ -66,6 +66,9 @@ def test_requests_get_results_and_errors(sock):
         with pytest.raises(RunnerError, match="runner error: KeyError"):
             await hostrpc.request(sock, "crash", {}, 5)
         assert (await raw(sock, b'{"op": 5}\n'))["error"] == "unknown op '5'"
+        # A request that isn't one is answered, not dropped.
+        for line in (b"[1]\n", b"not json\n"):
+            assert (await raw(sock, line))["error"].startswith("the request was too long")
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
@@ -305,3 +308,15 @@ def test_a_peer_is_local_from_loopback_or_the_servers_own_address_only():
     assert not hostrpc.local_peer(None, own)
     assert not hostrpc.local_peer(("10.89.79.12", 40000), None)
     assert not hostrpc.local_peer(("testclient", 50000), ("testserver", 80))
+
+
+def test_a_type_error_inside_an_op_is_the_runners_not_bad_arguments(caplog):
+    async def buggy(n: int) -> int:
+        return None + n  # type: ignore[operator]
+
+    service = hostrpc.Service([buggy])
+    bad = asyncio.run(service.reply({"op": "buggy", "args": {"m": 1}}))
+    assert not bad["ok"] and bad["error"].startswith("bad arguments for buggy: ")
+    broken = asyncio.run(service.reply({"op": "buggy", "args": {"n": 1}}))
+    assert broken["error"].startswith("runner error: TypeError")
+    assert "op buggy failed" in caplog.text  # and logged, as the runner's own bug

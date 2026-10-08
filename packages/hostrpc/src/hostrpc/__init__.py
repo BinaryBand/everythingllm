@@ -211,18 +211,31 @@ async def request(
         raise RunnerError(
             f"The {name} isn't running on the host ({type(e).__name__} on {socket})."
         ) from e
+    except OSError as e:  # e.g. a socket the caller may not use
+        raise RunnerError(f"The {name} can't be reached ({e}).") from e
     try:
         await write_message(writer, {"op": op, "args": args})
         reply = await asyncio.wait_for(read_message(reader), timeout)
     except TimeoutError as e:
         raise RunnerError(f"The {name} didn't answer within {timeout:.0f}s.") from e
+    except OSError as e:  # a reset, as it restarts or crashes
+        raise RunnerError(f"The {name} broke off the call ({e}).") from e
+    except ValueError as e:  # a reply over `limit`, or cut short
+        raise RunnerError(f"The {name}'s answer couldn't be read ({e}).") from e
     finally:
         writer.close()
+    return _result(reply, name)
+
+
+def _result(reply: Any, name: str) -> Any:
+    """A reply's result, or RunnerError with its error."""
     if reply is None:
         raise RunnerError(f"The {name} closed the connection without answering.")
+    if not isinstance(reply, dict):
+        raise RunnerError(f"The {name} answered with something other than a reply.")
     if not reply.get("ok"):
         raise RunnerError(reply.get("error") or "unknown error")
-    return reply["result"]
+    return reply.get("result")
 
 
 def request_sync(
@@ -235,14 +248,18 @@ def request_sync(
     limit: int = LIMIT,
 ) -> Any:
     """`request` for blocking code, which may run with or without an event loop of its own."""
+    conn = socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM)
     try:
-        conn = socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM)
         conn.settimeout(timeout)
         conn.connect(str(socket))
     except (FileNotFoundError, ConnectionRefusedError) as e:
+        conn.close()
         raise RunnerError(
             f"The {name} isn't running on the host ({type(e).__name__} on {socket})."
         ) from e
+    except OSError as e:  # a connect that timed out, or a socket the caller may not use
+        conn.close()
+        raise RunnerError(f"The {name} can't be reached ({e}).") from e
     try:
         with conn, conn.makefile("rwb") as f:
             f.write(json.dumps({"op": op, "args": args}).encode() + b"\n")
@@ -250,12 +267,17 @@ def request_sync(
             line = f.readline(limit + 1)
     except TimeoutError as e:
         raise RunnerError(f"The {name} didn't answer within {timeout:.0f}s.") from e
+    except OSError as e:
+        raise RunnerError(f"The {name} broke off the call ({e}).") from e
     if not line:
         raise RunnerError(f"The {name} closed the connection without answering.")
-    reply = json.loads(line)
-    if not reply.get("ok"):
-        raise RunnerError(reply.get("error") or "unknown error")
-    return reply["result"]
+    if len(line) > limit:
+        raise RunnerError(f"The {name}'s answer is over {limit} bytes.")
+    try:
+        reply = json.loads(line)
+    except ValueError as e:
+        raise RunnerError(f"The {name}'s answer isn't JSON ({e}).") from e
+    return _result(reply, name)
 
 
 def caller(
@@ -362,16 +384,19 @@ class Service:
         try:
             if fn is None:
                 raise RunnerError(f"unknown op '{op}'")
+            args = msg.get("args") or {}
+            # Only the call's own arguments are the caller's mistake: a TypeError from
+            # inside the op is the runner's, and logged as one below.
             try:
-                args = msg.get("args") or {}
-                result = (
-                    await fn(**args)
-                    if inspect.iscoroutinefunction(fn)
-                    else await asyncio.to_thread(fn, **args)
-                )
-                return {"ok": True, "result": result}
+                inspect.signature(fn).bind(**args)
             except TypeError as e:
                 raise RunnerError(f"bad arguments for {op}: {e}") from e
+            result = (
+                await fn(**args)
+                if inspect.iscoroutinefunction(fn)
+                else await asyncio.to_thread(fn, **args)
+            )
+            return {"ok": True, "result": result}
         except (RunnerError, *self.errors) as e:
             return {"ok": False, "error": str(e)}
         except Exception as e:
@@ -382,8 +407,20 @@ class Service:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
-            if (msg := await read_message(reader)) is not None:
+            try:
+                msg = await read_message(reader)
+            except ValueError:  # a line over the limit (LimitOverrunError), or not JSON
+                msg = "unreadable"
+            if isinstance(msg, dict):
                 await write_message(writer, await self.reply(msg))
+            elif msg is not None:  # told, so the caller doesn't just send it again
+                await write_message(
+                    writer,
+                    {
+                        "ok": False,
+                        "error": "the request was too long, or not a JSON object",
+                    },
+                )
         except (ConnectionResetError, BrokenPipeError):
             # The caller went away mid-answer (a chat closed, AnythingLLM restarted).
             self.log.info("a client left before its answer")

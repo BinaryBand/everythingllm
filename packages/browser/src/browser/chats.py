@@ -19,8 +19,9 @@ does a developer API chat sent without one, which goes to it), is the runner's t
 
 `card` is the card's picture and `page` where it links, as in the card line the agent gets
 (Runner.card); `frame` is the chat's `card.jpg`, the same picture for a key: one JPEG, as
-the tab looks now (no push stream; a client asks again to follow it), 404 when the chat has
-no tab. `state` is Runner.state's (working, idle, waiting, user, closed) for the tab
+the tab looks now (no push stream; a client asks again to follow it, and a card that hasn't
+changed is a 304 by its ETag), 404 when the chat has no tab. Asking for it counts as
+watching the tab for a few seconds (Runner.watched), as a streamed card does. `state` is Runner.state's (working, idle, waiting, user, closed) for the tab
 and Runner.asked_state's (waiting, saving, saved, declined, expired) for a login request,
 newest first. `title` is the card's name for the page, never its address, and `last` what
 was done last, as the card says it.
@@ -141,13 +142,12 @@ class Unavailable(Exception):
 
 
 class Refused(Exception):
-    """A request for a chat's browser that's answered with an error: its status line and
-    the error to say."""
+    """A request for a chat's browser that's answered with an error: its status line, and
+    the error to say as the exception's text."""
 
     def __init__(self, status: str, error: str) -> None:
         super().__init__(error)
         self.status = status
-        self.error = error
 
 
 class ThreadIds:
@@ -253,13 +253,9 @@ class Chats:
 
     async def answer(
         self, workspace: str, slug: str | None, headers: dict[str, str]
-    ) -> tuple[str, dict[str, Any]]:
-        """The status and JSON body for a GET of the chat's route."""
-        try:
-            thread = await self.thread(workspace, slug, headers)
-        except Refused as e:
-            return e.status, {"error": e.error}
-        return "200 OK", self.of(workspace, slug, thread)
+    ) -> dict[str, Any]:
+        """The JSON body for a GET of the chat's route; raises Refused."""
+        return self.of(workspace, slug, await self.thread(workspace, slug, headers))
 
     async def tab(
         self, workspace: str, slug: str | None, headers: dict[str, str]

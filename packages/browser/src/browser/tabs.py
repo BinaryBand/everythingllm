@@ -31,6 +31,11 @@ class Tab:
     shot: bytes = b""  # its latest screenshot (JPEG)
     shot_at: float = 0.0
     viewers: int = 0  # live cards streaming it
+    polled_at: float = float(
+        "-inf"
+    )  # when a client last asked for its card (browser.chats)
+    # the last frame drawn (browser.live): what it shows, and the JPEG
+    drawn: tuple[tuple[Any, ...], bytes] | None = None
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     # ref -> its element's name in the last view the agent got, to say what it acts on
     labels: dict[str, str] = field(default_factory=dict)

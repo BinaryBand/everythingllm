@@ -49,6 +49,7 @@ import io
 import json
 import os
 import re
+import zlib
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
@@ -168,7 +169,13 @@ class Live:
             return await live.send(writer, "403 Forbidden", b"Not from here.\n")
         if chat := chats.ROUTE.fullmatch(path):
             return await self.chat(
-                writer, method, chat[1], chat[2], headers, bool(chat[3]), query
+                writer,
+                method,
+                chat[1],
+                chat[2],
+                headers,
+                bool(chat[3]),
+                live.theme(query),
             )
         if method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET only.\n")
@@ -217,11 +224,13 @@ class Live:
         workspace: str,
         thread: str | None,
         headers: dict[str, str],
-        card: bool = False,
-        query: str = "",
+        card: bool,
+        theme: str,
     ) -> None:
         """A chat's cards and how they stand, or (`card`) its tab's card as it is now, for
-        a client with a key (browser.chats)."""
+        a client with a key (browser.chats). The card has an ETag, so a client asking
+        again for a card that hasn't changed (If-None-Match) gets a 304 without it, and
+        asking counts as watching the tab for a while (Runner.watched)."""
         # A web client's preflight, for the Authorization header.
         if method == "OPTIONS":
             return await live.send(writer, "204 No Content", headers=chats.CORS)
@@ -232,16 +241,21 @@ class Live:
         try:
             if card:
                 tab = await self.chats.tab(workspace, thread, headers)
+                tab.polled_at = self.runner.now()
                 shot = await self.runner.screenshot(tab, self.GAP)
-                frame = await self.draw(
-                    tab, shot, self.runner.state(tab), live.theme(query)
-                )
-                return await live.send(
-                    writer, "200 OK", frame, "image/jpeg", headers=chats.CORS
-                )
-            status, body = await self.chats.answer(workspace, thread, headers)
+                frame = await self.draw(tab, shot, self.runner.state(tab), theme)
+                tag = f'"{zlib.crc32(frame):08x}"'
+                cache = {
+                    **chats.CORS,
+                    "ETag": tag,
+                    "Cache-Control": "private, no-cache",
+                }
+                if headers.get("if-none-match") == tag:
+                    return await self.not_modified(writer, cache)
+                return await live.send(writer, "200 OK", frame, "image/jpeg", cache)
+            status, body = "200 OK", await self.chats.answer(workspace, thread, headers)
         except chats.Refused as e:
-            status, body = e.status, {"error": e.error}
+            status, body = e.status, {"error": str(e)}
         except Exception:
             self.runner.log.exception("a chat's browser for a client failed")
             status, body = (
@@ -329,10 +343,28 @@ class Live:
             tab.viewers -= 1
 
     async def draw(self, tab: Tab, shot: bytes, state: str, theme: str) -> bytes:
-        """The tab's frame from its screenshot (picture), drawn off the loop."""
-        return await asyncio.to_thread(
-            picture, shot, tab.workspace, state, tab.title, tab.url, tab.last, theme
-        )
+        """The tab's frame from its screenshot (picture), drawn off the loop; the last one
+        again while what it shows hasn't changed, as for a client asking every second."""
+        shows = (shot, state, tab.title, tab.url, tab.last, theme)
+        if tab.drawn is None or tab.drawn[0] != shows:
+            frame = await asyncio.to_thread(
+                picture, shot, tab.workspace, state, tab.title, tab.url, tab.last, theme
+            )
+            tab.drawn = (shows, frame)
+        return tab.drawn[1]
+
+    @staticmethod
+    async def not_modified(
+        writer: asyncio.StreamWriter, headers: dict[str, str]
+    ) -> None:
+        """A 304, with no body nor its length, then close."""
+        try:
+            writer.write(live.head("304 Not Modified", headers))
+            await writer.drain()
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            await live.close(writer)
 
     async def asked(
         self,

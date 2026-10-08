@@ -12,15 +12,15 @@
 // Once AnythingLLM stops the agent itself, this finds that and leaves the file alone; if
 // the code it looks for has moved, it says so on stderr and leaves it alone too. Either
 // way `uv run hostctl health` says so (`node agent-stop.js --check`): then remove this.
-const fs = require("fs");
+const { patchOnLoad } = require("./patch-on-load");
 
 const TARGET = /[\\/]server[\\/]utils[\\/]chats[\\/]apiChatHandler\.js$/;
 const FILE = "/app/server/utils/chats/apiChatHandler.js";
-// streamChat's agent branch: the cluster starts, then its events stream to the response.
-// chatSync starts one too, but answers at the end and has no response to watch.
-const START = /agentHandler\.startAgentCluster\(\);(?=(?:\s*\/\/[^\n]*)*\s*return eventListener\s*\.streamAgentEvents\(response,)/g;
-// The same branch, from its handler to its stream, for an abort AnythingLLM added itself.
-const BRANCH = /new EphemeralAgentHandler\((?:(?!new EphemeralAgentHandler\()[\s\S])*?\.streamAgentEvents\(response,/g;
+// An agent branch runs from its handler on; streamChat's is the one whose events stream to
+// the response (chatSync's answers at the end, and has no response to watch).
+const HANDLER = "new EphemeralAgentHandler(";
+const STREAM = ".streamAgentEvents(response,";
+const START = "agentHandler.startAgentCluster();";
 const STOPS = /\.abort\(|OnClientDisconnect\(\s*response/;
 // On the same line, so the file's line numbers stay as they are.
 const STOP =
@@ -30,28 +30,16 @@ const STOP =
  *  done: "patched", "upstream" (it stops it already) or "moved" (the code isn't as
  *  expected; left alone). Pure, for the tests and the check. */
 function patch(source) {
-  if ((source.match(BRANCH) || []).some((branch) => STOPS.test(branch))) return { source, state: "upstream" };
-  if ((source.match(START) || []).length !== 1) return { source, state: "moved" };
-  return { source: source.replace(START, `$&${STOP}`), state: "patched" };
+  const parts = source.split(HANDLER);
+  const streaming = parts.flatMap((part, i) => (i > 0 && part.includes(STREAM) ? [i] : []));
+  const branch = (i) => parts[i].slice(0, parts[i].indexOf(STREAM));
+  if (streaming.some((i) => STOPS.test(branch(i)))) return { source, state: "upstream" };
+  if (streaming.length !== 1 || branch(streaming[0]).split(START).length !== 2) return { source, state: "moved" };
+  const i = streaming[0];
+  parts[i] = parts[i].replace(START, `${START}${STOP}`);
+  return { source: parts.join(HANDLER), state: "patched" };
 }
 
 module.exports = { patch };
 
-if (require.main === module && process.argv.includes("--check")) {
-  console.log(patch(fs.readFileSync(FILE, "utf8")).state);
-} else if (!require.main) {
-  // Preloaded (no main module yet). A fork (Bree's scheduled jobs) inherits execArgv.
-  const self = `--require=${__filename}`;
-  if (!process.execArgv.includes(self)) process.execArgv.push(self);
-  const Module = require("module");
-  const compile = Module.prototype._compile;
-  Module.prototype._compile = function (content, filename, ...rest) {
-    if (typeof content === "string" && TARGET.test(filename)) {
-      const done = patch(content);
-      if (done.state === "moved")
-        process.stderr.write(`[agent-stop] ${filename} isn't as expected; a client's Stop won't stop the agent\n`);
-      content = done.source;
-    }
-    return compile.call(this, content, filename, ...rest);
-  };
-}
+patchOnLoad(module, { file: FILE, target: TARGET, patch, tag: "agent-stop", moved: "a client's Stop won't stop the agent" });

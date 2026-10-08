@@ -197,14 +197,28 @@ def test_every_state_of_a_login_request_has_a_card():
         assert light.convert("RGB").getpixel((800, 20)) == THEMES["light"].panel
 
 
-async def ask(port, path, method="GET", key=None):
-    """A request with the key a client sends, if any -> (head, JSON body or None)."""
+async def ask(port, path, method="GET", key=None, headers=""):
+    """A request with the key a client sends, if any -> (head, JSON body, else the body)."""
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     auth = f"Authorization: Bearer {key}\r\n" if key is not None else ""
-    writer.write(f"{method} {path} HTTP/1.1\r\nHost: h\r\n{auth}\r\n".encode())
+    writer.write(f"{method} {path} HTTP/1.1\r\nHost: h\r\n{auth}{headers}\r\n".encode())
     await writer.drain()
     head, _, body = (await reader.read()).partition(b"\r\n\r\n")
-    return head, json.loads(body) if b"application/json" in head else None
+    return head, json.loads(body) if b"application/json" in head else body
+
+
+async def good_key(key):
+    """chats.Check for a client whose key is GOOD."""
+    return None if key == "GOOD" else (403, "No valid api key found.")
+
+
+async def lookup(workspace, slug):
+    """chats.Lookup for career's chats chat-7 and chat-8, and its main chat."""
+    return {
+        ("career", "chat-7"): "7",
+        ("career", "chat-8"): "8",
+        ("career", None): "default",
+    }.get((workspace, slug))
 
 
 def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
@@ -214,14 +228,7 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
 
     async def check(key):
         checked.append(key)
-        return None if key == "GOOD" else (403, "No valid api key found.")
-
-    async def lookup(workspace, slug):
-        return {
-            ("career", "chat-7"): "7",
-            ("career", "chat-8"): "8",
-            ("career", None): "default",
-        }.get((workspace, slug))
+        return await good_key(key)
 
     async def main():
         podman = FakePodman()
@@ -301,64 +308,54 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
 
 def test_a_client_with_a_key_gets_its_chats_card_from_any_origin(tmp_path):
     """The chat's card.jpg is the tab's card as it is now, one JPEG any origin may read, for
-    a key; the card's own address still says nothing of CORS."""
+    a key, with an ETag, and asking for it watches the tab; the card's own address still
+    says nothing of CORS."""
     from browser.chats import Chats
-
-    async def check(key):
-        return None if key == "GOOD" else (403, "No valid api key found.")
-
-    async def lookup(workspace, slug):
-        return {("career", "chat-7"): "7", ("career", None): "default"}.get(
-            (workspace, slug)
-        )
-
-    async def fetch(port, path, key=None):
-        reader, writer = await asyncio.open_connection("127.0.0.1", port)
-        auth = f"Authorization: Bearer {key}\r\n" if key is not None else ""
-        writer.write(f"GET {path} HTTP/1.1\r\nHost: h\r\n{auth}\r\n".encode())
-        await writer.drain()
-        head, _, body = (await reader.read()).partition(b"\r\n\r\n")
-        return head, body
 
     async def main():
         podman = FakePodman()
-        r = Runner(config(tmp_path), podman=podman, now=Clock())
-        server = await live.Live(r, Chats(r, check, lookup)).serve(0)
+        clock = Clock()
+        r = Runner(config(tmp_path), podman=podman, now=clock)
+        server = await live.Live(r, Chats(r, good_key, lookup)).serve(0)
         port = server.sockets[0].getsockname()[1]
         route = "/_live/browser/chat/career/chat-7/card.jpg"
         try:
-            head, body = await fetch(port, route)
-            assert b"401" in head and json.loads(body) == {
-                "error": "No valid api key found."
-            }
+            head, body = await ask(port, route)  # refused as the JSON is, CORS and all
+            assert b"401" in head and body == {"error": "No valid api key found."}
             assert b"Access-Control-Allow-Origin: *" in head
-            head, _ = await fetch(port, route, "BAD")
-            assert b"403" in head
-            head, body = await fetch(port, "/chat/career/nope/card.jpg", "GOOD")
-            assert b"404" in head and json.loads(body) == {"error": "No such chat."}
-            head, body = await fetch(port, route, "GOOD")  # no tab yet
-            assert b"404" in head and json.loads(body) == {
-                "error": "This chat has no browser tab."
-            }
+            head, body = await ask(port, route, key="GOOD")  # no tab yet
+            assert b"404" in head and body == {"error": "This chat has no browser tab."}
             await r.op_open(scope(), "https://linkedin.com/login")
             tab = r.threads[("career", "7")]
-            head, body = await fetch(port, route, "GOOD")
+            session = r.sessions["career"]
+            assert not r.watched(session)
+            head, body = await ask(port, route, key="GOOD")
             assert b"200 OK" in head and b"Content-Type: image/jpeg" in head
             assert b"Access-Control-Allow-Origin: *" in head
-            assert b"Cache-Control: no-store" in head
+            assert b"Cache-Control: private, no-cache" in head
             image = Image.open(io.BytesIO(body))
             assert image.format == "JPEG" and image.width == live.WIDTH
+            assert r.watched(session)  # for a while after the client asked
+            clock.t += 11
+            assert not r.watched(session)
+            # Asked again with its ETag, an unchanged card is a 304 without it.
+            tag = head.split(b"ETag: ")[1].split(b"\r\n")[0].decode()
+            again = f"If-None-Match: {tag}\r\n"
+            head, body = await ask(port, route, key="GOOD", headers=again)
+            assert b"304 Not Modified" in head and body == b""
+            assert b"Content-Length" not in head and b"Access-Control" in head
+            tab.moved("Clicked e1")
+            head, _ = await ask(port, route, key="GOOD", headers=again)
+            assert b"200 OK" in head and tag.encode() not in head
             light = THEMES["light"].panel
-            _, body = await fetch(
-                port, "/chat/career/chat-7/card.jpg?theme=light", "GOOD"
-            )
+            _, body = await ask(port, f"{route}?theme=light", key="GOOD")
             corner = Image.open(io.BytesIO(body)).convert("RGB").getpixel((40, 8))
             assert all(abs(x - y) <= 6 for x, y in zip(corner, light, strict=True))
             # The main chat's, from the workspace's route.
-            head, _ = await fetch(port, "/chat/career/card.jpg", "GOOD")
+            head, _ = await ask(port, "/chat/career/card.jpg", key="GOOD")
             assert b"404" in head
             await r.op_open(scope(thread="default"), "https://example.com/")
-            head, _ = await fetch(port, "/chat/career/card.jpg", "GOOD")
+            head, _ = await ask(port, "/chat/career/card.jpg", key="GOOD")
             assert b"200 OK" in head and b"image/jpeg" in head
             # The card's own address, which needs no key, gives no other origin a read.
             reader, writer = await get(port, f"/_live/browser/{tab.id}.jpg")

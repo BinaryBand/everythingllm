@@ -43,32 +43,28 @@ case "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:300
 esac
 
 echo "AnythingLLM"
-# thread-scope.js gives skills an API or Telegram chat's thread, which AnythingLLM leaves out;
-# without it, every such chat in a workspace shares one browser tab and sandbox scope.
-if [ "$(podman container inspect -f '{{.State.Running}}' systemd-anythingllm 2>/dev/null)" != true ]; then
-  fail "AnythingLLM's container isn't running, so thread-scope.js can't be checked"
-else
-  case "$(podman exec systemd-anythingllm printenv NODE_OPTIONS 2>/dev/null)" in
-    *thread-scope.js*) loaded=yes ;; *) loaded=no ;;
-  esac
+# The preloads that patch AnythingLLM's own files as they load (anythingllm/patch-on-load.js):
+# preload <file> <what it does> <what AnythingLLM now does itself> <what goes wrong without it>
+preload() {
+  case "$node_options" in *"$1"*) loaded=yes ;; *) loaded=no ;; esac
   # Only stdout: a warning node prints on stderr isn't the patch's state.
-  case "$loaded/$(podman exec -e NODE_OPTIONS= systemd-anythingllm node /mcp/anythingllm/thread-scope.js --check 2>/dev/null)" in
-    yes/patched) ok "API and Telegram chats give skills their thread (thread-scope.js)" ;;
-    */upstream) printf '  NOTE  %s\n' "AnythingLLM gives skills an API chat's thread itself: drop anythingllm/thread-scope.js" ;;
-    no/*) fail "thread-scope.js isn't preloaded: uv run hostctl units" ;;
-    *) fail "thread-scope.js no longer fits AnythingLLM's ephemeral.js: API chats share their workspace's scope" ;;
+  case "$loaded/$(podman exec -e NODE_OPTIONS= systemd-anythingllm node "/mcp/anythingllm/$1" --check 2>/dev/null)" in
+    yes/patched) ok "$2 ($1)" ;;
+    */upstream) printf '  NOTE  %s\n' "$3: drop anythingllm/$1" ;;
+    no/*) fail "$1 isn't preloaded: uv run hostctl units" ;;
+    *) fail "$1 no longer fits AnythingLLM's code: $4" ;;
   esac
-  # agent-stop.js stops an API chat's agent when its client goes; without it, a Stop in a
-  # client app leaves the agent working and saving its answer.
-  case "$(podman exec systemd-anythingllm printenv NODE_OPTIONS 2>/dev/null)" in
-    *agent-stop.js*) loaded=yes ;; *) loaded=no ;;
-  esac
-  case "$loaded/$(podman exec -e NODE_OPTIONS= systemd-anythingllm node /mcp/anythingllm/agent-stop.js --check 2>/dev/null)" in
-    yes/patched) ok "a client's Stop stops an API chat's agent (agent-stop.js)" ;;
-    */upstream) printf '  NOTE  %s\n' "AnythingLLM stops an API chat's agent when its client goes: drop anythingllm/agent-stop.js" ;;
-    no/*) fail "agent-stop.js isn't preloaded: uv run hostctl units" ;;
-    *) fail "agent-stop.js no longer fits AnythingLLM's apiChatHandler.js: a client's Stop leaves the agent working" ;;
-  esac
+}
+if [ "$(podman container inspect -f '{{.State.Running}}' systemd-anythingllm 2>/dev/null)" != true ]; then
+  fail "AnythingLLM's container isn't running, so its preloads can't be checked"
+else
+  node_options=$(podman exec systemd-anythingllm printenv NODE_OPTIONS 2>/dev/null)
+  preload thread-scope.js "API and Telegram chats give skills their thread" \
+    "AnythingLLM gives skills an API chat's thread itself" \
+    "every API chat in a workspace shares one browser tab and sandbox scope"
+  preload agent-stop.js "a client's Stop stops an API chat's agent" \
+    "AnythingLLM stops an API chat's agent when its client goes" \
+    "a client's Stop leaves the agent working and saving its answer"
 fi
 
 echo "Routes"

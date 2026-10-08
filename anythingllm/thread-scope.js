@@ -9,7 +9,7 @@
 // Once AnythingLLM passes it itself, this finds thread_id there and leaves the file alone;
 // if the code it looks for has moved, it says so on stderr and leaves it alone too. Either
 // way `uv run hostctl health` says so (`node thread-scope.js --check`): then remove this.
-const fs = require("fs");
+const { patchOnLoad } = require("./patch-on-load");
 
 const TARGET = /[\\/]server[\\/]utils[\\/]agents[\\/]ephemeral\.js$/;
 const FILE = "/app/server/utils/agents/ephemeral.js";
@@ -27,21 +27,4 @@ function patch(source) {
 
 module.exports = { patch };
 
-if (require.main === module && process.argv.includes("--check")) {
-  console.log(patch(fs.readFileSync(FILE, "utf8")).state);
-} else if (!require.main) {
-  // Preloaded (no main module yet). A fork (Bree's scheduled jobs) inherits execArgv.
-  const self = `--require=${__filename}`;
-  if (!process.execArgv.includes(self)) process.execArgv.push(self);
-  const Module = require("module");
-  const compile = Module.prototype._compile;
-  Module.prototype._compile = function (content, filename, ...rest) {
-    if (typeof content === "string" && TARGET.test(filename)) {
-      const done = patch(content);
-      if (done.state === "moved")
-        process.stderr.write(`[thread-scope] ${filename} isn't as expected; API and Telegram chats share their workspace's scope\n`);
-      content = done.source;
-    }
-    return compile.call(this, content, filename, ...rest);
-  };
-}
+patchOnLoad(module, { file: FILE, target: TARGET, patch, tag: "thread-scope", moved: "API and Telegram chats share their workspace's scope" });

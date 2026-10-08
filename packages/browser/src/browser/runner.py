@@ -146,6 +146,9 @@ DRIVER_SECONDS = 42
 LIMIT = 8 << 20  # a driver's reply: a screenshot is a few hundred KB
 USER_KEYS = {"Enter", "Tab", "Backspace"}  # as browser.driver's: the view's key buttons
 ACTIVE = 30  # seconds after the agent's last op on a tab that it still reads as working
+POLLED = (
+    10  # seconds after a client last asked for a tab's card that it still watches it
+)
 # The ops that are the agent at work in its chat's tab (not wait_approval, which waits).
 WORK = {"open", "act", "read", "handoff", "close", "logins", "login", "code", "passkey",
         "ask_login"}  # fmt: skip
@@ -275,8 +278,10 @@ class Runner(hostrpc.Service):
             self.reserved.discard(slot[0])
 
     def watched(self, s: Session) -> bool:
+        """A live card streams one of its tabs, a client asks for one's card (browser.chats)
+        or the take-over view is open."""
         return s.viewers > 0 or any(
-            t.viewers
+            t.viewers or self.now() - t.polled_at < POLLED
             for t in self.tabs.values()
             if t.workspace == s.workspace and t.open
         )

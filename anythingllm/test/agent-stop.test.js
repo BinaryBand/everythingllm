@@ -1,10 +1,8 @@
-const os = require("os");
 const fs = require("fs");
-const vm = require("vm");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { runPreloaded, parsesAsModule } = require("./preload");
 
 const PRELOAD = path.join(__dirname, "..", "agent-stop.js");
 const { patch } = require(PRELOAD);
@@ -49,11 +47,7 @@ module.exports = { chatSync, streamChat };
 /** Run `node --require agent-stop.js` on a handler saved as .../server/utils/chats/apiChatHandler.js:
  *  streamChat with a response that closes, ended or not, and what the agent was told. */
 function load(source, ended) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-stop-"));
-  const file = path.join(dir, "server", "utils", "chats", "apiChatHandler.js");
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, source);
-  const script = `const { EventEmitter } = require("events");
+  const { out, stderr } = runPreloaded(PRELOAD, "server/utils/chats/apiChatHandler.js", source, (file) => `const { EventEmitter } = require("events");
     const { streamChat } = require(${JSON.stringify(file)});
     const told = [];
     const agentHandler = { startAgentCluster() {}, log: (m) => told.push(m), aibitat: { abort: () => told.push("abort") } };
@@ -62,11 +56,8 @@ function load(source, ended) {
     const eventListener = { streamAgentEvents: () => new Promise(() => {}) };
     streamChat({ response, agentHandler, eventListener });
     response.emit("close");
-    console.log(JSON.stringify(told));`;
-  const run = spawnSync(process.execPath, [`--require=${PRELOAD}`, "-e", script], { encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "" } });
-  fs.rmSync(dir, { recursive: true, force: true });
-  assert.equal(run.status, 0, run.stderr);
-  return { told: JSON.parse(run.stdout), stderr: run.stderr };
+    console.log(JSON.stringify(told));`);
+  return { told: out, stderr };
 }
 
 test("a client that goes before the answer ends stops the agent", () => {
@@ -107,5 +98,5 @@ test("the container's own apiChatHandler.js takes the patch and still parses", {
   const done = patch(fs.readFileSync(REAL, "utf8"));
   assert.notEqual(done.state, "moved", "AnythingLLM's apiChatHandler.js changed: see agent-stop.js");
   if (done.state === "patched") assert.equal(done.source.match(/response\.on\("close", \(\) => \{ if \(!response\.writableEnded\)/g).length, 1);
-  new vm.Script(`(function (exports, require, module, __filename, __dirname) {${done.source}\n})`, { filename: REAL });
+  parsesAsModule(done.source, REAL);
 });

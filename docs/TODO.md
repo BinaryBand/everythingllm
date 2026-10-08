@@ -11,19 +11,15 @@ Important, and next for apps once the list template has been used for a while. T
 - **Opt-in per workspace,** turned on the way web access is (the user approves it), and a template pinned by its hash when an app is made, so the workspace changing its template doesn't silently change apps already made.
 - **The declarative route first:** it keeps a tick instant and the host free of workspace code; the repo's list template would be rewritten in it to prove it.
 
-## Finish putting 2026-10-08's changes live
+## Checks left from 2026-10-08's changes
 
-Done live on 2026-10-08: sandbox-runner, agents-runner, research-runner, the gateway, the egress proxy (it knows `sandbox-web`) and the static server restarted onto the new code; sites-runner stopped and its installed unit removed; `sites` dropped from AnythingLLM's MCP servers and the `write-entry` and `delete-entry` skills from storage; the "Daily News Page" job deleted; the news data deleted; the research entries moved to `~/archive/everythingllm/sites/`; sites-runner's venv and `.env` share, and storage's `sites/`, `sandbox-build/` and `mcp/` removed. Web and model access checked end to end through the runner's socket (a web workspace reaches example.com but not the tailnet and sees only its own `/shared`; another doesn't; a model call answers with no key in the run, is logged, and its socket goes after the run). Left, since the auto-mode check refused them or they need a person:
+Everything that could be done without a person is live: the runners, gateway, egress proxy and static server run the new code, the installed units match the templates, the skills, the default prompt and its version are deployed, and the apps' routes answer. Left:
 
-- **`uv run hostctl deploy`.** Ships the skills (the new `sandbox-access`; deep-research, run-code, remind-once and schedule-job changed; `_lib`), the system prompt and its version, and restarts AnythingLLM. Until then the agent has no `sandbox-access` skill and its deep-research skill still says reports go to the research site (the runner refuses a run if the agent fills in its `site`).
-- **`uv run hostctl units`.** Renders research-runner's template (its pages, entries and `sandbox-build` mounts are gone; until then its old unit's `ExecStartPre` makes those folders again on a restart) and the static server's (`ExecStartPre` makes its bind sources).
 - **The machine's route for the article writer.** `tailscale serve --https=8445 --set-path=/news/write off` (nothing listens on :8448 now).
-- **The machine's routes for apps** (the sandbox runner's apps server, `sandbox.appsweb`): `https://<PUBLIC_HOST>:8445/_live/apps/` and `https://<PUBLIC_HOST>:8447/_apps/` to `http://127.0.0.1:8455` (with tailscale serve: `tailscale serve --bg --https=8445 --set-path=/_live/apps http://127.0.0.1:8455` and the same with `--https=8447 --set-path=/_apps`). `uv run hostctl routes` checks them. Until then an app's card doesn't load in the chat and its page can't save.
-- **Apps, end to end, once deployed and routed:** "put oat milk on the groceries list" makes the app and shows its card; ticking on its page moves the card in the chat; an older tab of the page says to reload.
-- **Each workspace's prompt.** career, cloud, algorithms and education have their own copy of the block (`uv run hostctl health` lists them); `update-prompt` in each, the user's call.
+- **Apps, end to end, in a chat:** "put oat milk on the groceries list" makes the app and shows its card; ticking on its page moves the card in the chat; an older tab of the page says to reload.
+- **Each workspace's prompt.** career, cloud, algorithms, education and parity-scratch have their own copy of the block (`uv run hostctl health` lists them); `update-prompt` in each, the user's call.
 - **Checks that need a person in a chat:** `sandbox-access` turning web on shows AnythingLLM's approval prompt, and a "no" or an always-allowed skill leaves it off; a deep research run from a UI chat lands in the workspace's documents with a notice quoting its findings; `show-image` puts a chart in the chat.
 - **The Nilson app** no longer gets a report link (ntfy's `Click`) when a research run ends, since there's no report page; check what it shows instead.
-- **`hostctl units` doesn't retire a Quadlet container whose template is gone** (only host units in `~/.config/systemd/user`); sites-runner's was removed by hand. Retire one the way a dropped host unit is.
 
 ## Make the test suite faster
 
@@ -46,6 +42,7 @@ The relay and research-runner went live in their containers on 2026-10-07 (see t
   - Run one Nilson chat to the end through the relay, with its ntfy notice.
 - **Once the containers have run for a week:** delete the old host venvs `~/.local/share/everythingllm/venvs/{relay,research}`, and the leftover `browser-net` network (`podman network rm browser-net`).
 - **Rolling a container back is partly by hand.** `hostctl.units.retired()` only looks in `~/.config/systemd/user`, so going back to a host unit means moving `~/.config/containers/systemd/<x>.container` aside yourself, then restoring its template to `host/systemd/` from git and running `uv run hostctl units`. A `uv run hostctl units --host <app>` could do both.
+- **`hostctl units` doesn't retire a Quadlet container whose template is gone** (only host units in `~/.config/systemd/user`); sites-runner's was removed by hand. Retire one the way a dropped host unit is.
 
 ## Saved logins in the browser: loose ends
 

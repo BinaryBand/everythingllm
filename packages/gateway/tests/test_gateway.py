@@ -11,6 +11,7 @@ import hostrpc
 import pytest
 import research.job
 import sandbox.runner
+import sandbox.workspace
 from gateway import agents as gateway_agents
 from gateway import app, grants
 from gateway import research as gateway_research
@@ -510,7 +511,7 @@ def test_a_client_name_that_isnt_a_sandbox_key_gets_no_scope(name):
 
 
 def test_the_gateways_copies_of_the_sandboxs_limits_match_it():
-    assert gateway_sandbox.KEY_RE.pattern == sandbox.runner.KEY_RE.pattern
+    assert gateway_sandbox.KEY_RE.pattern == sandbox.workspace.KEY_RE.pattern
     assert gateway_sandbox.RUNNER_WAIT == sandbox.runner.WAIT
     assert gateway_sandbox.LIMIT == sandbox.runner.LIMIT
     assert gateway_agents.LIMIT == agents.runner.LIMIT  # a finished wait can be 6 MB
@@ -519,7 +520,7 @@ def test_the_gateways_copies_of_the_sandboxs_limits_match_it():
     assert app.CLIENT_RE.fullmatch(longest) and not app.CLIENT_RE.fullmatch(
         longest + "a"
     )
-    assert sandbox.runner.KEY_RE.fullmatch(gateway_sandbox.WORKSPACE + longest)
+    assert sandbox.workspace.KEY_RE.fullmatch(gateway_sandbox.WORKSPACE + longest)
 
 
 def test_a_write_lands_in_the_clients_folder_on_the_real_runner(

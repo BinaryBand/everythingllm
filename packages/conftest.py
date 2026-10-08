@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 PACKAGES = Path(__file__).resolve().parent
-SANDBOX_IMAGE = "localhost/everythingllm-sandbox"  # sandbox.runner.IMAGE
+SANDBOX_IMAGE = "localhost/everythingllm-sandbox"  # sandbox.containers.IMAGE
 SITEBUILD = PACKAGES / "sandbox" / "src" / "sandbox" / "sitebuild.py"
 THEMES = PACKAGES / "sandbox" / "zola" / "themes"
 

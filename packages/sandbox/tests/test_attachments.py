@@ -7,8 +7,9 @@ import unicodedata
 from pathlib import Path
 
 import pytest
-from sandbox import runner
-from sandbox.runner import Config, Runner
+from sandbox import attachments, workspace
+from sandbox.runner import Runner
+from sandbox.workspace import Config
 from test_runner import A2, A, FakePodman, cfg, go, make, project, work  # noqa: F401
 
 CLIENT = {"workspace": "client-acme", "thread": "gateway", "gateway": True}
@@ -212,8 +213,8 @@ def test_nothing_is_written_through_a_link_a_run_left_in_work(
 
 
 def test_the_caps(cfg, uploads, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(runner, "ATTACHMENT_BYTES", 100)
-    monkeypatch.setattr(runner, "ATTACHMENTS_BYTES", 150)
+    monkeypatch.setattr(attachments, "ATTACHMENT_BYTES", 100)
+    monkeypatch.setattr(attachments, "ATTACHMENTS_BYTES", 150)
     files = [
         upload(uploads, "big-1.json", "big.csv", "x" * 100),
         upload(uploads, "a-2.json", "a.csv", "a" * 40),
@@ -229,7 +230,7 @@ def test_the_caps(cfg, uploads, monkeypatch):  # noqa: F811
         ),
     ]
     # Past ATTACHMENTS_MAX, the list isn't whole, so nothing is removed for being left out.
-    monkeypatch.setattr(runner, "ATTACHMENTS_MAX", 1)
+    monkeypatch.setattr(attachments, "ATTACHMENTS_MAX", 1)
     res = run(make(cfg), attachments=[files[2], files[1]])
     assert res["attachment_notes"][0] == "only the first 1 attachments were copied"
     assert (attached(cfg) / "a.csv").is_file()
@@ -240,7 +241,7 @@ def test_attachments_past_the_workspaces_limit_are_left_out(
     uploads,
     monkeypatch,
 ):
-    monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 1000)
+    monkeypatch.setattr(workspace, "WORKSPACE_MAX_BYTES", 1000)
     files = [
         upload(uploads, "a-1.json", "a.csv", "a" * 600),
         upload(uploads, "b-2.json", "b.csv", "b" * 600),
@@ -292,14 +293,14 @@ def test_a_call_from_an_older_or_newer_skill_still_runs(cfg):  # noqa: F811
     ],
 )
 def test_attachment_names(title, taken, name):
-    assert runner.attachment_name(title, taken) == name
+    assert attachments.attachment_name(title, taken) == name
 
 
 def test_a_long_title_makes_a_name_of_at_most_100_characters():
     taken = set()
     for _ in range(12):
-        name = runner.attachment_name("x" * 300 + ".csv", taken)
-        assert len(name) <= runner.NAME_MAX and name.endswith(".csv")
+        name = attachments.attachment_name("x" * 300 + ".csv", taken)
+        assert len(name) <= attachments.NAME_MAX and name.endswith(".csv")
         taken.add(name)
     assert len(taken) == 12
 

@@ -1,12 +1,13 @@
 """Model access for a sandbox run: a model the run's code can ask, with no key in the run.
 
-A workspace the user gave model access (the sandbox-access skill; runner.Access) gets, for
-each run, a socket of the run's own, served here in sandbox-runner and mounted into the
-container (runner.MODELS_DIR). The socket says who is calling: one run, of one workspace
-and thread, so nothing a request says about that is trusted. Its one op, `ask`, sends the
-messages to a model of ALLOWED through packages/llm, with the key from AnythingLLM's .env,
-read here on the host; the run never sees it. The code in the run asks with the stdlib
-client runner copies into its /sandbox (model_client.py, as everythingllm_models.py).
+A workspace the user gave model access (the sandbox-access skill; sandbox.access.Access)
+gets, for each run, a socket of the run's own, served here in sandbox-runner and mounted
+into the container (sandbox.containers.MODELS_DIR). The socket says who is calling: one
+run, of one workspace and thread, so nothing a request says about that is trusted. Its one
+op, `ask`, sends the messages to a model of ALLOWED through packages/llm, with the key from
+AnythingLLM's .env, read here on the host; the run never sees it. The code in the run asks
+with the stdlib client the runner copies into its /sandbox (model_client.py, as
+everythingllm_models.py).
 
 A workspace has a budget of tokens a day, in and out, in the user's time zone (its Access's
 daily_tokens, DAILY_TOKENS by default): a call is refused once the day's calls have used it.

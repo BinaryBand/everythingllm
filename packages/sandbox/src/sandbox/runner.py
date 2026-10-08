@@ -73,43 +73,17 @@ own folders, puts the theme it names in place (the repo's from /system/themes, o
 workspace's from /shared/<it>/themes), and builds it. The runner copies the output into
 /public/<slug> (plain files only), so a site goes live like any page.
 
-A page's title for its card, and what its CSP blocks and its notices, are read without
-following a symlink: a run could leave one in /public pointing at another workspace's
-files.
-
-Config (environment):
-  ANYTHINGLLM_STORAGE, PUBLIC_HOST
-                    this machine's storage directory and HTTPS name, from host.env
-                    (default /srv/anythingllm/storage; PUBLIC_HOST is required, since
-                    egress.toml needs it to load)
-  SANDBOX_SOCKET    the Unix socket to listen on (default <storage>/everythingllm/sandbox/runner.sock)
-  SANDBOX_ROOT      workspace folders, host-only (default
-                    ~/.local/share/everythingllm/sandbox/workspaces);
-                    run scripts go in its `.runs` folder
-  SANDBOX_SYSTEM_THEMES  the themes mounted at /system/themes (default the repo's
-                         packages/sandbox/zola/themes)
-  SANDBOX_PUBLIC    every workspace's /public, as <workspace>/ (default
-                    ~/.local/share/everythingllm/sandbox/public)
-  SANDBOX_PUBLIC_URL  public URL of SANDBOX_PUBLIC (default https://<PUBLIC_HOST>:8447/)
-  SANDBOX_SITE_DIR  the pages site's root, where the link cards and shown images are
-                    saved (default ~/.local/share/everythingllm/pages/public)
-  SANDBOX_SITE_URL  public URL of SANDBOX_SITE_DIR (default https://<PUBLIC_HOST>:8445/)
-  SANDBOX_UPLOADS   AnythingLLM's chat attachments, whose text a run gets in
-                    /work/attachments (default <storage>/direct-uploads)
-  SANDBOX_ACCESS    each workspace's web and model access (default
-                    ~/.local/share/everythingllm/sandbox/access.json)
-  ANYTHINGLLM_ENV   AnythingLLM's .env, for the model keys (default <storage>/.env)
-  USER_TIMEZONE     whose day a model budget is (sandbox.models)
-  APPS_PORT         the apps server's port (sandbox.appsweb; default 8455)
+The runner's parts are modules of their own: sandbox.workspace (a call's scope, its
+folders and their limits), sandbox.access, sandbox.containers (podman, and each
+container's arguments), sandbox.pages (/public, and show_image's images) and
+sandbox.attachments. Its config, and the environment it's read from, is
+sandbox.workspace's Config.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
-import html as htmllib
-import io
 import json
 import logging
 import os
@@ -118,703 +92,78 @@ import secrets
 import shutil
 import signal
 import stat
-import tempfile
 import time
-import unicodedata
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass, field, replace
-from itertools import chain
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import chatimage
 import chatimage.card
-import hostenv
 import hostrpc
-from egress import config as egress_config
 from hostrpc import safefs
-from PIL import Image
 
 from sandbox import apps as app_templates
-from sandbox import appsweb
+from sandbox import appsweb, pages, workspace
 from sandbox import models as model_access
+from sandbox.access import (
+    MAX_DAILY_TOKENS,
+    NO_ACCESS,
+    Access,
+    read_access,
+    valid_budget,
+    write_access,
+)
 from sandbox.apps.tokens import Tokens
+from sandbox.attachments import sync_attachments
+from sandbox.containers import (
+    IMAGE,
+    LABEL,
+    PROXY_CONTAINER,
+    Podman,
+    model_dir,
+    podman,
+    prepare,
+    prepare_build,
+)
 from sandbox.errors import Busy, NoSuchApp, SandboxError
-from sandbox.names import KEY, SLUG
+from sandbox.names import SLUG
+from sandbox.pages import LIST_MAX, Pages
+from sandbox.workspace import (
+    PROFILE,
+    SLUG_RE,
+    WEB_PROFILE,
+    Config,
+    Scope,
+    existing_scope,
+    gc_threads,
+    make_scope,
+    over_quota,
+    public_changes,
+    remove_path,
+    resolve,
+    snapshot,
+    split,
+    write_regular,
+)
 
 log = logging.getLogger("sandbox-runner")
 # Big enough for a run's output, which the runner caps well below this.
 LIMIT = 8 * 1024 * 1024
 
-
-# Also named in hostctl's sandbox-images (cli.py).
-IMAGE = "localhost/everythingllm-sandbox"
-PROFILE = "sandbox"  # egress.toml's profile, whose addresses the runs take
-WEB_PROFILE = "sandbox-web"  # its profile for the runs of a workspace with web access
-PROXY_CONTAINER = "systemd-egress-proxy"  # the egress proxy, as Quadlet names it
-LABEL = "everythingllm-sandbox=1"
-
 LANGUAGES = {"python": ("main.py", "python"), "bash": ("main.sh", "bash")}
-KEY_RE = re.compile(f"^{KEY}$")
-# The MCP gateway's clients' workspaces (gateway.sandbox): kept for scopes that say
-# "gateway": true, which AnythingLLM's skills never do, so a workspace someone happens to
-# name "Client X" can't share a gateway client's folders.
-CLIENT_PREFIX = "client-"
-SLUG_RE = re.compile(f"^{SLUG}$")
-# Shared and system folders are data: nothing in them runs as ./file.
-DATA_RW = "rw,noexec,nosuid,nodev"
-DATA_RO = "ro,noexec,nosuid,nodev"
-REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/sandbox/src/sandbox/
-SYSTEM_THEMES = REPO / "packages" / "sandbox" / "zola" / "themes"  # the repo's themes
-MEMORY = "1g"
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
 BUILD_TIMEOUT = 60  # a site build, assembling included
-SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
-MODEL_CLIENT = Path(__file__).with_name("model_client.py")  # a run's way to ask a model
-MODELS_DIR = "/run/everythingllm"  # where a run with model access finds its socket
-OUTPUT_BYTES = 20_000  # per stream of a run
-WRITE_BYTES = 1_000_000  # op_write
-WORKSPACE_WARN_BYTES = 4 << 30
-WORKSPACE_MAX_BYTES = 5 << 30  # no new runs or writes past this; deletes still work
-# A run is stopped if, while it runs, the workspace grows past WORKSPACE_MAX_BYTES and
-# RUN_SLACK, or holds more than MAX_FILES files and folders (hidden ones too): looked at
-# every WATCH_SECONDS, and no one file it writes can be over FILE_MAX_BYTES (RLIMIT_FSIZE).
-RUN_SLACK = 1 << 30
-MAX_FILES = 200_000
-WATCH_SECONDS = 3.0
-FILE_MAX_BYTES = 2 << 30
-OPEN_FILES = 4096
-PUBLISH_MAX_BYTES = 500 << 20  # what publish or a build copies into /public at once
-# show_image: the images it puts on the pages site for the chat (`IMAGES/<workspace>/`), by
-# the format Pillow reads in the file's header, at most IMAGE_MAX_BYTES each; past
-# IMAGES_MAX_BYTES a workspace's oldest go, and old chats show them broken.
-IMAGES = "_images"
-IMAGE_FORMATS = {"PNG": "png", "JPEG": "jpg", "GIF": "gif", "WEBP": "webp"}
-IMAGE_MAX_BYTES = 10 << 20
-IMAGES_MAX_BYTES = 500 << 20
+WATCH_SECONDS = 3.0  # how often a run's workspace is looked at (watch)
 APP_DATA_BYTES = 1 << 20  # an app's data.json, at most
 APP_ACTIONS = ("create", "do", "show", "list", "delete")
 APP_DATA_RE = re.compile(rf"/project/apps/({SLUG})/data\.json")
-THREAD_MAX_AGE = 7 * 24 * 3600
-LIST_MAX = 200  # files named in a run's changed list
 # A request answers within WAIT; a run that's still going carries on, and the skill waits
 # on it again with op_wait.
 WAIT = 45
 RESULT_KEEP = 3600  # how long a finished run's result can still be fetched
-CSP_SCAN = 200  # HTML and .js files of a changed page checked (blocked, notices)
-# A chat's attachments, as text in /work/attachments (sync_attachments): AnythingLLM keeps
-# each one's text as <uploads>/<name>-<uuid>.json, and the skill names the chat's.
-ATTACHMENTS = "attachments"
-# In it: each copy's source and hash, so a copy of a detached file can go.
-MANIFEST = ".manifest.json"
-ATTACHMENTS_MAX = 50  # named in one run
-ATTACHMENT_BYTES = 50 << 20  # one source file, at most
-ATTACHMENTS_BYTES = 200 << 20  # the sources read for one run, at most
-UPLOAD_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,250}\.json$")
-# Names that keep their extension; the rest become .txt.
-TEXT_TYPES = ("csv", "tsv", "txt", "md", "json")
-NAME_MAX = 100
-
-# What podman produced: exit code, stdout, stderr, and whether it was killed for time.
-PodmanResult = tuple[int, str, str, bool]
-Podman = Callable[[list[str], float | None, str | None], Awaitable[PodmanResult]]
-
-
-def joined(head: bytes | bytearray, tail: bytes | bytearray, cut: int) -> str:
-    """Text kept from both ends of something longer; the end of a traceback matters most."""
-    gap = f"\n… [{cut} bytes cut] …\n" if cut else ""
-    return head.decode(errors="replace") + gap + tail.decode(errors="replace")
-
-
-async def capture(stream: asyncio.StreamReader, limit: int) -> str:
-    """Read a stream to the end, keeping its first tenth of `limit` bytes and the rest from its end."""
-    keep_head = limit // 10
-    keep_tail = limit - keep_head
-    head = bytearray()
-    tail = bytearray()
-    cut = 0
-    while chunk := await stream.read(65536):
-        if len(head) < keep_head:
-            take = keep_head - len(head)
-            head += chunk[:take]
-            chunk = chunk[take:]
-        tail += chunk
-        if len(tail) > keep_tail:
-            cut += len(tail) - keep_tail
-            del tail[: len(tail) - keep_tail]
-    return joined(head, tail, cut)
-
-
-async def podman(
-    args: list[str], timeout: float | None, kill: str | None
-) -> PodmanResult:
-    """Run podman; on timeout, kill the container named `kill` and report it."""
-    proc = await asyncio.create_subprocess_exec(
-        "podman",
-        *args,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    assert proc.stdout is not None and proc.stderr is not None  # both are PIPEs
-    reading = asyncio.gather(
-        capture(proc.stdout, OUTPUT_BYTES), capture(proc.stderr, OUTPUT_BYTES)
-    )
-    timed_out = False
-    try:
-        await asyncio.wait_for(proc.wait(), timeout)
-    except TimeoutError:
-        timed_out = True
-        if kill:
-            killer = await asyncio.create_subprocess_exec(
-                "podman",
-                "kill",
-                kill,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            try:  # a hung podman mustn't keep the run, its lock and its slot forever
-                await asyncio.wait_for(killer.wait(), 30)
-            except TimeoutError:
-                killer.kill()
-                await killer.wait()
-        try:
-            await asyncio.wait_for(proc.wait(), 30)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-    out, err = await reading
-    return proc.returncode or 0, out, err, timed_out
-
-
-@dataclass
-class Config:
-    socket: Path
-    root: Path
-    system_themes: Path
-    site_dir: Path
-    site_url: str
-    # egress-net, the sandbox profile's addresses (one slot each) and the proxy's URL; and
-    # for a workspace with web access, its profile's and the proxy's public-only port.
-    network: str = ""
-    ips: tuple[str, ...] = ()
-    proxy: str = ""
-    web_ips: tuple[str, ...] = ()
-    public_proxy: str = ""
-    access_file: Path = Path("/nonexistent/access.json")  # SANDBOX_ACCESS
-    # Model access: AnythingLLM's .env (the keys, read here, never in a run) and the log.
-    model_env: Path = Path("/nonexistent/.env")
-    model_log: Path = Path("/nonexistent/models")
-    # Each run's model socket, in a folder of its own: a short path, as AF_UNIX's are.
-    model_sockets: Path = Path("/nonexistent/m")
-    # Each app's write-back token, host-only; the apps server's port (sandbox.appsweb),
-    # with none none served.
-    app_state: Path = Path("/nonexistent/apps")
-    apps_port: int | None = None
-    public_root: Path = Path("/nonexistent")
-    public_url: str = "http://127.0.0.1:8447/"
-    uploads: Path = Path("/nonexistent")  # AnythingLLM's direct-uploads
-
-    @property
-    def scripts(self) -> Path:
-        return self.root / ".runs"
-
-    @classmethod
-    def from_env(cls) -> Config:
-        get = os.environ.get
-        egress = egress_config.load()  # ValueError without PUBLIC_HOST
-        host = os.environ["PUBLIC_HOST"]
-        return cls(
-            socket=hostenv.socket_path("sandbox", "SANDBOX_SOCKET"),
-            network=egress.network,
-            ips=tuple(egress.profiles[PROFILE].ips.values()),
-            proxy=egress.url,
-            web_ips=tuple(
-                egress.profiles[WEB_PROFILE].ips.values()
-                if WEB_PROFILE in egress.profiles
-                else ()
-            ),
-            public_proxy=egress.public_url,
-            access_file=Path(
-                get("SANDBOX_ACCESS", hostenv.data_dir() / "sandbox" / "access.json")
-            ),
-            model_env=Path(get("ANYTHINGLLM_ENV", hostenv.storage() / ".env")),
-            model_log=hostenv.data_dir() / "sandbox" / "models",
-            model_sockets=hostenv.data_dir() / "sandbox" / "m",
-            app_state=hostenv.data_dir() / "sandbox" / "apps",
-            apps_port=int(get("APPS_PORT") or appsweb.PORT),
-            root=Path(
-                get("SANDBOX_ROOT", hostenv.data_dir() / "sandbox" / "workspaces")
-            ),
-            system_themes=Path(get("SANDBOX_SYSTEM_THEMES", SYSTEM_THEMES)),
-            site_dir=Path(get("SANDBOX_SITE_DIR", hostenv.site_dir())),
-            site_url=get(
-                "SANDBOX_SITE_URL",
-                f"https://{host}:8445/",
-            ),
-            public_root=Path(
-                get("SANDBOX_PUBLIC", hostenv.data_dir() / "sandbox" / "public")
-            ),
-            public_url=get(
-                "SANDBOX_PUBLIC_URL",
-                f"https://{host}:8447/",
-            ),
-            uploads=Path(get("SANDBOX_UPLOADS", hostenv.storage() / "direct-uploads")),
-        )
-
-
-@dataclass(frozen=True)
-class Access:
-    """What a workspace's runs may reach beyond PyPI: the public web (`web`), and a model
-    (`models`, up to `daily_tokens` a day; sandbox.models). Off unless the user turned it
-    on (op_access, the sandbox-access skill)."""
-
-    web: bool = False
-    models: bool = False
-    daily_tokens: int = model_access.DAILY_TOKENS
-
-
-NO_ACCESS = Access()
-MAX_DAILY_TOKENS = 10_000_000
-
-
-def valid_budget(daily_tokens: Any) -> bool:
-    return (
-        isinstance(daily_tokens, int)
-        and not isinstance(daily_tokens, bool)
-        and 0 < daily_tokens <= MAX_DAILY_TOKENS
-    )
-
-
-@dataclass(frozen=True)
-class Scope:
-    """Where a call came from, and the host folders behind its writable mounts: in the
-    workspace's folder (`home`), threads/<thread>/ (/work), project/ (/project) and shared/
-    (/shared/<workspace>); and its folder in the served tree (`public`, /public)."""
-
-    workspace: str
-    thread: str
-    home: Path
-    public: Path
-    gateway: bool = False  # a gateway client's: no chat behind it
-
-    @property
-    def roots(self) -> dict[str, Path]:
-        return {
-            "/work": self.home / "threads" / self.thread,
-            "/project": self.home / "project",
-            f"/shared/{self.workspace}": self.home / "shared",
-            "/public": self.public,
-        }
-
-    def mount_of(self, folder: Path) -> tuple[str, tuple[str, ...]] | None:
-        """A folder as its mount and its parts inside that; None outside them all
-        (another thread's /work)."""
-        for mount, root in self.roots.items():
-            if folder.is_relative_to(root):
-                return mount, folder.relative_to(root).parts
-        return None
-
-
-@dataclass
-class Usage:
-    """What a workspace holds, from one walk of its folder."""
-
-    files: dict[str, tuple[int, int]] = field(
-        default_factory=dict
-    )  # sandbox path: (mtime, size)
-    total: int = 0
-    count: int = 0  # every file and folder, hidden ones included: what MAX_FILES holds
-    tops: dict[str, int] = field(
-        default_factory=dict
-    )  # size by top-level entry of each mount
-
-    def biggest(self, n: int = 5) -> str:
-        """For the error that stops a workspace over WORKSPACE_MAX_BYTES: no run can look then."""
-        ranked = sorted(self.tops.items(), key=lambda kv: -kv[1])[:n]
-        return ", ".join(f"{k} {v >> 20} MB" for k, v in ranked)
-
-
-def snapshot(scope: Scope) -> Usage:
-    """Every visible file in the workspace's mounts by its path in the sandbox, and the size
-    of the whole workspace (its other threads and its /public too). Hidden top-level entries
-    (.local with pip installs, .cache…) count toward the size only."""
-    usage = Usage()
-    walk = chain(os.walk(scope.home), os.walk(scope.public))
-    for dirpath, dirnames, filenames in walk:
-        usage.count += len(dirnames) + len(filenames)
-        where = scope.mount_of(Path(dirpath))
-        for name in filenames:
-            try:
-                st = os.lstat(os.path.join(dirpath, name))
-            except FileNotFoundError:
-                continue
-            usage.total += st.st_size
-            if where is None:
-                key = "other chats' /work"
-            else:
-                mount, parts = where[0], (*where[1], name)
-                key = f"{mount}/{parts[0]}" + ("/" if len(parts) > 1 else "")
-                if not parts[0].startswith("."):
-                    usage.files[f"{mount}/{'/'.join(parts)}"] = (
-                        st.st_mtime_ns,
-                        st.st_size,
-                    )
-            usage.tops[key] = usage.tops.get(key, 0) + st.st_size
-    return usage
-
-
-def public_changes(before: Usage, after: Usage) -> set[str]:
-    """The top-level entries of /public a run added, changed or removed: its pages that changed."""
-    b, a = (
-        {p: sig for p, sig in u.files.items() if p.startswith("/public/")}
-        for u in (before, after)
-    )
-    return {p.split("/")[2] for p in b.keys() | a.keys() if b.get(p) != a.get(p)}
-
-
-def write_regular(target: Path, data: bytes, path: str) -> None:
-    """Write a file, refusing anything already there that isn't a plain file: opening a FIFO
-    would block, and a device or socket isn't something to write to."""
-    try:
-        st = os.lstat(target)
-    except FileNotFoundError:
-        pass
-    else:
-        if not stat.S_ISREG(st.st_mode):
-            raise SandboxError(f"'{path}' exists and isn't a regular file")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(
-        target,
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK,
-        0o644,
-    )
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-
-
-def force_remove(func: Callable[..., Any], path: str, exc: BaseException) -> None:
-    """rmtree's onexc: sandbox code can leave read-only folders behind, so make the folder
-    and its parent writable and try again."""
-    if isinstance(exc, FileNotFoundError):
-        return
-    try:
-        for p in (os.path.dirname(path), path):
-            if os.path.isdir(p) and not os.path.islink(p):
-                os.chmod(p, os.stat(p).st_mode | stat.S_IRWXU)
-        if os.path.isdir(path) and not os.path.islink(path):
-            shutil.rmtree(path, onexc=force_remove)
-        else:
-            os.unlink(path)
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        log.warning("couldn't remove %s: %s", path, e)
-
-
-def copy_regular(source: Path, dest: Path) -> None:
-    """Copy a plain file without following a symlink or opening a FIFO: the checks before
-    the copy can't be raced, because they're made on the file that's open."""
-    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, "rb") as src:
-        if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):
-            raise SandboxError(f"'{source.name}' isn't a regular file")
-        with open(dest, "wb") as out:
-            shutil.copyfileobj(src, out)
-
-
-def trim_images(folder: int, limit: int) -> None:
-    """Delete the oldest plain files in the open folder `folder` until the rest are within
-    `limit` bytes; whatever else is there is left alone."""
-    files = []
-    for entry in os.scandir(folder):
-        st = entry.stat(follow_symlinks=False)
-        if stat.S_ISREG(st.st_mode) and not entry.name.startswith("."):
-            files.append((st.st_mtime, entry.name, st.st_size))
-    total = sum(size for _, _, size in files)
-    for _, name, size in sorted(files):
-        if total <= limit:
-            break
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(name, dir_fd=folder)
-        total -= size
-
-
-def remove_path(path: Path) -> None:
-    """Delete a file, symlink or folder; a symlink itself, never what it points to."""
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path, onexc=force_remove)
-    else:
-        path.unlink(missing_ok=True)
-
-
-# What the pages site's CSP blocks, so a page that leans on it renders without it.
-# Links to other sites are fine; loading from them isn't. Tags are matched with [^<>]*, so
-# a page full of stray "<" can't make a pattern scan to the end of it again and again.
-_OFFSITE = r"""["']?\s*(?:https?:)?//"""
-_CSP_BLOCKED = (
-    (
-        "scripts from another host",
-        re.compile(r"<script\b[^<>]*\bsrc\s*=" + _OFFSITE, re.IGNORECASE),
-    ),
-    (
-        "stylesheets or fonts from another host",
-        re.compile(
-            r"<link\b[^<>]*\bhref\s*=" + _OFFSITE + r"|@import\s*" + _OFFSITE,
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "images, media or frames from another host",
-        re.compile(
-            r"<(?:img|iframe|video|audio|source|embed|object|track)\b[^<>]*\b(?:src|data|srcset)\s*="
-            + _OFFSITE,
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "CSS url()s pointing at another host",
-        re.compile(r"url\(" + _OFFSITE, re.IGNORECASE),
-    ),
-)
-TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
-DESCRIPTION_RE = re.compile(
-    r"""<meta\b[^>]*\bname\s*=\s*["']?description\b[^>]*\bcontent\s*=\s*(["'])(.*?)\1""",
-    re.IGNORECASE | re.DOTALL,
-)
-PARAGRAPH_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.IGNORECASE | re.DOTALL)
-TAG_RE = re.compile(r"<[^>]*>")
-
-
-def csp_blocked(html: str, origin: str = "") -> list[str]:
-    """What in a page the site's CSP will block: [] when nothing is. URLs on the site's own
-    `origin` (scheme://host:port, as zola writes them) are allowed."""
-    if origin:  # only where the origin ends: https://site.example.evil/ is another host
-        html = re.sub(re.escape(origin) + r"""(?=[/"'\s>)]|$)""", "", html)
-    return [what for what, pattern in _CSP_BLOCKED if pattern.search(html)]
-
-
-# What the agent should know about a page whose scripts run: the pages site runs them in a
-# CSP sandbox (allow-scripts allow-downloads), where each page has an opaque origin of its
-# own. tests/test_pages_browser.py checks each of these limits in a real browser.
-SCRIPTS_RE = re.compile(
-    r"""<script\b|<[^<>]*\son[a-z]+\s*=|(?:href|src)\s*=\s*["']?\s*javascript:""",
-    re.IGNORECASE,
-)
-SCRIPTS_NOTICE = (
-    "it has scripts, which run sandboxed (no storage, no reading the site's files, no "
-    "forms, popups or alerts): tell the user what they do and ask before publishing it"
-)
-# What breaks in the sandbox, looked for in a page with scripts and in its .js files.
-_SCRIPT_LIMITS = (
-    (
-        (
-            "localStorage, sessionStorage, IndexedDB and cookies throw; keep its state "
-            "in the page"
-        ),
-        re.compile(r"\b(?:localStorage|sessionStorage|indexedDB|document\.cookie)\b"),
-    ),
-    (
-        (
-            "fetch and XMLHttpRequest can't read the site's files (or another host's); "
-            "put the data in the page"
-        ),
-        re.compile(r"\bfetch\(|\bXMLHttpRequest\b"),
-    ),
-    (
-        "module scripts can't load files (src= or import); use plain scripts",
-        re.compile(
-            r"""(?i:<script\b[^<>]*\btype\s*=\s*["']?module)"""
-            r"""|\bimport\(|^\s*import\b\s*[\w{*"']""",
-            re.MULTILINE,
-        ),
-    ),
-    (
-        "alert, confirm and prompt do nothing; show messages in the page",
-        re.compile(r"\b(?:alert|confirm|prompt)\("),
-    ),
-)
-# What breaks in the sandbox with or without scripts.
-_PAGE_LIMITS = (
-    (
-        "links with target=_blank won't open (no new tabs); drop the target",
-        re.compile(r"""\btarget\s*=\s*["']?_blank""", re.IGNORECASE),
-    ),
-    (
-        (
-            "forms don't submit, and their submit event never fires; use a button's "
-            "click handler"
-        ),
-        re.compile(r"<form\b", re.IGNORECASE),
-    ),
-)
-NOTICES = (
-    SCRIPTS_NOTICE,
-    *(what for what, _ in _SCRIPT_LIMITS),
-    *(what for what, _ in _PAGE_LIMITS),
-)
-
-
-def page_notices(text: str, script: bool = False) -> list[str]:
-    """What the sandbox the pages site runs scripts in means for a page's HTML, or with
-    `script`, for one of its .js files: [] when nothing does."""
-    scripts = script or bool(SCRIPTS_RE.search(text))
-    found = [] if script else [w for w, pattern in _PAGE_LIMITS if pattern.search(text)]
-    if scripts and not script:
-        found.append(SCRIPTS_NOTICE)
-    if scripts:
-        found += [w for w, pattern in _SCRIPT_LIMITS if pattern.search(text)]
-    return [n for n in NOTICES if n in found]
-
-
-def page_description(html: str) -> str:
-    """A line about a page for its card: its meta description, else its first paragraph."""
-    if m := DESCRIPTION_RE.search(html):
-        return htmllib.unescape(m.group(2))
-    for m in PARAGRAPH_RE.finditer(html):
-        if text := " ".join(htmllib.unescape(TAG_RE.sub(" ", m.group(1))).split()):
-            return text
-    return ""
-
-
-def page_path(slug: str, entry: str) -> str:
-    """A page's path on the site: its folder when the entry is index.html, else the file."""
-    return f"{slug}/" + ("" if entry == "index.html" else quote(entry))
-
-
-def regular_files(source: Path) -> tuple[list[tuple[Path, str]], int]:
-    """Every plain file under `source` with its path inside it, and their size; symlinks,
-    anything else that isn't a file or folder, and hidden entries (.git, .cache…) are left
-    out, as is `source` itself if it's a symlink."""
-    st = os.lstat(source)
-    if stat.S_ISREG(st.st_mode):
-        name = (
-            "index.html" if source.suffix.lower() in (".html", ".htm") else source.name
-        )
-        return [(source, name)], st.st_size
-    if not stat.S_ISDIR(st.st_mode):
-        return [], 0
-    found, size = [], 0
-    for dirpath, dirnames, filenames in os.walk(source):
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if not d.startswith(".") and not os.path.islink(os.path.join(dirpath, d))
-        ]
-        for name in filenames:
-            if name.startswith("."):
-                continue
-            p = Path(dirpath, name)
-            st = os.lstat(p)
-            if stat.S_ISREG(st.st_mode):
-                found.append((p, str(p.relative_to(source))))
-                size += st.st_size
-    return sorted(found, key=lambda f: f[1]), size
-
-
-def attachment_name(title: str, taken: set[str]) -> str:
-    """A file name in /work/attachments for an attachment called `title`: NFC, letters,
-    digits and ._- only, at most NAME_MAX characters, no leading dot, and not in `taken`.
-    Text types keep their extension; anything else (a PDF's or a spreadsheet's text, with
-    the sheets AnythingLLM names in its title) becomes <title>.txt."""
-    title = unicodedata.normalize("NFC", title)[:500]
-    clean = re.sub(r"[^\w.-]+", "_", title).strip("._-") or "attachment"
-    stem, dot, ext = clean.rpartition(".")
-    if not (dot and stem and ext.lower() in TEXT_TYPES):
-        stem, ext = clean, "txt"
-    stem = stem[: NAME_MAX - len(ext) - 4].rstrip("._-") or "attachment"
-    for n in range(1, len(taken) + 2):
-        name = f"{stem}.{ext}" if n == 1 else f"{stem}-{n}.{ext}"
-        if name not in taken:
-            return name
-    raise AssertionError("unreachable: one of len(taken) + 1 names is free")
-
-
-def safe_name(name: Any) -> bool:
-    """A name a manifest (which code in the sandbox can edit) may give: one plain entry."""
-    return (
-        isinstance(name, str)
-        and 0 < len(name) <= 255
-        and "/" not in name
-        and "\0" not in name
-        and not name.startswith(".")
-    )
-
-
-def read_manifest(folder: int) -> dict[str, dict[str, Any]]:
-    """/work/attachments/.manifest.json: {name: {source, sha256, bytes}} for each copy the
-    runner wrote, leaving out whatever in it isn't one (code in the sandbox can write it)."""
-    try:
-        fd = safefs.open_regular(folder, MANIFEST)
-    except OSError:
-        return {}
-    with os.fdopen(fd, "rb") as f:
-        raw = f.read(1 << 20)
-    try:
-        data = json.loads(raw)
-    except ValueError:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {
-        name: {"source": e["source"], "sha256": e["sha256"], "bytes": e["bytes"]}
-        for name, e in data.items()
-        if safe_name(name)
-        and isinstance(e, dict)
-        and isinstance(e.get("source"), str)
-        and UPLOAD_RE.fullmatch(e["source"])
-        and isinstance(e.get("sha256"), str)
-        and isinstance(e.get("bytes"), int)
-    }
-
-
-def unchanged(folder: int, name: str, entry: dict[str, Any]) -> bool:
-    """Whether the copy `name` is still what the runner wrote (False when it's gone or isn't
-    a plain file)."""
-    try:
-        fd = safefs.open_regular(folder, name)
-    except OSError:
-        return False
-    with os.fdopen(fd, "rb") as f:
-        if os.fstat(f.fileno()).st_size != entry["bytes"]:
-            return False
-        digest = hashlib.sha256()
-        while chunk := f.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest() == entry["sha256"]
-
-
-def read_upload(uploads: Path, file: str, budget: int) -> tuple[bytes | None, int, str]:
-    """An attachment's text from AnythingLLM's `uploads` folder, read without following a
-    symlink and only if its file is at most `budget` bytes: (text, the file's size, "") or
-    (None, bytes read, why not)."""
-    try:
-        with safefs.folder(uploads) as d:
-            fd = safefs.open_regular(d, file)
-    except FileNotFoundError:
-        log.warning("attachment %s isn't in %s", file, uploads)
-        return None, 0, "is no longer on the server"
-    except OSError as e:
-        return None, 0, f"couldn't be read ({e.strerror or e})"
-    with os.fdopen(fd, "rb") as f:
-        size = os.fstat(f.fileno()).st_size
-        if size > ATTACHMENT_BYTES:
-            return None, 0, f"is over {ATTACHMENT_BYTES >> 20} MB"
-        if size > budget:
-            over = f"{ATTACHMENTS_BYTES >> 20} MB of attachments it copies"
-            return None, 0, f"would take this run over the {over}"
-        raw = f.read(size + 1)
-    if len(raw) > size:  # it grew while it was read
-        return None, len(raw), "changed while it was read"
-    try:
-        text = json.loads(raw).get("pageContent")
-    except (ValueError, AttributeError):
-        text = None
-    if not isinstance(text, str):
-        return None, len(raw), "has no text AnythingLLM kept"
-    return text.encode(errors="replace"), len(raw), ""
 
 
 @dataclass
@@ -852,6 +201,7 @@ class Runner(hostrpc.Service):
         if self.ask_model is None:
             self.ask_model = model_access.provider_ask(self.config.model_env)
         self.app_tokens = Tokens(self.config.app_state)
+        self.pages = Pages(self.config)
 
     @contextlib.asynccontextmanager
     async def slot(self, web: bool = False) -> AsyncIterator[str]:
@@ -875,28 +225,14 @@ class Runner(hostrpc.Service):
         finally:
             free.put_nowait(ip)
 
-    # --- access ---
+    # --- access (sandbox.access) ---
 
     def access(self, scope: Scope) -> Access:
         """The workspace's access, from access_file; none for a gateway client's, and none
         when the file is missing or can't be read."""
         if scope.gateway:
             return NO_ACCESS
-        try:
-            entry = json.loads(self.config.access_file.read_text()).get(scope.workspace)
-        except FileNotFoundError:
-            return NO_ACCESS
-        except (OSError, ValueError, AttributeError) as e:
-            log.warning("couldn't read %s: %s", self.config.access_file, e)
-            return NO_ACCESS
-        if not isinstance(entry, dict):
-            return NO_ACCESS
-        budget = entry.get("daily_tokens")
-        return Access(
-            web=entry.get("web") is True,
-            models=entry.get("models") is True,
-            daily_tokens=budget if valid_budget(budget) else NO_ACCESS.daily_tokens,
-        )
+        return read_access(self.config.access_file, scope.workspace)
 
     async def op_access(
         self,
@@ -949,116 +285,22 @@ class Runner(hostrpc.Service):
                 "sandbox-access skill asks for"
             )
         async with self._access_lock:
-            await asyncio.to_thread(self.write_access, s.workspace, wanted)
+            await asyncio.to_thread(
+                write_access, self.config.access_file, s.workspace, wanted
+            )
         log.info("access for %s: %s", s.workspace, asdict(wanted))
         return {**out, **asdict(wanted), "changed": True}
 
-    def write_access(self, workspace: str, access: Access) -> None:
-        file = self.config.access_file
-        try:
-            data = json.loads(file.read_text())
-            if not isinstance(data, dict):
-                data = {}
-        except FileNotFoundError:
-            data = {}
-        except (OSError, ValueError) as e:
-            raise SandboxError(f"couldn't read the access settings: {e}") from None
-        if access == NO_ACCESS:
-            data.pop(workspace, None)
-        else:
-            data[workspace] = asdict(access)
-        file.parent.mkdir(parents=True, exist_ok=True)
-        hostrpc.atomic_write(
-            file, json.dumps(data, indent=1, sort_keys=True) + "\n", 0o600
-        )
-
-    # --- scopes and paths ---
+    # --- scopes (sandbox.workspace) ---
 
     def scope(self, scope: dict[str, Any]) -> Scope:
         """The caller's folders, made on first use; using the thread's /work keeps it from gc."""
-        if not isinstance(scope, dict):
-            raise SandboxError("scope must be {workspace, thread}")
-        workspace, thread = (
-            str(scope.get("workspace") or ""),
-            str(scope.get("thread") or ""),
-        )
-        for what, key in (("workspace", workspace), ("thread", thread)):
-            if not KEY_RE.match(key):
-                raise SandboxError(f"bad {what} '{key}'")
-        gateway = scope.get("gateway") is True
-        if workspace.startswith(CLIENT_PREFIX) != gateway:
-            raise SandboxError(
-                f"a gateway client's scope is a '{CLIENT_PREFIX}' workspace"
-                if gateway
-                else f"workspace '{workspace}': names starting '{CLIENT_PREFIX}' are the "
-                "MCP gateway's clients' sandboxes; rename the workspace to use the sandbox"
-            )
-        s = Scope(
-            workspace,
-            thread,
-            self.config.root / workspace,
-            self.config.public_root / workspace,
-            gateway,
-        )
-        for d in s.roots.values():
-            d.mkdir(parents=True, exist_ok=True)
-        os.utime(s.roots["/work"])
-        return s
+        return make_scope(self.config, scope)
 
     def app_scope(self, workspace: str) -> Scope | None:
         """A workspace's scope for its apps, as an address names it (sandbox.appsweb): None
         if it has no sandbox or is a gateway client's. Nothing is made."""
-        if workspace.startswith(CLIENT_PREFIX) or not KEY_RE.fullmatch(workspace):
-            return None
-        s = Scope(
-            workspace,
-            "default",
-            self.config.root / workspace,
-            self.config.public_root / workspace,
-        )
-        return s if s.home.is_dir() else None
-
-    def split(self, scope: Scope, path: str) -> tuple[str, Path, Path]:
-        """`path` in the sandbox (under one of the caller's own mounts, or relative to /work)
-        as its mount, that mount's host folder and the path inside it, unresolved. `..` is
-        refused, and so is anything outside the caller's own folders: another workspace's
-        /shared is read-only, and the runner never touches a folder another workspace writes."""
-        path = path.strip()
-        mount = next(
-            (m for m in scope.roots if path == m or path.startswith(m + "/")), None
-        )
-        if mount is None and path.startswith("/"):
-            owner = path.split("/")[2] if path.startswith("/shared/") else ""
-            if owner and owner != scope.workspace:
-                raise SandboxError(
-                    f"'{path}' is in {owner}'s shared folder, which is read-only here; "
-                    "copy what you need into your own folders with run-code"
-                )
-            raise SandboxError(
-                f"bad path '{path}': use a path under {', '.join(scope.roots)}"
-            )
-        rel = Path(path.removeprefix(mount or "").lstrip("/"))
-        if ".." in rel.parts:
-            raise SandboxError(f"bad path '{path}': '..' isn't allowed")
-        root = scope.roots[mount or "/work"]
-        return mount or "/work", root, root / rel
-
-    def resolve(self, scope: Scope, path: str) -> Path:
-        """`path` after following symlinks, which must stay inside its mount's folder (not be
-        all of it). Callers hold the workspace's lock, so no run can swap a link in after."""
-        mount, root, target = self.split(scope, path)
-        target, root = target.resolve(), root.resolve()
-        if not target.is_relative_to(root):
-            raise SandboxError(f"'{path}' points outside {mount}")
-        if target == root:
-            raise SandboxError(
-                f"'{path}' is all of {mount}; give a file or folder inside it"
-            )
-        return target
-
-    def model_dir(self, run: str) -> Path:
-        """The folder of a run's model socket, mounted into its container (MODELS_DIR)."""
-        return self.config.model_sockets / run
+        return existing_scope(self.config, workspace)
 
     def lock(self, workspace: str) -> asyncio.Lock:
         return self._locks.setdefault(workspace, asyncio.Lock())
@@ -1083,15 +325,7 @@ class Runner(hostrpc.Service):
 
     def gc(self) -> list[str]:
         """Delete threads' /work folders untouched for a week. /project stays."""
-        cutoff = self.now() - THREAD_MAX_AGE
-        old = [
-            d
-            for d in self.config.root.glob("*/threads/*")
-            if d.is_dir() and d.stat().st_mtime < cutoff
-        ]
-        for d in old:
-            remove_path(d)
-        return [f"{d.parent.parent.name}/{d.name}" for d in old]
+        return gc_threads(self.config.root, self.now())
 
     # --- running code ---
 
@@ -1198,13 +432,6 @@ class Runner(hostrpc.Service):
             )
         return await self.wait(run_id, job)
 
-    def over_quota(self, usage: Usage, doing: str) -> SandboxError:
-        return SandboxError(
-            f"this workspace's sandbox uses {usage.total >> 20} MB, over its {WORKSPACE_MAX_BYTES >> 20} MB "
-            f"limit, so it can't {doing}. Delete something with write-file (delete=true) first; "
-            f"the biggest: {usage.biggest()}."
-        )
-
     async def execute(
         self,
         scope: Scope,
@@ -1224,14 +451,14 @@ class Runner(hostrpc.Service):
         async with self.lock(scope.workspace):
             try:
                 copies, notes = await asyncio.to_thread(
-                    self.sync_attachments, scope, attachments, known
+                    sync_attachments, self.config.uploads, scope, attachments, known
                 )
             except Exception:
                 log.exception("attachments for %s", scope.workspace)
                 copies, notes = [], ["the chat's attachments couldn't be copied"]
             before = await asyncio.to_thread(snapshot, scope)
-            if before.total > WORKSPACE_MAX_BYTES:
-                raise self.over_quota(before, "run code")
+            if before.total > workspace.WORKSPACE_MAX_BYTES:
+                raise over_quota(before, "run code")
             access = self.access(scope)
             asking = (
                 model_access.Models(
@@ -1250,12 +477,20 @@ class Runner(hostrpc.Service):
             ):
                 try:
                     args = await asyncio.to_thread(
-                        self.prepare, name, scope, run_dir, script, code, ip, access
+                        prepare,
+                        self.config,
+                        name,
+                        scope,
+                        run_dir,
+                        script,
+                        code,
+                        ip,
+                        access,
                     )
                     if asking is not None:
                         # The run's own socket, for as long as it runs; its folder goes
                         # once it's closed.
-                        sockets = self.model_dir(name)
+                        sockets = model_dir(self.config, name)
                         stack.callback(shutil.rmtree, sockets, True)
                         await stack.enter_async_context(
                             hostrpc.serving(asking, sockets / "sock")
@@ -1286,7 +521,7 @@ class Runner(hostrpc.Service):
             # Outside the slot: walking the workspace needs no address.
             after = await asyncio.to_thread(snapshot, scope)
             published = await asyncio.to_thread(
-                self.page_changes, scope, public_changes(before, after)
+                self.pages.page_changes, scope, public_changes(before, after)
             )
             changed = sorted(
                 p for p, sig in after.files.items() if before.files.get(p) != sig
@@ -1318,10 +553,10 @@ class Runner(hostrpc.Service):
             "changed_more": max(0, len(changed) - LIST_MAX),
             "published": published,
             "warning": (
-                f"this workspace's sandbox uses {after.total >> 20} MB of its {WORKSPACE_MAX_BYTES >> 20} MB; "
+                f"this workspace's sandbox uses {after.total >> 20} MB of its {workspace.WORKSPACE_MAX_BYTES >> 20} MB; "
                 "delete what isn't needed"
             )
-            if after.total > WORKSPACE_WARN_BYTES
+            if after.total > workspace.WORKSPACE_WARN_BYTES
             else None,
             "attachments": copies,
             "attachment_notes": notes,
@@ -1331,249 +566,24 @@ class Runner(hostrpc.Service):
             else None,
         }
 
-    def sync_attachments(
-        self, scope: Scope, attachments: Any, known: bool
-    ) -> tuple[list[str], list[str]]:
-        """Put the chat's attachments, [{title, file}] with `file` a JSON file in AnythingLLM's
-        uploads folder, as text files in /work/attachments: (the names there now, notes on
-        what couldn't be copied). Under the workspace's lock, before a run.
-
-        Only new copies are written; a copy already there stays as it is, edited or not.
-        /work/attachments/.manifest.json says which source each copy came from and what was
-        written. When `known` (the skill's lookup was whole), a copy whose file is no
-        longer attached goes, if it's unchanged; an edited one stays, as the chat's own. A
-        source that's gone is skipped, and its copy kept. A gateway client's scope has no
-        chat, and gets nothing. Nothing here follows a symlink: code in the sandbox can put
-        one anywhere in /work."""
-        if scope.gateway or not (attachments or known):
-            return [], []
-        notes: list[str] = []
-        if not isinstance(attachments, list):
-            attachments, known = [], False
-        if len(attachments) > ATTACHMENTS_MAX:
-            notes.append(f"only the first {ATTACHMENTS_MAX} attachments were copied")
-            attachments, known = attachments[:ATTACHMENTS_MAX], False
-        wanted: dict[str, str] = {}  # source file: title
-        for a in attachments:
-            file = a.get("file") if isinstance(a, dict) else None
-            if not isinstance(file, str) or not UPLOAD_RE.fullmatch(file):
-                notes.append("an attachment with a bad file name was skipped")
-                continue
-            title = a.get("title")
-            wanted.setdefault(
-                file,
-                title if isinstance(title, str) and title.strip() else file[:-5],
-            )
-        work = scope.roots["/work"]
-        try:
-            folder = safefs.open_dir(work, (ATTACHMENTS,), make=bool(wanted))
-        except FileNotFoundError:
-            return [], notes  # nothing attached, and no copies to remove
-        except OSError:
-            notes.append(
-                f"/work/{ATTACHMENTS} isn't a folder (a file or link is in its place), so "
-                "the chat's attachments weren't copied"
-            )
-            return [], notes
-        try:
-            return self.fill_attachments(scope, folder, wanted, known, notes), notes
-        finally:
-            os.close(folder)
-            with contextlib.suppress(OSError):
-                os.rmdir(work / ATTACHMENTS)  # only if it's empty, and never a link
-
-    def fill_attachments(
-        self,
-        scope: Scope,
-        folder: int,
-        wanted: dict[str, str],
-        known: bool,
-        notes: list[str],
-    ) -> list[str]:
-        """sync_attachments' work in the open folder /work/attachments."""
-        manifest = read_manifest(folder)
-        before = dict(manifest)
-        there = set(os.listdir(folder))
-        by_source = {e["source"]: name for name, e in manifest.items()}
-        present: list[str] = []
-        new: list[tuple[str, str, bytes]] = []  # (source, name, text)
-        budget = ATTACHMENTS_BYTES
-        for file, title in wanted.items():
-            old = by_source.get(file)
-            if old is not None and old in there:
-                present.append(old)
-                continue
-            # A copy that's gone (the chat deleted it) is written again, under its name.
-            text, read, why = read_upload(self.config.uploads, file, budget)
-            budget -= read
-            if text is None:
-                notes.append(f"{title} {why}, so it wasn't copied")
-                continue
-            taken = there | set(manifest) | {n for _, n, _ in new}
-            new.append((file, old or attachment_name(title, taken), text))
-        if new:
-            usage = snapshot(scope)
-            room = WORKSPACE_MAX_BYTES - usage.total
-            for file, name, text in new:
-                if len(text) > room:
-                    notes.append(
-                        f"{name} wasn't copied: the workspace's sandbox is near its "
-                        f"{WORKSPACE_MAX_BYTES >> 20} MB limit"
-                    )
-                    continue
-                try:
-                    safefs.replace(folder, name, text)
-                except OSError as e:
-                    notes.append(f"{name} couldn't be written ({e.strerror or e})")
-                    continue
-                room -= len(text)
-                present.append(name)
-                manifest[name] = {
-                    "source": file,
-                    "sha256": hashlib.sha256(text).hexdigest(),
-                    "bytes": len(text),
-                }
-        if known:
-            for name, entry in list(manifest.items()):
-                if entry["source"] in wanted:
-                    continue
-                if unchanged(folder, name, entry):
-                    with contextlib.suppress(FileNotFoundError):
-                        os.unlink(name, dir_fd=folder)
-                del manifest[name]  # gone, or edited and now the chat's own
-        if manifest != before:
-            if manifest:
-                data = json.dumps(manifest, indent=1, sort_keys=True).encode()
-                safefs.replace(folder, MANIFEST, data)
-            else:
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(MANIFEST, dir_fd=folder)
-        return sorted(present)
-
     async def watch(self, scope: Scope, name: str) -> str:
         """While a run goes, look at the workspace's use every WATCH_SECONDS and kill the
         run if it fills the disk; what it went over, or "" if it was stopped first."""
         while True:
             await asyncio.sleep(WATCH_SECONDS)
             usage = await asyncio.to_thread(snapshot, scope)
-            if usage.total > WORKSPACE_MAX_BYTES + RUN_SLACK:
-                over = f"the workspace went over {(WORKSPACE_MAX_BYTES + RUN_SLACK) >> 20} MB"
-            elif usage.count > MAX_FILES:
-                over = f"the workspace went over {MAX_FILES} files and folders"
+            most = workspace.WORKSPACE_MAX_BYTES + workspace.RUN_SLACK
+            if usage.total > most:
+                over = f"the workspace went over {most >> 20} MB"
+            elif usage.count > workspace.MAX_FILES:
+                over = (
+                    f"the workspace went over {workspace.MAX_FILES} files and folders"
+                )
             else:
                 continue
             log.warning("killing run %s in %s: %s", name, scope.workspace, over)
             await self.podman(["kill", name], 30, None)
             return over
-
-    def hardening(self, name: str) -> list[str]:
-        """Every sandbox container's podman arguments up to its network and mounts."""
-        return [
-            "run",
-            "--name",
-            name,
-            "--label",
-            LABEL,
-            "--read-only",
-            "--tmpfs",
-            "/tmp:rw,size=256m,mode=1777",
-            "--memory",
-            MEMORY,
-            "--memory-swap",
-            MEMORY,
-            "--cpus",
-            "1",
-            "--pids-limit",
-            "256",
-            "--ulimit",
-            f"fsize={FILE_MAX_BYTES}:{FILE_MAX_BYTES}",
-            "--ulimit",
-            f"nofile={OPEN_FILES}:{OPEN_FILES}",
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
-            "--userns",
-            "keep-id",
-        ]
-
-    def read_only_mounts(self, workspace: str, others: bool = True) -> list[str]:
-        """Every other workspace's shared folder (without `others`, none) and the repo's
-        themes, read-only."""
-        return [
-            *(
-                a
-                for other, folder in (self.others_shared(workspace) if others else ())
-                for a in ("-v", f"{folder}:/shared/{other}:{DATA_RO}")
-            ),
-            "-v",
-            f"{self.config.system_themes}:/system/themes:{DATA_RO}",
-        ]
-
-    def prepare(
-        self,
-        name: str,
-        scope: Scope,
-        run_dir: Path,
-        script: str,
-        code: str,
-        ip: str,
-        access: Access = NO_ACCESS,
-    ) -> list[str]:
-        """Write the run's script and return its podman arguments: egress-net at `ip`,
-        with the egress proxy as its only way out; the workspace's own folders read-write,
-        every other workspace's shared folder and the repo's themes read-only. With web
-        access, through the proxy's public-only port, and without the other workspaces'
-        shared folders, which a run that reads the web could send anywhere. With model
-        access, its socket's folder and the client that asks through it."""
-        proxy = self.config.public_proxy if access.web else self.config.proxy
-        (run_dir / "code").mkdir(parents=True)
-        (run_dir / "code" / script).write_text(code)
-        asking = []
-        if access.models:  # the run's own socket (served by execute) and the client
-            sockets = self.model_dir(name)
-            if len(str(sockets / "sock")) > 100:  # AF_UNIX's limit is 108
-                raise SandboxError(
-                    f"{self.config.model_sockets} is too long a path for model sockets"
-                )
-            sockets.mkdir(parents=True)
-            shutil.copyfile(MODEL_CLIENT, run_dir / "code" / "everythingllm_models.py")
-            asking = [
-                "-v",
-                f"{sockets}:{MODELS_DIR}:ro",
-                "-e",
-                f"EVERYTHINGLLM_MODELS={MODELS_DIR}/sock",
-            ]
-        # No --rm: the container is kept until execute has asked podman whether it ran out of memory.
-        return [
-            *self.hardening(name),
-            "--network",
-            f"{self.config.network}:ip={ip}",
-            "--dns",
-            "none",
-            "-e",
-            f"http_proxy={proxy}",
-            "-e",
-            f"https_proxy={proxy}",
-            *(
-                a
-                for mount, root in scope.roots.items()
-                for a in (
-                    "-v",
-                    f"{root}:{mount}"
-                    + (
-                        f":{DATA_RW}"
-                        if mount == "/public" or mount.startswith("/shared/")
-                        else ""
-                    ),
-                )
-            ),
-            *self.read_only_mounts(scope.workspace, others=not access.web),
-            *asking,
-            "-v",
-            f"{run_dir / 'code'}:/sandbox:ro",
-            IMAGE,
-        ]
 
     # --- site builds ---
 
@@ -1584,7 +594,7 @@ class Runner(hostrpc.Service):
         /shared/<workspace> or /work) into /public/<slug>, and publish it. The slug is the
         folder's name unless given. A build that outlasts the call goes on, like a run."""
         s = self.scope(scope)
-        mount, _, _ = self.split(s, path)
+        mount, _, _ = split(s, path)
         if mount == "/public":
             raise SandboxError(
                 "build a site from its source in /project or /shared, not from /public"
@@ -1614,16 +624,18 @@ class Runner(hostrpc.Service):
         run_dir = self.config.scripts / name
         async with self.lock(scope.workspace):
             usage = await asyncio.to_thread(snapshot, scope)
-            if usage.total > WORKSPACE_MAX_BYTES:
-                raise self.over_quota(usage, "build a site")
-            source = self.resolve(scope, path)
+            if usage.total > workspace.WORKSPACE_MAX_BYTES:
+                raise over_quota(usage, "build a site")
+            source = resolve(scope, path)
             if not (source / "zola.toml").is_file():
                 raise SandboxError(
                     f"'{path}' has no zola.toml, so it isn't a Zola site"
                 )
             url = self.public_url(scope.workspace, slug)
             try:
-                args = await asyncio.to_thread(self.prepare_build, name, scope, run_dir)
+                args = await asyncio.to_thread(
+                    prepare_build, self.config, name, scope, run_dir
+                )
                 async with self.slot():
                     exit_code, out, err, timed_out = await self.podman(
                         [*args, "python", "/sandbox/sitebuild.py", path, url],
@@ -1639,12 +651,12 @@ class Runner(hostrpc.Service):
                         f"the site didn't build: {(err or out).strip()[-2000:]}"
                     )
                 files = await asyncio.to_thread(
-                    self.stage_files, scope, run_dir / "out" / "site", slug
+                    self.pages.stage_files, scope, run_dir / "out" / "site", slug
                 )
             finally:
                 await self.podman(["rm", "-f", "--ignore", name], 60, None)
                 await asyncio.to_thread(shutil.rmtree, run_dir, True)
-            published = await asyncio.to_thread(self.page_changes, scope, {slug})
+            published = await asyncio.to_thread(self.pages.page_changes, scope, {slug})
         log.info(
             "built %s from %s for %s: %d files", slug, path, scope.workspace, files
         )
@@ -1656,43 +668,6 @@ class Runner(hostrpc.Service):
             "published": published,
         }
 
-    def prepare_build(self, name: str, scope: Scope, run_dir: Path) -> list[str]:
-        """A build container's podman arguments: no network, the workspace's own folders
-        (but /public) and everything else read-only, an empty /out, and the helper."""
-        (run_dir / "code").mkdir(parents=True)
-        (run_dir / "out").mkdir()
-        shutil.copyfile(SITEBUILD, run_dir / "code" / "sitebuild.py")
-        return [
-            *self.hardening(name),
-            "--network",
-            "none",
-            *(
-                a
-                for mount, root in scope.roots.items()
-                if mount != "/public"
-                for a in ("-v", f"{root}:{mount}:{DATA_RO}")
-            ),
-            *self.read_only_mounts(scope.workspace),
-            "-v",
-            f"{run_dir / 'out'}:/out:rw,noexec,nosuid,nodev",
-            "-v",
-            f"{run_dir / 'code'}:/sandbox:ro",
-            IMAGE,
-        ]
-
-    def others_shared(self, workspace: str) -> list[tuple[str, Path]]:
-        """Every other workspace's shared folder, as (workspace, folder): workspaces that
-        have used the sandbox, so their folders exist."""
-        return sorted(
-            (d.name, d / "shared")
-            for d in self.config.root.iterdir()
-            if d.name != workspace
-            and KEY_RE.fullmatch(d.name)
-            and not d.is_symlink()
-            and (d / "shared").is_dir()
-            and not (d / "shared").is_symlink()
-        )
-
     # --- files ---
 
     async def op_write(
@@ -1702,12 +677,12 @@ class Runner(hostrpc.Service):
         its limit can get back under). Deleting exactly one of the workspace's mounts empties
         it."""
         s = self.scope(scope)
-        mount = self.split(s, path)[0]
+        mount = split(s, path)[0]
         async with self.exclusive(s.workspace):
             result = await self.write(s, path, content, delete)
-            if mount == "/public" and (target := self.split(s, path)[2]) != s.public:
+            if mount == "/public" and (target := split(s, path)[2]) != s.public:
                 result["published"] = await asyncio.to_thread(
-                    self.page_changes, s, {target.relative_to(s.public).parts[0]}
+                    self.pages.page_changes, s, {target.relative_to(s.public).parts[0]}
                 )
         return result
 
@@ -1718,20 +693,20 @@ class Runner(hostrpc.Service):
         if delete:
             return await asyncio.to_thread(self.delete, s, path)
         data = (content or "").encode()
-        if len(data) > WRITE_BYTES:
+        if len(data) > pages.WRITE_BYTES:
             raise SandboxError(
-                f"content is {len(data)} bytes; the limit is {WRITE_BYTES}"
+                f"content is {len(data)} bytes; the limit is {pages.WRITE_BYTES}"
             )
         usage = await asyncio.to_thread(snapshot, s)
-        if usage.total + len(data) > WORKSPACE_MAX_BYTES:
-            raise self.over_quota(usage, "write files")
-        target = self.resolve(s, path)
+        if usage.total + len(data) > workspace.WORKSPACE_MAX_BYTES:
+            raise over_quota(usage, "write files")
+        target = resolve(s, path)
         await asyncio.to_thread(write_regular, target, data, path)
         return {"path": path.strip(), "bytes": len(data)}
 
     def delete(self, scope: Scope, path: str) -> dict[str, Any]:
         """Only the parent is resolved: a symlink is removed itself, never what it points to."""
-        mount, root, target = self.split(scope, path)
+        mount, root, target = split(scope, path)
         if target == root:
             if path.strip() != mount:
                 raise SandboxError(
@@ -1752,59 +727,11 @@ class Runner(hostrpc.Service):
         remove_path(target)
         return {"path": path.strip(), "folder": stat.S_ISDIR(st.st_mode)}
 
-    # --- pages ---
+    # --- pages (sandbox.pages) ---
 
     def public_url(self, workspace: str, path: str = "") -> str:
         """Where `path` in a workspace's /public is on the workspace pages site."""
-        return f"{self.config.public_url.rstrip('/')}/{workspace}/{path}"
-
-    def page_url(self, workspace: str, item: Path) -> str:
-        """A top-level entry of /public on the site: a folder as itself, a file as the file."""
-        return self.public_url(
-            workspace, quote(item.name) + ("/" if item.is_dir() else "")
-        )
-
-    def checked(self, item: Path) -> dict[str, list[str]]:
-        """What in a page the site's CSP blocks, so the agent hears it won't load, and what
-        it should know about the sandbox the page's scripts run in (`notices`)."""
-        origin = "/".join(self.config.public_url.split("/")[:3])
-        files = [
-            (f, name.endswith((".js", ".mjs")))
-            for f, name in regular_files(item)[0]
-            if name.endswith((".html", ".htm", ".js", ".mjs"))
-        ]
-        blocked, notices = set(), set()
-        for f, script in files[:CSP_SCAN]:
-            data = safefs.read_regular(f.parent, (f.name,), WRITE_BYTES)
-            if data is not None:
-                text = data.decode(errors="replace")
-                if not script:
-                    blocked.update(csp_blocked(text, origin))
-                notices.update(page_notices(text, script))
-        return {
-            "blocked": sorted(blocked),
-            "notices": [n for n in NOTICES if n in notices],
-        }
-
-    def page_changes(self, scope: Scope, names: set[str]) -> dict[str, Any] | None:
-        """Where the top-level entries `names` of /public that changed are now, with what
-        their CSP blocks and their notices (`checked`), and which of them are gone; None
-        when there are none. Hidden entries are left out: the site doesn't serve them."""
-        live, removed = [], []
-        for name in sorted(n for n in names if not n.startswith(".")):
-            item = scope.public / name
-            if not os.path.lexists(item):
-                removed.append(name)
-            elif not item.is_symlink() and (item.is_dir() or item.is_file()):
-                live.append(
-                    {
-                        "slug": name,
-                        "url": self.page_url(scope.workspace, item),
-                        **self.checked(item),
-                    }
-                )
-        result = {"live": live, "removed": removed}
-        return {k: v for k, v in result.items() if v} or None
+        return self.pages.public_url(workspace, path)
 
     async def op_publish(
         self,
@@ -1820,7 +747,7 @@ class Runner(hostrpc.Service):
         workspace's pages."""
         s = self.scope(scope)
         path = (path or "").strip()
-        outside = bool(path) and self.split(s, path)[0] != "/public"
+        outside = bool(path) and split(s, path)[0] != "/public"
         if (outside or (slug and not path)) and not (
             isinstance(slug, str) and SLUG_RE.fullmatch(slug)
         ):
@@ -1830,20 +757,20 @@ class Runner(hostrpc.Service):
             )
         async with self.exclusive(s.workspace):
             if outside:
-                await asyncio.to_thread(self.stage, s, path, slug)
+                await asyncio.to_thread(self.pages.stage, s, path, slug)
                 name = slug
             elif path:
-                target = self.split(s, path)[2]
+                target = split(s, path)[2]
                 if target == s.public:
                     raise SandboxError(
                         "give a page in /public, e.g. /public/trip-plan, not all of it"
                     )
                 name = target.relative_to(s.public).parts[0]
             elif slug:
-                entries = self.public_entries(s.public, slug)
+                entries = self.pages.public_entries(s.public, slug)
                 name = entries[0].name if entries else slug
             else:
-                return await asyncio.to_thread(self.listing, s)
+                return await asyncio.to_thread(self.pages.listing, s)
             item = s.public / name
             if remove:
                 if path and not outside:
@@ -1852,16 +779,18 @@ class Runner(hostrpc.Service):
                     entries = (
                         [item]
                         if os.path.lexists(item)
-                        else self.public_entries(s.public, name)
+                        else self.pages.public_entries(s.public, name)
                     )
                 else:
-                    entries = self.public_entries(s.public, slug) or (
+                    entries = self.pages.public_entries(s.public, slug) or (
                         [item] if os.path.lexists(item) else []
                     )
                 if not entries:
                     raise SandboxError(f"there's no page '{name}' in /public")
                 for e in entries:
-                    url = self.page_url(s.workspace, e)  # before: a folder's ends in /
+                    url = self.pages.page_url(
+                        s.workspace, e
+                    )  # before: a folder's ends in /
                     await asyncio.to_thread(remove_path, e)
                     # Its link card too, which shows the page's title and description.
                     chatimage.card.remove(self.config.site_dir, url)
@@ -1871,7 +800,7 @@ class Runner(hostrpc.Service):
                     f"there's nothing at /public/{name} to publish; give the path of "
                     "the file or folder to publish"
                 )
-            return await asyncio.to_thread(self.page_info, s.workspace, item)
+            return await asyncio.to_thread(self.pages.page_info, s.workspace, item)
 
     async def op_show_image(
         self, scope: dict[str, Any], path: str = "", alt: str = ""
@@ -1884,74 +813,10 @@ class Runner(hostrpc.Service):
         if not isinstance(alt, str):
             raise SandboxError("alt must be text")
         async with self.exclusive(s.workspace):
-            data = await asyncio.to_thread(self.read_image, s, path)
+            data = await asyncio.to_thread(self.pages.read_image, s, path)
             return await asyncio.to_thread(
-                self.put_image, s.workspace, data, path.strip(), alt
+                self.pages.put_image, s.workspace, data, path.strip(), alt
             )
-
-    def read_image(self, scope: Scope, path: str) -> bytes:
-        """The bytes of the plain file at `path`, at most IMAGE_MAX_BYTES."""
-        source = self.resolve(scope, path)
-        try:
-            fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        except FileNotFoundError:
-            raise SandboxError(f"there's no '{path}'") from None
-        except OSError as e:
-            raise SandboxError(f"'{path}' can't be read ({e.strerror})") from None
-        if not stat.S_ISREG(
-            os.fstat(fd).st_mode
-        ):  # before fdopen, which refuses a folder
-            os.close(fd)
-            raise SandboxError(f"'{path}' isn't a file")
-        with os.fdopen(fd, "rb") as f:
-            data = f.read(IMAGE_MAX_BYTES + 1)
-        if len(data) > IMAGE_MAX_BYTES:
-            raise SandboxError(
-                f"'{path}' is over {IMAGE_MAX_BYTES >> 20} MB; make it smaller with run-code"
-            )
-        return data
-
-    def put_image(
-        self, workspace: str, data: bytes, path: str, alt: str
-    ) -> dict[str, Any]:
-        """Save an image on the pages site, by its hash, and trim the workspace's to
-        IMAGES_MAX_BYTES, oldest shown first."""
-        try:  # the header only: nothing is decoded
-            with Image.open(io.BytesIO(data)) as image:
-                kind, (width, height) = image.format, image.size
-        except Exception:  # noqa: BLE001 - whatever Pillow can't read isn't one
-            kind, width, height = None, 0, 0
-        ext = IMAGE_FORMATS.get(kind or "")
-        if ext is None:
-            raise SandboxError(
-                f"'{path}' isn't a PNG, JPEG, GIF or WebP image; convert it with "
-                "run-code (an SVG with cairosvg, say), or publish it as a page"
-            )
-        name = f"{hashlib.sha256(data).hexdigest()[:32]}.{ext}"
-        self.config.site_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
-        folder = safefs.open_dir(self.config.site_dir, (IMAGES, workspace), make=True)
-        try:
-            try:  # shown before: only its time, so the trim keeps it
-                os.utime(name, dir_fd=folder, follow_symlinks=False)
-                shown = stat.S_ISREG(
-                    os.stat(name, dir_fd=folder, follow_symlinks=False).st_mode
-                )
-            except FileNotFoundError:
-                shown = False
-            if not shown:
-                safefs.replace(folder, name, data)
-            trim_images(folder, IMAGES_MAX_BYTES)
-        finally:
-            os.close(folder)
-        url = f"{self.config.site_url.rstrip('/')}/{IMAGES}/{quote(workspace)}/{name}"
-        label = " ".join(alt.split()) or Path(path).stem or "image"
-        return {
-            "url": url,
-            "width": width,
-            "height": height,
-            "bytes": len(data),
-            "image": chatimage.linked_image(label, url, url),
-        }
 
     # --- apps (sandbox.apps) ---
 
@@ -2131,104 +996,6 @@ class Runner(hostrpc.Service):
         remove_path(folder)
         remove_path(s.public / "apps" / name)
         self.app_tokens.remove(s.workspace, name)
-
-    def listing(self, scope: Scope) -> dict[str, Any]:
-        """The workspace's pages: /public's top-level entries and where they are."""
-        items = sorted(e for e in scope.public.iterdir() if not e.name.startswith("."))
-        return {
-            "site": self.public_url(scope.workspace),
-            "pages": [
-                {"slug": e.name, "url": self.page_url(scope.workspace, e)}
-                for e in items[:LIST_MAX]
-            ],
-        }
-
-    def page_info(self, workspace: str, item: Path) -> dict[str, Any]:
-        """A page's address, size, what its CSP blocks, its notices and its link card."""
-        url = self.page_url(workspace, item)
-        # Read without following a symlink a run left: index.html could point at another
-        # workspace's files, whose title and description would go on the card.
-        entry = (item, "index.html") if item.is_dir() else (item.parent, item.name)
-        title, description = item.name, ""
-        data = None
-        if entry[1].lower().endswith((".html", ".htm")):
-            data = safefs.read_regular(entry[0], (entry[1],), WRITE_BYTES)
-        if data is not None:
-            html = data.decode(errors="replace")
-            if m := TITLE_RE.search(html):
-                title = htmllib.unescape(" ".join(m.group(1).split())) or title
-            description = page_description(html)
-        return {
-            "slug": item.name,
-            "url": url,
-            "files": len(regular_files(item)[0]),
-            **self.checked(item),
-            "card": chatimage.card.make(
-                self.config.site_dir,
-                url,
-                title,
-                f"Pages · {workspace}",
-                description,
-                images=self.config.site_url,
-            ),
-        }
-
-    def public_entries(self, public: Path, slug: str) -> list[Path]:
-        """/public's entries for `slug`: its folder, or a file named <slug>.<ext>."""
-        if not public.is_dir():
-            return []
-        return [
-            e
-            for e in public.iterdir()
-            if e.name == slug or (Path(e.name).stem == slug and "." in e.name)
-        ]
-
-    def stage(self, scope: Scope, path: str, slug: str) -> None:
-        """Copy a file or folder from the workspace's own folders to /public/<slug>, in place
-        of whatever was there: an HTML file as its index.html, a folder whole (plain files
-        only)."""
-        source = self.resolve(scope, path)
-        if not source.exists():
-            raise SandboxError(f"there's no '{path}'")
-        files, size = regular_files(source)
-        if not files:
-            raise SandboxError(f"'{path}' has no files to publish")
-        if size > PUBLISH_MAX_BYTES:
-            raise SandboxError(
-                f"'{path}' is {size >> 20} MB; the most publish copies is {PUBLISH_MAX_BYTES >> 20} MB"
-            )
-        self.put_public(scope, files, slug)
-
-    def stage_files(self, scope: Scope, source: Path, slug: str) -> int:
-        """A build's output into /public/<slug>: its plain files, within the copy cap."""
-        files, size = regular_files(source) if source.is_dir() else ([], 0)
-        if not files:
-            raise SandboxError("the build produced no files")
-        if size > PUBLISH_MAX_BYTES:
-            raise SandboxError(
-                f"the built site is {size >> 20} MB; a build can copy at most "
-                f"{PUBLISH_MAX_BYTES >> 20} MB"
-            )
-        self.put_public(scope, files, slug)
-        return len(files)
-
-    def put_public(
-        self, scope: Scope, files: list[tuple[Path, str]], slug: str
-    ) -> None:
-        """Copy plain files into /public/<slug>, in place of whatever was there for it, built
-        in a hidden folder beside it (which the site doesn't serve) and swapped in."""
-        new = Path(tempfile.mkdtemp(dir=scope.public, prefix=f".{slug}."))
-        try:
-            for src, name in files:
-                (new / name).parent.mkdir(parents=True, exist_ok=True)
-                copy_regular(src, new / name)
-            new.chmod(0o755)
-            for old in self.public_entries(scope.public, slug):
-                remove_path(old)
-            os.rename(new, scope.public / slug)
-        except BaseException:
-            remove_path(new)
-            raise
 
     # --- server ---
 

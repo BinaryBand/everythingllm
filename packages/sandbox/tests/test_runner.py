@@ -6,8 +6,9 @@ import re
 from pathlib import Path
 
 import pytest
-from sandbox import runner
-from sandbox.runner import Config, Runner
+from sandbox import containers, pages, runner, workspace
+from sandbox.runner import Runner
+from sandbox.workspace import Config
 
 A = {"workspace": "career", "thread": "12"}
 A2 = {"workspace": "career", "thread": "default"}
@@ -131,7 +132,7 @@ def test_podman_args_isolate_the_run(cfg):
         "--read-only",
         "--cap-drop ALL",
         "--pids-limit 256",
-        f"--memory {runner.MEMORY}",
+        f"--memory {containers.MEMORY}",
         "no-new-privileges",
         "--userns keep-id",
     ]:
@@ -351,7 +352,7 @@ def test_a_runner_without_addresses_refuses_to_run(cfg):
 
 
 def test_a_workspaces_shared_folder_counts_toward_its_quota(cfg, monkeypatch):
-    monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 10)
+    monkeypatch.setattr(workspace, "WORKSPACE_MAX_BYTES", 10)
     r = make(cfg)
     go(r.op_run(A, "bash", "true"))
     (shared(cfg, A) / "big.bin").write_bytes(b"x" * 11)
@@ -361,7 +362,7 @@ def test_a_workspaces_shared_folder_counts_toward_its_quota(cfg, monkeypatch):
 
 
 def test_the_browsers_downloads_count_toward_the_workspace(cfg, monkeypatch):
-    monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 10)
+    monkeypatch.setattr(workspace, "WORKSPACE_MAX_BYTES", 10)
     r = make(cfg)
     go(r.op_run(A, "bash", "true"))
     downloads = cfg.root / "career" / "project" / "downloads"  # browser-runner's copies
@@ -376,10 +377,10 @@ def test_copy_regular_refuses_symlinks_and_fifos(tmp_path):
     (tmp_path / "link").symlink_to(tmp_path / "real")
     os.mkfifo(tmp_path / "pipe")
     with pytest.raises(OSError):
-        runner.copy_regular(tmp_path / "link", tmp_path / "out1")
+        workspace.copy_regular(tmp_path / "link", tmp_path / "out1")
     with pytest.raises(runner.SandboxError, match="isn't a regular file"):
-        runner.copy_regular(tmp_path / "pipe", tmp_path / "out2")
-    runner.copy_regular(tmp_path / "real", tmp_path / "out3")
+        workspace.copy_regular(tmp_path / "pipe", tmp_path / "out2")
+    workspace.copy_regular(tmp_path / "real", tmp_path / "out3")
     assert (tmp_path / "out3").read_text() == "r"
 
 
@@ -410,7 +411,7 @@ def test_run_reports_changed_files_by_their_sandbox_paths(cfg):
 
 
 def test_a_run_warns_near_the_limit_counting_hidden_files(cfg, monkeypatch):
-    monkeypatch.setattr(runner, "WORKSPACE_WARN_BYTES", 2)
+    monkeypatch.setattr(workspace, "WORKSPACE_WARN_BYTES", 2)
 
     def effect(m):
         (m["/project"] / ".local").mkdir(exist_ok=True)
@@ -444,7 +445,7 @@ def test_capture_keeps_head_and_tail():
         stream = asyncio.StreamReader()
         stream.feed_data(b"start" + b"x" * 300_000 + b"Traceback end")
         stream.feed_eof()
-        return await runner.capture(stream, 1000)
+        return await containers.capture(stream, 1000)
 
     out = go(main())
     assert (
@@ -530,7 +531,7 @@ def test_delete(cfg, tmp_path):
 
 
 def test_quota_stops_runs_and_writes_but_not_deletes(cfg, monkeypatch):
-    monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 10)
+    monkeypatch.setattr(workspace, "WORKSPACE_MAX_BYTES", 10)
     r = make(cfg)
     for path, size in [(project(cfg, A) / "big.bin", 9), (work(cfg, A2) / ".cache", 2)]:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -552,7 +553,7 @@ def test_gc_removes_idle_threads_but_not_projects(cfg):
     r = make(cfg)
     go(r.op_write(A, "/project/keep", "k"))
     go(r.op_write(A2, "new", "n"))
-    past = r.now() - runner.THREAD_MAX_AGE - 10
+    past = r.now() - workspace.THREAD_MAX_AGE - 10
     os.utime(work(cfg, A), (past, past))
     os.utime(project(cfg, A), (past, past))
     assert r.gc() == ["career/12"]
@@ -565,7 +566,7 @@ def test_cleanup_removes_leftovers(cfg):
     (cfg.scripts / "sandbox-abc").mkdir(parents=True)
     go(r.cleanup())
     assert not cfg.scripts.exists()
-    assert r.podman.calls[0][0] == ["rm", "-f", "--filter", f"label={runner.LABEL}"]
+    assert r.podman.calls[0][0] == ["rm", "-f", "--filter", f"label={containers.LABEL}"]
 
 
 def test_ping_lists_problems(cfg):
@@ -697,7 +698,7 @@ def test_writes_say_which_page_changed_or_went(cfg):
                 "slug": "b.html",
                 "url": "https://ws.example/career/b.html",
                 "blocked": [],
-                "notices": [runner.SCRIPTS_NOTICE],
+                "notices": [pages.SCRIPTS_NOTICE],
             }
         ]
     }
@@ -738,7 +739,7 @@ def test_a_run_reports_removed_and_changed_pages_but_not_hidden_ones(cfg):
 def test_public_counts_toward_the_workspaces_quota(cfg, monkeypatch):
     r = make(cfg)
     go(r.op_write(A, "/public/big.html", "x" * 1000))
-    monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 500)
+    monkeypatch.setattr(workspace, "WORKSPACE_MAX_BYTES", 500)
     with pytest.raises(runner.SandboxError, match="over its"):
         go(r.op_run(A, "bash", "true"))
 
@@ -773,7 +774,7 @@ def test_each_workspace_has_its_own_public(cfg):
     ],
 )
 def test_page_description(html, description):
-    assert runner.page_description(html) == description
+    assert pages.page_description(html) == description
 
 
 def test_publish_gives_a_pages_address_and_card(cfg):
@@ -894,11 +895,11 @@ def test_show_image_refuses_a_big_one_and_drops_the_oldest_past_the_cap(
 ):
     r = make(cfg)
     work(cfg, A).mkdir(parents=True)
-    monkeypatch.setattr(runner, "IMAGE_MAX_BYTES", 10)
+    monkeypatch.setattr(pages, "IMAGE_MAX_BYTES", 10)
     (work(cfg, A) / "big.png").write_bytes(png("red"))
     with pytest.raises(runner.SandboxError, match="over 0 MB"):
         go(r.op_show_image(A, "big.png"))
-    monkeypatch.setattr(runner, "IMAGE_MAX_BYTES", 10 << 20)
+    monkeypatch.setattr(pages, "IMAGE_MAX_BYTES", 10 << 20)
     sizes = []
     urls = []
     for i, color in enumerate(("red", "green", "blue")):
@@ -908,7 +909,7 @@ def test_show_image_refuses_a_big_one_and_drops_the_oldest_past_the_cap(
         sizes.append(res["bytes"])
         os.utime(cfg.site_dir / "_images" / "career" / urls[-1], (i, i))
     # Showing the first again makes it the newest, so the second goes.
-    monkeypatch.setattr(runner, "IMAGES_MAX_BYTES", sizes[0] + sizes[2])
+    monkeypatch.setattr(pages, "IMAGES_MAX_BYTES", sizes[0] + sizes[2])
     go(r.op_show_image(A, "0.png"))
     assert sorted(os.listdir(cfg.site_dir / "_images" / "career")) == sorted(
         [urls[0], urls[2]]
@@ -956,37 +957,37 @@ def test_links_on_the_sites_own_origin_arent_blocked(cfg):
     ],
 )
 def test_only_scripts_from_another_host_are_blocked(html, blocked):
-    found = runner.csp_blocked(html, "https://ws.example")
+    found = pages.csp_blocked(html, "https://ws.example")
     assert found == (["scripts from another host"] if blocked else [])
 
 
 def notice(start: str) -> str:
     """The one notice that starts with `start`."""
-    (found,) = [n for n in runner.NOTICES if n.startswith(start)]
+    (found,) = [n for n in pages.NOTICES if n.startswith(start)]
     return found
 
 
 def test_a_page_with_scripts_hears_what_the_sandbox_takes_away():
-    scripts = runner.SCRIPTS_NOTICE
-    assert runner.page_notices("<title>Plain</title><p>Important: prompt (x)</p>") == []
+    scripts = pages.SCRIPTS_NOTICE
+    assert pages.page_notices("<title>Plain</title><p>Important: prompt (x)</p>") == []
     for html in (
         "<script>tick()</script>",
         "<b onclick='go()'>",
         "<a href=javascript:go()>",
     ):
-        assert runner.page_notices(html) == [scripts]
+        assert pages.page_notices(html) == [scripts]
     page = (
         "<script>localStorage.x = 1; fetch('d.json'); alert('done')</script>"
         '<script type="module" src="m.js"></script>'
         '<a href="a.html" target="_blank">a</a><form><button>add</button></form>'
     )
-    assert runner.page_notices(page) == list(runner.NOTICES)
+    assert pages.page_notices(page) == list(pages.NOTICES)
     # Without scripts, only what breaks without them; prose that looks like code is fine.
-    assert runner.page_notices(
+    assert pages.page_notices(
         "<p>Important: fetch() and localStorage.</p><a target=_blank href=x>x</a>"
     ) == [notice("links with target=_blank")]
     # A script file has no notice of its own that it's a script, and no HTML limits.
-    assert runner.page_notices(
+    assert pages.page_notices(
         "import { a } from './a.js';\nsessionStorage.k = 1; // target=_blank <form>",
         script=True,
     ) == [notice("localStorage"), notice("module scripts")]
@@ -999,11 +1000,11 @@ def test_a_pages_script_files_are_checked_too(cfg):
         r.op_write(A, "/public/timer/index.html", '<script src="app.js"></script>')
     )
     assert res["published"]["live"][0]["notices"] == [
-        runner.SCRIPTS_NOTICE,
+        pages.SCRIPTS_NOTICE,
         notice("localStorage"),
     ]
     assert go(r.op_publish(A, "timer"))["notices"] == [
-        runner.SCRIPTS_NOTICE,
+        pages.SCRIPTS_NOTICE,
         notice("localStorage"),
     ]
 
@@ -1032,7 +1033,7 @@ def test_publish_refuses_bad_input(cfg, tmp_path, monkeypatch):
     (work(cfg, A) / "dir" / "leak").symlink_to(victim)
     go(r.op_publish(A, "d", "dir"))
     assert sorted(os.listdir(public(cfg, A) / "d")) == ["f.txt"]
-    monkeypatch.setattr(runner, "PUBLISH_MAX_BYTES", 2)
+    monkeypatch.setattr(pages, "PUBLISH_MAX_BYTES", 2)
     with pytest.raises(runner.SandboxError, match="the most publish copies"):
         go(r.op_publish(A, "s2", "a.txt"))
 
@@ -1050,10 +1051,10 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     # egress.toml, where the runs' addresses are, needs this machine's name.
     with pytest.raises(ValueError, match="PUBLIC_HOST isn't set"):
-        runner.Config.from_env()
+        Config.from_env()
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/data/allm")
     monkeypatch.setenv("PUBLIC_HOST", "box.tail.ts.net")
-    config = runner.Config.from_env()
+    config = Config.from_env()
     assert (config.network, config.ips, config.proxy) == (
         "egress-net",
         ("10.89.79.40", "10.89.79.41"),
@@ -1066,7 +1067,7 @@ def test_config_follows_this_machines_host_settings(monkeypatch):
     assert config.root == data / "sandbox" / "workspaces"
     assert config.public_root == data / "sandbox" / "public"
     assert config.public_url == "https://box.tail.ts.net:8447/"
-    assert config.system_themes == runner.SYSTEM_THEMES
+    assert config.system_themes == workspace.SYSTEM_THEMES
     assert (config.system_themes / "agent-site" / "theme.toml").is_file()
 
 
@@ -1188,26 +1189,26 @@ def test_publish_never_reads_through_a_symlink_a_run_left_in_public(cfg):
     assert "secret" not in json.dumps(res)
     # Nor does the scan of what the CSP blocks read a symlink at the top of /public.
     (public(cfg, A) / "y.html").symlink_to(project(cfg, B) / "private.html")
-    assert runner.regular_files(public(cfg, A) / "y.html") == ([], 0)
-    assert runner.regular_files(public(cfg, A) / "x")[0][0][1] == "other.html"
+    assert workspace.regular_files(public(cfg, A) / "y.html") == ([], 0)
+    assert workspace.regular_files(public(cfg, A) / "x")[0][0][1] == "other.html"
 
 
 def test_a_run_cant_write_one_huge_file_or_too_many_open(cfg):
     r = make(cfg)
     go(r.op_run(A, "bash", "true"))
     args = r.podman.runs()[0][0]
-    assert f"fsize={runner.FILE_MAX_BYTES}:{runner.FILE_MAX_BYTES}" in args
-    assert f"nofile={runner.OPEN_FILES}:{runner.OPEN_FILES}" in args
+    assert f"fsize={containers.FILE_MAX_BYTES}:{containers.FILE_MAX_BYTES}" in args
+    assert f"nofile={containers.OPEN_FILES}:{containers.OPEN_FILES}" in args
 
 
 @pytest.mark.parametrize("what", ["bytes", "files", "hidden files"])
 def test_a_run_that_fills_the_disk_is_stopped_while_it_runs(cfg, monkeypatch, what):
     monkeypatch.setattr(runner, "WATCH_SECONDS", 0.01)
     if what == "bytes":
-        monkeypatch.setattr(runner, "WORKSPACE_MAX_BYTES", 100)
-        monkeypatch.setattr(runner, "RUN_SLACK", 100)
+        monkeypatch.setattr(workspace, "WORKSPACE_MAX_BYTES", 100)
+        monkeypatch.setattr(workspace, "RUN_SLACK", 100)
     else:
-        monkeypatch.setattr(runner, "MAX_FILES", 5)
+        monkeypatch.setattr(workspace, "MAX_FILES", 5)
 
     def fill(m):
         # Files in a hidden folder count too, or a run could fill the inodes there.

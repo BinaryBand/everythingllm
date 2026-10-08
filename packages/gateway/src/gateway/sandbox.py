@@ -41,7 +41,7 @@ PREFIX = "sandbox_"
 # A client's sandbox workspace is WORKSPACE + its name, its one thread THREAD.
 WORKSPACE = "client-"
 THREAD = "gateway"
-# sandbox.runner.KEY_RE, which a scope's workspace and thread must match (the gateway
+# sandbox.workspace.KEY_RE, which a scope's workspace and thread must match (the gateway
 # doesn't import the runner; a test holds them equal).
 KEY_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")
 

@@ -752,6 +752,16 @@ def test_publish_copies_into_public_and_remove_deletes_from_it(cfg):
         go(r.op_publish(A, "trip-plan", remove=True))
 
 
+def test_removing_a_page_by_its_path_leaves_others_that_share_its_stem(cfg):
+    r = make(cfg)
+    for name in ("notes.html", "notes.css", "v1.2", "v1.3"):
+        go(r.op_write(A, f"/public/{name}", "x"))
+    go(r.op_write(A, "/public/notes/index.html", "x"))
+    go(r.op_publish(A, path="/public/notes.html", remove=True))
+    go(r.op_publish(A, path="/public/v1.2", remove=True))
+    assert sorted(os.listdir(public(cfg, A))) == ["notes", "notes.css", "v1.3"]
+
+
 def test_publish_without_a_page_lists_them(cfg):
     r = make(cfg)
     go(r.op_write(A, "/public/a/index.html", "a"))
@@ -1260,7 +1270,7 @@ def test_a_run_cant_write_one_huge_file_or_too_many_open(cfg):
     assert f"nofile={runner.OPEN_FILES}:{runner.OPEN_FILES}" in args
 
 
-@pytest.mark.parametrize("what", ["bytes", "files"])
+@pytest.mark.parametrize("what", ["bytes", "files", "hidden files"])
 def test_a_run_that_fills_the_disk_is_stopped_while_it_runs(cfg, monkeypatch, what):
     monkeypatch.setattr(runner, "WATCH_SECONDS", 0.01)
     if what == "bytes":
@@ -1270,8 +1280,11 @@ def test_a_run_that_fills_the_disk_is_stopped_while_it_runs(cfg, monkeypatch, wh
         monkeypatch.setattr(runner, "MAX_FILES", 5)
 
     def fill(m):
+        # Files in a hidden folder count too, or a run could fill the inodes there.
+        folder = m["/work"] / ".junk" if what == "hidden files" else m["/work"]
+        folder.mkdir(exist_ok=True)
         for i in range(10):
-            (m["/work"] / f"f{i}").write_bytes(b"x" * 50)
+            (folder / f"f{i}").write_bytes(b"x" * 50)
 
     r = make(cfg, effect=fill, delay=0.3, result=(137, "", "", False))
     res = go(r.op_run(A, "bash", "yes > big"))

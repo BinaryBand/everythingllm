@@ -45,7 +45,7 @@ import tomllib
 
 LOCK = ".build.lock"
 MARKER = ".zola-site"  # in every built site; the sandbox won't publish over it
-BUILD_SECONDS = 40  # per site, the sandbox's limit; hostrpc's caller gives up after 55
+BUILD_SECONDS = 40  # per site, the sandbox's limit; hostrpc's caller gives up after 50
 
 log = logging.getLogger(__name__)
 REPO_SITES = (

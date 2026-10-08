@@ -60,11 +60,14 @@ def test_assemble_copies_the_site_with_its_theme_but_not_git_or_old_output(
     )
     (site / ".git").mkdir()
     (site / "public").mkdir()
+    (site / "content" / "public").mkdir()  # a section of that name is the site's own
+    (site / "content" / "public" / "_index.md").write_text("+++\n+++\n")
     (site / "themes" / "agent-site").mkdir(parents=True)
     (site / "themes" / "agent-site" / "stale.txt").write_text("old copy")
     work = tmp_path / "work"
     assemble(site, work, *roots)
     assert sorted(p.name for p in work.iterdir()) == ["content", "themes", "zola.toml"]
+    assert (work / "content" / "public" / "_index.md").is_file()
     assert sorted(p.name for p in (work / "themes" / "agent-site").iterdir()) == [
         "theme.toml"
     ]

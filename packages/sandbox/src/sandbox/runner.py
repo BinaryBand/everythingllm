@@ -24,7 +24,7 @@ which no run mounts and the size limit leaves out; the browser saves downloads i
 The shared and system folders are mounted noexec and never on PATH: they're data, and code
 in another workspace's folder isn't to be run. A workspace's folders together (its shared
 folder too) are held to WORKSPACE_MAX_BYTES: no run starts past it, and one that takes the
-workspace past it and RUN_SLACK, or past MAX_FILES files, is killed (`watch`, every
+workspace past it and RUN_SLACK, or past MAX_FILES files and folders, is killed (`watch`, every
 WATCH_SECONDS); no file a run writes can be over FILE_MAX_BYTES. The script itself is mounted read-only from a
 host-only folder at /sandbox.
 
@@ -156,16 +156,17 @@ DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
 BUILD_TIMEOUT = 60  # a site build, assembling included
 SYSTEM_BUILD_TIMEOUT = (
-    40  # a system site's, as sites.build's; its callers give up after 55
+    40  # a system site's, as sites.build's; its callers give up after 50
 )
+SYSTEM_SLOT_WAIT = 5  # how long a system build waits for a slot before saying "busy"
 SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
 OUTPUT_BYTES = 20_000  # per stream of a run
 WRITE_BYTES = 1_000_000  # op_write
 WORKSPACE_WARN_BYTES = 4 << 30
 WORKSPACE_MAX_BYTES = 5 << 30  # no new runs or writes past this; deletes still work
 # A run is stopped if, while it runs, the workspace grows past WORKSPACE_MAX_BYTES and
-# RUN_SLACK, or holds more than MAX_FILES files: looked at every WATCH_SECONDS, and no one
-# file it writes can be over FILE_MAX_BYTES (RLIMIT_FSIZE).
+# RUN_SLACK, or holds more than MAX_FILES files and folders (hidden ones too): looked at
+# every WATCH_SECONDS, and no one file it writes can be over FILE_MAX_BYTES (RLIMIT_FSIZE).
 RUN_SLACK = 1 << 30
 MAX_FILES = 200_000
 WATCH_SECONDS = 3.0
@@ -253,7 +254,11 @@ async def podman(
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            await killer.wait()
+            try:  # a hung podman mustn't keep the run, its lock and its slot forever
+                await asyncio.wait_for(killer.wait(), 30)
+            except TimeoutError:
+                killer.kill()
+                await killer.wait()
         try:
             await asyncio.wait_for(proc.wait(), 30)
         except TimeoutError:
@@ -358,6 +363,7 @@ class Usage:
         default_factory=dict
     )  # sandbox path: (mtime, size)
     total: int = 0
+    count: int = 0  # every file and folder, hidden ones included: what MAX_FILES holds
     tops: dict[str, int] = field(
         default_factory=dict
     )  # size by top-level entry of each mount
@@ -384,7 +390,8 @@ def snapshot(scope: Scope) -> Usage:
     of the whole workspace (its other threads and its /public too). Hidden top-level entries
     (.local with pip installs, .cache…) count toward the size only."""
     usage = Usage()
-    for dirpath, _, filenames in walk(scope):
+    for dirpath, dirnames, filenames in walk(scope):
+        usage.count += len(dirnames) + len(filenames)
         where = scope.mount_of(Path(dirpath))
         for name in filenames:
             try:
@@ -802,14 +809,20 @@ class Runner(hostrpc.Service):
             self._free.put_nowait(ip)
 
     @contextlib.asynccontextmanager
-    async def slot(self) -> AsyncIterator[str]:
+    async def slot(self, wait: float | None = None) -> AsyncIterator[str]:
         """One of the sandbox profile's addresses, held until the block ends: a run's
-        container takes it on egress-net, a build's (no network) only its turn."""
+        container takes it on egress-net, a build's (no network) only its turn. With
+        `wait`, a caller that can't wait out two runs is told the sandbox is busy instead."""
         if not self.config.ips:
             raise SandboxError(
                 "the sandbox has no addresses on egress-net (egress.toml's sandbox profile)"
             )
-        ip = await self._free.get()
+        try:
+            ip = await asyncio.wait_for(self._free.get(), wait)
+        except TimeoutError:
+            raise SandboxError(
+                "the sandbox is busy with other runs; try again in a few minutes"
+            ) from None
         try:
             yield ip
         finally:
@@ -1239,8 +1252,8 @@ class Runner(hostrpc.Service):
             usage = await asyncio.to_thread(snapshot, scope)
             if usage.total > WORKSPACE_MAX_BYTES + RUN_SLACK:
                 over = f"the workspace went over {(WORKSPACE_MAX_BYTES + RUN_SLACK) >> 20} MB"
-            elif len(usage.files) > MAX_FILES:
-                over = f"the workspace went over {MAX_FILES} files"
+            elif usage.count > MAX_FILES:
+                over = f"the workspace went over {MAX_FILES} files and folders"
             else:
                 continue
             log.warning("killing run %s in %s: %s", name, scope.workspace, over)
@@ -1440,7 +1453,8 @@ class Runner(hostrpc.Service):
                 args = await asyncio.to_thread(
                     self.prepare_system_build, name, site, run_dir
                 )
-                async with self.slot():
+                # sites.build gives up after 50 s; runs can hold both slots for 300.
+                async with self.slot(wait=SYSTEM_SLOT_WAIT):
                     exit_code, out, err, timed_out = await self.podman(
                         [
                             *args,
@@ -1520,6 +1534,8 @@ class Runner(hostrpc.Service):
         if size > PUBLISH_MAX_BYTES:
             raise SandboxError(f"the built site is {size >> 20} MB, over the cap")
         remove_path(dest)
+        # Only the folders on the current file's path stay open (os.walk's order keeps a
+        # folder's files together), so a site of thousands of folders doesn't run out of fds.
         folders: dict[tuple[str, ...], int] = {}
         try:
             parent = open_dir(dest.parent)
@@ -1529,6 +1545,8 @@ class Runner(hostrpc.Service):
                 os.close(parent)
             for src, rel in files:
                 *parts, name = Path(rel).parts
+                for key in [k for k in folders if tuple(parts[: len(k)]) != k]:
+                    os.close(folders.pop(key))
                 for i in range(len(parts)):
                     key = tuple(parts[: i + 1])
                     if key not in folders:
@@ -1735,13 +1753,25 @@ class Runner(hostrpc.Service):
                 return await asyncio.to_thread(self.listing, s)
             item = s.public / name
             if remove:
-                entries = self.public_entries(s.public, Path(name).stem) or (
-                    [item] if os.path.lexists(item) else []
-                )
+                if path and not outside:
+                    # The entry the path names, or else its file (/public/notes for
+                    # notes.html), never others that share a stem (notes.css, v1.3).
+                    entries = (
+                        [item]
+                        if os.path.lexists(item)
+                        else self.public_entries(s.public, name)
+                    )
+                else:
+                    entries = self.public_entries(s.public, slug) or (
+                        [item] if os.path.lexists(item) else []
+                    )
                 if not entries:
                     raise SandboxError(f"there's no page '{name}' in /public")
                 for e in entries:
+                    url = self.page_url(s.workspace, e)  # before: a folder's ends in /
                     await asyncio.to_thread(remove_path, e)
+                    # Its link card too, which shows the page's title and description.
+                    chatimage.card.remove(self.config.site_dir, url)
                 return {"slug": name, "removed": True}
             if not (item.is_dir() or item.is_file()) or item.is_symlink():
                 raise SandboxError(

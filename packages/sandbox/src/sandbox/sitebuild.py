@@ -139,9 +139,13 @@ def assemble(
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         raise BuildError(f"zola.toml doesn't parse: {e}") from None
     theme = theme_source(conf, system, shared)
-    shutil.copytree(
-        source, work, symlinks=True, ignore=shutil.ignore_patterns(".git", "public")
-    )
+
+    def leave_out(folder: str, names: list[str]) -> set[str]:
+        # An old build's public/ is only the one at the top: content/public/ is a section.
+        old = {".git", "public"} if Path(folder) == source else {".git"}
+        return old & set(names)
+
+    shutil.copytree(source, work, symlinks=True, ignore=leave_out)
     if theme is not None:
         dest = work / "themes" / theme.name
         shutil.rmtree(dest, ignore_errors=True)

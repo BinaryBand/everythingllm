@@ -233,15 +233,18 @@ def test_the_view_answers_the_agents_request_and_saves_offers(tmp_path):
         saved = r.vault.add("career", "example.com", "alice", "pw", ask=True)
         waiting = await r.op_login(scope(), saved["id"], "e1", "e2")
         state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
-        assert state["approval"] == {
-            "id": waiting["approval"],
-            "kind": "login",
-            "site": "example.com",
-            "username": "alice",
-            "url": "https://example.com/",
-        }
+        assert state["approvals"] == [
+            {
+                "id": waiting["approval"],
+                "kind": "login",
+                "site": "example.com",
+                "username": "alice",
+                "url": "https://example.com/",
+                "chat": "Title of https://example.com/",  # its tab's page
+            }
+        ]
         head, body = await post(port, f"/{s.token}/approve/{waiting['approval']}")
-        assert "200 OK" in head and json.loads(body)["approval"] is None
+        assert "200 OK" in head and json.loads(body)["approvals"] == []
         assert (await r.op_login(scope(), saved["id"], "e1", "e2"))["page"]
         driver = podman.drivers[s.name]
         driver.offers["0a1b2c3d"] = {

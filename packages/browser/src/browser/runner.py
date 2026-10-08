@@ -43,7 +43,9 @@ Saved logins (browser.vault, one vault per workspace) are the agent's to use and
 read: it names a login and the fields, and the runner has the driver fill them on the
 login's own site, over https. A login the user marked `ask` waits for their OK in the
 take-over view (and on the card) before each use, good for GRANT minutes in that chat
-alone. While the user has the browser, logins they send are offered for saving there too.
+alone. A chat waits for one OK at a time: its new request takes the place of its own last
+one, never another chat's, and one unanswered for APPROVAL_SECONDS is let go. While the
+user has the browser, logins they send are offered for saving there too.
 
 A passkey (`passkey`) is a saved entry too, asking first unless the user turns that off: the
 driver puts it in the thread's page for the click that signs in with it. Only the user makes
@@ -124,6 +126,7 @@ log = logging.getLogger("browser-runner")
 IDLE = 20 * 60  # seconds unused and unwatched before a browser is stopped
 GRANT = 10 * 60  # seconds the user's OK to use a login lasts
 WAIT = 40  # what wait_approval waits at most, inside a skill call's patience
+APPROVAL_SECONDS = 30 * 60  # an unanswered request for the user's OK is let go after
 MAX_ANSWERS = 20  # the user's last answers kept, for a wait_approval that comes late
 START_SECONDS = 40  # for a container's driver to answer
 # An op in the driver: its own limits are shorter (30 s for a page load).
@@ -282,8 +285,7 @@ class Runner(hostrpc.Service):
         # Held until its container, which holds the address, is gone.
         self.reserved.add(s.slot)
         try:
-            if s.approval is not None:  # its waiter hears it's stale
-                s.approval.answered.set()
+            self.unask(s, *s.approvals.values())
             if s.making:
                 await self.save_made(s)
             await self.podman(["stop", "-t", "5", s.name], 30)
@@ -355,8 +357,7 @@ class Runner(hostrpc.Service):
             return result
         if self.sessions.get(s.workspace) is s:
             del self.sessions[s.workspace]
-            if s.approval is not None:  # its waiter hears it's stale
-                s.approval.answered.set()
+            self.unask(s, *s.approvals.values())
             self.forget(s.workspace)
             await self.podman(["rm", "-f", s.name], 30)
         raise Gone("the browser closed (its window was shut, or it crashed)")
@@ -617,15 +618,15 @@ class Runner(hostrpc.Service):
     ) -> dict[str, Any]:
         workspace, _ = check_scope(scope)
         s = self.sessions.get(workspace)
-        # Unanswered and no longer asked (another login's request took its place, or the
-        # browser restarted): not the user's no.
+        # Unanswered and no longer asked (its chat asked for another login, nobody answered
+        # in APPROVAL_SECONDS, or the browser restarted): not the user's no.
         stale = {"done": True, "approved": False, "stale": True}
         if s is None:
             return stale
         if approval in s.answers:
             return {"done": True, "approved": s.answers[approval]}
-        waiting = s.approval
-        if waiting is None or waiting.id != approval:
+        waiting = s.approvals.get(approval)
+        if waiting is None:
             return stale
         try:
             await asyncio.wait_for(waiting.answered.wait(), WAIT)
@@ -721,23 +722,53 @@ class Runner(hostrpc.Service):
         """The OK the agent must wait for before using `entry`, as the op's reply
         ({approval, card}), or None when it needs none (the entry doesn't ask, or the user
         said yes to this chat in the last GRANT seconds)."""
+        self.expire(s)
+        now = self.now()
         key = (tab.thread, entry["id"])
-        if not entry.get("ask") or s.granted.get(key, 0) > self.now():
+        if not entry.get("ask") or s.granted.get(key, 0) > now:
             return None
-        if s.approval is None or (s.approval.thread, s.approval.login) != key:
-            if s.approval is not None:  # its waiter hears it's stale
-                s.approval.answered.set()
-            s.approval = Approval(
+        # One per chat: its new request takes the place of its own last one, and leaves
+        # other chats' be. A workspace's main chat and its scheduled jobs share the thread
+        # "default" (anythingllm/agent-skills/_lib/scope.js), so theirs replace each other.
+        waiting = next(
+            (a for a in s.approvals.values() if a.thread == tab.thread), None
+        )
+        if waiting is None or waiting.login != entry["id"]:
+            if waiting is not None:
+                self.unask(s, waiting)
+            waiting = Approval(
                 secrets.token_hex(4), entry["id"], entry["kind"], entry["site"],
-                entry["username"], tab.thread, tab.url,
+                entry["username"], tab.thread, tab.url, now,
             )  # fmt: skip
+            s.approvals[waiting.id] = waiting
         tab.moved(f"Waiting for your OK to use your {entry['site']} {entry['kind']}")
-        return {"approval": s.approval.id, "card": self.card(tab)}
+        return {"approval": waiting.id, "card": self.card(tab)}
+
+    def expire(self, s: Session) -> None:
+        """Let go of the requests nobody answered in APPROVAL_SECONDS, saying so on their
+        chats' cards, and of the OKs past their time."""
+        now = self.now()
+        old = [a for a in s.approvals.values() if now - a.made > APPROVAL_SECONDS]
+        self.unask(s, *old)
+        for waiting in old:
+            tab = self.threads.get((s.workspace, waiting.thread))
+            if tab is not None and tab.open:
+                tab.moved(
+                    f"Nobody answered in time about the {waiting.site} {waiting.kind}"
+                )
+        s.granted = {k: until for k, until in s.granted.items() if until > now}
+
+    def unask(self, s: Session, *approvals: Approval) -> None:
+        """Let unanswered requests go: their waiters hear they're stale."""
+        for waiting in approvals:
+            s.approvals.pop(waiting.id, None)
+            waiting.answered.set()
 
     def answer(self, s: Session, approval: str, yes: bool) -> None:
-        """The user's answer in the take-over view."""
-        waiting = s.approval
-        if waiting is None or waiting.id != approval:
+        """The user's answer in the take-over view, said on the card of the chat that
+        asked alone: another chat still waiting keeps saying so."""
+        waiting = s.approvals.pop(approval, None)
+        if waiting is None:
             raise RunnerError("that request isn't waiting any more")
         waiting.answer = bool(yes)
         if yes:
@@ -745,12 +776,12 @@ class Runner(hostrpc.Service):
         s.answers[waiting.id] = waiting.answer
         while len(s.answers) > MAX_ANSWERS:
             del s.answers[next(iter(s.answers))]
-        s.approval = None
         waiting.answered.set()
-        self.tell(
-            s,
-            f"You {'allowed' if yes else 'refused'} the {waiting.site} {waiting.kind}",
-        )
+        tab = self.threads.get((s.workspace, waiting.thread))
+        if tab is not None and tab.open:
+            tab.moved(
+                f"You {'allowed' if yes else 'refused'} the {waiting.site} {waiting.kind}"
+            )
 
     async def used(self, workspace: str, entry: dict[str, Any], **fields: Any) -> None:
         """Note the day a login was used (and a passkey's new sign count). The fill is done
@@ -911,7 +942,7 @@ class Runner(hostrpc.Service):
             return "closed"
         if s.control == "user":
             return "waiting" if s.asked else "user"
-        if (s.approval is not None and s.approval.thread == tab.thread) or any(
+        if any(a.thread == tab.thread for a in s.approvals.values()) or any(
             r.tab == tab.id and self.waiting(r) for r in self.asked.values()
         ):
             return "waiting"

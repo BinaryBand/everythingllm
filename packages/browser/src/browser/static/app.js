@@ -86,13 +86,28 @@ async function act(doing, what, body) {
   return error;
 }
 
-function showApproval(a) {
-  $("approval").hidden = !a;
-  if (!a) return;
-  $("approval-text").textContent =
-    `The agent in one of this workspace's chats wants to use your ${a.kind} for ${who(a)}, on ${a.url}.`;
-  $("allow").onclick = () => act("allow the request", `approve/${a.id}`);
-  $("deny").onclick = () => act("refuse the request", `deny/${a.id}`);
+// The agent's waits for your OK to use a saved login, one per chat, in the order asked.
+function showApprovals(approvals) {
+  const box = $("approvals");
+  const keep = new Set(approvals.map((a) => a.id));
+  for (const old of [...box.children]) if (!keep.has(old.dataset.id)) old.remove();
+  for (const a of approvals) {
+    if (box.querySelector(`[data-id="${a.id}"]`)) continue;
+    const chat = a.chat ? `the chat browsing “${a.chat}”` : "one of this workspace's chats";
+    const allow = el("button", { textContent: "Allow" });
+    const deny = el("button", { textContent: "Don't allow", className: "quiet" });
+    const row = el(
+      "div",
+      { className: "ask" },
+      el("span", { textContent: `The agent in ${chat} wants to use your ${a.kind} for ${who(a)}, on ${a.url}.` }),
+      allow,
+      deny
+    );
+    row.dataset.id = a.id;
+    allow.onclick = () => act("allow the request", `approve/${a.id}`);
+    deny.onclick = () => act("refuse the request", `deny/${a.id}`);
+    box.append(row);
+  }
 }
 
 // The agent's requests for logins it has none of: each links to its own form.
@@ -191,7 +206,7 @@ async function refresh() {
 
 function render(s) {
   show(s);
-  showApproval(s.approval);
+  showApprovals(s.approvals || []);
   showAsked(s.asked || []);
   showOffers(s.offers || []);
   showLogins(s.logins || []);

@@ -221,6 +221,40 @@ test("browser-login says so when the user refuses", async () => {
   }
 });
 
+test("browser-login has the agent call again when its request was let go", async () => {
+  const runner = await fakeRunner((op) =>
+    op === "login" ? { ok: true, result: { approval: "ap4", card: CARD } } : { ok: true, result: { done: true, approved: false, stale: true } }
+  );
+  try {
+    const reply = await login.handler.call(agent(), { action: "login", login: "x" });
+    assert.match(reply, /this chat asked for another of its saved logins, or the browser restarted\)\. Call browser-login again\.$/);
+    assert.deepEqual(runner.requests.map((r) => r.op), ["login", "wait_approval"]);
+  } finally {
+    delete process.env.BROWSER_SOCKET;
+    await runner.close();
+  }
+});
+
+test("browser-login gives up waiting after five minutes and has the agent ask in its reply", async (t) => {
+  let now = 0;
+  t.mock.method(Date, "now", () => now);
+  const runner = await fakeRunner((op) => {
+    if (op === "login") return { ok: true, result: { approval: "ap5", card: CARD } };
+    now += 40_000; // each wait_approval is the runner's WAIT
+    return { ok: true, result: { done: false, approved: false } };
+  });
+  try {
+    const reply = await login.handler.call(agent(), { action: "login", login: "x" });
+    assert.match(reply, /^Card: \[!\[Browser: x\]/);
+    assert.match(reply, /The user hasn't answered yet\. Put the Card line in your reply/);
+    // 5 minutes of 40 s waits: the eighth ends past it.
+    assert.deepEqual(runner.requests.map((r) => r.op), ["login", ...Array(8).fill("wait_approval")]);
+  } finally {
+    delete process.env.BROWSER_SOCKET;
+    await runner.close();
+  }
+});
+
 test("browser-login asks the user for a login on a card, with the scope and nothing from the model", async () => {
   const ASKED = "[![Log in to github.com](https://h:8445/_live/browser/login/lr-0.png)](https://h:8445/_live/browser/login/lr-0)";
   let card = ASKED;

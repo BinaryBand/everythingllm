@@ -63,7 +63,8 @@ class Session:
     reason: str = ""  # why the user has it
     asked: bool = False  # whether the agent asked for it (a handoff)
     viewers: int = 0  # take-over views open
-    approval: Approval | None = None  # the OK the agent waits for
+    # id -> an OK the agent waits for, at most one per chat, in the order asked
+    approvals: dict[str, Approval] = field(default_factory=dict)
     # (thread, login id) -> OK until: one chat's OK isn't another's
     granted: dict[tuple[str, str], float] = field(default_factory=dict)
     answers: dict[str, bool] = field(default_factory=dict)  # approval id -> the user's

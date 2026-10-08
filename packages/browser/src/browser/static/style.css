@@ -11,8 +11,7 @@ button { font: inherit; padding: 0.35rem 0.9rem; border-radius: 6px; border: 0; 
 #reason { margin: 0; padding: 0.4rem 1rem; background: #3a2f1f; color: var(--user); }
 #problem { margin: 0; padding: 0.4rem 1rem; }
 main { flex: 1; min-height: 0; }
-#approval, #offers > div { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; margin: 0; padding: 0.5rem 1rem; background: #3a2f1f; color: var(--user); }
-#approval[hidden] { display: none; }
+#approvals > div, #offers > div { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; margin: 0; padding: 0.5rem 1rem; background: #3a2f1f; color: var(--user); }
 button.quiet { background: transparent; color: var(--muted); border: 1px solid #3a3f4b; }
 #logins { padding: 0.3rem 1rem; border-top: 1px solid #2c313b; }
 #logins summary { cursor: pointer; color: var(--muted); }

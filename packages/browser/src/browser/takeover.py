@@ -11,10 +11,12 @@ container, so a stopped browser's old address goes nowhere.
   GET  /<token>/app.js, style.css  the page's script and style (static/ beside this file)
   GET  /<token>/novnc/<path>     noVNC's core and vendor files (copied from the browser image
                                  into <data>/novnc by hostctl browser-images)
-  GET  /<token>/state            {workspace, control, state, reason, waiting, tabs, approval,
+  GET  /<token>/state            {workspace, control, state, reason, waiting, tabs, approvals,
                                  asked, offers, logins, making, made}: `state` what's being done
-                                 with it (Runner.activity), logins (and passkeys) and offers
-                                 without their secrets
+                                 with it (Runner.activity), `approvals` the agent's waits for
+                                 the user's OK, one per chat in the order asked, each naming
+                                 its chat by its tab's page (`chat`, null without one), logins
+                                 (and passkeys) and offers without their secrets
   POST /<token>/take             the user takes the browser
   POST /<token>/give             the user hands it back to the agent
   POST /<token>/approve/<id>, deny/<id>   answer the agent's wish to use a saved login
@@ -95,11 +97,7 @@ PAGE = """<!doctype html>
 </header>
 <p id="reason" hidden></p>
 <p id="problem" class="error" hidden></p>
-<section id="approval" class="ask" hidden>
-  <span id="approval-text"></span>
-  <button id="allow">Allow</button>
-  <button id="deny" class="quiet">Don't allow</button>
-</section>
+<section id="approvals"></section>
 <section id="asked"></section>
 <section id="offers"></section>
 <details id="logins">
@@ -447,7 +445,20 @@ class Takeover:
         ]
         if s.making:  # save what was made, and see whether they still can
             await self.runner.save_made(s)
-        approval = s.approval
+        self.runner.expire(s)
+        approvals = [
+            {
+                "id": a.id,
+                "kind": a.kind,
+                "site": a.site,
+                "username": a.username,
+                "url": a.url,
+                "chat": self.runner.subject(tab)
+                if (tab := self.runner.threads.get((s.workspace, a.thread))) is not None
+                else None,
+            }
+            for a in s.approvals.values()
+        ]
         asked = [
             {"id": a.id, "site": a.site, "link": f"/login/{a.id}/"}
             for a in self.runner.asked.values()
@@ -464,15 +475,7 @@ class Takeover:
             "reason": s.reason,
             "waiting": s.asked and s.control == "user",
             "tabs": tabs,
-            "approval": {
-                "id": approval.id,
-                "kind": approval.kind,
-                "site": approval.site,
-                "username": approval.username,
-                "url": approval.url,
-            }
-            if approval is not None
-            else None,
+            "approvals": approvals,
             "asked": asked,
             "offers": await self.runner.offers(s),
             "logins": logins,

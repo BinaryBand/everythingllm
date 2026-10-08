@@ -60,7 +60,7 @@ module.exports.runtime = {
             "The user hasn't answered yet. Put the Card line in your reply, ask them to allow the saved login in the browser view, and end your reply.",
           ].filter(Boolean).join("\n");
         if (w.stale)
-          return "That request for the user's OK was replaced (by another saved login's, or the browser restarted). Call browser-login again.";
+          return "That request for the user's OK was let go (this chat asked for another of its saved logins, or the browser restarted). Call browser-login again.";
         if (!w.approved) return "The user didn't allow that login. Ask them what they'd like instead.";
         r = await request(what, args);
         if (r === null) return null;

@@ -543,7 +543,7 @@ def test_a_login_that_asks_waits_for_the_users_ok(tmp_path, monkeypatch):
         waiting = await r.op_login(scope(), saved["id"], "e1", "e2")
         assert waiting["card"] and driver.filled == []
         s = r.sessions["career"]
-        assert s.approval.id == waiting["approval"]
+        assert list(s.approvals) == [waiting["approval"]]
         assert (
             r.threads[("career", "7")].last
             == "Waiting for your OK to use your linkedin.com login"
@@ -585,12 +585,13 @@ def test_a_request_no_longer_asked_is_stale_not_refused(tmp_path, monkeypatch):
         first = (await r.op_login(scope(), alice["id"], "e1", "e2"))["approval"]
         waiting = asyncio.create_task(r.op_wait_approval(scope(), first))
         await asyncio.sleep(0)
-        # Another login's request takes its place: the waiter hears at once.
+        # The chat's request for another login takes its place: the waiter hears at once.
         second = (await r.op_login(scope(), bob["id"], "e1", "e2"))["approval"]
         assert second != first
         assert await asyncio.wait_for(waiting, 1) == stale
         assert await r.op_wait_approval(scope(), first) == stale
         assert await r.op_wait_approval(scope(), "nope") == stale
+        assert list(r.sessions["career"].approvals) == [second]
         # So does one whose browser stops, and it stays stale.
         waiting = asyncio.create_task(r.op_wait_approval(scope(), second))
         await asyncio.sleep(0)
@@ -606,6 +607,77 @@ def test_a_request_no_longer_asked_is_stale_not_refused(tmp_path, monkeypatch):
         with pytest.raises(RunnerError, match="the browser closed"):
             await r.op_read(scope())
         assert await asyncio.wait_for(waiting, 1) == stale
+
+    test(tmp_path)
+
+
+def test_two_chats_wait_for_their_ok_at_once_and_each_answer_is_its_own(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner_mod, "WAIT", 5)
+
+    @run
+    async def test(r, podman, clock):
+        alice = r.vault.add("career", "linkedin.com", "alice", "pw", ask=True)
+        bob = r.vault.add("career", "linkedin.com", "bob", "pw", ask=True)
+        await r.op_open(scope(thread="7"), "https://linkedin.com/")
+        await r.op_open(scope(thread="8"), "https://linkedin.com/feed")
+        s = r.sessions["career"]
+        seven, eight = r.threads[("career", "7")], r.threads[("career", "8")]
+        first = (await r.op_login(scope(thread="7"), alice["id"], "e1", "e2"))[
+            "approval"
+        ]
+        second = (await r.op_login(scope(thread="8"), bob["id"], "e1", "e2"))[
+            "approval"
+        ]
+        assert list(s.approvals) == [first, second]  # in the order asked
+        waits = [
+            asyncio.create_task(r.op_wait_approval(scope(thread="7"), first)),
+            asyncio.create_task(r.op_wait_approval(scope(thread="8"), second)),
+        ]
+        await asyncio.sleep(0)
+        assert not any(w.done() for w in waits)  # neither made the other's stale
+        assert r.state(seven) == r.state(eight) == "waiting"
+
+        r.answer(s, second, True)
+        assert await asyncio.wait_for(waits[1], 1) == {"done": True, "approved": True}
+        await asyncio.sleep(0)
+        assert not waits[0].done()
+        assert eight.last == "You allowed the linkedin.com login"
+        assert seven.last == "Waiting for your OK to use your linkedin.com login"
+        assert r.state(seven) == "waiting"
+
+        r.answer(s, first, False)
+        assert await asyncio.wait_for(waits[0], 1) == {"done": True, "approved": False}
+        assert seven.last == "You refused the linkedin.com login"
+        assert eight.last == "You allowed the linkedin.com login"
+        assert s.approvals == {}
+
+    test(tmp_path)
+
+
+def test_a_request_nobody_answers_is_let_go(tmp_path):
+    stale = {"done": True, "approved": False, "stale": True}
+
+    @run
+    async def test(r, podman, clock):
+        alice = r.vault.add("career", "linkedin.com", "alice", "pw", ask=True)
+        await r.op_open(scope(thread="7"), "https://linkedin.com/")
+        await r.op_open(scope(thread="8"), "https://linkedin.com/feed")
+        s = r.sessions["career"]
+        old = (await r.op_login(scope(thread="7"), alice["id"], "e1", "e2"))["approval"]
+        r.answer(s, old, True)
+        old = (await r.op_login(scope(thread="8"), alice["id"], "e1", "e2"))["approval"]
+        clock.t += runner_mod.APPROVAL_SECONDS + 1
+        # Another chat's request lets it go, and the OKs past their time with it.
+        new = (await r.op_login(scope(thread="7"), alice["id"], "e1", "e2"))["approval"]
+        assert list(s.approvals) == [new] and s.granted == {}
+        assert await r.op_wait_approval(scope(thread="8"), old) == stale
+        tab = r.threads[("career", "8")]
+        assert tab.last == "Nobody answered in time about the linkedin.com login"
+        assert r.state(tab) == "idle"
+        with pytest.raises(RunnerError, match="isn't waiting"):
+            r.answer(s, old, True)
 
     test(tmp_path)
 
@@ -910,11 +982,13 @@ def test_an_ok_to_use_a_login_is_for_the_chat_that_asked_alone(tmp_path):
         await r.op_open(scope(thread="8"), "https://linkedin.com/feed")
         s = r.sessions["career"]
         asked = await r.op_login(scope(thread="7"), saved["id"], "e1", "e2")
-        assert (s.approval.thread, s.approval.url) == ("7", "https://linkedin.com/")
+        waiting = s.approvals[asked["approval"]]
+        assert (waiting.thread, waiting.url) == ("7", "https://linkedin.com/")
         r.answer(s, asked["approval"], True)
         assert (await r.op_login(scope(thread="7"), saved["id"], "e1", "e2"))["page"]
         other = await r.op_login(scope(thread="8"), saved["id"], "e1", "e2")
-        assert "approval" in other and s.approval.thread == "8"
+        assert "approval" in other
+        assert [a.thread for a in s.approvals.values()] == ["8"]
 
     test(tmp_path)
 

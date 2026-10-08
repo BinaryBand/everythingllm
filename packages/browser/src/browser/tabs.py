@@ -58,6 +58,7 @@ class Approval:
     username: str
     thread: str  # the chat that asks: an OK is for it alone
     url: str  # its page's address, which the view shows
+    made: float
     answer: bool | None = None
     answered: asyncio.Event = field(default_factory=asyncio.Event)
 

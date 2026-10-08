@@ -22,7 +22,6 @@ The relay, research-runner and sites-runner went live in their containers on 202
 
 - **Checks that need a person.**
   - Run one Nilson chat to the end through the relay, with its ntfy notice.
-  - Ask the agent for one Daily News article, which drives the article writer in sites-runner's container.
 - **Once the containers have run for a week:** delete the old host venvs `~/.local/share/everythingllm/venvs/{relay,research,sites}`, and the leftover `browser-net` network (`podman network rm browser-net`).
 - **Rolling a container back is partly by hand.** `hostctl.units.retired()` only looks in `~/.config/systemd/user`, so going back to a host unit means moving `~/.config/containers/systemd/<x>.container` aside yourself, then restoring its template to `host/systemd/` from git and running `uv run hostctl units`. A `uv run hostctl units --host <app>` could do both.
 

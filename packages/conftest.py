@@ -36,7 +36,6 @@ def no_host_settings(monkeypatch, tmp_path_factory):
         "EGRESS_PROXY",
         "SEARXNG_URL",
         "LIVE_HOST",
-        "ARTICLES_HOST",
     ):
         monkeypatch.delenv(key, raising=False)
     # Nor does any test reach this machine's runners (site builds would ask the sandbox's).

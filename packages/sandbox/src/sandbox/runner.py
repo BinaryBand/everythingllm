@@ -61,7 +61,7 @@ own folders, puts the theme it names in place (the repo's from /system/themes, o
 workspace's from /shared/<it>/themes), and builds it. The runner copies the output into
 /public/<slug> (plain files only), so a site goes live like any page.
 
-The system sites (news, research, status) are built the same way, with the theme their
+The system sites (research) are built the same way, with the theme their
 repo zola.toml names in [extra.build] theme_from (op_build_system_site, which sites.build calls):
 their repo source and the repo's themes come in read-only, with a copy of their entries
 made without following a symlink (the sites and research containers can write
@@ -1841,7 +1841,9 @@ class Runner(hostrpc.Service):
             raise SandboxError(f"there's no '{path}'") from None
         except OSError as e:
             raise SandboxError(f"'{path}' can't be read ({e.strerror})") from None
-        if not stat.S_ISREG(os.fstat(fd).st_mode):  # before fdopen, which refuses a folder
+        if not stat.S_ISREG(
+            os.fstat(fd).st_mode
+        ):  # before fdopen, which refuses a folder
             os.close(fd)
             raise SandboxError(f"'{path}' isn't a file")
         with os.fdopen(fd, "rb") as f:

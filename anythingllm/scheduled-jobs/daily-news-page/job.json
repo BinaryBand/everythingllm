@@ -1,8 +1,0 @@
-{
-  "name": "Daily News Page",
-  "schedule": "0 18 * * *",
-  "tools": [
-    "@@mcp_sites",
-    "@@write-entry"
-  ]
-}

@@ -14,15 +14,15 @@
     "params": {
       "site": {
         "type": "string",
-        "description": "Site name from list_sites, e.g. 'news'."
+        "description": "Site name from list_sites, e.g. 'research'."
       },
       "section": {
         "type": "string",
-        "description": "Section name from list_sites, e.g. 'editions'."
+        "description": "Section name from list_sites, e.g. 'reports'."
       },
       "slug": {
         "type": "string",
-        "description": "Entry name, used in its URL: lowercase letters, digits and hyphens, e.g. '2026-10-03'."
+        "description": "Entry name, used in its URL: lowercase letters, digits and hyphens, e.g. 'heat-pumps'."
       }
     }
   }

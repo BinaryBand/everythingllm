@@ -180,7 +180,7 @@ def build_mcp(
     mcp = MCPServer(
         "everythingllm",
         instructions=(
-            "EverythingLLM's runners: the sites' entries and the news feeds, "
+            "EverythingLLM's runners: the sites' entries, "
             "delegations to AnythingLLM's own agents, deep research runs and a code "
             "sandbox of the client's own. A client has the tools it was granted."
         ),

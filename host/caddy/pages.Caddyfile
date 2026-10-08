@@ -8,7 +8,7 @@
   admin off
 }
 
-# The system sites (news and research: Zola, built from the repo's templates) and the link
+# The system site (research: Zola, built from the repo's templates) and the link
 # cards. No scripts, no inline styles.
 :8445 {
   root * /srv/site
@@ -42,8 +42,8 @@
 # Every sandbox workspace's /public (sandbox.runner), served as it is: /<workspace>/... is
 # that workspace's, whatever it put there, live the moment it's written. The folder mounted
 # here holds nothing but /public folders, so a symlink in one can't reach anything private.
-# A port of its own makes these pages an origin of their own: whatever they run can't post
-# to /news/write on :8445.
+# A port of its own makes these pages an origin of their own: whatever they run can't act
+# as the pages site on :8445, whose cards and live views the chat shows.
 # Pages may run inline scripts and scripts from this site, but only in a CSP sandbox: each
 # page gets an opaque origin, so it can't use storage or cookies, read the site's other
 # pages or files, submit forms, open windows or tabs, or show alert()s; downloads work.

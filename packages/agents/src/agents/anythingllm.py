@@ -15,6 +15,7 @@ Config (environment, from host.env and agents.env through the unit):
 """
 
 import asyncio
+import json
 import os
 import re
 from collections.abc import Callable
@@ -25,7 +26,6 @@ from urllib.parse import quote
 
 import hostrpc
 import httpx
-from hostctl.jobs import job_tools
 
 THINKING = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 TIMEOUT = httpx.Timeout(connect=10, read=30, write=30, pool=10)
@@ -318,6 +318,18 @@ class InternalAPI:
         """The workspace's threads, with their ids (the developer API gives only slugs)."""
         reply = await self.call("GET", f"/workspace/{quote(slug, safe='')}/threads")
         return (reply or {}).get("threads") or []
+
+
+def job_tools(job: dict) -> list | None:
+    """A live job's tools: AnythingLLM gives them as JSON text, or null for none. None
+    when there are none or the text isn't a JSON list."""
+    tools = job.get("tools")
+    if isinstance(tools, str):
+        try:
+            tools = json.loads(tools) if tools.strip() else None
+        except ValueError:
+            return None
+    return tools if isinstance(tools, list) else None
 
 
 def parsed_tools(job: dict) -> dict:

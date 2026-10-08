@@ -30,7 +30,6 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import hostrpc
-from hostctl import jobs as hostjobs
 from hostrpc import RunnerError
 from runs.runlog import iso
 
@@ -270,9 +269,6 @@ class ScheduledJobs:
     def tz(self) -> ZoneInfo:
         return zone(self.timezone)
 
-    async def managed(self) -> set[str]:
-        return set(await asyncio.to_thread(hostjobs.repo_jobs))
-
     # list
 
     async def listing(self) -> str:
@@ -281,7 +277,6 @@ class ScheduledJobs:
         if not jobs:
             return "AnythingLLM has no scheduled jobs."
         once = {e["id"]: e for e in await self.registry.read()}
-        managed = await self.managed()
         lines = [
             (
                 f"{len(jobs)} scheduled job{'s' * (len(jobs) != 1)} (times in {tz.key}; "
@@ -289,16 +284,13 @@ class ScheduledJobs:
             )
         ]
         for job in sorted(jobs, key=lambda j: j.get("id") or 0):
-            lines.append(
-                self.line(job, once.get(job.get("id")), job["name"] in managed, tz, now)
-            )
+            lines.append(self.line(job, once.get(job.get("id")), tz, now))
         return "\n".join(lines)
 
     def line(
         self,
         job: dict,
         entry: dict | None,
-        managed: bool,
         tz: ZoneInfo,
         now: datetime,
     ) -> str:
@@ -321,8 +313,6 @@ class ScheduledJobs:
             "enabled" if job.get("enabled") else "disabled",
             f"tools: {tools_text(job.get('tools'))}",
         ]
-        if managed:
-            parts.append("managed by the repo, so not deleted or disabled here")
         return (
             "; ".join(parts)
             + f"\n  prompt: {clipped(job.get('prompt', ''), LISTED_PROMPT)}"
@@ -356,12 +346,6 @@ class ScheduledJobs:
                 f"AnythingLLM has no scheduled job {job_id} (scheduled-jobs list shows "
                 "them)"
             ) from None
-        if job["name"] in await self.managed():
-            raise RunnerError(
-                f'"{job["name"]}" is managed by the repo (anythingllm/scheduled-jobs), '
-                "which deploy keeps in place; it can't be deleted or disabled here. It can "
-                "be turned off in AnythingLLM's Scheduled Jobs, which deploy leaves be."
-            )
         await self.idle(job)
         tz = self.tz
         once = next(
@@ -461,24 +445,17 @@ class ScheduledJobs:
         log.info('made one-off %s "%s" for %s', job["id"], full, entry["fire_at"])
         return f'Made one-off job {job["id"]} "{full}": it runs {timing}.'
 
-    async def can_make(
-        self, name: str, wanted: list[str], repos_too: bool = False
-    ) -> None:
-        """Refuse a name in use (with `repos_too`, also one of the repo's jobs') and a tool
-        AnythingLLM doesn't have for a job, or hasn't set up; looked up all at once."""
+    async def can_make(self, name: str, wanted: list[str]) -> None:
+        """Refuse a name in use and a tool AnythingLLM doesn't have for a job, or hasn't
+        set up; looked up all at once."""
 
         async def none() -> Any:
             return ()
 
-        jobs, tools, managed = await asyncio.gather(
+        jobs, tools = await asyncio.gather(
             self.client.jobs(),
             self.client.available_tools() if wanted else none(),
-            self.managed() if repos_too else none(),
         )
-        if name in managed:
-            raise RunnerError(
-                f'"{name}" is the name of a job the repo manages; pick another'
-            )
         if any(j.get("name") == name for j in jobs):
             raise RunnerError(
                 f'there\'s a job named "{name}" already: pick another name, or delete '
@@ -516,7 +493,7 @@ class ScheduledJobs:
                 "the schedule must be a cron of five fields (minute hour day month "
                 'weekday) in UTC, e.g. "0 6 * * 1-5" for 06:00 UTC on weekdays'
             )
-        await self.can_make(name, wanted, repos_too=True)
+        await self.can_make(name, wanted)
         offset = f"{self.tz.key} is {utc_offset(self.tz, self.clock())} now"
         if not apply:
             return (

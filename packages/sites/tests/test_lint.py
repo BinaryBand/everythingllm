@@ -8,7 +8,7 @@ REPO_ZOLA = Path(__file__).resolve().parents[1] / "zola"
 
 def test_every_repo_template_passes_the_checks():
     templates = list(REPO_ZOLA.glob("**/templates/**/*.html"))
-    assert len(templates) > 5
+    assert len(templates) >= 5  # the theme's
     for t in templates:
         assert lint.problems(t.read_text()) == [], t
 

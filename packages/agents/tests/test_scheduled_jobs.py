@@ -239,14 +239,12 @@ def test_remind_once_refuses_a_name_in_use_a_tool_it_lacks_and_the_wrong_callers
     asyncio.run(main())
 
 
-def test_list_shows_local_times_one_offs_and_the_repos_job_without_run_results(
-    api, tmp_path
-):
+def test_list_shows_local_times_one_offs_and_jobs_without_run_results(api, tmp_path):
     async def main():
         r = make(api, tmp_path)
         news = api.add(
-            "Daily News Page",
-            tools=["@@mcp_sites"],
+            "Evening digest",
+            tools=["web-browsing"],
             nextRunAt="2026-10-07T18:00:00.000Z",
         )
         api.run(news, datetime(2026, 10, 6, 18, 0, 3, tzinfo=UTC))
@@ -261,24 +259,18 @@ def test_list_shows_local_times_one_offs_and_the_repos_job_without_run_results(
         assert "times in Europe/Stockholm" in text
         assert 'cron "0 18 * * *" (UTC), next Wed 2026-10-07 20:00 CEST' in text
         assert "last run Tue 2026-10-06 20:00 CEST (completed)" in text
-        assert "managed by the repo" in text
         assert '"[once] call mum": one-off at Wed 2026-10-07 13:59 CEST' in text
         assert "tools: none" in text and "xxxxxxxx" not in text
 
     asyncio.run(main())
 
 
-def test_delete_shows_the_job_first_and_refuses_the_repos_and_a_running_one(
-    api, tmp_path
-):
+def test_delete_shows_the_job_first_and_refuses_a_running_one(api, tmp_path):
     async def main():
         r = make(api, tmp_path)
-        news = api.add("Daily News Page")
         mine = api.add("Weekly digest", schedule="0 7 * * 1")
         busy = api.add("Busy")
         api.run(busy, NOW, status="running")
-        with pytest.raises(RunnerError, match="managed by the repo"):
-            await r.op_scheduled_jobs(CHAT, "delete", news, apply=True)
         with pytest.raises(RunnerError, match="running right now"):
             await r.op_scheduled_jobs(CHAT, "disable", busy, apply=True)
         with pytest.raises(RunnerError, match="no scheduled job 99"):
@@ -287,20 +279,19 @@ def test_delete_shows_the_job_first_and_refuses_the_repos_and_a_running_one(
             # int() would delete job 1 for true and job 2 for 2.5
             with pytest.raises(RunnerError, match="give the id"):
                 await r.op_scheduled_jobs(CHAT, "delete", job_id, apply=True)
-        assert sorted(api.jobs) == [news, mine, busy]
+        assert sorted(api.jobs) == [mine, busy]
         preview = await r.op_scheduled_jobs(CHAT, "delete", mine)
-        assert 'Job 2 "Weekly digest": cron "0 7 * * 1"' in preview
+        assert 'Job 1 "Weekly digest": cron "0 7 * * 1"' in preview
         assert "the prompt of Weekly digest" in preview and "apply true" in preview
         assert mine in api.jobs
         assert (
             await r.op_scheduled_jobs(CHAT, "disable", mine, apply=True)
-        ).startswith("Disabled job 2")
+        ).startswith("Disabled job 1")
         assert api.jobs[mine]["enabled"] is False
         assert "already disabled" in await r.op_scheduled_jobs(CHAT, "disable", mine)
         done = await r.op_scheduled_jobs(CHAT, "delete", str(mine), apply=True)
-        assert done == 'Deleted job 2 "Weekly digest".'
-        assert sorted(api.jobs) == [news, busy]
-        assert ("DELETE", f"/{news}") not in api.calls
+        assert done == 'Deleted job 1 "Weekly digest".'
+        assert sorted(api.jobs) == [busy]
         assert ("PUT", f"/{busy}") not in api.calls
 
     asyncio.run(main())
@@ -494,7 +485,6 @@ def test_schedule_job_refuses_a_bad_cron_a_one_offs_name_and_the_wrong_callers(
             ({"name": "x", "schedule": "0 6 * *"}, "cron of five fields"),
             ({"name": "[once] x"}, "one-off's"),
             ({"name": "taken"}, "already"),
-            ({"name": "Daily News Page"}, "the repo manages"),
             ({"name": "x", "tools": ["@@nope"]}, "no tool @@nope"),
         ]:
             with pytest.raises(RunnerError, match=error):

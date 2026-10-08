@@ -106,7 +106,7 @@ SANDBOX = {
 
 
 def test_claude_code_has_the_fronts_tools_their_skills_and_the_gateways_own(client):
-    assert {"list_sites", "headlines"} <= READS
+    assert {"list_sites", "list_entries"} <= READS
     assert {"write_entry", "delete_entry"} <= WRITES
     names = tool_names(client)
     assert names == READS | WRITES | AGENTS | RESEARCH | SANDBOX

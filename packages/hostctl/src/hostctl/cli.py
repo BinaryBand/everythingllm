@@ -114,7 +114,7 @@ def diff() -> None:
 
 @command(
     "deploy",
-    "write skills, jobs, the default prompt and its version, and MCP config live, refresh MCP deps, restart AnythingLLM, rebuild the sites",
+    "write skills, the default prompt and its version, and MCP config live, refresh MCP deps, restart AnythingLLM, rebuild the sites",
 )
 def deploy() -> None:
     from hostctl import sync  # needs ANYTHINGLLM_STORAGE
@@ -152,15 +152,6 @@ def import_skill(name: str) -> None:
     from hostctl import sync
 
     sync.main(["import-skill", name])
-
-
-@command(
-    "import-job", 'copy a live scheduled job into the repo: import-job "Daily News Page"'
-)
-def import_job(name: str) -> None:
-    from hostctl import sync
-
-    sync.main(["import-job", name])
 
 
 @command(

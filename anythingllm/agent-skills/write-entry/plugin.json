@@ -4,7 +4,7 @@
   "name": "Write Entry",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Save an entry on a Zola site (news, research) and rebuild it; it's live when this returns. If the site doesn't build with it, nothing is saved and the error says why. Sections and fields come from list_sites; to edit, get_entry and write with overwrite.",
+  "description": "Save an entry on a Zola site (research) and rebuild it; it's live when this returns. If the site doesn't build with it, nothing is saved and the error says why. Sections and fields come from list_sites; to edit, get_entry and write with overwrite.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -14,15 +14,15 @@
     "params": {
       "site": {
         "type": "string",
-        "description": "Site name from list_sites, e.g. 'news'."
+        "description": "Site name from list_sites, e.g. 'research'."
       },
       "section": {
         "type": "string",
-        "description": "Section name from list_sites, e.g. 'editions'."
+        "description": "Section name from list_sites, e.g. 'reports'."
       },
       "slug": {
         "type": "string",
-        "description": "Entry name, used in its URL: lowercase letters, digits and hyphens, e.g. '2026-10-03'."
+        "description": "Entry name, used in its URL: lowercase letters, digits and hyphens, e.g. 'heat-pumps'."
       },
       "title": {
         "type": "string",

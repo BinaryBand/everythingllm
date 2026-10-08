@@ -253,7 +253,9 @@ def test_research_reaches_searxng_through_the_proxy_and_never_anythingllm(egress
     assert url.scheme == "https" and url.hostname and url.port
     assert profile.judge(url.hostname, url.port) == "allow"
     assert profile.judge("host.example.ts.net", 3001) is None
-    shared = re.search(r"hostctl\.ctr_env \S+ \S+ (.+)$", template.read_text(), re.MULTILINE)
+    shared = re.search(
+        r"hostctl\.ctr_env \S+ \S+ (.+)$", template.read_text(), re.MULTILINE
+    )
     assert shared and not {"AUTH_TOKEN", "JWT_SECRET", "JWT_SECRET?"} & set(
         shared.group(1).split()
     )
@@ -342,9 +344,8 @@ def test_a_share_of_anythingllms_env_is_written_before_each_start(template):
 
 
 def test_sites_runner_mounts_only_what_it_uses():
-    """sites-runner (sites.tools, sites.build, sites.articles_web) reads the repo, writes
-    the entries and builds into the pages site, serves its socket, asks the sandbox runner
-    to build, and reads its share of AnythingLLM's .env for the article writer's key.
+    """sites-runner (sites.tools, sites.build) reads the repo, writes the entries and
+    builds into the pages site, serves its socket and asks the sandbox runner to build.
     Nothing else."""
     keys = container_keys(QUADLET / "sites-runner.container.in")
     data, storage = "%h/.local/share/everythingllm", "@ANYTHINGLLM_STORAGE@"
@@ -355,21 +356,13 @@ def test_sites_runner_mounts_only_what_it_uses():
             f"{data}/pages/public:{data}/pages/public",
             f"{storage}/everythingllm/sites:{storage}/everythingllm/sites",
             f"{storage}/everythingllm/sandbox-build:{storage}/everythingllm/sandbox-build:ro",
-            (
-                "%h/.config/everythingllm/ctr/sites-runner.env:"
-                "%h/.config/everythingllm/ctr/sites-runner.env:ro"
-            ),
             f"{data}/venvs/sites-runner-ctr:{data}/venvs/sites-runner-ctr",
         ]
     )
     # Its socket is in storage, so it keeps the host user's groups.
     assert keys["GroupAdd"] == ["keep-groups"]
     env = dict(e.partition("=")[::2] for e in keys["Environment"])
-    # The article writer listens where the published port arrives, and reaches SearXNG by
-    # PUBLIC_HOST, which the sites profile allows.
-    assert keys["PublishPort"] == ["127.0.0.1:8448:8448"]
-    assert env["ARTICLES_HOST"] == "0.0.0.0"
-    assert env["SEARXNG_URL"] == "https://@PUBLIC_HOST@:8888/search"
+    assert "PublishPort" not in keys  # it serves nothing over HTTP
     assert env["UV_PROJECT_ENVIRONMENT"] == f"{data}/venvs/sites-runner-ctr/venv"
     assert env["UV_CACHE_DIR"] == f"{data}/venvs/sites-runner-ctr/uv-cache"
     assert keys["Exec"] == [

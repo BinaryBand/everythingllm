@@ -44,7 +44,7 @@ serve = [{ https = 8888, port = 8888 }]
 summary = "the pages site (Caddy): the Zola sites on :8445 and the workspaces' /public on :8447"
 container = { "systemd-static_agent" = "pages site (Caddy)" }
 serve = [{ https = 8445, port = 8445 }, { https = 8447, port = 8447 }]
-health = { "pages site" = "http://127.0.0.1:8445/news/", "workspace pages" = "http://127.0.0.1:8447/" }
+health = { "pages site" = "http://127.0.0.1:8445/research/", "workspace pages" = "http://127.0.0.1:8447/" }
 
 [sandbox]
 summary = "the code sandbox's runner and its image; its runs reach PyPI through the egress proxy"
@@ -91,12 +91,10 @@ health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-0000
 why_not_installed = "it needs a developer API key in ~/.config/everythingllm/agents.env first"
 
 [sites]
-summary = "sites-runner, in its container: writes the sites' entries and has the sandbox build them, and serves the article writer (:8445/news/write)"
+summary = "sites-runner, in its container: writes the sites' entries and has the sandbox build them"
 runner = "sites-runner.service"
 container = { "systemd-sites-runner" = "sites runner" }
 before = ["python3 -m hostctl service-images"]
-serve = [{ https = 8445, path = "/news/write", port = 8448 }]
-health = { "article writer" = "http://127.0.0.1:8448/" }
 install = true
 
 [relay]

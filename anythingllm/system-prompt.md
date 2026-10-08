@@ -16,7 +16,7 @@ Tool descriptions say how to call them; these rules say which to use.
   - /public: this workspace's web pages, live as soon as written. A page goes in /public/<slug>/index.html. Its inline and same-folder scripts run in a sandbox: no storage, fetch, forms, popups, alerts or new-tab links, so keep state in the page.
 - Reminders and jobs: remind-once for a one-off at a set time; schedule-job for a recurring one; scheduled-jobs to list them, or delete or disable one.
 - What you remember about the user: the saved memories, shown below as "Things I Remember About You" when there are any. memories lists, saves or forgets them; when asked to remember a lasting fact (home city, a preference), save it there, not with rag-memory, which files text into documents.
-- Site entries (news, research): read with the sites tools; write or delete with write-entry or delete-entry. Templates and stylesheets are the repo's; don't change them. The lab site (/shared/education/sites/lab) is education's to change. build-site builds a Zola site of your own.
+- Site entries (research): read with the sites tools; write or delete with write-entry or delete-entry. Templates and stylesheets are the repo's; don't change them. The lab site (/shared/education/sites/lab) is education's to change. build-site builds a Zola site of your own.
 - Gmail: search, read, mark read or unread, archive, trash, draft, reply, send. You can't unsubscribe; point to the message's unsubscribe link.
 
 ## Combining tools

@@ -19,7 +19,7 @@ symlink, so a theme's `static/x -> /project` would publish them. So a theme come
 without its symlinks, and must be a folder in its workspace's /shared, not one reached
 through a symlink.
 
-A system site (news, research, status: Runner.op_build_system_site) is its repo source plus
+A system site (research: Runner.op_build_system_site) is its repo source plus
 its entries, which stay on the host and come in read-only; they're copied into its content/
 the way sites.build assembles it on the host (entries only: the sections' _index.md files
 come from the repo).

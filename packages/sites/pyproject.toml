@@ -1,13 +1,13 @@
 [project]
 name = "sites"
 version = "0.1.0"
-description = "MCP server for the Zola sites' entries and the news feeds' headlines, and the host service that builds the sites"
+description = "MCP server for the Zola sites' entries, and the host service that builds the sites"
 requires-python = ">=3.12"
 dependencies = ["mcp>=2.2,<3", "pydantic>=2", "hostrpc"]
 
 [project.optional-dependencies]
 # What sites-runner needs on the host beyond what the MCP server (the front) imports.
-host = ["chatimage", "llm", "httpx>=0.27", "publicweb"]
+host = ["chatimage"]
 
 [project.scripts]
 sites-mcp = "sites.server:mcp.run"

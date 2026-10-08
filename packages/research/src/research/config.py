@@ -1,7 +1,7 @@
 """Depth presets and shared limits for a research run."""
 
 # `searches` caps a run's web searches. A 108-search thorough run got Google CSE,
-# Brave and DuckDuckGo to block this server, which also breaks the news job.
+# Brave and DuckDuckGo to block this server, which also breaks the agent's own web search.
 DEPTHS = {
     "quick": {
         "workers": 3,

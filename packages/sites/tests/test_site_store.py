@@ -176,11 +176,13 @@ def repo_store(tmp_path, sandbox_zola):
 
 def test_build_never_replaces_a_published_page(tmp_path):
     b = builder(tmp_path)
-    (tmp_path / "site" / "news").mkdir()
-    (tmp_path / "site" / "news" / "index.html").write_text("someone's page")
-    with pytest.raises(BuildError, match="wasn't built from sites/news"):
-        b.build("news")
-    assert (tmp_path / "site" / "news" / "index.html").read_text() == "someone's page"
+    (tmp_path / "site" / "research").mkdir()
+    (tmp_path / "site" / "research" / "index.html").write_text("someone's page")
+    with pytest.raises(BuildError, match="wasn't built from sites/research"):
+        b.build("research")
+    assert (
+        tmp_path / "site" / "research" / "index.html"
+    ).read_text() == "someone's page"
 
 
 def test_build_reports_a_missing_site(tmp_path):
@@ -188,50 +190,10 @@ def test_build_reports_a_missing_site(tmp_path):
         builder(tmp_path).build("nope")
 
 
-def test_news_site_builds_with_entries(repo_store, tmp_path):
-    """The real news site and theme build through the store, with the home page showing the newest edition."""
-    for day, headline in [("2026-10-02", "Older"), ("2026-10-03", "Newer & <i>")]:
-        repo_store.write(
-            "news",
-            "editions",
-            day,
-            f"Daily News — {day}",
-            day,
-            {
-                "sections": [
-                    {
-                        "name": "US",
-                        "stories": [{"headline": headline, "url": "javascript:x"}],
-                    },
-                    {"name": "World", "stories": []},
-                ]
-            },
-        )
-    out = tmp_path / "site" / "news"
-    assert (out / MARKER).exists()
-    assert not list((tmp_path / "site").glob(".news.*")), (
-        "temporary build directories left behind"
-    )
-    home = (out / "index.html").read_text()
-    assert "Newer &amp; &lt;i&gt;" in home and "No items retrieved today." in home
-    assert "javascript:" not in home
-    assert "Daily News — 2026-10-02" in home  # under Earlier editions
-    assert (out / "editions" / "2026-10-02" / "index.html").exists()
-    assert "2026-10-03" in (out / "editions" / "index.html").read_text()
-    assert "<style" not in home and "style=" not in home
-
-
 def test_every_stylesheet_a_repo_site_lists_is_there():
     for config in (REPO_ZOLA / "sites").glob("*/zola.toml"):
         for sheet in tomllib.loads(config.read_text())["extra"].get("stylesheets", []):
             assert (config.parent / "static" / sheet).is_file(), sheet
-
-
-def test_news_sections_carry_their_config(tmp_path):
-    (tmp_path / "content").mkdir()
-    store = SiteStore(REPO_ZOLA / "sites", tmp_path / "content")
-    news = store.site("news")
-    assert news.readonly == ["articles"]
 
 
 def run_sites_write(monkeypatch, capsys, tmp_path, request, remote):
@@ -477,34 +439,33 @@ def test_dated_slugs_keep_their_own_urls(repo_store, tmp_path):
     ]
 
 
-def test_build_all_builds_the_rest_and_reports_every_failure(tmp_path):
+def test_build_all_reports_every_failure(tmp_path):
     b = builder(tmp_path)
-    (tmp_path / "site" / "news").mkdir()
-    (tmp_path / "site" / "news" / "index.html").write_text("someone's page")
+    (tmp_path / "site" / "research").mkdir()
+    (tmp_path / "site" / "research" / "index.html").write_text("someone's page")
     with pytest.raises(BuildError) as e:
         b.build()
-    assert "sites/news" in str(e.value)
-    assert (tmp_path / "site" / "research" / MARKER).exists()
+    assert "sites/research" in str(e.value)
 
 
 def test_failed_swap_puts_the_last_build_back(tmp_path, monkeypatch):
     b = builder(tmp_path)
-    dest = tmp_path / "site" / "news"
+    dest = tmp_path / "site" / "research"
     dest.mkdir()
     (dest / MARKER).write_text("")
     (dest / "index.html").write_text("last good build")
     real_rename = os.rename
 
     def rename(src, dst):
-        if Path(src).name == ".news.new":
+        if Path(src).name == ".research.new":
             raise OSError("disk trouble")
         real_rename(src, dst)
 
     monkeypatch.setattr("sites.build.os.rename", rename)
     with pytest.raises(BuildError, match="disk trouble"):
-        b.build("news")
+        b.build("research")
     assert (dest / "index.html").read_text() == "last good build"
-    assert not list((tmp_path / "site").glob(".news.*"))
+    assert not list((tmp_path / "site").glob(".research.*"))
 
 
 # --- the public URL comes from host.env -----------------------------------------------
@@ -586,7 +547,7 @@ def test_a_theme_from_site_is_built_by_the_sandbox_and_swapped_in_here(tmp_path)
         return new
 
     b = Builder(source, tmp_path / "content", tmp_path / "site", remote)
-    assert (b.theme_from("research"), b.theme_from("news")) == ("education", "system")
+    assert b.theme_from("research") == "education"
     [dest] = b.build("research")
     assert asked == ["research"]
     assert (dest / "index.html").read_text() == "built in the sandbox"
@@ -661,8 +622,7 @@ def test_a_site_without_theme_from_is_refused_and_never_sent_to_the_sandbox(tmp_
     with pytest.raises(BuildError, match=r"research can't be built.*theme_from"):
         b.build("research")
     assert not (tmp_path / "site" / "research").exists()
-    [dest] = b.build("news")  # theme_from = "system": the sandbox's, as ever
-    assert asked == ["news"] and (dest / MARKER).exists()
+    assert asked == []
 
 
 def test_every_repo_site_is_built_in_the_sandbox():

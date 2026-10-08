@@ -10,7 +10,29 @@ import pytest
 from hostctl import cli
 
 # The commands that aren't per app.
-TARGETS = ["install", "units", "diff", "deploy", "skills", "skills-check", "restart", "logs", "status", "health", "test", "test-skills", "mcp-sync", "apps", "routes", "gateway-client", "sandbox-images", "service-images", "browser-images", "browser-reset", "sites-build"]
+TARGETS = [
+    "install",
+    "units",
+    "diff",
+    "deploy",
+    "skills",
+    "skills-check",
+    "restart",
+    "logs",
+    "status",
+    "health",
+    "test",
+    "test-skills",
+    "mcp-sync",
+    "apps",
+    "routes",
+    "gateway-client",
+    "sandbox-images",
+    "service-images",
+    "browser-images",
+    "browser-reset",
+    "sites-build",
+]
 
 
 @pytest.fixture
@@ -28,7 +50,9 @@ def ran(monkeypatch):
     monkeypatch.setattr(cli.units, "main", step("units"))
     monkeypatch.setattr(cli.machine, "main", step("machine"))
     monkeypatch.setattr(cli.appctl, "main", step("appctl"))
-    sync = SimpleNamespace(main=step("sync"), mcp_packages=lambda: ["sites", "research"])
+    sync = SimpleNamespace(
+        main=step("sync"), mcp_packages=lambda: ["sites", "research"]
+    )
     monkeypatch.setitem(sys.modules, "hostctl.sync", sync)
     monkeypatch.setattr("hostctl.sync", sync, raising=False)
     monkeypatch.setenv("ANYTHINGLLM_STORAGE", "/storage")
@@ -152,10 +176,10 @@ def test_service_images_makes_again_an_egress_net_without_its_ip_range(monkeypat
 
 
 def test_import_takes_a_name_and_needs_one(ran):
-    cli.main(["import-job", "Daily News Page"])
-    assert ran == ["sync import-job Daily News Page"]
-    with pytest.raises(SystemExit, match="import-job"):
-        cli.main(["import-job"])
+    cli.main(["import-skill", "weather"])
+    assert ran == ["sync import-skill weather"]
+    with pytest.raises(SystemExit, match="import-skill"):
+        cli.main(["import-skill"])
 
 
 def test_gateway_client_takes_the_clients_name(ran, monkeypatch):
@@ -174,7 +198,9 @@ def test_test_runs_without_host_env(ran, monkeypatch):
     assert ran[0] == "uv run --all-packages --all-extras pytest -q"
 
 
-def test_browser_images_builds_the_image_and_puts_its_novnc_in_place(ran, monkeypatch, tmp_path):
+def test_browser_images_builds_the_image_and_puts_its_novnc_in_place(
+    ran, monkeypatch, tmp_path
+):
     monkeypatch.setattr(cli.run_guard, "DATA", tmp_path)
     old = tmp_path / "browser" / "novnc"
     old.mkdir(parents=True)
@@ -189,7 +215,12 @@ def test_browser_images_builds_the_image_and_puts_its_novnc_in_place(ran, monkey
     monkeypatch.setattr(cli.subprocess, "run", run)
     cli.main(["browser-images"])
     assert ran[0].startswith("podman build -t localhost/everythingllm-browser -f ")
-    assert any(c.startswith("podman network create --internal --disable-dns --subnet 10.89.79.0/24") for c in ran)
+    assert any(
+        c.startswith(
+            "podman network create --internal --disable-dns --subnet 10.89.79.0/24"
+        )
+        for c in ran
+    )
     copy = "everythingllm-browser-novnc-copy"
     assert ran[-3:] == [
         f"podman create --name {copy} localhost/everythingllm-browser",
@@ -200,7 +231,9 @@ def test_browser_images_builds_the_image_and_puts_its_novnc_in_place(ran, monkey
     assert (old / "core").is_dir() and not (old / "stale.js").exists()
 
 
-def test_browser_reset_stops_the_browser_and_wipes_only_its_profile(ran, monkeypatch, tmp_path):
+def test_browser_reset_stops_the_browser_and_wipes_only_its_profile(
+    ran, monkeypatch, tmp_path
+):
     monkeypatch.setattr(cli.run_guard, "DATA", tmp_path)
     home = tmp_path / "sandbox" / "workspaces" / "career"
     (home / "browser" / "profile").mkdir(parents=True)

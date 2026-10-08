@@ -1460,19 +1460,13 @@ dependencies = [
 [package.optional-dependencies]
 host = [
     { name = "chatimage" },
-    { name = "httpx" },
-    { name = "llm" },
-    { name = "publicweb" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "chatimage", marker = "extra == 'host'", editable = "packages/chatimage" },
     { name = "hostrpc", editable = "packages/hostrpc" },
-    { name = "httpx", marker = "extra == 'host'", specifier = ">=0.27" },
-    { name = "llm", marker = "extra == 'host'", editable = "packages/llm" },
     { name = "mcp", specifier = ">=2.2,<3" },
-    { name = "publicweb", marker = "extra == 'host'", editable = "packages/publicweb" },
     { name = "pydantic", specifier = ">=2" },
 ]
 provides-extras = ["host"]

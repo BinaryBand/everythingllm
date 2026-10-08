@@ -30,8 +30,10 @@ The agent's request for a login (Runner.op_ask_login) has a card too:
   /login/<id>/ there), or a page saying it isn't known.
 
 A tab's id is `bw-` and 16 hex digits, not guessable, and a request's `lr-` and 32: the
-card and its link are the only way to either. A connection from anywhere but loopback or the server's own address is refused
-(hostrpc.local_peer).
+card and its link are the only way to either, but for a client with an AnythingLLM
+developer API key, which `chat/<workspace>/<thread>` tells a chat's cards and how they
+stand (browser.chats). A connection from anywhere but loopback or the server's own address
+is refused (hostrpc.local_peer).
 
 Config (environment):
   LIVE_HOST  the address to listen on (default 127.0.0.1)
@@ -43,6 +45,7 @@ import asyncio
 import contextlib
 import html
 import io
+import json
 import os
 import re
 from collections.abc import AsyncIterator
@@ -62,6 +65,7 @@ from chatimage import (
 )
 from PIL import Image, ImageDraw, ImageEnhance
 
+from browser import chats
 from browser.origin import registrable
 
 if TYPE_CHECKING:
@@ -138,8 +142,9 @@ class Live:
     ROUTE = re.compile(r"(?:/_live/browser)?/(bw-[0-9a-f]{16})(\.jpg)?")
     ASK_ROUTE = re.compile(r"(?:/_live/browser)?/login/(lr-[0-9a-f]{32})(\.png)?")
 
-    def __init__(self, runner: Runner):
+    def __init__(self, runner: Runner, chat: chats.Chats | None = None):
         self.runner = runner
+        self.chats = chat or chats.Chats(runner)
 
     async def serve(self, port: int) -> asyncio.Server:
         return await asyncio.start_server(
@@ -150,13 +155,17 @@ class Live:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
-            method, path, query = await asyncio.wait_for(live.read_request(reader), 10)
+            method, path, query, headers = await asyncio.wait_for(
+                live.read_head(reader), 10
+            )
         except (live.BadRequest, TimeoutError):
             return await live.send(writer, "400 Bad Request", b"Bad request.\n")
         if not hostrpc.local_peer(
             writer.get_extra_info("peername"), writer.get_extra_info("sockname")
         ):
             return await live.send(writer, "403 Forbidden", b"Not from here.\n")
+        if chat := chats.ROUTE.fullmatch(path):
+            return await self.chat(writer, method, chat[1], chat[2], headers)
         if method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET only.\n")
         theme = live.theme(query)
@@ -196,6 +205,38 @@ class Live:
                 await live.send(
                     writer, "500 Internal Server Error", b"Something went wrong.\n"
                 )
+
+    async def chat(
+        self,
+        writer: asyncio.StreamWriter,
+        method: str,
+        workspace: str,
+        thread: str,
+        headers: dict[str, str],
+    ) -> None:
+        """A chat's cards and how they stand, for a client with a key (browser.chats)."""
+        # A web client's preflight, for the Authorization header.
+        if method == "OPTIONS":
+            return await live.send(writer, "204 No Content", headers=chats.CORS)
+        if method != "GET":
+            return await live.send(
+                writer, "405 Method Not Allowed", b"GET only.\n", headers=chats.CORS
+            )
+        try:
+            status, body = await self.chats.answer(workspace, thread, headers)
+        except Exception:
+            self.runner.log.exception("a chat's browser for a client failed")
+            status, body = (
+                "500 Internal Server Error",
+                {"error": "Something went wrong."},
+            )
+        await live.send(
+            writer,
+            status,
+            json.dumps(body).encode(),
+            "application/json",
+            headers=chats.CORS,
+        )
 
     async def stream(
         self,

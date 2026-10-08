@@ -687,12 +687,14 @@ class Runner(hostrpc.Service):
         if not self.config.pages_url:
             return ""
         page = f"{self.config.pages_url.rstrip('/')}/_live/browser/{tab.id}"
-        subject = (
-            tab.title
-            if tab.title and not pagetext.challenge_title(tab.title)
-            else site_of(tab.url)
-        )
-        return linked_image(f"Browser: {subject}", page + ".jpg", page)
+        return linked_image(f"Browser: {self.subject(tab)}", page + ".jpg", page)
+
+    def subject(self, tab: Tab) -> str:
+        """The tab's page as its card names it: by its title, or by its site when it has
+        none or a bot check's, never by its address, whose path can hold a token."""
+        if tab.title and not pagetext.challenge_title(tab.title):
+            return tab.title
+        return site_of(tab.url)
 
     def takeover(self, s: Session, tab: Tab | None = None) -> str:
         url = f"{self.config.takeover_url.rstrip('/')}/{s.token}/"

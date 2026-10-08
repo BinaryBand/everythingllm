@@ -3,6 +3,7 @@ the card's link goes to the take-over view while the browser runs."""
 
 import asyncio
 import io
+import json
 
 from browser import live
 from browser.runner import Runner
@@ -191,3 +192,146 @@ def test_every_state_of_a_login_request_has_a_card():
         assert image.format == "PNG"
         light = Image.open(io.BytesIO(live.asked_picture(req, state, "light")))
         assert light.convert("RGB").getpixel((800, 20)) == THEMES["light"].panel
+
+
+async def ask(port, path, method="GET", key=None):
+    """A request with the key a client sends, if any -> (head, JSON body or None)."""
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    auth = f"Authorization: Bearer {key}\r\n" if key is not None else ""
+    writer.write(f"{method} {path} HTTP/1.1\r\nHost: h\r\n{auth}\r\n".encode())
+    await writer.drain()
+    head, _, body = (await reader.read()).partition(b"\r\n\r\n")
+    return head, json.loads(body) if b"application/json" in head else None
+
+
+def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
+    from browser.chats import Chats
+
+    checked = []
+
+    async def check(key):
+        checked.append(key)
+        return None if key == "GOOD" else (403, "No valid api key found.")
+
+    async def lookup(workspace, slug):
+        return {("career", "chat-7"): "7", ("career", "chat-8"): "8"}.get(
+            (workspace, slug)
+        )
+
+    async def main():
+        podman = FakePodman()
+        r = Runner(config(tmp_path), podman=podman, now=Clock())
+        server = await live.Live(r, Chats(r, check, lookup)).serve(0)
+        port = server.sockets[0].getsockname()[1]
+        cards = "https://host.example.ts.net:8445/_live/browser"
+        try:
+            route = "/_live/browser/chat/career/chat-7"
+            head, body = await ask(port, route)
+            assert b"401" in head and body == {"error": "No valid api key found."}
+            assert b"Access-Control-Allow-Origin: *" in head and checked == []
+            head, body = await ask(port, route, key="BAD")
+            assert b"403" in head and body == {"error": "No valid api key found."}
+            head, _ = await ask(port, route, "OPTIONS")  # a web client's preflight
+            assert (
+                b"204" in head
+                and b"Access-Control-Allow-Headers: Authorization" in head
+            )
+            head, _ = await ask(port, route, "POST", key="GOOD")
+            assert b"405" in head
+            head, body = await ask(port, "/chat/career/nope", key="GOOD")
+            assert b"404" in head and body == {"error": "No such chat."}
+            # A chat that hasn't used the browser, and one that has, the prefix stripped.
+            head, body = await ask(port, route, key="GOOD")
+            assert b"200 OK" in head and b"application/json" in head
+            assert body == {"tab": None, "logins": []}
+            await r.op_open(scope(), "https://linkedin.com/login")
+            tab = r.threads[("career", "7")]
+            head, body = await ask(port, "/chat/career/chat-7", key="GOOD")
+            assert body == {
+                "tab": {
+                    "card": f"{cards}/{tab.id}.jpg",
+                    "page": f"{cards}/{tab.id}",
+                    "state": "idle",  # an op called here, not through reply
+                    "title": r.subject(tab),
+                    "last": tab.last,
+                },
+                "logins": [],
+            }
+            asked = await r.op_ask_login(scope())
+            _, body = await ask(port, route, key="GOOD")
+            assert body["tab"]["state"] == "waiting"
+            assert body["logins"] == [
+                {
+                    "card": f"{cards}/login/{asked['request']}.png",
+                    "page": f"{cards}/login/{asked['request']}",
+                    "site": "linkedin.com",
+                    "state": "waiting",
+                }
+            ]
+            r.decline(r.asked[asked["request"]])
+            _, body = await ask(port, route, key="GOOD")
+            assert body["logins"][0]["state"] == "declined"
+            _, body = await ask(port, "/chat/career/chat-8", key="GOOD")
+            assert body == {"tab": None, "logins": []}  # another chat's are its own
+            await r.stop("career")
+            _, body = await ask(port, route, key="GOOD")
+            assert body["tab"]["state"] == "closed"
+        finally:
+            server.close()
+            await podman.close()
+
+    asyncio.run(main())
+
+
+def test_a_key_is_checked_with_anythingllm_and_a_good_one_remembered(monkeypatch):
+    from browser import chats
+
+    asked, answers, now = [], {"GOOD": 200, "BAD": 403, "ODD": 500}, [0.0]
+
+    def get_json(url, headers):
+        asked.append((url, headers["Authorization"]))
+        return answers[headers["Authorization"].removeprefix("Bearer ")], {}
+
+    monkeypatch.setattr(chats, "get_json", get_json)
+    check = chats.KeyCheck("http://all.example", now=lambda: now[0])
+
+    async def main():
+        assert await check("GOOD") is None
+        assert await check("GOOD") is None
+        assert asked == [("http://all.example/api/v1/auth", "Bearer GOOD")]
+        assert b"GOOD" not in b"".join(check.good)  # kept by its hash
+        assert await check("BAD") == (403, "No valid api key found.")
+        assert (await check("ODD"))[0] == 502
+        now[0] = 61
+        assert await check("GOOD") is None and len(asked) == 4  # asked again
+
+    asyncio.run(main())
+
+
+def test_a_threads_id_comes_from_its_workspaces_list(monkeypatch, tmp_path):
+    from browser import chats
+
+    lists, now = [], [0.0]
+    threads = [{"id": 7, "slug": "chat-7"}]
+
+    def get_json(url, headers):
+        lists.append(url)
+        if "nowhere" in url:
+            return 400, None
+        return 200, {"threads": list(threads), "defaultThreadChatCount": 0}
+
+    monkeypatch.setattr(chats, "get_json", get_json)
+    monkeypatch.setattr(chats.hostrpc, "anythingllm_headers", lambda *a, **k: {})
+    ids = chats.ThreadIds("http://all.example", tmp_path / ".env", now=lambda: now[0])
+
+    async def main():
+        assert await ids("career", "chat-7") == "7"
+        assert await ids("career", "chat-7") == "7"
+        assert lists == ["http://all.example/api/workspace/career/threads"]
+        threads.append({"id": 8, "slug": "chat-8"})
+        assert await ids("career", "chat-8") == "8"  # a chat made since: asked again
+        assert await ids("career", "gone") is None
+        assert await ids("nowhere", "chat-7") is None
+        assert len(lists) == 4
+
+    asyncio.run(main())

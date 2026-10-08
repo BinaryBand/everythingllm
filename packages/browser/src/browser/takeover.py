@@ -59,7 +59,8 @@ from browser import websocket
 from browser.origin import registrable
 
 if TYPE_CHECKING:
-    from browser.runner import Runner, Session
+    from browser.containers import Session
+    from browser.runner import Runner
 
 HOST = "127.0.0.1"
 STATIC = Path(__file__).with_name("static")

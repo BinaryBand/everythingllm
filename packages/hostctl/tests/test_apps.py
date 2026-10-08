@@ -159,8 +159,8 @@ def port_of(name: str, path: str = "") -> int:
 def test_the_ports_are_the_ones_the_code_and_units_use():
     import hostenv
     from agents.runner import Settings as AgentsSettings
-    from browser.runner import LIVE_PORT as BROWSER_LIVE_PORT
-    from browser.runner import TAKEOVER_PORT as BROWSER_TAKEOVER_PORT
+    from browser.config import LIVE_PORT as BROWSER_LIVE_PORT
+    from browser.config import TAKEOVER_PORT as BROWSER_TAKEOVER_PORT
     from gateway.app import Config as GatewayConfig
     from publicweb.pages import SEARXNG
     from relay.app import PREFIX as RELAY_PREFIX

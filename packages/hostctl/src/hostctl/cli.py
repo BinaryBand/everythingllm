@@ -43,7 +43,7 @@ SERVICE_IMAGE = (
 )
 EGRESS_TOML = ROOT / "packages" / "egress" / "src" / "egress" / "egress.toml"
 # The workspaces' browsers (packages/browser): their image and its folder, and what
-# browser-runner names a workspace's container (browser.runner.IMAGE, PREFIX).
+# browser-runner names a workspace's container (browser.containers.IMAGE, PREFIX).
 BROWSER = ROOT / "host" / "containers" / "browser"
 BROWSER_IMAGE = "localhost/everythingllm-browser"
 BROWSER_PREFIX = "everythingllm-browser-"

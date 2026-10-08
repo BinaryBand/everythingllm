@@ -8,7 +8,7 @@ import io
 from pathlib import Path
 
 import hostrpc
-from browser import runner as runner_mod
+from browser import config as config_mod
 from PIL import Image
 
 IPS = {"browser-1": "10.89.79.32", "browser-2": "10.89.79.33"}
@@ -202,9 +202,9 @@ class Clock:
         return self.t
 
 
-def config(tmp_path, **kw) -> runner_mod.Config:
+def config(tmp_path, **kw) -> config_mod.Config:
     (tmp_path / "workspaces").mkdir(exist_ok=True)  # as serve() makes it
-    return runner_mod.Config(
+    return config_mod.Config(
         root=tmp_path / "workspaces",
         data=tmp_path / "data",
         ips=dict(IPS),

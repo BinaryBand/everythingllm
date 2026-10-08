@@ -6,9 +6,12 @@ stopped when it's idle."""
 import asyncio
 
 import pytest
+from browser import containers, logins, tabs
 from browser import runner as runner_mod
+from browser.config import check_scope
 from browser.page import UNTRUSTED
-from browser.runner import Runner, check_scope
+from browser.runner import Runner
+from browser.vault import VaultError
 from browser_fakes import Clock, FakePodman, as_given, config, passkey, scope
 from hostrpc import RunnerError
 
@@ -57,7 +60,7 @@ def test_a_browser_is_hardened_and_mounts_only_its_workspaces_profile_downloads_
     tmp_path,
 ):
     r = Runner(config(tmp_path))
-    s = runner_mod.Session(
+    s = containers.Session(
         "career",
         "browser-1",
         "10.89.79.32",
@@ -100,7 +103,7 @@ def test_a_browser_is_hardened_and_mounts_only_its_workspaces_profile_downloads_
         f"{tmp_path}/data/downloads/career:/downloads:{data}",
         f"{tmp_path}/data/sockets/browser-1:/run/browser:{data}",
     ]
-    assert args[-1] == runner_mod.IMAGE
+    assert args[-1] == containers.IMAGE
 
 
 def test_open_starts_the_workspaces_browser_and_gives_each_thread_a_tab_and_card(
@@ -164,7 +167,7 @@ def test_an_elements_label_is_its_name_in_the_last_view():
             "not an element",
         ]
     }
-    found = runner_mod.labels(view)
+    found = tabs.labels(view)
     assert found == {
         "e1": "Sign in",
         "e2": "Home",
@@ -172,12 +175,10 @@ def test_an_elements_label_is_its_name_in_the_last_view():
         "e4": 'Say "yes"',
         "e6": "Size",
         "e7": "Notes",
-        "e8": "x" * (runner_mod.LABEL_CHARS - 1) + "…",
+        "e8": "x" * (tabs.LABEL_CHARS - 1) + "…",
         "e9": "Telephone",
     }
-    assert (
-        runner_mod.describe("fill", "Customer name", "Ada") == "Filled in Customer name"
-    )
+    assert tabs.describe("fill", "Customer name", "Ada") == "Filled in Customer name"
 
 
 def test_a_card_without_a_title_or_with_a_bot_checks_names_the_site_not_the_address(
@@ -475,7 +476,7 @@ def test_the_starting_runner_removes_its_old_containers(tmp_path):
     @run
     async def test(r, podman, clock):
         await r.cleanup()
-        assert podman.calls == [["rm", "-f", "--filter", f"label={runner_mod.LABEL}"]]
+        assert podman.calls == [["rm", "-f", "--filter", f"label={containers.LABEL}"]]
 
     test(tmp_path)
 
@@ -616,7 +617,7 @@ def test_a_fill_done_isnt_undone_by_noting_its_use(tmp_path):
         await r.op_open(scope(), "https://linkedin.com/")
 
         def gone(*args, **kw):
-            raise runner_mod.VaultError("there's no saved login")
+            raise VaultError("there's no saved login")
 
         r.vault.update = gone  # deleted in the take-over view while it was filled
         assert (await r.op_login(scope(), saved["id"], "e1", "e2"))["page"]
@@ -733,7 +734,7 @@ def test_a_request_runs_out_is_kept_a_while_and_is_capped(tmp_path):
         await r.op_open(scope(), "https://linkedin.com/")
         first = r.asked[(await r.op_ask_login(scope()))["request"]]
         assert first.sites == ["linkedin.com"]
-        clock.t += runner_mod.ASK_SECONDS + 1
+        clock.t += logins.ASK_SECONDS + 1
         assert r.asked_state(first) == "expired"
         with pytest.raises(RunnerError, match=r"\(expired\)"):
             await r.fulfil(first, "linkedin.com", "alice", "pw", "", False)
@@ -741,7 +742,7 @@ def test_a_request_runs_out_is_kept_a_while_and_is_capped(tmp_path):
         # for a day.
         second = (await r.op_ask_login(scope()))["request"]
         assert second != first.id and r.asked_by_id(first.id) is first
-        clock.t += runner_mod.KEEP_ASKED - runner_mod.ASK_SECONDS
+        clock.t += logins.KEEP_ASKED - logins.ASK_SECONDS
         assert r.asked_by_id(first.id) is None and r.asked_by_id("lr-nope") is None
         second = (await r.op_ask_login(scope()))["request"]
         # The browser stopping doesn't end one: the save needs only the vault.
@@ -750,7 +751,7 @@ def test_a_request_runs_out_is_kept_a_while_and_is_capped(tmp_path):
         await r.fulfil(req, "linkedin.com", "alice", "pw", "", False)
         assert r.vault.logins("career")[0]["site"] == "linkedin.com"
         # At most MAX_ASKED wait in a workspace.
-        for n in range(runner_mod.MAX_ASKED):
+        for n in range(logins.MAX_ASKED):
             await r.op_open(scope(thread=f"t{n}"), "https://linkedin.com/")
             await r.op_ask_login(scope(thread=f"t{n}"))
         await r.op_open(scope(thread="last"), "https://linkedin.com/")
@@ -839,7 +840,7 @@ def test_a_run_cant_send_downloads_through_a_symlink(tmp_path):
     (project / "downloads").symlink_to(outside)
     (staging / "7").mkdir(parents=True)
     (staging / "7" / "evil.pth").write_text("import os")
-    told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
+    told = containers.collect_downloads(staging, tmp_path / "workspaces", "career")
     assert list(outside.iterdir()) == []
     assert told == {
         "7": [
@@ -852,7 +853,7 @@ def test_a_run_cant_send_downloads_through_a_symlink(tmp_path):
     (project / "downloads").mkdir()
     (project / "downloads" / "evil.pth").symlink_to(outside / "planted")
     (staging / "7" / "evil.pth").write_text("import os")
-    told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
+    told = containers.collect_downloads(staging, tmp_path / "workspaces", "career")
     assert told == {"7": ["downloaded evil-2.pth to /project/downloads/evil-2.pth"]}
     assert list(outside.iterdir()) == []
 
@@ -866,7 +867,7 @@ def test_the_browser_cant_make_the_copy_read_host_files(tmp_path):
     (staging / "7").mkdir(parents=True)
     (staging / "7" / "key.txt").symlink_to(secret)
     (staging / "8").symlink_to(tmp_path)
-    told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
+    told = containers.collect_downloads(staging, tmp_path / "workspaces", "career")
     downloads = tmp_path / "workspaces" / "career" / "project" / "downloads"
     assert not downloads.exists() or list(downloads.iterdir()) == []
     assert "8" not in told and told.get("7", []) == []
@@ -875,11 +876,11 @@ def test_the_browser_cant_make_the_copy_read_host_files(tmp_path):
 
 
 def test_an_oversized_download_isnt_copied(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_mod, "DOWNLOAD_BYTES", 3)
+    monkeypatch.setattr(containers, "DOWNLOAD_BYTES", 3)
     staging = tmp_path / "data" / "downloads" / "career"
     (staging / "7").mkdir(parents=True)
     (staging / "7" / "big.bin").write_bytes(b"1234")
-    told = runner_mod.collect_downloads(staging, tmp_path / "workspaces", "career")
+    told = containers.collect_downloads(staging, tmp_path / "workspaces", "career")
     assert told["7"][0].startswith("couldn't save the download big.bin")
     assert not (staging / "7" / "big.bin").exists()
 
@@ -1037,7 +1038,7 @@ def test_only_the_user_makes_passkeys_and_each_made_is_saved(tmp_path):
 
 
 def test_the_card_names_a_pressed_key_only_when_its_a_named_one():
-    describe = runner_mod.describe
+    describe = tabs.describe
     assert describe("press", "", "Enter") == "Pressed Enter"
     assert describe("press", "", "Shift+Tab") == "Pressed Shift+Tab"
     assert (

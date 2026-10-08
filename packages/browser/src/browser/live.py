@@ -69,7 +69,8 @@ from browser import chats
 from browser.origin import registrable
 
 if TYPE_CHECKING:
-    from browser.runner import LoginRequest, Runner, Tab
+    from browser.runner import Runner
+    from browser.tabs import LoginRequest, Tab
 
 HOST = "127.0.0.1"
 CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"

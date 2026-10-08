@@ -185,7 +185,7 @@ def test_a_login_requests_card_shows_how_it_stands_and_links_to_its_form(tmp_pat
 
 
 def test_every_state_of_a_login_request_has_a_card():
-    from browser.runner import LoginRequest
+    from browser.tabs import LoginRequest
 
     req = LoginRequest("lr-x", "career", "7", "bw-x", ["linkedin.com"], "https://x/", 0)
     for state in live.ASKED:

@@ -15,7 +15,11 @@ repo's path and @KEY@ with KEY from host.env:
            A host unit this rendered whose template is gone (removed from host/systemd,
            or moved to host/quadlet as a container) is retired: stopped, disabled and
            deleted. A container that took its name over is
-           started then, since the old copy would hide Quadlet's unit; `diff` lists them.
+           started then, since the old copy would hide Quadlet's unit. A container this
+           rendered whose template is gone is stopped and deleted (Quadlet's units can't
+           be disabled; the reload drops it) before anything is written, so a host unit
+           of its name never takes over while it runs; but never AnythingLLM's or the
+           egress proxy's, which it leaves with a word on why. `diff` lists them all.
            An app's host units stay running while one of its containers can't start yet.
            Given app names (`uv run hostctl units relay`), it installs and retires only
            those apps' units, so services can move into containers one at a time; the
@@ -302,12 +306,23 @@ def hold_back(
     return now
 
 
-def retired(plan: list[Unit], user: Path, root: Path = ROOT) -> list[Path]:
-    """Host units in `user` that this rendered, or linked into the repo's host/systemd the
-    old way, and that no template makes any more."""
+def retired(
+    plan: list[Unit], user: Path, containers: Path, root: Path = ROOT
+) -> list[Path]:
+    """Units that no template makes any more: containers in `containers` that this
+    rendered (first), then host units in `user` that this rendered, or linked into the
+    repo's host/systemd the old way. Containers were never linked: a link is someone's."""
     planned_here = {u.dest for u in plan}
-    linked_from = root / "host" / "systemd"
     old = []
+    for path in sorted(containers.glob("*.container")):
+        if path in planned_here or path.is_symlink():
+            continue
+        try:
+            if RENDERED.match(path.read_text()):
+                old.append(path)
+        except OSError:
+            pass
+    linked_from = root / "host" / "systemd"
     for path in sorted([*user.glob("*.service"), *user.glob("*.timer")]):
         if path in planned_here:
             continue
@@ -323,12 +338,26 @@ def retired(plan: list[Unit], user: Path, root: Path = ROOT) -> list[Path]:
     return old
 
 
+# The containers `units` never retires, and what would go with them.
+ESSENTIAL = {
+    "anythingllm.container": "AnythingLLM and every skill go with it",
+    "egress-proxy.container": "every service container's way out goes with it",
+}
+
+
+def service_of(path: Path) -> str:
+    """The unit an installed file makes: a container's is Quadlet's <name>.service."""
+    return path.stem + ".service" if path.suffix == ".container" else path.name
+
+
 def retire(old: list[Path], plan: list[Unit]) -> tuple[list[str], list[str]]:
-    """Stop, disable and delete each. Returns the
+    """Stop, disable and delete each host unit, and stop and delete each container
+    (Quadlet's units can't be disabled; the next daemon-reload drops them). Returns the
     containers to start now that the host unit of their name is gone, and the units left
     as they are: a guarded runner with a run going (run_guard asks), whose container
-    mustn't start beside it, and every old unit of an app whose containers can't start
-    yet (no image, network or proxy), so the host keeps running it until they can."""
+    mustn't start beside it, every old unit of an app whose containers can't start
+    yet (no image, network or proxy), so the host keeps running it until they can, and
+    AnythingLLM's or the proxy's container (ESSENTIAL), which only a person retires."""
     containers = {u.service for u in plan if u.always}
     waiting = {}  # app name -> what one of its containers lacks
     for u in plan:
@@ -340,8 +369,15 @@ def retire(old: list[Path], plan: list[Unit]) -> tuple[list[str], list[str]]:
             waiting.setdefault(app.name, (u.service, lacking))
     start, left = [], []
     for path in old:
-        name = path.name
-        blocked = [a for a in waiting if belongs(name, [a])]
+        name, container = service_of(path), path.suffix == ".container"
+        if container and path.name in ESSENTIAL:
+            print(
+                f"units: left {path}: no template makes it, but {ESSENTIAL[path.name]}; "
+                f"stop {name} and delete it by hand if it's meant to go"
+            )
+            left.append(name)
+            continue
+        blocked = [] if container else [a for a in waiting if belongs(name, [a])]
         if blocked:
             service, lacking = waiting[blocked[0]]
             print(
@@ -354,14 +390,18 @@ def retire(old: list[Path], plan: list[Unit]) -> tuple[list[str], list[str]]:
             print(f"units: left {name} running; run `uv run hostctl units` again later")
             left.append(name)
             continue
+        if container:
+            subprocess.run(["systemctl", "--user", "stop", name], check=False)
         # A template (x@.service) can't be stopped by its name; a running instance
         # finishes, and nothing starts another.
-        if "@." not in name:
+        elif "@." not in name:
             subprocess.run(
                 ["systemctl", "--user", "disable", "--now", name], check=False
             )
         path.unlink(missing_ok=True)
-        if name in containers:
+        if container:
+            print(f"retired {path}: the repo has no template for it any more")
+        elif name in containers:
             start.append(name)
             print(f"retired {path}: its container takes over")
         else:
@@ -427,10 +467,10 @@ def main(argv: list[str] | None = None) -> None:
     values = {"REPO": str(ROOT), **host_settings(ROOT / "host.env")}
     plan = planned(values, containers, user)
     todo = changed(plan)
-    old = retired(plan, user)
+    old = retired(plan, user, containers)
     if args.apps:
         todo = [u for u in todo if belongs(u.service, args.apps)]
-        old = [p for p in old if belongs(p.name, args.apps)]
+        old = [p for p in old if belongs(service_of(p), args.apps)]
 
     if args.action == "diff":
         for unit in todo:
@@ -443,7 +483,10 @@ def main(argv: list[str] | None = None) -> None:
                 )
             )
         for path in old:
-            print(f"retire {path}: no template makes it any more")
+            if path.name in ESSENTIAL:
+                print(f"keep {path}: no template makes it, but {ESSENTIAL[path.name]}")
+            else:
+                print(f"retire {path}: no template makes it any more")
         if not (todo or old):
             print("units: installed units match the repo")
         return
@@ -452,8 +495,18 @@ def main(argv: list[str] | None = None) -> None:
         print("units: nothing to install")
         return
     refuse_worktree("install")
+    # Containers go before anything is written: a host unit of the same name would take
+    # the name over at the reload while the container still ran. One left running keeps
+    # its name, so such a host unit waits for it.
+    gone = [p for p in old if p.suffix == ".container"]
+    _, kept = retire(gone, plan)
+    for unit in [u for u in todo if not u.always and u.service in kept]:
+        print(
+            f"units: not installing {unit.dest} while {unit.service}'s container runs"
+        )
+        todo.remove(unit)
     restart = install(todo)
-    start, left = retire(old, plan)
+    start, left = retire([p for p in old if p not in gone], plan)
     restart = [s for s in restart if s not in left]
     restart += [s for s in start if s not in restart]
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)

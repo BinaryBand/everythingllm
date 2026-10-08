@@ -41,8 +41,6 @@ The relay and research-runner went live in their containers on 2026-10-07 (see t
 - **Checks that need a person.**
   - Run one Nilson chat to the end through the relay, with its ntfy notice.
 - **Once the containers have run for a week:** delete the old host venvs `~/.local/share/everythingllm/venvs/{relay,research}`, and the leftover `browser-net` network (`podman network rm browser-net`).
-- **Rolling a container back is partly by hand.** `hostctl.units.retired()` only looks in `~/.config/systemd/user`, so going back to a host unit means moving `~/.config/containers/systemd/<x>.container` aside yourself, then restoring its template to `host/systemd/` from git and running `uv run hostctl units`. A `uv run hostctl units --host <app>` could do both.
-- **`hostctl units` doesn't retire a Quadlet container whose template is gone** (only host units in `~/.config/systemd/user`); sites-runner's was removed by hand. Retire one the way a dropped host unit is.
 
 ## Saved logins in the browser: loose ends
 

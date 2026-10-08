@@ -357,7 +357,7 @@ def test_a_rendered_unit_with_no_template_is_retired(tmp_path, monkeypatch, caps
             True,
         ),
     ]
-    old = units.retired(plan, user)
+    old = units.retired(plan, user, containers)
     assert [p.name for p in old] == [
         "gone-runner.service",
         "linked.service",
@@ -385,7 +385,7 @@ def test_a_guarded_runner_with_a_run_going_isnt_retired(tmp_path, monkeypatch):
     plan = [
         unit(tmp_path, tmp_path / "r.container", "x", "research-runner.service", True)
     ]
-    old = units.retired(plan, user)
+    old = units.retired(plan, user, tmp_path / "containers")
     assert units.retire(old, plan) == (
         [],
         ["research-runner.service"],
@@ -408,7 +408,7 @@ def test_an_apps_host_units_stay_while_its_containers_cant_start(
     user.mkdir()
     for name in ("research-runner.service", "research-old.timer"):
         (user / name).write_text(RENDERED)
-    old = units.retired(planned, user)
+    old = units.retired(planned, user, tmp_path / "containers")
     start, left = units.retire(old, planned)
     assert (start, sorted(left)) == (
         [],
@@ -438,7 +438,7 @@ def test_an_archived_apps_host_units_are_all_retired(tmp_path, monkeypatch):
     old = ["audit-runner.service", "podcasts-sync.timer", "podcasts-web.service"]
     for name in [*old, "browser-runner.service"]:
         (user / name).write_text(RENDERED)
-    retired = units.retired(planned, user)
+    retired = units.retired(planned, user, tmp_path / "containers")
     assert [p.name for p in retired] == old
     assert units.retire(retired, planned) == ([], [])
     assert [p.name for p in user.iterdir()] == ["browser-runner.service"]
@@ -480,6 +480,128 @@ def test_units_retires_the_old_host_unit_then_starts_its_container(
         ["restart", "relay.service"],
     ]
     assert not (user / "relay.service").exists()
+
+
+def test_units_retires_an_orphaned_container_before_writing_its_host_unit(
+    tmp_path, monkeypatch, capsys
+):
+    """A container whose template is gone (its service moved back to the host) is stopped
+    and deleted before the host unit of its name is written, which would otherwise take
+    the name over from the running container at the reload. Quadlet's units refuse
+    `disable`. Only containers this rendered count: not someone's own, nor a link."""
+    import subprocess
+
+    user, containers = tmp_path / "user", tmp_path / "containers"
+    planned = plan(tmp_path)
+    for u in planned:
+        u.dest.parent.mkdir(parents=True, exist_ok=True)
+        u.dest.write_text(u.text)
+    host = unit(
+        tmp_path, user / "old-runner.service", "[Service]\n", "old-runner.service"
+    )
+    planned.append(host)
+    (containers / "old-runner.container").write_text(RENDERED + "[Container]\n")
+    (containers / "searxng.container").write_text("[Container]\nImage=searxng\n")
+    (tmp_path / "linked.container").write_text(RENDERED)
+    (containers / "linked.container").symlink_to(tmp_path / "linked.container")
+    calls = []
+
+    def run(cmd, **kw):
+        if cmd[2:3] == ["stop"]:
+            assert not host.dest.exists(), "its host unit was written first"
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 3 if "is-active" in cmd else 0)
+
+    monkeypatch.setattr(units.subprocess, "run", run)
+    monkeypatch.setattr(units, "ROOT", tmp_path)  # not a worktree
+    monkeypatch.setattr(units, "host_settings", lambda f: {})
+    monkeypatch.setattr(units, "planned", lambda values, c, u: planned)
+    monkeypatch.setenv("UNITS_USER_DIR", str(user))
+    monkeypatch.setenv("UNITS_CONTAINER_DIR", str(containers))
+
+    units.main(["diff"])
+    out = capsys.readouterr().out
+    assert f"retire {containers / 'old-runner.container'}: no template" in out
+    assert "searxng" not in out and "linked" not in out
+    units.main(["install"])
+    systemctl = [c[2:] for c in calls if c[:2] == ["systemctl", "--user"]]
+    # The host unit isn't running, so it waits to be enabled.
+    assert systemctl == [
+        ["stop", "old-runner.service"],
+        ["is-active", "--quiet", "old-runner.service"],
+        ["daemon-reload"],
+    ]
+    assert host.dest.exists()
+    assert sorted(p.name for p in containers.glob("*.container")) == sorted(
+        [
+            *(u.dest.name for u in planned if u.always),
+            "linked.container",
+            "searxng.container",
+        ]
+    )
+    assert (containers / "linked.container").is_symlink()
+
+
+def test_units_leaves_essential_and_busy_containers_and_their_host_units(
+    tmp_path, monkeypatch, capsys
+):
+    """AnythingLLM's and the proxy's containers take everything down with them, and
+    research-runner's has a run going: each stays, with a word on why, and the host unit
+    of research-runner's name waits too, since it would take the name over."""
+    import subprocess
+
+    user, containers = tmp_path / "user", tmp_path / "containers"
+    gone = ("anythingllm", "egress-proxy", "research-runner")
+    planned = [u for u in plan(tmp_path) if u.dest.stem not in gone]
+    for u in planned:
+        u.dest.parent.mkdir(parents=True, exist_ok=True)
+        u.dest.write_text(u.text)
+    for name in gone:
+        (containers / f"{name}.container").write_text(RENDERED + "[Container]\n")
+    host = unit(
+        tmp_path,
+        user / "research-runner.service",
+        "[Service]\n",
+        "research-runner.service",
+    )
+    planned.append(host)
+    calls, asked = [], []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(units.subprocess, "run", run)
+    monkeypatch.setattr(run_guard, "ok_to_restart", lambda s: asked.append(s) or False)
+    monkeypatch.setattr(units, "ROOT", tmp_path)  # not a worktree
+    monkeypatch.setattr(units, "host_settings", lambda f: {})
+    monkeypatch.setattr(units, "planned", lambda values, c, u: planned)
+    monkeypatch.setenv("UNITS_USER_DIR", str(user))
+    monkeypatch.setenv("UNITS_CONTAINER_DIR", str(containers))
+
+    units.main(["diff"])
+    out = capsys.readouterr().out
+    assert f"keep {containers / 'anythingllm.container'}: no template" in out
+    assert f"retire {containers / 'research-runner.container'}" in out
+    units.main(["install"])
+    assert asked == ["research-runner.service"]
+    systemctl = [c[2:] for c in calls if c[:2] == ["systemctl", "--user"]]
+    assert systemctl == [["daemon-reload"]]
+    assert sorted(p.name for p in containers.glob("*.container")) == sorted(
+        [*(u.dest.name for u in planned if u.always), *(f"{n}.container" for n in gone)]
+    )
+    assert not host.dest.exists()
+    out = capsys.readouterr().out
+    for name, why in (
+        ("anythingllm", "AnythingLLM and every skill go with it"),
+        ("egress-proxy", "every service container's way out goes with it"),
+    ):
+        assert (
+            f"left {containers / name}.container: no template makes it, but {why}"
+            in out
+        )
+    assert "left research-runner.service running" in out
+    assert f"not installing {host.dest}" in out
 
 
 def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, capsys):

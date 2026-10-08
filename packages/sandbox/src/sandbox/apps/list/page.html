@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>List</title>
+<style>
+:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--line:oklch(0.895 0.014 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--muted:oklch(0.5 0.02 280);--fade:oklch(0.62 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--line:oklch(0.36 0.022 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--muted:oklch(0.72 0.018 280);--fade:oklch(0.6 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:560px;margin:0 auto;padding:20px 16px 32px;display:flex;flex-direction:column;gap:14px}
+h1{margin:0;font-size:22px;line-height:1.25}
+header p{margin:2px 0 0;font-size:13.5px;color:var(--muted)}
+.add{display:flex;gap:8px}
+.add input{flex:1;min-width:0;height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font:inherit}
+.add input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{font:inherit;cursor:pointer}
+#add{min-height:44px;padding:0 18px;border:0;border-radius:10px;background:var(--accent);color:var(--onaccent);font-weight:500}
+ul{list-style:none;margin:0;padding:0}
+li{border-bottom:1px solid var(--line2)}
+label{min-height:48px;display:flex;align-items:center;gap:12px;cursor:pointer}
+input[type=checkbox]{width:22px;height:22px;margin:0;accent-color:var(--accent);flex:none}
+li span{flex:1;min-width:0;overflow-wrap:anywhere}
+li.done span{color:var(--fade);text-decoration:line-through}
+.quiet{align-self:flex-start;min-height:40px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}
+#status{margin:0;min-height:20px;font-size:13px;color:var(--muted)}
+#status.ok::before{content:"";display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:var(--ok)}
+#status.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="title">List</h1>
+    <p id="left"></p>
+  </header>
+  <div class="add">
+    <input id="new" aria-label="Add an item" placeholder="Add an item" maxlength="200" autocomplete="off">
+    <button id="add" type="button">Add</button>
+  </div>
+  <ul id="items"></ul>
+  <button id="clear" class="quiet" type="button" hidden>Clear done</button>
+  <p id="status" role="status"></p>
+</main>
+<script>
+"use strict";
+// The app's data, its write-back token and where to post ops, put here by the host when it
+// renders the page (sandbox.apps.render). Text is shown with textContent, never as markup.
+const APP = /*APP*/null;
+const byId = (id) => document.getElementById(id);
+let busy = false;
+
+function draw() {
+  const data = APP.data;
+  document.title = data.title;
+  byId("title").textContent = data.title;
+  const open = data.items.filter((i) => !i.done);
+  const done = data.items.filter((i) => i.done);
+  byId("left").textContent = !data.items.length
+    ? "Nothing on the list yet"
+    : open.length ? `${open.length} of ${data.items.length} left` : `All ${data.items.length} done`;
+  const list = byId("items");
+  list.replaceChildren();
+  for (const item of [...open, ...done]) {
+    const li = document.createElement("li");
+    if (item.done) li.className = "done";
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = item.done;
+    box.addEventListener("change", () => send(item.done ? "uncheck" : "check", { item: item.id }));
+    const name = document.createElement("span");
+    name.textContent = item.text;
+    label.append(box, name);
+    li.append(label);
+    list.append(li);
+  }
+  byId("clear").hidden = !done.length;
+}
+
+function say(text, kind) {
+  const status = byId("status");
+  status.textContent = text;
+  status.className = kind || "";
+}
+
+async function send(op, args) {
+  if (busy) return;
+  busy = true;
+  say("Saving…");
+  try {
+    const answer = await fetch(APP.ops, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ token: APP.token, op, args }),
+    });
+    const reply = await answer.json().catch(() => ({}));
+    if (!answer.ok) {
+      say(reply.error || `Couldn't save (${answer.status}).`, "bad");
+    } else {
+      APP.data = reply.data;
+      APP.token = reply.token;
+      say("Saved", "ok");
+    }
+  } catch {
+    say("Couldn't reach the server. Ask in the chat instead.", "bad");
+  } finally {
+    busy = false;
+    draw();
+  }
+}
+
+byId("add").addEventListener("click", () => {
+  const field = byId("new");
+  const value = field.value.trim();
+  if (!value) return;
+  field.value = "";
+  send("add", { item: value });
+});
+byId("new").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") byId("add").click();
+});
+byId("clear").addEventListener("click", () => send("clear_done", {}));
+draw();
+</script>
+</body>
+</html>

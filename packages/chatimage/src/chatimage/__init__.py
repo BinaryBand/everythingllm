@@ -8,6 +8,7 @@ an image the host draws:
 
 - `chatimage.card`: a link card for a published page, saved on the pages site.
 - `chatimage.progress`: a frame of a progress card for a long job.
+- an app's card (sandbox.apps' templates draw it with this kit), in the `app` accent.
 - `chatimage.live`: serves frames as `multipart/x-mixed-replace`, so an `<img>` keeps
   showing the newest one while the connection stays open: a live image with no script.
 
@@ -51,6 +52,7 @@ class Palette:
     done: RGB
     failed: RGB
     user: RGB  # a browser card's strip while the user has the browser
+    app: RGB  # an app's card (sandbox.apps), one colour for every app
     # One per site, picked by the label's first part, so a site's images share a colour.
     accents: tuple[RGB, ...]
 
@@ -66,6 +68,7 @@ THEMES = {
         done=getrgb("#68D7A1"),
         failed=getrgb("#F68482"),
         user=getrgb("#F2B772"),
+        app=getrgb("#B4A9F6"),
         accents=tuple(
             map(
                 getrgb,
@@ -83,6 +86,7 @@ THEMES = {
         done=getrgb("#007047"),
         failed=getrgb("#AF2934"),
         user=getrgb("#8B5511"),
+        app=getrgb("#4F41A8"),
         accents=tuple(
             map(
                 getrgb,

@@ -11,6 +11,7 @@ const publish = require("../../publish/handler").runtime;
 const buildSite = require("../../build-site/handler").runtime;
 const showImage = require("../../show-image/handler").runtime;
 const sandboxAccess = require("../../sandbox-access/handler").runtime;
+const app = require("../../app/handler").runtime;
 
 // A fake sandbox-runner: answers each request with respond(op, args); an array of Buffers
 // is sent as separate chunks, a moment apart, and undefined means never.
@@ -328,6 +329,32 @@ test("sandbox-access asks before model access or a bigger budget, and says what 
       models: true, daily_tokens: 300000, apply: true, approved: true, scope: { workspace: "career", thread: "12" },
     });
     assert.match(await sandboxAccess.handler.call(self, { daily_tokens: "lots" }), /daily_tokens must be a whole number/);
+  } finally {
+    await runner.close();
+  }
+});
+
+test("app sends one op with the invocation's scope and replies with the card", async () => {
+  const card = "[![Groceries](https://h:8445/_live/apps/career/groceries.png)](https://h:8445/_live/apps/career/groceries)";
+  const runner = await fakeRunner((op, args) => {
+    if (args.action === "list") return { ok: true, result: { apps: [{ name: "groceries", title: "Groceries", summary: "4 of 6 left" }, { name: "old", error: "its data can't be used" }] } };
+    if (args.action === "delete") return { ok: true, result: { name: args.name, deleted: true } };
+    return { ok: true, result: { name: "groceries", title: "Groceries", summary: "4 of 6 left", did: "added oat milk", card, page: "https://h:8447/career/apps/groceries/" } };
+  });
+  try {
+    const { self } = agent();
+    const reply = await app.handler.call(self, { action: "do", name: "groceries", op: "add", item: "Oat milk", scope: { workspace: "home" } });
+    assert.equal(reply, `Added oat milk. Groceries: 4 of 6 left.\nCard: ${card}\nPage: https://h:8447/career/apps/groceries/`);
+    assert.deepEqual(runner.requests[0], {
+      op: "app",
+      args: { action: "do", name: "groceries", title: "", op: "add", args: { item: "Oat milk" }, scope: { workspace: "career", thread: "12" } },
+    });
+    await app.handler.call(self, { action: "create", name: "packing", title: "Packing", items: '["Passport", "Charger"]' });
+    assert.deepEqual(runner.requests[1].args.args, { items: ["Passport", "Charger"] });
+    await app.handler.call(self, { action: "do", name: "packing", op: "rename", title: "Trip" });
+    assert.deepEqual(runner.requests[2].args.args, { title: "Trip" });
+    assert.match(await app.handler.call(self, {}), /^This workspace's apps:\n- groceries: Groceries, 4 of 6 left\n- old: its data can't be used$/);
+    assert.match(await app.handler.call(self, { action: "delete", name: "groceries" }), /Deleted the app groceries/);
   } finally {
     await runner.close();
   }

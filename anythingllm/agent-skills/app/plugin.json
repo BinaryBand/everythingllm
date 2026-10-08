@@ -1,0 +1,54 @@
+{
+  "active": true,
+  "hubId": "app",
+  "name": "App",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "The user's kept lists (shopping, packing, to-dos), as small apps: one call makes one, adds, ticks off or removes items, and the reply has a Card line showing the list live in the chat, which opens a page where the user ticks items too. Use it for any list the user keeps, never a hand-written page. Lists are per workspace: list them before making one. Ask before delete.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "Put oat milk on the groceries list",
+      "call": "{\"action\": \"do\", \"name\": \"groceries\", \"op\": \"add\", \"item\": \"Oat milk\"}"
+    },
+    {
+      "prompt": "Start a packing list for the trip: passport, charger, rain jacket",
+      "call": "{\"action\": \"create\", \"name\": \"packing\", \"title\": \"Packing for Gothenburg\", \"items\": [\"Passport\", \"Charger\", \"Rain jacket\"]}"
+    },
+    {
+      "prompt": "Got the eggs",
+      "call": "{\"action\": \"do\", \"name\": \"groceries\", \"op\": \"check\", \"item\": \"Eggs\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "action": {
+        "description": "create, do (one op), show, list (this workspace's apps) or delete.",
+        "type": "string"
+      },
+      "name": {
+        "description": "The app's name: lowercase letters, digits and hyphens, e.g. 'groceries'.",
+        "type": "string"
+      },
+      "title": {
+        "description": "Its title, for create or op rename.",
+        "type": "string"
+      },
+      "op": {
+        "description": "For do: add, check, uncheck, remove, clear_done or rename.",
+        "type": "string"
+      },
+      "item": {
+        "description": "The item, as text, for add, check, uncheck or remove.",
+        "type": "string"
+      },
+      "items": {
+        "description": "Several items to add (create or add), as a list of text.",
+        "type": "array"
+      }
+    }
+  }
+}

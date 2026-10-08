@@ -64,6 +64,11 @@ guessed and shows the same image for good. The reply's `image` is a Markdown ima
 link to it, which the agent pastes as it does a link card. They count toward
 IMAGES_MAX_BYTES a workspace, not its size limit: they're outside its folders.
 
+op_app keeps the workspace's apps (sandbox.apps): an app is a template from the repo plus
+the workspace's data for it in /project/apps/<name>/data.json; each change goes through the
+template's ops, re-renders its page in /public/apps/<name>/ with the data embedded and a
+new write-back token (kept host-only in APP_STATE's folder), and moves its live card on.
+
 A site build (op_build_site) runs the repo's sitebuild.py in a container with no network
 and every folder read-only but an empty /out: it copies a Zola site from the workspace's
 own folders, puts the theme it names in place (the repo's from /system/themes, or a
@@ -104,6 +109,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import hmac
 import html as htmllib
 import io
 import json
@@ -130,6 +136,7 @@ from egress import config as egress_config
 from hostrpc import safefs
 from PIL import Image
 
+from sandbox import apps as app_templates
 from sandbox import models as model_access
 
 log = logging.getLogger("sandbox-runner")
@@ -139,6 +146,14 @@ LIMIT = 8 * 1024 * 1024
 
 class SandboxError(hostrpc.RunnerError):
     """An error to show the agent: bad arguments, a missing file, the runner being down."""
+
+
+class BadToken(SandboxError):
+    """A write-back that isn't from the app's page."""
+
+
+class StaleToken(SandboxError):
+    """A write-back from a page of the app's that has been rendered again since."""
 
 
 # Also named in hostctl's sandbox-images (cli.py).
@@ -187,6 +202,9 @@ IMAGES = "_images"
 IMAGE_FORMATS = {"PNG": "png", "JPEG": "jpg", "GIF": "gif", "WEBP": "webp"}
 IMAGE_MAX_BYTES = 10 << 20
 IMAGES_MAX_BYTES = 500 << 20
+APP_DATA_BYTES = 1 << 20  # an app's data.json, at most
+APP_ACTIONS = ("create", "do", "show", "list", "delete")
+OLD_TOKENS = 8  # an app's earlier write-back tokens, known as a stale page's
 THREAD_MAX_AGE = 7 * 24 * 3600
 # The workspace's browser profile, in its folder beside the sandbox's (packages/browser).
 BROWSER = "browser"
@@ -301,6 +319,9 @@ class Config:
     model_log: Path = Path("/nonexistent/models")
     # Each run's model socket, in a folder of its own: a short path, as AF_UNIX's are.
     model_sockets: Path = Path("/nonexistent/m")
+    app_state: Path = Path(
+        "/nonexistent/apps"
+    )  # each app's write-back token, host-only
     public_root: Path = Path("/nonexistent")
     public_url: str = "http://127.0.0.1:8447/"
     uploads: Path = Path("/nonexistent")  # AnythingLLM's direct-uploads
@@ -331,6 +352,7 @@ class Config:
             model_env=Path(get("ANYTHINGLLM_ENV", hostrpc.storage() / ".env")),
             model_log=hostrpc.data_dir() / "sandbox" / "models",
             model_sockets=hostrpc.data_dir() / "sandbox" / "m",
+            app_state=hostrpc.data_dir() / "sandbox" / "apps",
             root=Path(
                 get("SANDBOX_ROOT", hostrpc.data_dir() / "sandbox" / "workspaces")
             ),
@@ -832,9 +854,10 @@ class Runner(hostrpc.Service):
     now: Callable[[], float] = time.time
     _free: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     _free_web: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
-    ask_model: model_access.Ask | None = (
-        None  # by default, the providers' (packages/llm)
-    )
+    # Asks a model for a run with model access; by default the providers' (packages/llm).
+    ask_model: model_access.Ask | None = None
+    # Notified whenever an app changes, for its live card (sandbox.appsweb).
+    apps_changed: asyncio.Condition = field(default_factory=asyncio.Condition)
     _access_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     _jobs: dict[str, Job] = field(default_factory=dict)
@@ -1925,6 +1948,207 @@ class Runner(hostrpc.Service):
             "bytes": len(data),
             "image": f"[![{label}]({chatimage.link(url)})]({chatimage.link(url)})",
         }
+
+    # --- apps (sandbox.apps) ---
+
+    async def op_app(
+        self,
+        scope: dict[str, Any],
+        action: str = "list",
+        name: str = "",
+        template: str = "list",
+        title: str = "",
+        op: str = "",
+        args: Any = None,
+    ) -> dict[str, Any]:
+        """An app of the workspace's: `create` one from a template, `do` one of its ops,
+        `show` it, `list` them, or `delete` one. Every change re-renders its page in
+        /public/apps/<name>/ and moves its live card on (sandbox.appsweb)."""
+        if action not in APP_ACTIONS:
+            raise SandboxError(f"action must be one of: {', '.join(APP_ACTIONS)}")
+        s = self.scope(scope)
+        if s.gateway:
+            raise SandboxError("a gateway client has no chat to show an app in")
+        if action != "list" and not (isinstance(name, str) and SLUG_RE.fullmatch(name)):
+            raise SandboxError(
+                "name must be 1-63 lowercase letters, digits or hyphens, e.g. 'groceries'"
+            )
+        self.idle(s.workspace)
+        async with self.lock(s.workspace):
+            if action == "list":
+                return {"apps": await asyncio.to_thread(self.list_apps, s)}
+            if action == "delete":
+                await asyncio.to_thread(self.delete_app, s, name)
+                result: dict[str, Any] = {"name": name, "deleted": True}
+            elif action == "create":
+                result = await asyncio.to_thread(
+                    self.create_app, s, name, template, title, args
+                )
+            elif action == "show":
+                result = await asyncio.to_thread(self.show_app, s, name)
+            else:
+                result = await asyncio.to_thread(self.change_app, s, name, op, args)
+                result.pop("token", None)  # the page's, never the agent's
+                result.pop("data", None)
+        await self.app_changed()
+        return result
+
+    async def app_changed(self) -> None:
+        async with self.apps_changed:
+            self.apps_changed.notify_all()
+
+    def read_app(self, s: Scope, name: str) -> dict[str, Any]:
+        """The app's data, read without following a symlink and checked by its template."""
+        raw = safefs.read_regular(
+            s.roots["/project"], ("apps", name, "data.json"), APP_DATA_BYTES + 1
+        )
+        if raw is None:
+            raise SandboxError(f"there's no app '{name}' (app list shows them)")
+        if len(raw) > APP_DATA_BYTES:
+            raise SandboxError(f"{name}'s data is over {APP_DATA_BYTES >> 20} MB")
+        try:
+            data = json.loads(raw)
+            return app_templates.of(data).validate(data)
+        except ValueError as e:  # AppError is one
+            raise SandboxError(f"{name}'s data can't be used: {e}") from None
+
+    def save_app(self, s: Scope, name: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Write the app's data, one version on, and its page, under a new write-back
+        token; the data as saved, with the token under "token"."""
+        data = {**data, "version": data["version"] + 1}
+        try:
+            with safefs.folder(s.roots["/project"], ("apps", name), make=True) as d:
+                safefs.replace(d, "data.json", json.dumps(data, indent=1).encode())
+            token = self.rotate_token(s.workspace, name)
+            page = app_templates.render(
+                data, token, f"/_apps/{quote(s.workspace)}/{quote(name)}/ops"
+            )
+            with safefs.folder(s.public, ("apps", name), make=True) as d:
+                safefs.replace(d, "index.html", page.encode())
+        except OSError as e:
+            raise SandboxError(f"couldn't save {name}: {e}") from None
+        return {**data, "token": token}
+
+    def token_file(self, workspace: str, name: str) -> Path:
+        return self.config.app_state / workspace / f"{name}.json"
+
+    def tokens(self, workspace: str, name: str) -> dict[str, Any]:
+        try:
+            held = json.loads(self.token_file(workspace, name).read_text())
+        except (OSError, ValueError):
+            return {"token": "", "old": []}
+        return held if isinstance(held, dict) else {"token": "", "old": []}
+
+    def rotate_token(self, workspace: str, name: str) -> str:
+        """A new write-back token for the app; the one before joins the stale ones."""
+        held = self.tokens(workspace, name)
+        token = secrets.token_urlsafe(24)
+        old = [held.get("token") or "", *held.get("old", [])][:OLD_TOKENS]
+        file = self.token_file(workspace, name)
+        file.parent.mkdir(parents=True, exist_ok=True)
+        hostrpc.atomic_write(
+            file, json.dumps({"token": token, "old": [t for t in old if t]}), 0o600
+        )
+        return token
+
+    def app_reply(
+        self, s: Scope, name: str, data: dict[str, Any], did: str = ""
+    ) -> dict[str, Any]:
+        kind = app_templates.of(data)
+        live = (
+            f"{self.config.site_url.rstrip('/')}/_live/apps/"
+            f"{quote(s.workspace)}/{quote(name)}"
+        )
+        card = (
+            f"[![{chatimage.alt(data['title'])}]({chatimage.link(live + '.png')})]"
+            f"({chatimage.link(live)})"
+        )
+        return {
+            "name": name,
+            "template": kind.NAME,
+            "title": data["title"],
+            "summary": kind.summary(data),
+            "did": did,
+            "version": data["version"],
+            "page": self.public_url(s.workspace, f"apps/{quote(name)}/"),
+            "card": card,
+        }
+
+    def create_app(
+        self, s: Scope, name: str, template: str, title: str, args: Any
+    ) -> dict[str, Any]:
+        project = s.roots["/project"]
+        if safefs.read_regular(project, ("apps", name, "data.json"), 1) is not None:
+            raise SandboxError(f"there's an app '{name}' already; change it with do")
+        try:
+            kind = app_templates.template(template)
+            data = kind.new(title or name.replace("-", " ").capitalize())
+            did = "made it"
+            if isinstance(args, dict) and (args.get("items") or args.get("item")):
+                data, did = kind.apply(data, "add", args)
+                did = f"made it and {did}"
+        except ValueError as e:
+            raise SandboxError(str(e)) from None
+        saved = self.save_app(s, name, data)
+        return self.app_reply(s, name, saved, did)
+
+    def change_app(
+        self, s: Scope, name: str, op: str, args: Any, token: str | None = None
+    ) -> dict[str, Any]:
+        """Apply one of the app's ops and save it; its reply, with the data and the new
+        token. With `token` (a page's), only when it's the app's current one: StaleToken
+        for one it had before, BadToken for any other."""
+        data = self.read_app(s, name)
+        if token is not None:
+            held = self.tokens(s.workspace, name)
+            current = held.get("token") or ""
+            if not (current and hmac.compare_digest(current, token)):
+                old = [t for t in held.get("old", []) if isinstance(t, str)]
+                if any(hmac.compare_digest(t, token) for t in old):
+                    raise StaleToken("this page is out of date; reload it")
+                raise BadToken("this isn't the app's page")
+        try:
+            data, did = app_templates.of(data).apply(data, op, args)
+        except ValueError as e:
+            raise SandboxError(str(e)) from None
+        saved = self.save_app(s, name, data)
+        token = saved.pop("token")
+        return {**self.app_reply(s, name, saved, did), "data": saved, "token": token}
+
+    def show_app(self, s: Scope, name: str) -> dict[str, Any]:
+        data = self.read_app(s, name)
+        if not (s.public / "apps" / name / "index.html").is_file():
+            data = self.save_app(s, name, data)  # a page a run removed comes back
+        return self.app_reply(s, name, data)
+
+    def list_apps(self, s: Scope) -> list[dict[str, Any]]:
+        found: list[dict[str, Any]] = []
+        try:
+            entries = sorted(
+                os.scandir(s.roots["/project"] / "apps"), key=lambda e: e.name
+            )
+        except OSError:
+            return found
+        for entry in entries:
+            if not entry.is_dir(follow_symlinks=False) or not SLUG_RE.fullmatch(
+                entry.name
+            ):
+                continue
+            try:
+                found.append(
+                    self.app_reply(s, entry.name, self.read_app(s, entry.name))
+                )
+            except SandboxError as e:
+                found.append({"name": entry.name, "error": str(e)})
+        return found
+
+    def delete_app(self, s: Scope, name: str) -> None:
+        folder = s.roots["/project"] / "apps" / name
+        if not os.path.lexists(folder):
+            raise SandboxError(f"there's no app '{name}' (app list shows them)")
+        remove_path(folder)
+        remove_path(s.public / "apps" / name)
+        self.token_file(s.workspace, name).unlink(missing_ok=True)
 
     def listing(self, scope: Scope) -> dict[str, Any]:
         """The workspace's pages: /public's top-level entries and where they are."""

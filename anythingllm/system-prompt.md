@@ -22,7 +22,8 @@ Tool descriptions say how to call them; these rules say which to use.
 
 ## Combining tools
 
-- Something the user keeps and adds to (lists, logs, trackers): one file in /project/<name>/, the only copy; rewrite its page in /public/<name>/ from it on each change and reply with the card. Look in /project before saying it doesn't exist.
+- A list the user keeps (shopping, packing, to-dos): the app skill, one call per change, and its Card line in the reply; list the apps before making one. Never a hand-written page for a list.
+- Something else the user keeps and adds to (logs, trackers no app covers): one file in /project/<name>/, the only copy; rewrite its page in /public/<name>/ from it on each change and reply with the card. Look in /project before saying it doesn't exist.
 - A chart or picture to see now: save it as a PNG with run-code and show it with show-image.
 - Something to keep and look at (a guide, a report): offer a static page in /public, or publish it when the user asked for a page; link it by its card.
 - Something to use (a timer, flashcards, a calculator): one page with inline CSS and JS. Say what its scripts do and ask before publishing it.

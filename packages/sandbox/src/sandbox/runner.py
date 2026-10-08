@@ -47,6 +47,14 @@ that a page has scripts (so the agent asks the user before publishing it) and wh
 sandbox's limits it runs into. op_publish gives the same for a page, with its address and
 link card, and can copy a file or folder into /public first.
 
+op_show_image puts an image from the caller's folders in the chat: a PNG, JPEG, GIF or
+WebP file, read without following a symlink and named by its format in its header (never
+by its name, and never an SVG, which opened by itself is a page), is copied to the pages
+site's `_images/<workspace>/`, named by a hash of its bytes, so its address can't be
+guessed and shows the same image for good. The reply's `image` is a Markdown image in a
+link to it, which the agent pastes as it does a link card. They count toward
+IMAGES_MAX_BYTES a workspace, not its size limit: they're outside its folders.
+
 A site build (op_build_site) runs the repo's sitebuild.py in a container with no network
 and every folder read-only but an empty /out: it copies a Zola site from the workspace's
 own folders, puts the theme it names in place (the repo's from /system/themes, or a
@@ -99,6 +107,7 @@ import asyncio
 import contextlib
 import hashlib
 import html as htmllib
+import io
 import json
 import logging
 import os
@@ -116,11 +125,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import chatimage
 import chatimage.card
 import hostrpc
 import tomllib
 from egress import config as egress_config
 from hostrpc import safefs
+from PIL import Image
 
 log = logging.getLogger("sandbox-runner")
 # Big enough for a run's output, which the runner caps well below this.
@@ -173,6 +184,13 @@ WATCH_SECONDS = 3.0
 FILE_MAX_BYTES = 2 << 30
 OPEN_FILES = 4096
 PUBLISH_MAX_BYTES = 500 << 20  # what publish or a build copies into /public at once
+# show_image: the images it puts on the pages site for the chat (`IMAGES/<workspace>/`), by
+# the format Pillow reads in the file's header, at most IMAGE_MAX_BYTES each; past
+# IMAGES_MAX_BYTES a workspace's oldest go, and old chats show them broken.
+IMAGES = "_images"
+IMAGE_FORMATS = {"PNG": "png", "JPEG": "jpg", "GIF": "gif", "WEBP": "webp"}
+IMAGE_MAX_BYTES = 10 << 20
+IMAGES_MAX_BYTES = 500 << 20
 THREAD_MAX_AGE = 7 * 24 * 3600
 # The workspace's browser profile, in its folder beside the sandbox's (packages/browser).
 BROWSER = "browser"
@@ -470,6 +488,23 @@ def copy_regular(source: Path, dest: Path) -> None:
             raise SandboxError(f"'{source.name}' isn't a regular file")
         with open(dest, "wb") as out:
             shutil.copyfileobj(src, out)
+
+
+def trim_images(folder: int, limit: int) -> None:
+    """Delete the oldest plain files in the open folder `folder` until the rest are within
+    `limit` bytes; whatever else is there is left alone."""
+    files = []
+    for entry in os.scandir(folder):
+        st = entry.stat(follow_symlinks=False)
+        if stat.S_ISREG(st.st_mode) and not entry.name.startswith("."):
+            files.append((st.st_mtime, entry.name, st.st_size))
+    total = sum(size for _, _, size in files)
+    for _, name, size in sorted(files):
+        if total <= limit:
+            break
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(name, dir_fd=folder)
+        total -= size
 
 
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -1779,6 +1814,85 @@ class Runner(hostrpc.Service):
                     "the file or folder to publish"
                 )
             return await asyncio.to_thread(self.page_info, s.workspace, item)
+
+    async def op_show_image(
+        self, scope: dict[str, Any], path: str = "", alt: str = ""
+    ) -> dict[str, Any]:
+        """An image in the caller's folders, put on the pages site for the chat: its
+        address, size and the Markdown line that shows it (`image`)."""
+        s = self.scope(scope)
+        if not isinstance(path, str) or not path.strip():
+            raise SandboxError("give the image's path, e.g. /work/chart.png")
+        if not isinstance(alt, str):
+            raise SandboxError("alt must be text")
+        self.idle(s.workspace)
+        async with self.lock(s.workspace):
+            data = await asyncio.to_thread(self.read_image, s, path)
+            return await asyncio.to_thread(
+                self.put_image, s.workspace, data, path.strip(), alt
+            )
+
+    def read_image(self, scope: Scope, path: str) -> bytes:
+        """The bytes of the plain file at `path`, at most IMAGE_MAX_BYTES."""
+        source = self.resolve(scope, path)
+        try:
+            fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except FileNotFoundError:
+            raise SandboxError(f"there's no '{path}'") from None
+        except OSError as e:
+            raise SandboxError(f"'{path}' can't be read ({e.strerror})") from None
+        if not stat.S_ISREG(os.fstat(fd).st_mode):  # before fdopen, which refuses a folder
+            os.close(fd)
+            raise SandboxError(f"'{path}' isn't a file")
+        with os.fdopen(fd, "rb") as f:
+            data = f.read(IMAGE_MAX_BYTES + 1)
+        if len(data) > IMAGE_MAX_BYTES:
+            raise SandboxError(
+                f"'{path}' is over {IMAGE_MAX_BYTES >> 20} MB; make it smaller with run-code"
+            )
+        return data
+
+    def put_image(
+        self, workspace: str, data: bytes, path: str, alt: str
+    ) -> dict[str, Any]:
+        """Save an image on the pages site, by its hash, and trim the workspace's to
+        IMAGES_MAX_BYTES, oldest shown first."""
+        try:  # the header only: nothing is decoded
+            with Image.open(io.BytesIO(data)) as image:
+                kind, (width, height) = image.format, image.size
+        except Exception:  # noqa: BLE001 - whatever Pillow can't read isn't one
+            kind, width, height = None, 0, 0
+        ext = IMAGE_FORMATS.get(kind or "")
+        if ext is None:
+            raise SandboxError(
+                f"'{path}' isn't a PNG, JPEG, GIF or WebP image; convert it with "
+                "run-code (an SVG with cairosvg, say), or publish it as a page"
+            )
+        name = f"{hashlib.sha256(data).hexdigest()[:32]}.{ext}"
+        self.config.site_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+        folder = safefs.open_dir(self.config.site_dir, (IMAGES, workspace), make=True)
+        try:
+            try:  # shown before: only its time, so the trim keeps it
+                os.utime(name, dir_fd=folder, follow_symlinks=False)
+                shown = stat.S_ISREG(
+                    os.stat(name, dir_fd=folder, follow_symlinks=False).st_mode
+                )
+            except FileNotFoundError:
+                shown = False
+            if not shown:
+                safefs.replace(folder, name, data)
+            trim_images(folder, IMAGES_MAX_BYTES)
+        finally:
+            os.close(folder)
+        url = f"{self.config.site_url.rstrip('/')}/{IMAGES}/{quote(workspace)}/{name}"
+        label = chatimage.alt(alt) or chatimage.alt(Path(path).stem) or "image"
+        return {
+            "url": url,
+            "width": width,
+            "height": height,
+            "bytes": len(data),
+            "image": f"[![{label}]({chatimage.link(url)})]({chatimage.link(url)})",
+        }
 
     def listing(self, scope: Scope) -> dict[str, Any]:
         """The workspace's pages: /public's top-level entries and where they are."""

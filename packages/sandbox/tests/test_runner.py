@@ -762,6 +762,87 @@ def test_removing_a_page_by_its_path_leaves_others_that_share_its_stem(cfg):
     assert sorted(os.listdir(public(cfg, A))) == ["notes", "notes.css", "v1.3"]
 
 
+def png(color: str, size=(4, 3), kind="PNG") -> bytes:
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", size, color).save(out, kind)
+    return out.getvalue()
+
+
+def test_show_image_puts_an_image_on_the_pages_site_named_by_its_bytes(cfg):
+    r = make(cfg)
+    work(cfg, A).mkdir(parents=True)
+    (work(cfg, A) / "chart.png").write_bytes(png("red"))
+    res = go(r.op_show_image(A, "chart.png", "Totals [2026]"))
+    name = res["url"].rsplit("/", 1)[1]
+    assert re.fullmatch(
+        r"https://pages\.example/_images/career/[0-9a-f]{32}\.png", res["url"]
+    )
+    assert res["image"] == f"[![Totals \\[2026\\]]({res['url']})]({res['url']})"
+    assert (res["width"], res["height"]) == (4, 3)
+    saved = cfg.site_dir / "_images" / "career" / name
+    assert saved.read_bytes() == png("red")
+    # Named by its format, not its file's name; the same bytes again are the same image.
+    (project(cfg, A) / "photo.data").write_bytes(png("red", kind="JPEG"))
+    jpeg = go(r.op_show_image(A2, "/project/photo.data"))
+    assert jpeg["url"].endswith(".jpg") and jpeg["image"].startswith("[![photo](")
+    assert go(r.op_show_image(A, "/work/chart.png", "x"))["url"] == res["url"]
+
+
+@pytest.mark.parametrize(
+    ("make_it", "error"),
+    [
+        (
+            lambda f: f.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>"),
+            "isn't a PNG",
+        ),
+        (lambda f: f.write_text("hello"), "isn't a PNG"),
+        (lambda f: f.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 40), "isn't a PNG"),
+        (lambda f: f.mkdir(), "isn't a file"),
+        (lambda f: f.symlink_to("/etc/hostname"), "points outside"),
+        (lambda f: None, "there's no"),
+    ],
+)
+def test_show_image_takes_only_a_raster_image_in_the_callers_folders(
+    cfg, make_it, error
+):
+    r = make(cfg)
+    work(cfg, A).mkdir(parents=True)
+    make_it(work(cfg, A) / "x.png")
+    with pytest.raises(runner.SandboxError, match=error):
+        go(r.op_show_image(A, "/work/x.png"))
+    assert not list((cfg.site_dir).glob("_images/*/*"))
+
+
+def test_show_image_refuses_a_big_one_and_drops_the_oldest_past_the_cap(
+    cfg, monkeypatch
+):
+    r = make(cfg)
+    work(cfg, A).mkdir(parents=True)
+    monkeypatch.setattr(runner, "IMAGE_MAX_BYTES", 10)
+    (work(cfg, A) / "big.png").write_bytes(png("red"))
+    with pytest.raises(runner.SandboxError, match="over 0 MB"):
+        go(r.op_show_image(A, "big.png"))
+    monkeypatch.setattr(runner, "IMAGE_MAX_BYTES", 10 << 20)
+    sizes = []
+    urls = []
+    for i, color in enumerate(("red", "green", "blue")):
+        (work(cfg, A) / f"{i}.png").write_bytes(png(color))
+        res = go(r.op_show_image(A, f"{i}.png"))
+        urls.append(res["url"].rsplit("/", 1)[1])
+        sizes.append(res["bytes"])
+        os.utime(cfg.site_dir / "_images" / "career" / urls[-1], (i, i))
+    # Showing the first again makes it the newest, so the second goes.
+    monkeypatch.setattr(runner, "IMAGES_MAX_BYTES", sizes[0] + sizes[2])
+    go(r.op_show_image(A, "0.png"))
+    assert sorted(os.listdir(cfg.site_dir / "_images" / "career")) == sorted(
+        [urls[0], urls[2]]
+    )
+
+
 def test_publish_without_a_page_lists_them(cfg):
     r = make(cfg)
     go(r.op_write(A, "/public/a/index.html", "a"))

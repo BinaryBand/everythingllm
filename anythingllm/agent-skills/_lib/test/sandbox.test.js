@@ -9,6 +9,7 @@ const runCode = require("../../run-code/handler").runtime;
 const writeFile = require("../../write-file/handler").runtime;
 const publish = require("../../publish/handler").runtime;
 const buildSite = require("../../build-site/handler").runtime;
+const showImage = require("../../show-image/handler").runtime;
 
 // A fake sandbox-runner: answers each request with respond(op, args); an array of Buffers
 // is sent as separate chunks, a moment apart, and undefined means never.
@@ -144,6 +145,24 @@ test("write-file and publish replies", async () => {
     );
     assert.equal(await publish.handler.call(self, { slug: "plot", remove: true }), "removed /public/plot; it's no longer on the web");
     assert.deepEqual(runner.requests[2].args, { scope: { workspace: "career", thread: "12" }, slug: "plot", path: "/work/out", remove: false });
+  } finally {
+    await runner.close();
+  }
+});
+
+test("show-image gives the line that shows the image, with the invocation's scope", async () => {
+  const image = "[![Totals](https://h:8445/_images/career/ab.png)](https://h:8445/_images/career/ab.png)";
+  const runner = await fakeRunner(() => ({
+    ok: true,
+    result: { url: "https://h:8445/_images/career/ab.png", width: 1200, height: 800, bytes: 48_000, image },
+  }));
+  try {
+    const reply = await showImage.handler.call(agent().self, { path: "/work/totals.png", alt: "Totals", scope: { workspace: "home" } });
+    assert.equal(reply, `shown: https://h:8445/_images/career/ab.png (1200×800, 47 KB)\nImage: ${image}`);
+    assert.deepEqual(runner.requests[0], {
+      op: "show_image",
+      args: { path: "/work/totals.png", alt: "Totals", scope: { workspace: "career", thread: "12" } },
+    });
   } finally {
     await runner.close();
   }

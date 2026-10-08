@@ -1,0 +1,30 @@
+{
+  "active": true,
+  "hubId": "show-image",
+  "name": "Show Image",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Show an image from the sandbox in the chat: a PNG, JPEG, GIF or WebP file in /work, /project, /shared or /public (a chart run-code saved, a photo), at most 10 MB. Gives an Image: line to put in your reply.",
+  "author": "anything",
+  "license": "MIT",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "Plot the monthly totals",
+      "call": "{\"path\": \"/work/totals.png\", \"alt\": \"Monthly totals, 2026\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "path": {
+        "description": "The image file, e.g. '/work/chart.png'.",
+        "type": "string"
+      },
+      "alt": {
+        "description": "What the image shows, in a few words.",
+        "type": "string"
+      }
+    }
+  }
+}

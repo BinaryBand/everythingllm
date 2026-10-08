@@ -49,6 +49,7 @@ from hostrpc import RunnerError
 from runs.service import Meter, Progress, Run, RunService
 
 from research import job, live, notify
+from research.config import depth_preset
 
 log = logging.getLogger("research-runner")
 
@@ -57,14 +58,21 @@ MAX_GOAL = 500
 MAX_TITLE = 120
 
 
-def check_split(sub_questions: Any, title: Any) -> None:
-    """RunnerError unless the caller's sub_questions and title are usable."""
+def check_split(sub_questions: Any, title: Any, depth: Any = None) -> None:
+    """RunnerError unless the caller's sub_questions and title are usable, and the depth
+    has a worker for each part (it would leave the rest out unsaid)."""
     if sub_questions is not None:
         if not isinstance(sub_questions, list) or not (
             1 <= len(sub_questions) <= MAX_SUB_QUESTIONS
         ):
             raise RunnerError(
                 f"sub_questions must be a list of 1 to {MAX_SUB_QUESTIONS} parts of the question."
+            )
+        preset = depth_preset(depth if isinstance(depth, str) else None)
+        if len(sub_questions) > preset["workers"]:
+            raise RunnerError(
+                f"a {preset['name']} run researches at most {preset['workers']} parts; "
+                "give fewer sub_questions, or a deeper depth."
             )
         for i, part in enumerate(sub_questions, 1):
             goal = part.get("goal") if isinstance(part, dict) else part
@@ -112,8 +120,13 @@ class Runner(RunService):
         module's."""
         if not isinstance(question, str) or not question.strip():
             raise RunnerError("No research question was given.")
-        check_split(args.get("sub_questions"), args.get("title") or None)
-        req = job.Request.of(question, **args)
+        check_split(
+            args.get("sub_questions"), args.get("title") or None, args.get("depth")
+        )
+        try:  # **args takes any name: Request's fields are the ones there are
+            req = job.Request.of(question, **args)
+        except TypeError as e:
+            raise RunnerError(f"bad arguments for start: {e}") from None
         run = self.new_run(req.question, owner)
         if chat := told(owner, scope):
             self.chats[run.id] = chat

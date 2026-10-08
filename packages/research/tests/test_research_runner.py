@@ -264,6 +264,10 @@ def test_bad_requests_get_errors(served):
             ),
             ({"sub_questions": [" "]}, r"sub_questions\[1\] must be a goal"),
             ({"sub_questions": ["x" * 501]}, "over 500 characters"),
+            (  # not cut to the depth's workers unsaid
+                {"sub_questions": ["a", "b", "c", "d"], "depth": "quick"},
+                "a quick run researches at most 3 parts",
+            ),
             ({"title": "t" * 121}, "at most 120 characters"),
             ({"title": 7}, "at most 120 characters"),
         ]:

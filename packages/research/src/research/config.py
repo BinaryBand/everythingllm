@@ -34,6 +34,8 @@ LIMITS = {"llm": 8, "fetch": 4}
 SEARCH_GAP = 2.0  # seconds
 
 PAGE_CHARS = 12_000  # page text handed to the extraction call
+# The most one page read takes, so a server that trickles bytes can't hold a worker.
+READ_SECONDS = 45
 NOTES_PER_WORKER = 30
 FINDINGS_PER_PAGE = 8
 RESULTS_PER_SEARCH = 8

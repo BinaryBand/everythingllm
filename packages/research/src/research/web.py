@@ -1,12 +1,13 @@
 """Web access for the workers: page reads (SearXNG search is publicweb.pages')."""
 
 import threading
+import time
 from collections.abc import Callable
 
 import httpx
 from publicweb.pages import browser_client, read_html
 
-from research.config import LIMITS, PAGE_CHARS
+from research.config import LIMITS, PAGE_CHARS, READ_SECONDS
 
 Read = Callable[[str], str | None]
 
@@ -30,7 +31,9 @@ def make_reader(
     if fetch is None:
         if client is None:
             raise TypeError("make_reader needs a client or a fetch function")
-        fetch = lambda url: read_html(client, url, max_chars, ReadError)
+        fetch = lambda url: read_html(
+            client, url, max_chars, ReadError, time.monotonic() + READ_SECONDS
+        )
     slots = threading.BoundedSemaphore(LIMITS["fetch"])
     cache: dict[str, str | None] = {}
     locks: dict[str, threading.Lock] = {}

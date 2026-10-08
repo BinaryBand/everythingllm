@@ -34,6 +34,13 @@ async function follow(self, chat, runId, card, question) {
   }
 }
 
+/** The agent's split of the question; an empty list, which models send for an optional
+ *  array they don't use, is none (the runner refuses an empty one). */
+function split(subQuestions) {
+  const parts = asObject(subQuestions);
+  return Array.isArray(parts) && parts.length === 0 ? null : parts;
+}
+
 module.exports.runtime = {
   handler: async function ({ question, depth, sub_questions, title }) {
     const refused = delegatedRefusal(this);
@@ -49,7 +56,7 @@ module.exports.runtime = {
         worker: args.WORKER_MODEL || null,
         planner_fallback: args.PLANNER_FALLBACK_MODEL ?? null,
         site: args.SITE || null,
-        sub_questions: asObject(sub_questions),
+        sub_questions: split(sub_questions),
         title: title || null,
         // The chat it came from, whose app the runner tells when the run ends.
         scope: scopeOf(this),

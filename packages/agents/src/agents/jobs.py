@@ -545,11 +545,16 @@ class ScheduledJobs:
         """While the delegation `key` runs, disable any scheduled job that appears that
         wasn't made here, telling it through `note`: a delegated task may not make one, and
         only AnythingLLM's own tools, which our skills' refusal doesn't reach, could."""
-        if not self.watched:
-            self.known = await self.job_ids()
-            self.watcher = asyncio.create_task(self.watch())
+        # Registered before the first await, so a delegation that starts meanwhile doesn't
+        # start a second watcher, which nothing would cancel and which would go on
+        # disabling every new job, the user's own too.
+        first = not self.watched
         self.watched[key] = note
         try:
+            if first:
+                self.known = None  # until the listing: a check meanwhile stands in
+                self.known = await self.job_ids()
+                self.watcher = asyncio.create_task(self.watch())
             yield
         finally:
             del self.watched[key]

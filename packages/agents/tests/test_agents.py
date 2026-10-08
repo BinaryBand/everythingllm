@@ -649,6 +649,24 @@ def test_delegation_stops_at_its_daily_budget(fake, tmp_path):
     asyncio.run(main())
 
 
+def test_delegations_waiting_their_turn_are_capped(fake, tmp_path, monkeypatch):
+    """None counts toward the budget until it ends, so a model in a loop can't queue any
+    number of them."""
+    monkeypatch.setattr(runner.Runner, "MAX_PENDING", 2)
+    ok = [{"name": "a", "profile": "worker", "instructions": "x"}]
+
+    async def main():
+        r = make(fake, tmp_path)
+        first = await r.op_delegate("one", ok)
+        await r.op_delegate("two", ok)
+        with pytest.raises(RunnerError, match="2 delegations are already running"):
+            await r.op_delegate("three", ok)
+        await finish(r, first["run_id"])
+        assert (await r.op_delegate("three", ok))["run_id"].startswith("dg-")
+
+    asyncio.run(main())
+
+
 def test_a_delegation_from_a_chat_tells_that_chat_when_it_ends(fake, tmp_path):
     async def main():
         r = make(fake, tmp_path)

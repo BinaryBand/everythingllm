@@ -58,8 +58,9 @@ Holding runs and waiting on them is runs.service's (RunService).
 A delegation that reads a lot of pages uses a lot of tokens (each agent step sends every
 page read so far again), and a running task can't be stopped, so a new delegation is
 refused once the delegations of the last 24 hours have cost DAILY_USD. That counts what
-the run log has: delegations still running (at most MAX_RUNS) count once they end, and
-GLM, which both profiles use and AnythingLLM doesn't price, not at all.
+the run log has: delegations still running or waiting (at most MAX_PENDING, so the budget
+is passed by those at most) count once they end, and GLM, which both profiles use and
+AnythingLLM doesn't price, not at all.
 
 Config (environment, from host.env and agents.env through the unit):
   AGENTS_SOCKET       socket to listen on (default <storage>/everythingllm/agents/runner.sock)
@@ -141,9 +142,10 @@ class Settings:
         return cls(
             runlogs=hostrpc.data_dir() / "agents" / "runs",
             pages_url=f"https://{host}:8445/" if host else "",
-            live_port=int(os.environ.get("AGENTS_LIVE_PORT", "8451")),
-            slots=int(os.environ.get("AGENTS_SLOTS", "3")),
-            daily_usd=float(os.environ.get("AGENTS_DAILY_USD", "3")),
+            # Set but empty is the default too; no task slot at all would hang every task.
+            live_port=int(os.environ.get("AGENTS_LIVE_PORT") or 8451),
+            slots=max(1, int(os.environ.get("AGENTS_SLOTS") or 3)),
+            daily_usd=float(os.environ.get("AGENTS_DAILY_USD") or 3),
             timezone=os.environ.get("USER_TIMEZONE") or DEFAULT_TIMEZONE,
         )
 
@@ -306,6 +308,9 @@ class Runner(RunService):
     NOUN = "delegation"
     SUBJECT_KEY = "goal"
     MAX_RUNS = 4  # delegations at once; their tasks share the task slots
+    # Delegations running or waiting their turn: none of them counts toward the daily
+    # budget until it ends, so without a limit a model in a loop could queue any number.
+    MAX_PENDING = 2 * MAX_RUNS
 
     def __init__(
         self,
@@ -414,6 +419,11 @@ class Runner(RunService):
         ):
             raise RunnerError(
                 f"the tasks' material is over {MAX_MATERIAL_TOTAL} characters in all"
+            )
+        if sum(not r.done for r in self.runs.values()) >= self.MAX_PENDING:
+            raise RunnerError(
+                f"{self.MAX_PENDING} delegations are already running or waiting; wait "
+                "for one to end before starting another."
             )
         cap = self.settings.daily_usd
         if (
@@ -537,9 +547,11 @@ class Runner(RunService):
             raise RunnerError(str(e)) from None
         log.info("updated %s's prompt to version %s", slug, version)
         return (
+            # The developer API's update leaves AnythingLLM's prompt history out (only
+            # its UI's records a change), so the diff is the one record of what was there.
             f"Updated this workspace's prompt to version {version}; its own text outside "
-            "the EverythingLLM block is unchanged, and AnythingLLM keeps the earlier prompt "
-            f"in its history. What changed:\n{changes}"
+            "the EverythingLLM block is unchanged. AnythingLLM's prompt history doesn't "
+            f"have the earlier prompt; the lines marked - below are what it was:\n{changes}"
         )
 
     async def execute(

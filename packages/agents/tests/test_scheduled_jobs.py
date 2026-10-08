@@ -552,3 +552,36 @@ def test_the_watch_disables_a_new_job_while_the_delegation_still_runs(
         assert len(notes) == 1  # noted once, not again at the end
 
     asyncio.run(main())
+
+
+def test_two_delegations_starting_at_once_share_one_watch_that_ends_with_them(
+    api, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(jobs, "WATCH", 0.01)
+
+    async def main():
+        r = make(api, tmp_path)
+        s = r.scheduled()
+        started: list[asyncio.Task] = []
+        create = asyncio.create_task
+
+        def counted(coro, **kw):
+            task = create(coro, **kw)
+            if getattr(coro, "__name__", "") == "watch":
+                started.append(task)
+            return task
+
+        monkeypatch.setattr(jobs.asyncio, "create_task", counted)
+
+        async def delegation(key):
+            async with s.guarding(key, lambda _: None):
+                await asyncio.sleep(0.05)
+
+        await asyncio.gather(delegation("dg-1"), delegation("dg-2"))
+        assert len(started) == 1 and started[0].done()
+        assert s.watcher is None and s.watched == {}
+        mine = api.add("the user's own, made after")
+        await asyncio.sleep(0.05)
+        assert api.jobs[mine]["enabled"]  # no watch left behind to disable it
+
+    asyncio.run(main())

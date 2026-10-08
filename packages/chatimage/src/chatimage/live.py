@@ -33,7 +33,7 @@ from chatimage import THEME, THEMES
 BOUNDARY = b"frame"
 SETTLE = 0.2  # seconds a frame waits for a newer one before it's sent again to be shown
 MAX_HEAD = 16 * 1024  # a request's line and headers; the machine's route adds a few
-CORS = {"Access-Control-Allow-Origin": "*"}  # on images alone
+CORS = {"Access-Control-Allow-Origin": "*"}  # on images, and runs.live's run JSON
 
 
 class BadRequest(Exception):

@@ -7,6 +7,7 @@ the answer too.
     GET /_live/browser/chat/<workspace>/<thread>     Authorization: Bearer <key>
     GET /_live/browser/chat/<workspace>              the workspace's main chat
     GET /_live/browser/chat/<workspace>[/<thread>]/card.jpg   the tab's card as it is now
+    POST /_live/browser/chat/<workspace>[/<thread>]/give     hand the browser back
 
 `<thread>` is the thread's slug, as the developer API names it; the runner keeps tabs by
 AnythingLLM's thread id (the scope a skill gives it), which only the internal API has, so it
@@ -14,7 +15,7 @@ asks that for the workspace's threads (ThreadIds). The main chat, which has no t
 does a developer API chat sent without one, which goes to it), is the runner's thread
 `default` (MAIN, as `_lib/scope.js` names it). The answer:
 
-    {"tab": null | {"card", "page", "frame", "state", "title", "last"},
+    {"tab": null | {"card", "page", "frame", "state", "title", "site", "last"},
      "logins": [{"card", "page", "site", "state"}, ...]}
 
 `card` is the card's picture and `page` where it links, as in the card line the agent gets
@@ -23,8 +24,16 @@ the tab looks now (no push stream; a client asks again to follow it, and a card 
 changed is a 304 by its ETag), 404 when the chat has no tab. Asking for it counts as
 watching the tab for a few seconds (Runner.watched), as a streamed card does. `state` is Runner.state's (working, idle, waiting, user, closed) for the tab
 and Runner.asked_state's (waiting, saving, saved, declined, expired) for a login request,
-newest first. `title` is the card's name for the page, never its address, and `last` what
-was done last, as the card says it.
+newest first. `title` is the card's name for the page, never its address,
+`site` who the page belongs to (tabs.site_of: its registrable name, or null for a tab with
+no page), never its address either, whose path can hold a token, and `last` what was done
+last, as the card says it.
+
+`give` is the take-over view's "Hand back to the agent" for a client: while the user has
+the browser it gives it back to the agent (Runner.give_back), and answers as the GET does,
+so the client sees the new state. The chat must have a tab; when the agent has the browser
+already, or it's closed, it changes nothing. Taking it over stays on the take-over view, which shows the
+screen to act on (the entry's `page` links to it).
 
 The key is checked as the relay checks it (KeyCheck: `GET /api/v1/auth`, a good key
 remembered by its hash for a minute) and never logged or kept. Anyone with a key can have
@@ -57,7 +66,8 @@ from urllib.parse import quote
 
 import hostenv
 
-from browser.origin import registrable
+from browser.origin import host_of, registrable
+from browser.tabs import site_of
 
 if TYPE_CHECKING:
     from browser.runner import Runner
@@ -67,13 +77,13 @@ log = logging.getLogger("browser-runner")
 
 # A slug has no ".", so a thread can't be taken for card.jpg.
 ROUTE = re.compile(
-    r"(?:/_live/browser)?/chat/([a-z0-9_][a-z0-9_-]{0,99})(?:/([A-Za-z0-9_-]{1,64}))?(/card\.jpg)?"
+    r"(?:/_live/browser)?/chat/([a-z0-9_][a-z0-9_-]{0,99})(?:/([A-Za-z0-9_-]{1,64}))?(/card\.jpg|/give)?"
 )
 MAIN = "default"  # the main chat's thread in the scopes skills give (_lib/scope.js)
 CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Authorization",
-    "Access-Control-Allow-Methods": "GET",
+    "Access-Control-Allow-Methods": "GET, POST",
     "Access-Control-Max-Age": "600",
 }
 REFUSED = "No valid api key found."  # AnythingLLM's own words, as the relay answers
@@ -268,6 +278,18 @@ class Chats:
             raise Refused("404 Not Found", "This chat has no browser tab.")
         return tab
 
+    async def give(
+        self, workspace: str, slug: str | None, headers: dict[str, str]
+    ) -> dict[str, Any]:
+        """Hand the chat's browser back to the agent, if the user has it, and answer as a
+        GET of the chat's route does; raises Refused."""
+        tab = await self.tab(workspace, slug, headers)
+        s = self.runner.sessions.get(workspace)
+        if s is not None and s.control == "user":
+            await self.runner.give_back(s)
+            log.info("a client handed %s's browser back to the agent", workspace)
+        return self.of(workspace, slug, tab.thread)
+
     def of(self, workspace: str, slug: str | None, thread: str) -> dict[str, Any]:
         """What the runner knows of the chat's browser."""
         r = self.runner
@@ -293,6 +315,7 @@ class Chats:
                 f"{'' if slug is None else '/' + slug}/card.jpg",
                 "state": r.state(tab),
                 "title": r.subject(tab),
+                "site": site_of(tab.url) if host_of(tab.url) else None,
                 "last": tab.last,
             },
             "logins": []

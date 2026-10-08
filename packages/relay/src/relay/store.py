@@ -2,12 +2,14 @@
 restart loses nothing already received; a terminal event and the run's new status are
 written in one transaction, so a run never ends twice.
 
-A run as the API shows it is `public(row)`: the question stays in the store (ntfy needs
-its start), out of every response. Its `mode` is the body's, or null when the workspace's
-own mode answered.
+A run as the API shows it is `public(row)`: its question's first QUESTION_CHARS
+characters (the whole is in the store, for ntfy; a key that can ask the relay can read the
+thread anyway), and `error`, the failed event's, kept on the run as it ends. Its `mode` is
+the body's, or null when the workspace's own mode answered.
 
-The schema's version is `pragma user_version`. Opening a database below `VERSION` drops its
-runs (those before 2 held `text` events nothing reads now) and makes the tables afresh.
+The schema's version is `pragma user_version`. Opening a database below 2 drops its runs
+(they held `text` events nothing reads now) and makes the tables afresh; one at 2 gets the
+runs' `error` column, filled from their failed events.
 """
 
 import json
@@ -22,7 +24,8 @@ TERMINAL = (
     "cancelled",
 )  # the events that end a run, named as its status
 STATUSES = ("running", *TERMINAL)
-VERSION = 2
+VERSION = 3
+QUESTION_CHARS = 200  # of a run's question in the API
 
 SCHEMA = """
 create table if not exists runs (
@@ -34,7 +37,8 @@ create table if not exists runs (
   question text not null,
   status text not null,
   created_at text not null,
-  finished_at text
+  finished_at text,
+  error text
 );
 create index if not exists runs_by_thread on runs (workspace, thread, status);
 create table if not exists events (
@@ -44,6 +48,14 @@ create table if not exists events (
   data text not null,
   primary key (run_id, seq)
 );
+"""
+
+ADD_ERROR = """
+alter table runs add column error text;
+update runs set error = (
+  select json_extract(data, '$.error') from events
+  where run_id = runs.id and name = 'failed'
+) where status = 'failed';
 """
 
 
@@ -58,10 +70,18 @@ def public(row: sqlite3.Row) -> dict[str, Any]:
         "workspace": row["workspace"],
         "thread": row["thread"],
         "mode": row["mode"],
+        "question": preview(row["question"]),
         "status": row["status"],
+        "error": row["error"],
         "createdAt": row["created_at"],
         "finishedAt": row["finished_at"],
     }
+
+
+def preview(question: str) -> str:
+    if len(question) <= QUESTION_CHARS:
+        return question
+    return question[: QUESTION_CHARS - 1].rstrip() + "…"
 
 
 class Store:
@@ -74,10 +94,13 @@ class Store:
         # a power cut that loses the last pieces ends the run anyway.
         self.db.execute("pragma synchronous = normal")
         self.db.execute("pragma foreign_keys = on")
-        if self.db.execute("pragma user_version").fetchone()[0] < VERSION:
+        version = self.db.execute("pragma user_version").fetchone()[0]
+        if version < 2:
             self.db.executescript(
                 "drop table if exists events; drop table if exists runs;"
             )
+        elif version == 2:
+            self.db.executescript(f"begin; {ADD_ERROR} commit;")
         self.db.executescript(SCHEMA)
         self.db.execute(f"pragma user_version = {VERSION}")
         path.chmod(0o600)  # questions and answers
@@ -95,7 +118,7 @@ class Store:
         question: str,
     ) -> sqlite3.Row:
         self.db.execute(
-            "insert into runs values (?, ?, ?, ?, ?, ?, 'running', ?, null)",
+            "insert into runs values (?, ?, ?, ?, ?, ?, 'running', ?, null, null)",
             (run_id, client_id, workspace, thread, mode, question, stamp()),
         )
         row = self.get(run_id)
@@ -141,8 +164,13 @@ class Store:
             )
             if name in TERMINAL:
                 self.db.execute(
-                    "update runs set status = ?, finished_at = ? where id = ?",
-                    (name, stamp(), run_id),
+                    "update runs set status = ?, finished_at = ?, error = ? where id = ?",
+                    (
+                        name,
+                        stamp(),
+                        data.get("error") if name == "failed" else None,
+                        run_id,
+                    ),
                 )
         return seq
 

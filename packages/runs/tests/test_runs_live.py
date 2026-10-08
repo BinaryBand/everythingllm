@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 
 from chatimage import THEMES
 from PIL import Image
@@ -98,6 +99,95 @@ def test_a_run_from_the_log_gets_one_frame_and_its_page(tmp_path):
         assert b"<h1>old</h1>" in body and b"failed" in body and b"refresh" not in body
         head, body = await get(port, "/th-99999999.png")
         assert Image.open(io.BytesIO(body)).format == "PNG"
+        server.close()
+
+    asyncio.run(main())
+
+
+def test_a_runs_json_says_how_it_goes_then_how_it_ended(tmp_path):
+    async def main():
+        s = Things()
+        go = asyncio.Event()
+
+        async def work(run, progress, meter):
+            progress("searching")
+            meter(0.5)
+            await go.wait()
+            return {"status": "ok", "title": "Found", "url": "https://h/report/"}
+
+        run = s.new_run("what is it")
+        s.launch(run, work)
+        server = await ThingLive(s, tmp_path, "https://h:8445/").serve(0)
+        port = server.sockets[0].getsockname()[1]
+        await asyncio.sleep(0.01)
+        run.last_seen = 0
+        for path in (f"/_live/things/{run.id}.json", f"/{run.id}.json"):
+            head, body = await get(port, path)
+            assert b"application/json" in head
+            assert b"Access-Control-Allow-Origin: *" in head
+            assert b"multipart" not in head  # one answer, not a push stream
+            got = json.loads(body)
+            assert got == {
+                "id": run.id,
+                "kind": "Thing",
+                "subject": "what is it",
+                "title": "what is it",
+                "state": "running",
+                "fraction": 0.5,
+                "minutes": 1,
+                "started": run.started,
+                "steps": ["searching"],
+                "line": "searching",
+                "url": None,
+                "error": None,
+            }
+        assert run.last_seen > 0  # polling it counts as following it
+        go.set()
+        await asyncio.sleep(0.05)
+        got = json.loads((await get(port, f"/{run.id}.json"))[1])
+        assert (got["state"], got["fraction"], got["title"]) == ("done", 1.0, "Found")
+        assert (got["line"], got["url"]) == ("Finished", "https://h/report/")
+        server.close()
+
+    asyncio.run(main())
+
+
+def test_a_runs_json_from_the_log_or_unknown(tmp_path):
+    append_line(
+        tmp_path,
+        "2026-10-06T10:00:00Z",
+        {
+            "run_id": "th-0123abcd",
+            "subject": "old",
+            "started": "2026-10-06T10:00:00Z",
+            "status": "failed",
+            "seconds": 180,
+            "error": "it broke",
+            "events": [[1, "x"], [2, "y"]],
+        },
+    )
+
+    async def main():
+        server = await ThingLive(Things(), tmp_path, "").serve(0)
+        port = server.sockets[0].getsockname()[1]
+        got = json.loads((await get(port, "/th-0123abcd.json"))[1])
+        assert got == {
+            "id": "th-0123abcd",
+            "kind": "Thing",
+            "subject": "old",
+            "title": "old",
+            "state": "failed",
+            "fraction": None,
+            "minutes": 3,
+            "started": "2026-10-06T10:00:00Z",
+            "steps": ["x", "y"],
+            "line": "it broke",
+            "url": None,
+            "error": "it broke",
+        }
+        got = json.loads((await get(port, "/th-99999999.json"))[1])
+        assert (got["state"], got["steps"], got["url"]) == ("unknown", [], None)
+        assert got["line"] == ThingLive.unknown_line(None)
         server.close()
 
     asyncio.run(main())

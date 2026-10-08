@@ -17,6 +17,12 @@ The machine routes https://<host>:8445<PATH> to the service's port (see
   one, until then a page of the run (`body`) that reloads itself every few seconds while
   it goes (no script). Pages are sent with a CSP that allows nothing but their own inline
   CSS, and everything a run says is escaped on them: a run's text is model output.
+- `<id>.json` is the run as a client app draws it itself (`Live.status`): its subject and
+  title, `state` (running, done, failed, interrupted, or unknown when neither the service
+  nor its log has it), `fraction`, `minutes`, `started`, its last steps, the card's last
+  line (the latest step, or how it ended and where its result is), `url` and `error`.
+  Readable from any origin, as the card is: it says what the run's page says, to whoever
+  has the run's id. Asking counts as following the run, as watching the card does.
 
 A service subclasses Live and sets PATH, LABEL and its wording (`ended_line`, `body`). A run's
 id is the service's ID_PREFIX and 8 hex digits (RunService.new_run).
@@ -32,6 +38,7 @@ Config (environment):
 
 import asyncio
 import html
+import json
 import os
 import re
 import time
@@ -67,9 +74,10 @@ class Live:
         self.service = service
         self.runlogs = runlogs
         self.pages_url = pages_url
-        # A run's card (.png) or its link, with or without PATH, as the machine's route may strip it.
+        # A run's card (.png), its JSON or its link, with or without PATH, as the machine's
+        # route may strip it.
         self.route = re.compile(
-            rf"(?:{re.escape(self.PATH.rstrip('/'))})?/({re.escape(service.ID_PREFIX)}[0-9a-f]{{8}})(\.png)?"
+            rf"(?:{re.escape(self.PATH.rstrip('/'))})?/({re.escape(service.ID_PREFIX)}[0-9a-f]{{8}})(\.png|\.json)?"
         )
 
     @classmethod
@@ -105,13 +113,15 @@ class Live:
         route = self.route.fullmatch(path)
         if not route:
             return await live.send(writer, "404 Not Found", b"No such run.\n")
-        run_id, image = route[1], bool(route[2])
+        run_id, kind = route[1], route[2]
         run = self.service.runs.get(run_id)
         theme = live.theme(query)
         try:
-            if image and run:
+            if kind == ".json":
+                await self.send_status(writer, run_id, run)
+            elif kind == ".png" and run:
                 await live.push(writer, self.frames(run, theme))
-            elif image:
+            elif kind == ".png":
                 frame = await asyncio.to_thread(self.logged_frame, run_id, theme)
                 await live.send(writer, "200 OK", frame, "image/png")
             else:
@@ -155,46 +165,81 @@ class Live:
         return self.STATES.get((result or {}).get("status", ""), "failed")
 
     def frame(self, run: Run, theme: str) -> bytes:
-        if not run.done:
-            return progress.draw(
-                run.title,
-                f"{self.LABEL} · running · {run.minutes()} min",
-                run.fraction,
-                run.events[-1] if run.events else "Starting.",
-                theme=theme,
-            )
-        state = self.state_of(run.result)
-        return progress.draw(
-            run.title,
-            f"{self.LABEL} · {state} · {run.minutes()} min",
-            1.0 if state == "done" else run.fraction,
-            self.ended_line(state, run.result or {}),
-            state,
-            theme,
-        )
+        return self.draw(self.snapshot(run.id, run, None)[0], theme)
 
     def logged_frame(self, run_id: str, theme: str) -> bytes:
         """One frame of how a run this service doesn't hold ended, from the run log."""
-        record = find(self.runlogs, run_id)
-        if record is None:
+        view, _ = self.snapshot(run_id, None, find(self.runlogs, run_id))
+        if view["state"] == "unknown":
             return progress.draw(
                 "This run isn't known here",
                 self.LABEL,
                 None,
-                self.unknown_line(),
+                view["line"],
                 "interrupted",
                 theme,
             )
-        state = self.STATES.get(record.get("status", ""), "interrupted")
-        minutes = max(1, round((record.get("seconds") or 0) / 60))
+        return self.draw(view, theme)
+
+    def draw(self, view: dict[str, Any], theme: str) -> bytes:
+        state = view["state"]
         return progress.draw(
-            record.get("title") or self.subject_of(record),
-            f"{self.LABEL} · {state} · {minutes} min",
-            None if state != "done" else 1.0,
-            self.ended_line(state, record),
+            view["title"],
+            f"{self.LABEL} · {state} · {view['minutes']} min",
+            view["fraction"],
+            view["line"],
             state,
             theme,
         )
+
+    def snapshot(
+        self, run_id: str, run: Run | None, record: dict[str, Any] | None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The run as its card, page and `<id>.json` say it (the JSON's fields), and its
+        result: the run held, else its run log line `record`, else unknown."""
+        if run is not None:
+            result = run.result or {}
+            state = self.state_of(run.result) if run.done else "running"
+            subject, title, started = run.subject, run.title, run.started
+            minutes, fraction = run.minutes(), run.fraction
+            steps = run.events[-12:]
+            if run.done:
+                line = self.ended_line(state, result)
+            else:
+                line = run.events[-1] if run.events else "Starting."
+        elif record is not None:
+            result = record
+            state = self.STATES.get(record.get("status", ""), "interrupted")
+            subject = self.subject_of(record)
+            title = record.get("title") or subject
+            started = record.get("started")
+            minutes = max(1, round((record.get("seconds") or 0) / 60))
+            fraction = None
+            steps = [e[1] for e in record.get("events", [])[-12:]]
+            line = self.ended_line(state, record)
+        else:
+            result, state, subject, title, started = {}, "unknown", "", "", None
+            minutes, fraction, steps, line = None, None, [], self.unknown_line()
+        ended = state not in ("running", "unknown")
+        view = {
+            "id": run_id,
+            "kind": self.LABEL,
+            "subject": subject,
+            "title": title,
+            "state": state,
+            "fraction": 1.0 if state == "done" else fraction,
+            "minutes": minutes,
+            "started": started,
+            "steps": steps,
+            "line": line,
+            "url": (self.destination(result) if ended else None) or None,
+            "error": (result.get("error") if state == "failed" else None) or None,
+        }
+        return view, result
+
+    async def logged(self, run_id: str, run: Run | None) -> dict[str, Any] | None:
+        """The run's log line when this service doesn't hold it, read in a thread."""
+        return None if run else await asyncio.to_thread(find, self.runlogs, run_id)
 
     # --- what a service says ---
 
@@ -231,21 +276,30 @@ class Live:
             f"<p>{html.escape(self.LABEL)}: {html.escape(status)}.</p>\n<ol>{items}</ol>"
         )
 
+    async def send_status(
+        self, writer: asyncio.StreamWriter, run_id: str, run: Run | None
+    ) -> None:
+        if run:
+            run.last_seen = time.monotonic()  # a client polling it is following it
+        view, _ = self.snapshot(run_id, run, await self.logged(run_id, run))
+        await live.send(
+            writer,
+            "200 OK",
+            json.dumps(view, ensure_ascii=False).encode(),
+            "application/json",
+            headers=live.CORS,
+        )
+
     async def page(
         self, writer: asyncio.StreamWriter, run_id: str, run: Run | None
     ) -> None:
         """The card's link: its destination once there is one, else a page of the run."""
-        if run is not None:
-            subject, done, result = run.subject, run.done, run.result or {}
-            events = run.events[-12:]
-            status = self.state_of(run.result) if done else "running"
-        else:
-            result = await asyncio.to_thread(find, self.runlogs, run_id) or {}
-            subject, done = self.subject_of(result), True
-            events = [e[1] for e in result.get("events", [])[-12:]]
-            status = self.STATES.get(result.get("status", ""), "not known here")
-        if done and (url := self.destination(result)):
+        view, result = self.snapshot(run_id, run, await self.logged(run_id, run))
+        if url := view["url"]:
             return await live.send(writer, "302 Found", headers={"Location": url})
+        subject, events = view["subject"], view["steps"]
+        done = view["state"] != "running"
+        status = "not known here" if view["state"] == "unknown" else view["state"]
         refresh = (
             ""
             if done

@@ -8,16 +8,17 @@ import base64
 import contextlib
 import json
 import logging
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import httpx
 import pytest
-from relay import upstream
+from relay import store, upstream
 from relay.app import HEALTH, Config, create_app
 from relay.auth import REFUSED
 from relay.runs import RESET, RESTARTED
-from relay.store import VERSION, Store
+from relay.store import QUESTION_CHARS, VERSION, Store
 
 KEY = "allm-key-0123456789"
 CHAT = {"message": "What's next?"}
@@ -171,6 +172,8 @@ def test_a_run_streams_its_chunks_then_done(tmp_path):
             ]
             got = (await client.get(f"/v1/runs/{run['id']}")).json()
             assert got["status"] == "done" and got["finishedAt"]
+            assert (got["question"], got["error"]) == ("What's next?", None)
+            assert (await client.get("/v1/runs")).json() == [got]
 
     go(main())
     assert answer.bodies == [CHAT]
@@ -305,9 +308,27 @@ def test_an_upstream_failure_fails_the_run(tmp_path, event):
             r = await client.get(f"/v1/runs/{run['id']}/events")
             assert parse(r.text)[-1] == (2, "failed", event[1])
             assert relay.store.get(run["id"])["status"] == "failed"
+            [listed] = (await client.get("/v1/runs?status=failed")).json()
+            assert listed["error"] == event[1]["error"]
 
     go(main())
     assert notified == [("failed", "What's next?")]
+
+
+def test_a_long_question_is_cut_in_the_api_and_whole_for_ntfy(tmp_path):
+    question = "Why " * 100
+    notified = Notified()
+
+    async def main():
+        async with running(tmp_path, Upstream(DONE), notified) as (relay, client):
+            run = (await post_run(client, body={"message": question})).json()
+            assert len(run["question"]) == QUESTION_CHARS
+            assert question.startswith(run["question"][:-1])
+            assert run["question"].endswith("…")
+            await finished(relay, run["id"])
+
+    go(main())
+    assert notified == [("done", question)]
 
 
 def test_an_answer_that_just_stops_is_done(tmp_path):
@@ -339,6 +360,7 @@ def test_a_restart_mid_run_fails_it_and_keeps_its_events(tmp_path):
         async with running(tmp_path, Upstream()) as (_, client):
             run = (await client.get(f"/v1/runs/{run_id}")).json()
             assert run["status"] == "failed" and run["finishedAt"]
+            assert run["error"] == RESTARTED
             r = await client.get(f"/v1/runs/{run_id}/events")
             assert parse(r.text) == [
                 (1, *text("partial")),
@@ -596,6 +618,32 @@ def test_a_database_from_before_version_2_loses_its_runs(tmp_path):
     store = Store(path)  # at the current version, runs are kept
     assert [r["id"] for r in store.runs()] == ["r_2"]
     store.close()
+
+
+def test_a_database_at_version_2_keeps_its_runs_and_gets_their_errors(tmp_path):
+    path = tmp_path / "relay.db"
+    db = sqlite3.connect(path)
+    db.executescript(
+        store.SCHEMA.replace(",\n  error text", "")
+        + """
+        insert into runs values
+          ('r_1', 'c_1', 'w', 't', null, 'q', 'failed', 'x', 'y'),
+          ('r_2', 'c_2', 'w', 't', null, 'q', 'done', 'x', 'y');
+        insert into events values
+          ('r_1', 1, 'failed', '{"error": "Model overloaded"}'),
+          ('r_2', 1, 'done', '{}');
+        pragma user_version = 2;
+        """
+    )
+    db.close()
+
+    s = Store(path)
+    assert [(r["id"], r["error"]) for r in s.runs()] == [
+        ("r_1", "Model overloaded"),
+        ("r_2", None),
+    ]
+    assert s.db.execute("pragma user_version").fetchone()[0] == VERSION
+    s.close()
 
 
 def test_uvicorn_believes_forwarded_headers_only_from_the_configured_peer(

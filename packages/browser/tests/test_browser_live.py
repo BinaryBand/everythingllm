@@ -266,6 +266,7 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
                     "frame": f"{cards}/chat/career/chat-7/card.jpg",
                     "state": "idle",  # an op called here, not through reply
                     "title": r.subject(tab),
+                    "site": "linkedin.com",  # never the address
                     "last": tab.last,
                 },
                 "logins": [],
@@ -299,6 +300,45 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
             await r.stop("career")
             _, body = await ask(port, route, key="GOOD")
             assert body["tab"]["state"] == "closed"
+        finally:
+            server.close()
+            await podman.close()
+
+    asyncio.run(main())
+
+
+def test_a_client_with_a_key_hands_the_browser_back(tmp_path):
+    """POST .../give is the take-over view's "Hand back to the agent", for a key, and
+    answers with the chat's new state; it takes nothing over."""
+    from browser.chats import Chats
+
+    async def main():
+        podman = FakePodman()
+        r = Runner(config(tmp_path), podman=podman, now=Clock())
+        server = await live.Live(r, Chats(r, good_key, lookup)).serve(0)
+        port = server.sockets[0].getsockname()[1]
+        route = "/_live/browser/chat/career/chat-7/give"
+        try:
+            head, body = await ask(port, route, "POST")
+            assert b"401" in head and body == {"error": "No valid api key found."}
+            assert b"Access-Control-Allow-Origin: *" in head
+            head, _ = await ask(port, route, "OPTIONS")
+            assert b"Access-Control-Allow-Methods: GET, POST" in head
+            head, body = await ask(port, route, "POST", key="GOOD")  # no tab yet
+            assert b"404" in head and body == {"error": "This chat has no browser tab."}
+            await r.op_open(scope(), "https://linkedin.com/login")
+            session = r.sessions["career"]
+            head, _ = await ask(port, route, key="GOOD")  # a GET doesn't give it back
+            assert b"405" in head
+            await r.take(session)
+            _, body = await ask(port, "/chat/career/chat-7", key="GOOD")
+            assert body["tab"]["state"] == "user"
+            head, body = await ask(port, "/chat/career/chat-7/give", "POST", key="GOOD")
+            assert b"200 OK" in head and session.control == "agent"
+            assert body["tab"]["state"] == "idle"
+            # The agent has it already: nothing changes, and the state is the same.
+            _, again = await ask(port, route, "POST", key="GOOD")
+            assert again == body and session.control == "agent"
         finally:
             server.close()
             await podman.close()

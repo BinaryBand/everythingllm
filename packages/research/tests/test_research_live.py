@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 
 import pytest
 from PIL import Image
@@ -142,14 +143,23 @@ def test_a_run_the_runner_no_longer_holds_is_drawn_from_the_run_log(served):
         # As a route that strips the prefix forwards it.
         link = await get(port, "/dr-0123abcd")
         unknown = await get(port, "/_live/research/dr-ffffffff.png")
+        status = await get(port, "/_live/research/dr-0123abcd.json")
         server.cancel()
-        return found, link, unknown
+        return found, link, unknown, status
 
-    (head, png), (link, _), (unknown_head, unknown_png) = asyncio.run(go())
+    (head, png), (link, _), (unknown_head, unknown_png), (_, status) = asyncio.run(go())
     assert b"Content-Type: image/png" in head
     assert Image.open(io.BytesIO(png)).size == (1600, 400)
     assert b"Location: https://h:8445/research/reports/old/" in link
     assert b"Content-Type: image/png" in unknown_head and unknown_png
+    status = json.loads(status)
+    assert (status["kind"], status["subject"], status["title"]) == (
+        "Deep research",
+        "old",
+        "Old report",
+    )
+    assert (status["state"], status["minutes"]) == ("done", 5)
+    assert "workspace documents" in status["line"]
 
 
 def test_other_requests_are_turned_away(served):

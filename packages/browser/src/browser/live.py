@@ -174,7 +174,7 @@ class Live:
                 chat[1],
                 chat[2],
                 headers,
-                bool(chat[3]),
+                chat[3],
                 live.theme(query),
             )
         if method != "GET":
@@ -224,22 +224,27 @@ class Live:
         workspace: str,
         thread: str | None,
         headers: dict[str, str],
-        card: bool,
+        what: str | None,
         theme: str,
     ) -> None:
-        """A chat's cards and how they stand, or (`card`) its tab's card as it is now, for
-        a client with a key (browser.chats). The card has an ETag, so a client asking
+        """A chat's cards and how they stand, its tab's card as it is now (`what` is
+        "/card.jpg"), or (a POST of "/give") the browser handed back to the agent, for a
+        client with a key (browser.chats). The card has an ETag, so a client asking
         again for a card that hasn't changed (If-None-Match) gets a 304 without it, and
         asking counts as watching the tab for a while (Runner.watched)."""
         # A web client's preflight, for the Authorization header.
         if method == "OPTIONS":
             return await live.send(writer, "204 No Content", headers=chats.CORS)
-        if method != "GET":
+        allowed = "POST" if what == "/give" else "GET"
+        if method != allowed:
             return await live.send(
-                writer, "405 Method Not Allowed", b"GET only.\n", headers=chats.CORS
+                writer,
+                "405 Method Not Allowed",
+                f"{allowed} only.\n".encode(),
+                headers=chats.CORS,
             )
         try:
-            if card:
+            if what == "/card.jpg":
                 tab = await self.chats.tab(workspace, thread, headers)
                 tab.polled_at = self.runner.now()
                 shot = await self.runner.screenshot(tab, self.GAP)
@@ -253,7 +258,8 @@ class Live:
                 if headers.get("if-none-match") == tag:
                     return await self.not_modified(writer, cache)
                 return await live.send(writer, "200 OK", frame, "image/jpeg", cache)
-            status, body = "200 OK", await self.chats.answer(workspace, thread, headers)
+            answer = self.chats.give if what == "/give" else self.chats.answer
+            status, body = "200 OK", await answer(workspace, thread, headers)
         except chats.Refused as e:
             status, body = e.status, {"error": str(e)}
         except Exception:

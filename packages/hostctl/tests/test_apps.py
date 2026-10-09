@@ -136,6 +136,7 @@ def test_the_registrys_views():
     assert {u: (g.runs, g.noun) for u, g in guarded.items()} == {
         "research-runner.service": ("research/runs", "Deep-research runs"),
         "agents-runner.service": ("agents/runs", "Delegations"),
+        "sandbox-runner.service": ("sandbox/runs", "Sandbox runs"),
         "egress-proxy.service": (
             "research/runs",
             "Deep-research runs (their requests go through the proxy)",

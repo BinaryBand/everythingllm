@@ -4,7 +4,7 @@
   "name": "Sandbox Access",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Show what this workspace's run-code can reach beyond PyPI, or turn it on or off: the web, and a model to ask (with a daily token budget). Off by default. Turning either on, or raising the budget, asks the user to approve it in the chat, and works only in AnythingLLM's own chat; never do it unless the user asked. A run with web access can't see other workspaces' /shared folders.",
+  "description": "Show what this workspace's run-code can reach beyond PyPI and how big its runs may be, or turn it on or off: the web, a model to ask (with a daily token budget), and heavy runs (up to 3 CPUs, 4 GB and 2 hours a run, for transcribing, training and the like). Off by default. Turning any on, or raising the budget, asks the user to approve it in the chat, and works only in AnythingLLM's own chat; never do it unless the user asked. A run with web access can't see other workspaces' /shared folders.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -20,6 +20,10 @@
     {
       "prompt": "Let my scripts summarize with an AI model",
       "call": "{\"models\": \"on\", \"apply\": true}"
+    },
+    {
+      "prompt": "Let the sandbox run a long transcription",
+      "call": "{\"heavy\": \"on\", \"apply\": true}"
     }
   ],
   "entrypoint": {
@@ -36,6 +40,10 @@
       "daily_tokens": {
         "description": "The model budget, tokens a day (default 200000); leave out to keep it.",
         "type": "number"
+      },
+      "heavy": {
+        "description": "\"on\" or \"off\": whether a run with a timeout over 300 s may use up to 3 CPUs, 4 GB and 2 hours; leave out to keep it as it is.",
+        "type": "string"
       },
       "apply": {
         "description": "true to make the change (the user is asked to approve turning on or raising); without it, only show what would change.",

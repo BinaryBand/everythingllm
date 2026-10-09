@@ -1,5 +1,6 @@
 // Sandbox Access: shows what this workspace's runs can reach beyond PyPI (the web; a model,
-// with a daily token budget), and turns that on or off (packages/sandbox's access op). Off,
+// with a daily token budget) and whether they may be heavy (more CPU, memory and time), and
+// turns that on or off (packages/sandbox's access op). Off,
 // and a lower budget, work from any chat. On, and a higher budget, work only from a chat in
 // AnythingLLM's UI, once the user approves it in AnythingLLM's own prompt
 // (requestToolApproval): anywhere else AnythingLLM answers "approved" without asking anyone
@@ -31,6 +32,9 @@ function state(a) {
       ? `model access is on (runs can ask a model, up to ${a.daily_tokens} tokens a day; ` +
         "from Python, `from everythingllm_models import ask`; from bash, `python3 /sandbox/everythingllm_models.py \"prompt\"`)"
       : "model access is off",
+    a.heavy
+      ? "heavy runs are on (a run with a timeout over 300 s gets up to 3 CPUs, 4 GB and 2 hours, one heavy run at a time on the server; run those in the background)"
+      : "heavy runs are off (1 CPU, 1 GB and 5 minutes a run)",
   ].join("; ");
 }
 
@@ -50,21 +54,30 @@ function approval(now, would) {
     );
   else if (would.models && would.daily_tokens > now.daily_tokens)
     parts.push(`Raise this workspace's model budget from ${now.daily_tokens} to ${would.daily_tokens} tokens a day.`);
+  if (would.heavy && !now.heavy)
+    parts.push(
+      "Let this workspace's code runs use up to 3 CPUs, 4 GB of memory and 2 hours each, one heavy run at a time " +
+        "on the server, for a run that asks for more than 5 minutes. While such a run goes, this workspace's other " +
+        "long runs, file writes and app saves are refused until it ends."
+    );
   parts.push("You can turn it off any time.");
   return parts.join(" ");
 }
 
 module.exports.runtime = {
-  handler: async function ({ web, models, daily_tokens, apply }) {
+  handler: async function ({ web, models, daily_tokens, heavy, apply }) {
     const wantWeb = onOff(web);
     const wantModels = onOff(models);
-    if (wantWeb === undefined || wantModels === undefined) return 'Error: web and models must be "on" or "off".';
+    const wantHeavy = onOff(heavy);
+    if (wantWeb === undefined || wantModels === undefined || wantHeavy === undefined)
+      return 'Error: web, models and heavy must be "on" or "off".';
     const budget = daily_tokens == null || daily_tokens === "" ? null : asInteger(daily_tokens);
     if (budget !== null && !Number.isInteger(budget)) return "Error: daily_tokens must be a whole number.";
     return withSandbox(this, async (request) => {
       const change = {};
       if (wantWeb !== null) change.web = wantWeb;
       if (wantModels !== null) change.models = wantModels;
+      if (wantHeavy !== null) change.heavy = wantHeavy;
       if (budget !== null) change.daily_tokens = budget;
       const shown = await request("access", change);
       if (!shown.would) return `In this workspace, ${state(shown)}.`;

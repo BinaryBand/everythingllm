@@ -182,5 +182,5 @@ def test_turning_models_on_or_raising_the_budget_needs_approval(cfg):  # noqa: F
     lower = go(r.op_access(A, daily_tokens=1000, apply=True))  # lowering needs none
     assert (lower["models"], lower["daily_tokens"]) == (True, 1000)
     assert json.loads(cfg.access_file.read_text()) == {
-        "career": {"web": False, "models": True, "daily_tokens": 1000}
+        "career": {"web": False, "models": True, "daily_tokens": 1000, "heavy": False}
     }

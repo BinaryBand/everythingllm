@@ -103,6 +103,8 @@ class Config:
     public_root: Path = Path("/nonexistent")
     public_url: str = "http://127.0.0.1:8447/"
     uploads: Path = Path("/nonexistent")  # AnythingLLM's direct-uploads
+    # A marker per run going, which hostctl's run_guard reads before a restart.
+    run_markers: Path = Path("/nonexistent/runs/running")
 
     @property
     def scripts(self) -> Path:
@@ -149,6 +151,7 @@ class Config:
                 f"https://{host}:8447/",
             ),
             uploads=Path(get("SANDBOX_UPLOADS", hostenv.storage() / "direct-uploads")),
+            run_markers=hostenv.data_dir() / "sandbox" / "runs" / "running",
         )
 
 

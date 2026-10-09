@@ -118,7 +118,7 @@ async def run(
 async def wait(run_id: RunId) -> dict:
     """Wait up to 45 seconds more for a run or a site build that came back running: its
     result, or {run_id, running: true, seconds} again while it's still going. Results are
-    kept an hour after the run ends."""
+    kept a day after the run ends."""
 
 
 @tool

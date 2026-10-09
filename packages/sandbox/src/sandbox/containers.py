@@ -3,7 +3,7 @@
 
 Both are hardened alike (`hardening`): a read-only root, every capability dropped, no new
 privileges, a keep-id user namespace, and memory, CPU, process, file size and open file
-limits. The repo's
+limits: NORMAL's, or HEAVY's for a long run of a workspace with heavy runs on. The repo's
 files a container needs (SITEBUILD, MODEL_CLIENT) are copied into its read-only /sandbox."""
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from sandbox.access import NO_ACCESS, Access
@@ -24,7 +25,31 @@ LABEL = "everythingllm-sandbox=1"
 # Shared and system folders are data: nothing in them runs as ./file.
 DATA_RW = "rw,noexec,nosuid,nodev"
 DATA_RO = "ro,noexec,nosuid,nodev"
-MEMORY = "1g"
+
+
+@dataclass(frozen=True)
+class Limits:
+    """A run's CPUs, memory (swap none) and /tmp, as podman takes them, and its longest
+    timeout in seconds."""
+
+    cpus: str
+    memory: str
+    tmp: str
+    max_timeout: int
+
+
+NORMAL = Limits(cpus="1", memory="1g", tmp="256m", max_timeout=300)
+# A long run (timeout past NORMAL's) of a workspace with heavy runs on (Access.heavy), one
+# at a time on the machine.
+HEAVY = Limits(cpus="3", memory="4g", tmp="1g", max_timeout=7200)
+
+
+def limits_for(access: Access, timeout: int) -> Limits:
+    """The limits of a run asking for `timeout`: HEAVY's when it's longer than NORMAL
+    allows and the workspace may have heavy runs, else NORMAL's."""
+    return HEAVY if access.heavy and timeout > NORMAL.max_timeout else NORMAL
+
+
 SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
 MODEL_CLIENT = Path(__file__).with_name("model_client.py")  # a run's way to ask a model
 MODELS_DIR = "/run/everythingllm"  # where a run with model access finds its socket
@@ -104,7 +129,7 @@ async def podman(
     return proc.returncode or 0, out, err, timed_out
 
 
-def hardening(name: str) -> list[str]:
+def hardening(name: str, limits: Limits = NORMAL) -> list[str]:
     """Every sandbox container's podman arguments up to its network and mounts."""
     return [
         "run",
@@ -114,13 +139,13 @@ def hardening(name: str) -> list[str]:
         LABEL,
         "--read-only",
         "--tmpfs",
-        "/tmp:rw,size=256m,mode=1777",
+        f"/tmp:rw,size={limits.tmp},mode=1777",
         "--memory",
-        MEMORY,
+        limits.memory,
         "--memory-swap",
-        MEMORY,
+        limits.memory,
         "--cpus",
-        "1",
+        limits.cpus,
         "--pids-limit",
         "256",
         "--ulimit",
@@ -178,13 +203,14 @@ def prepare(
     code: str,
     ip: str,
     access: Access = NO_ACCESS,
+    limits: Limits = NORMAL,
 ) -> list[str]:
     """Write the run's script and return its podman arguments: egress-net at `ip`,
     with the egress proxy as its only way out; the workspace's own folders read-write,
     every other workspace's shared folder and the repo's themes read-only. With web
     access, through the proxy's public-only port, and without the other workspaces'
     shared folders, which a run that reads the web could send anywhere. With model
-    access, its socket's folder and the client that asks through it."""
+    access, its socket's folder and the client that asks through it. Within `limits`."""
     proxy = config.public_proxy if access.web else config.proxy
     (run_dir / "code").mkdir(parents=True)
     (run_dir / "code" / script).write_text(code)
@@ -205,7 +231,7 @@ def prepare(
         ]
     # No --rm: the container is kept until execute has asked podman whether it ran out of memory.
     return [
-        *hardening(name),
+        *hardening(name, limits),
         "--network",
         f"{config.network}:ip={ip}",
         "--dns",

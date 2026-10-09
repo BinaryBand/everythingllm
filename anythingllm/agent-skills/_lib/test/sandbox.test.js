@@ -68,10 +68,38 @@ test("run-code sends its scope, waits out a long run and formats the result", as
     const reply = await runCode.handler.call(self, { language: "python", code: "print('hi')" });
     assert.equal(reply, "exit code: 0 (0.4s)\nstdout:\nhi\nfiles created or changed: /work/plot.png");
     assert.deepEqual(runner.requests, [
-      { op: "run", args: { scope: { workspace: "career", thread: "12" }, language: "python", code: "print('hi')", timeout: 60 } },
+      { op: "run", args: { scope: { workspace: "career", thread: "12" }, language: "python", code: "print('hi')" } },
       { op: "wait", args: { scope: { workspace: "career", thread: "12" }, run_id: "r-1" } },
     ]);
     assert.deepEqual(lines, ["Still running (45 s)…"]);
+  } finally {
+    await runner.close();
+  }
+});
+
+test("run-code starts a run in the background and checks on it by its run_id", async () => {
+  let finished = false;
+  const runner = await fakeRunner((op, args) => {
+    if (op === "run") return { ok: true, result: { run_id: "r-9", running: true, seconds: 45, timeout: 7200 } };
+    return finished
+      ? { ok: true, result: { ...done, run_id: args.run_id } }
+      : { ok: true, result: { run_id: args.run_id, running: true, seconds: 61.2, timeout: 7200 } };
+  });
+  try {
+    const { self, lines } = agent();
+    const started = await runCode.handler.call(self, { language: "bash", code: "whisper", timeout: "7200", background: "true" });
+    assert.match(started, /^Started in the background as run r-9 \(stopped at 7200 s/);
+    assert.match(started, /check on it with run-code and run_id r-9\. Its result is kept for a day\./);
+    assert.equal(runner.requests[0].args.timeout, 7200);
+    assert.equal("background" in runner.requests[0].args, false); // the runner's own wait decides
+    assert.deepEqual(lines, []);  // not waited for
+    assert.equal(
+      await runCode.handler.call(self, { run_id: "r-9" }),
+      "Run r-9 is still going: 61 s so far (it's stopped at 7200 s). Check again later with run_id r-9."
+    );
+    assert.deepEqual(runner.requests[1], { op: "wait", args: { scope: { workspace: "career", thread: "12" }, run_id: "r-9" } });
+    finished = true;
+    assert.match(await runCode.handler.call(self, { run_id: "r-9" }), /^Run r-9 finished\.\nexit code: 0/);
   } finally {
     await runner.close();
   }
@@ -243,13 +271,14 @@ function uiChat(answer) {
 }
 
 function accessRunner(web = false) {
-  const now = { web, models: false, daily_tokens: 200000 };
+  const now = { web, models: false, daily_tokens: 200000, heavy: false };
   return fakeRunner((op, args) => {
     if (op !== "access") return { ok: false, error: "?" };
     const would = { ...now };
-    for (const k of ["web", "models", "daily_tokens"]) if (args[k] !== undefined) would[k] = args[k];
+    for (const k of ["web", "models", "daily_tokens", "heavy"]) if (args[k] !== undefined) would[k] = args[k];
     if (JSON.stringify(would) === JSON.stringify(now)) return { ok: true, result: { workspace: "career", ...now, changed: false } };
-    const on = (would.web && !now.web) || (would.models && !now.models) || would.daily_tokens > now.daily_tokens;
+    const on =
+      (would.web && !now.web) || (would.models && !now.models) || (would.heavy && !now.heavy) || would.daily_tokens > now.daily_tokens;
     if (!args.apply) return { ok: true, result: { workspace: "career", ...now, would, needs_approval: on } };
     if (on && !args.approved) return { ok: false, error: "turning access on needs the user's approval" };
     return { ok: true, result: { workspace: "career", ...would, changed: true } };
@@ -311,7 +340,23 @@ test("sandbox-access turns web off from any chat, without asking", async () => {
     delete api.self.super.handlerProps.invocation.uuid;
     assert.match(await sandboxAccess.handler.call(api.self, { web: "off", apply: "true" }), /^Done\. In this workspace, web access is off/);
     assert.equal(api.asked.length, 0);
-    assert.match(await sandboxAccess.handler.call(api.self, { web: "maybe" }), /web and models must be "on" or "off"/);
+    assert.match(await sandboxAccess.handler.call(api.self, { web: "maybe" }), /web, models and heavy must be "on" or "off"/);
+  } finally {
+    await runner.close();
+  }
+});
+
+test("sandbox-access asks before heavy runs, and says what they cost the workspace", async () => {
+  const runner = await accessRunner();
+  try {
+    const { self, asked } = uiChat({ approved: true, message: "User approved the tool execution." });
+    assert.match(await sandboxAccess.handler.call(self, {}), /heavy runs are off \(1 CPU, 1 GB and 5 minutes a run\)/);
+    const reply = await sandboxAccess.handler.call(self, { heavy: "on", apply: true });
+    assert.match(reply, /heavy runs are on \(a run with a timeout over 300 s gets up to 3 CPUs, 4 GB and 2 hours/);
+    assert.match(asked[0].description, /up to 3 CPUs, 4 GB of memory and 2 hours each.*more than 5 minutes.*other long runs, file writes and app saves are refused/);
+    assert.deepEqual(runner.requests.at(-1).args, {
+      heavy: true, apply: true, approved: true, scope: { workspace: "career", thread: "12" },
+    });
   } finally {
     await runner.close();
   }

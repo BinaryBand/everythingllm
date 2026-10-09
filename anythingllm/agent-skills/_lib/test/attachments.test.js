@@ -75,7 +75,6 @@ test("run-code sends the chat's attachments, titles and file names only, and lis
       scope: { workspace: "career", thread: "12" },
       language: "bash",
       code: "wc -l /work/attachments/data.csv",
-      timeout: 60,
       attachments: [
         { title: "data.csv", file: "data.csv-1a2b.json" },
         { title: "Q3 report.pdf", file: "q3-report.pdf-3c4d.json" },

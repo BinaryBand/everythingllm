@@ -67,6 +67,7 @@ def cfg(tmp_path):
         access_file=tmp_path / "data" / "access.json",
         model_log=tmp_path / "data" / "models",
         app_state=tmp_path / "data" / "apps",
+        run_markers=tmp_path / "data" / "runs" / "running",
         public_root=tmp_path / "public",
         public_url="https://ws.example/",
     )
@@ -132,7 +133,7 @@ def test_podman_args_isolate_the_run(cfg):
         "--read-only",
         "--cap-drop ALL",
         "--pids-limit 256",
-        f"--memory {containers.MEMORY}",
+        f"--memory {containers.NORMAL.memory}",
         "no-new-privileges",
         "--userns keep-id",
     ]:
@@ -189,7 +190,7 @@ GATEWAY = {"workspace": "client-laptop", "thread": "gateway", "gateway": True}
 def test_a_workspace_reaches_the_web_only_once_the_user_approved_it(cfg):
     r = make(cfg)
     go(r.op_write(B, "/shared/home/notes.txt", "home's"))
-    off = {"web": False, "models": False, "daily_tokens": 200_000}
+    off = {"web": False, "models": False, "daily_tokens": 200_000, "heavy": False}
     assert go(r.op_access(A)) == {"workspace": "career", **off, "changed": False}
     shown = go(r.op_access(A, web=True))
     assert shown["would"] == {**off, "web": True} and shown["needs_approval"] is True

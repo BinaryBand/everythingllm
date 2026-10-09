@@ -1,5 +1,6 @@
-"""What a sandbox workspace's runs may reach beyond PyPI (Access): the public web, and a
-model within a daily token budget (sandbox.models).
+"""What a sandbox workspace's runs may reach beyond PyPI and the normal limits (Access): the
+public web, a model within a daily token budget (sandbox.models), and heavy runs (more CPU,
+memory and time; sandbox.containers.HEAVY).
 
 Off unless the user turned it on (the runner's op_access, the sandbox-access skill,
 approved in AnythingLLM's own prompt). Each workspace's is kept in one JSON file, the
@@ -25,12 +26,14 @@ log = logging.getLogger("sandbox-runner")
 @dataclass(frozen=True)
 class Access:
     """What a workspace's runs may reach beyond PyPI: the public web (`web`), and a model
-    (`models`, up to `daily_tokens` a day; sandbox.models). Off unless the user turned it
-    on (op_access, the sandbox-access skill)."""
+    (`models`, up to `daily_tokens` a day; sandbox.models); and whether they may be heavy
+    (`heavy`: containers.HEAVY's limits and up to HEAVY_MAX_TIMEOUT, one at a time on the
+    machine). Off unless the user turned it on (op_access, the sandbox-access skill)."""
 
     web: bool = False
     models: bool = False
     daily_tokens: int = model_access.DAILY_TOKENS
+    heavy: bool = False
 
 
 NO_ACCESS = Access()
@@ -61,6 +64,7 @@ def read_access(file: Path, workspace: str) -> Access:
         web=entry.get("web") is True,
         models=entry.get("models") is True,
         daily_tokens=budget if valid_budget(budget) else NO_ACCESS.daily_tokens,
+        heavy=entry.get("heavy") is True,
     )
 
 

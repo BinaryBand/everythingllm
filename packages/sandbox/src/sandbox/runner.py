@@ -13,7 +13,12 @@ AnythingLLM's own prompt; kept in SANDBOX_ACCESS) gets more: with web access, it
 an address of the `sandbox-web` profile instead and go out through the proxy's public port,
 public hosts only, without other workspaces' /shared folders; with model access, each run
 asks a model through a socket of its own (sandbox.models), within a daily token budget,
-the key staying here.
+the key staying here; with heavy runs, a run asking for longer than containers.NORMAL allows
+gets HEAVY's CPUs, memory and time, one heavy run at a time on the machine.
+
+A run that isn't done within WAIT answers with its run id, and op_wait fetches the result
+later, for RESULT_KEEP: that's how run-code puts a long run in the background. Each run
+going has a marker in run_markers, which hostctl's run_guard reads, so a restart asks first.
 
 What a run can see depends on where the call came from, which the skills in AnythingLLM
 pass as a scope of {workspace, thread} (never chosen by the model):
@@ -105,6 +110,7 @@ import chatimage
 import chatimage.card
 import hostrpc
 from hostrpc import safefs
+from runs import runlog
 
 from sandbox import apps, appsweb, pages, workspace
 from sandbox import models as model_access
@@ -120,10 +126,14 @@ from sandbox.apps import patch as app_patch
 from sandbox.apps.tokens import Tokens
 from sandbox.attachments import sync_attachments
 from sandbox.containers import (
+    HEAVY,
     IMAGE,
     LABEL,
+    NORMAL,
     PROXY_CONTAINER,
+    Limits,
     Podman,
+    limits_for,
     model_dir,
     podman,
     prepare,
@@ -167,7 +177,7 @@ APP_DATA_RE = re.compile(rf"/project/apps/({SLUG})/(?:data\.json|page\.html)")
 # A request answers within WAIT; a run that's still going carries on, and the skill waits
 # on it again with op_wait.
 WAIT = 45
-RESULT_KEEP = 3600  # how long a finished run's result can still be fetched
+RESULT_KEEP = 24 * 3600  # how long a finished run's result can still be fetched
 
 
 @dataclass
@@ -177,6 +187,7 @@ class Job:
     workspace: str
     task: asyncio.Task[dict[str, Any]]
     started: float
+    timeout: int = MAX_TIMEOUT
     finished: float | None = None
 
 
@@ -194,6 +205,8 @@ class Runner(hostrpc.Service):
     # Notified whenever an app changes, for its live card (sandbox.appsweb).
     apps_changed: asyncio.Condition = field(default_factory=asyncio.Condition)
     _access_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # One heavy run at a time on the machine (containers.HEAVY's limits).
+    _heavy: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1))
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     _jobs: dict[str, Job] = field(default_factory=dict)
 
@@ -246,8 +259,9 @@ class Runner(hostrpc.Service):
         daily_tokens: Any = None,
         apply: bool = False,
         approved: bool = False,
+        heavy: Any = None,
     ) -> dict[str, Any]:
-        """The workspace's access, and with `web` or `models` (true or false) or
+        """The workspace's access, and with `web`, `models` or `heavy` (true or false) or
         `daily_tokens` what it would be. With `apply` it's changed: turning anything on,
         or raising the budget, also needs `approved`, the user's own approval in the chat,
         which the sandbox-access skill asks AnythingLLM for; turning it off needs nothing
@@ -257,7 +271,7 @@ class Runner(hostrpc.Service):
             raise SandboxError(
                 "a gateway client's sandbox reaches only PyPI; its access can't change"
             )
-        for name, value in (("web", web), ("models", models)):
+        for name, value in (("web", web), ("models", models), ("heavy", heavy)):
             if value is not None and not isinstance(value, bool):
                 raise SandboxError(f"{name} must be true, false or left out")
         if daily_tokens is not None and not valid_budget(daily_tokens):
@@ -269,6 +283,7 @@ class Runner(hostrpc.Service):
                 ("web", web),
                 ("models", models),
                 ("daily_tokens", daily_tokens),
+                ("heavy", heavy),
             )
             if v is not None
         }
@@ -276,6 +291,7 @@ class Runner(hostrpc.Service):
         on = (
             (wanted.web and not current.web)
             or (wanted.models and not current.models)
+            or (wanted.heavy and not current.heavy)
             or wanted.daily_tokens > current.daily_tokens
         )
         out = {"workspace": s.workspace, **asdict(current)}
@@ -312,11 +328,12 @@ class Runner(hostrpc.Service):
     def idle(self, workspace: str) -> None:
         """Fail fast while a run holds the workspace (another chat's, or one whose chat
         closed), rather than queueing for its lock past the caller's patience."""
-        for job in self._jobs.values():
+        for run_id, job in self._jobs.items():
             if job.workspace == workspace and not job.task.done():
-                left = max(0, MAX_TIMEOUT - (self.now() - job.started))
+                left = max(0, job.timeout - (self.now() - job.started))
                 raise Busy(
-                    f"code is still running in this workspace (at most {left:.0f} s more); try again after"
+                    f"code is still running in this workspace (run {run_id}, at most "
+                    f"{left:.0f} s more); try again after"
                 )
 
     @contextlib.asynccontextmanager
@@ -386,19 +403,65 @@ class Runner(hostrpc.Service):
                 "run_id": run_id,
                 "running": True,
                 "seconds": round(self.now() - job.started, 1),
+                "timeout": job.timeout,
             }
         return {**result, "run_id": run_id}
 
     async def start(
-        self, workspace: str, work: Coroutine[Any, Any, dict[str, Any]]
+        self,
+        workspace: str,
+        work: Coroutine[Any, Any, dict[str, Any]],
+        subject: str,
+        timeout: int = MAX_TIMEOUT,
     ) -> dict[str, Any]:
-        """Start `work` as a run of `workspace`'s, and wait for it as op_wait does."""
+        """Start `work` as a run of `workspace`'s, and wait for it as op_wait does. While
+        it goes it has a marker for hostctl's run_guard (`subject` says what it is)."""
         self.prune()
         run_id = f"r-{secrets.token_hex(4)}"
-        job = Job(workspace, asyncio.create_task(work), self.now())
+        job = Job(
+            workspace,
+            asyncio.create_task(self.marked(run_id, f"{workspace}: {subject}", work)),
+            self.now(),
+            timeout,
+        )
         job.task.add_done_callback(lambda _: setattr(job, "finished", self.now()))
         self._jobs[run_id] = job
         return await self.wait(run_id, job)
+
+    async def marked(
+        self, run_id: str, subject: str, work: Coroutine[Any, Any, dict[str, Any]]
+    ) -> dict[str, Any]:
+        """`work`, with its marker in run_markers (the shape runs.runlog's markers have,
+        which hostctl.run_guard reads) touched every runlog.TOUCH while it goes. A failure
+        is raised without its traceback: the job keeps it for RESULT_KEEP, and the frames
+        would keep the run's snapshot and script with it."""
+        file = self.config.run_markers / f"{run_id}.json"
+        note = {"started": runlog.iso(self.now()), "subject": subject[:200]}
+
+        async def touch() -> None:
+            await asyncio.to_thread(file.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(
+                hostrpc.atomic_write,
+                file,
+                json.dumps({**note, "stale_ms": runlog.STALE_MS}),
+            )
+            while True:
+                await asyncio.sleep(runlog.TOUCH)
+                await asyncio.to_thread(os.utime, file)
+
+        marker = asyncio.create_task(touch())
+        try:
+            return await work
+        except Exception as e:  # noqa: BLE001 - raised again, only lighter
+            e.__context__ = None
+            raise e.with_traceback(None) from None
+        finally:
+            marker.cancel()
+            await asyncio.gather(marker, return_exceptions=True)
+            try:
+                await asyncio.to_thread(file.unlink, missing_ok=True)
+            except OSError as e:
+                log.warning("run %s's marker: %s", run_id, e)
 
     async def op_run(
         self,
@@ -410,24 +473,48 @@ class Runner(hostrpc.Service):
         attachments_known: bool = False,
         **newer: Any,
     ) -> dict[str, Any]:
-        """Run a script. `attachments` are the chat's files, [{title, file}] (from the
-        run-code skill, which looks them up), copied as text into /work/attachments first;
-        with `attachments_known`, the lookup was whole, so copies of files no longer
-        attached go. Arguments a newer skill sends that this runner doesn't know are
-        ignored, so the skill and the runner can be updated in either order."""
+        """Run a script, for up to `timeout` seconds: containers.NORMAL's max_timeout, or
+        HEAVY's in a workspace with heavy runs on, where a run that long gets HEAVY's
+        limits too (containers.limits_for). `attachments` are the chat's files, [{title,
+        file}] (from the run-code skill, which looks them up), copied as text into
+        /work/attachments first; with `attachments_known`, the lookup was whole, so copies
+        of files no longer attached go. While a long run (one past NORMAL's max_timeout)
+        holds the workspace, another is refused at once rather than queued behind it for
+        hours. Arguments a newer skill sends that this runner doesn't know are ignored, so
+        the skill and the runner can be updated in either order."""
         if newer:
             log.info("run: ignoring arguments %s", ", ".join(sorted(newer)))
         if language not in LANGUAGES:
             raise SandboxError(f"language must be one of: {', '.join(LANGUAGES)}")
         if not isinstance(code, str) or not code.strip():
             raise SandboxError("code is empty")
-        timeout = max(1, min(int(timeout), MAX_TIMEOUT))
         s = self.scope(scope)
+        access = self.access(s)
+        asked = max(1, int(timeout))
+        limits = limits_for(access, asked)
+        timeout = min(asked, limits.max_timeout)
+        if any(
+            j.workspace == s.workspace
+            and j.timeout > NORMAL.max_timeout
+            and not j.task.done()
+            for j in self._jobs.values()
+        ):
+            self.idle(s.workspace)  # Busy, naming the run
+        first = next((line for line in code.splitlines() if line.strip()), "").strip()
         return await self.start(
             s.workspace,
             self.execute(
-                s, language, code, timeout, attachments, attachments_known is True
+                s,
+                language,
+                code,
+                timeout,
+                attachments,
+                attachments_known is True,
+                access,
+                limits,
             ),
+            f"{language}: {first[:120]}",
+            timeout,
         )
 
     async def op_wait(self, scope: dict[str, Any], run_id: str) -> dict[str, Any]:
@@ -435,7 +522,7 @@ class Runner(hostrpc.Service):
         self.prune()
         if not (job := self._jobs.get(run_id)) or job.workspace != workspace:
             raise SandboxError(
-                "no such run (it finished over an hour ago, or the runner restarted)"
+                "no such run (it finished over a day ago, or the runner restarted)"
             )
         return await self.wait(run_id, job)
 
@@ -447,15 +534,21 @@ class Runner(hostrpc.Service):
         timeout: int,
         attachments: Any = None,
         known: bool = False,
+        access: Access = NO_ACCESS,
+        limits: Limits = NORMAL,
     ) -> dict[str, Any]:
-        """One run, start to finish; op_run keeps it as a task, which holds the workspace's
-        lock throughout and one of the slots (an address) from writing the script until
-        its container is removed. The chat's attachments are copied in first, so they
-        aren't among the files the run changed."""
+        """One run, start to finish, with the workspace's `access` and within `limits`;
+        op_run keeps it as a task, which holds the workspace's lock throughout, the heavy
+        runs' turn when it's one, and one of the slots (an address) from writing the
+        script until its container is removed. The chat's attachments are copied in
+        first, so they aren't among the files the run changed."""
         script, interpreter = LANGUAGES[language]
         name = f"sandbox-{secrets.token_hex(6)}"
         run_dir = self.config.scripts / name
-        async with self.lock(scope.workspace):
+        async with (
+            self.lock(scope.workspace),
+            self._heavy if limits is HEAVY else contextlib.nullcontext(),
+        ):
             try:
                 copies, notes = await asyncio.to_thread(
                     sync_attachments, self.config.uploads, scope, attachments, known
@@ -466,7 +559,6 @@ class Runner(hostrpc.Service):
             before = await asyncio.to_thread(snapshot, scope)
             if before.total > workspace.WORKSPACE_MAX_BYTES:
                 raise over_quota(before, "run code")
-            access = self.access(scope)
             asking = (
                 model_access.Models(
                     scope.workspace,
@@ -493,6 +585,7 @@ class Runner(hostrpc.Service):
                         code,
                         ip,
                         access,
+                        limits,
                     )
                     if asking is not None:
                         # The run's own socket, for as long as it runs; its folder goes
@@ -568,6 +661,7 @@ class Runner(hostrpc.Service):
             "attachments": copies,
             "attachment_notes": notes,
             "web": access.web,
+            "memory": limits.memory,
             "models": {"tokens_left": await asyncio.to_thread(asking.left)}
             if asking is not None
             else None,
@@ -614,7 +708,10 @@ class Runner(hostrpc.Service):
             )
         self.idle(s.workspace)
         return await self.start(
-            s.workspace, self.build(s, path.strip().rstrip("/"), slug)
+            s.workspace,
+            self.build(s, path.strip().rstrip("/"), slug),
+            f"site build: {slug}",
+            BUILD_TIMEOUT,
         )
 
     async def build(self, scope: Scope, path: str, slug: str) -> dict[str, Any]:
@@ -1118,9 +1215,11 @@ class Runner(hostrpc.Service):
     # --- server ---
 
     async def cleanup(self) -> None:
-        """Remove what an earlier runner left mid-run: its containers and script folders."""
+        """Remove what an earlier runner left mid-run: its containers, script folders and
+        run markers."""
         await self.podman(["rm", "-f", "--filter", f"label={LABEL}"], 120, None)
         await asyncio.to_thread(shutil.rmtree, self.config.scripts, True)
+        await asyncio.to_thread(shutil.rmtree, self.config.run_markers, True)
 
     async def gc_loop(self) -> None:
         while True:

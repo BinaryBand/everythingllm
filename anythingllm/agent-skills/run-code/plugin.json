@@ -4,7 +4,7 @@
   "name": "Run Code",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Run a Python or bash script in this workspace's Linux sandbox and return its output: arithmetic, data, files, charts, anything you'd otherwise estimate. It runs in /work (this chat's scratch); files attached in this chat are in /work/attachments (as text): read them there rather than pasting them into the script; /project keeps files; /public is live web pages, and the reply lists the pages a run changed. numpy, pandas, matplotlib, requests and zola are installed; pip installs persist; the network reaches PyPI only. Use bash to list, read, move and delete files.",
+  "description": "Run a Python or bash script in this workspace's Linux sandbox and return its output: arithmetic, data, files, charts, anything you'd otherwise estimate. It runs in /work (this chat's scratch); files attached in this chat are in /work/attachments (as text): read them there rather than pasting them into the script; /project keeps files; /public is live web pages, and the reply lists the pages a run changed. numpy, pandas, matplotlib, requests and zola are installed; pip installs persist; the network reaches PyPI only (sandbox-access shows more). For anything over a few minutes, run it in the background and check on it with its run_id. Use bash to list, read, move and delete files.",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -34,8 +34,16 @@
         "type": "string"
       },
       "timeout": {
-        "description": "Seconds before it's killed: default 60, at most 300.",
+        "description": "Seconds before it's killed: default 60, at most 300; in a workspace with heavy runs on (sandbox-access) up to 7200, and a run over 300 gets 3 CPUs and 4 GB.",
         "type": "integer"
+      },
+      "background": {
+        "description": "true to answer with its run_id if it isn't done within about 45 s, instead of waiting, for a long run (transcribing, training, big downloads); the result is kept for a day.",
+        "type": "boolean"
+      },
+      "run_id": {
+        "description": "The id of a background run to check on, instead of running anything: its result, or how long it has been going.",
+        "type": "string"
       }
     }
   }

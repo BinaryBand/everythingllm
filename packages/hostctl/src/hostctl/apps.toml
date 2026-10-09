@@ -54,6 +54,8 @@ summary = "the code sandbox's runner and its image; its runs reach PyPI through 
 runner = "sandbox-runner.service"
 units = { "sandbox-runner.service" = "code sandbox runner" }
 before = ["python3 -m hostctl sandbox-images"]
+# A heavy run can go for two hours (sandbox.runner's run markers).
+guard = { runs = "sandbox/runs", noun = "Sandbox runs" }
 # The apps server (sandbox.appsweb): each app's live card, and its page's write-back.
 serve = [
   { https = 8445, path = "/_live/apps", port = 8455 },

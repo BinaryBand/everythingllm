@@ -30,21 +30,8 @@ and https://<PUBLIC_HOST>:8447/_apps/ here, the page's own origin, for its write
   that changed gets 409 {"reload": true}, anything else 403. A write is at most MAX_BODY
   bytes, RATE a while per app, and none while a run holds the workspace (409).
 
-and a client's answer to a request to turn a workspace's access on (sandbox.accessreq), for
-a chat that can't ask the user in AnythingLLM's own window, at https://<PUBLIC_HOST>:8445
-/_live/sandbox/ (the prefix is required here):
-
-  GET  /_live/sandbox/access/<workspace>
-      {workspace, access: {web, models, daily_tokens, heavy}, requests: [{id, state, text,
-      would, made, expires}]}, newest first; state is waiting, approved, declined or
-      expired, `text` what the user is asked to approve.
-  POST /_live/sandbox/access/<workspace>/<id>/approve   (or /decline)
-      applies (or drops) the change the request asked for, once: the request as it now
-      stands, or 404 for none, 409 for one answered or expired.
-
-  All with `Authorization: Bearer <key>`, an AnythingLLM developer API key (hostenv.keys:
-  checked with /api/v1/auth, never kept), and answering any origin (CORS), since only a key
-  does. This is the only way a request is answered: no op a skill calls approves one.
+and the client routes under /_live/sandbox/ (sandbox.clientweb): a workspace's access
+requests and created files, for a client holding a developer API key.
 
 A card is per app, not per chat: the same address shows the app as it is now in every
 chat it was pasted in. Paths are taken with or without their prefix (a route may strip
@@ -66,8 +53,6 @@ import re
 import time
 from collections import deque
 from collections.abc import AsyncIterator
-from dataclasses import asdict
-from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import hostenv.keys
@@ -76,9 +61,14 @@ from chatimage import BAR, PAD, THEMES, WIDTH, font, frame, live
 from PIL import Image, ImageDraw
 
 from sandbox import apps
-from sandbox.access import read_access
-from sandbox.accessreq import NoRequest, NotWaiting
-from sandbox.errors import BadToken, Busy, Conflict, NoSuchApp, StaleToken
+from sandbox.clientweb import ClientWeb
+from sandbox.errors import (
+    BadToken,
+    Busy,
+    Conflict,
+    NoSuchApp,
+    StaleToken,
+)
 from sandbox.names import KEY, SLUG
 
 if TYPE_CHECKING:
@@ -91,15 +81,6 @@ MAX_STREAM = 30 * 60
 POLL = 10.0  # a fallback: an op and a run's edit announce themselves
 CARD = re.compile(rf"(?:/_live/apps)?/({KEY})/({SLUG})(\.png)?")
 OPS = re.compile(rf"(?:/_apps)?/({KEY})/({SLUG})/(ops|sync)")
-ACCESS = re.compile(
-    rf"/_live/sandbox/access/({KEY})(?:/(ar-[0-9a-f]{{32}})/(approve|decline))?"
-)
-CLIENT_CORS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Authorization",
-    "Access-Control-Allow-Methods": "GET, POST",
-    "Access-Control-Max-Age": "600",
-}
 MAX_BODY = 256 << 10
 RATE = (20, 10.0)  # writes per app in so many seconds
 SYNC_WAIT = 25.0
@@ -138,7 +119,7 @@ def gone_card(theme: str, says: str = GONE) -> bytes:
 class AppsWeb:
     def __init__(self, runner: Runner, check: hostenv.keys.Check | None = None):
         self.runner = runner
-        self.check = check or hostenv.keys.KeyCheck()
+        self.client = ClientWeb(runner, check or hostenv.keys.KeyCheck())
         self.recent: dict[tuple[str, str], deque[float]] = {}
         self.waiting: dict[tuple[str, str], int] = {}
         # Each synced app's data file stamp and the version it held, so a sync of an app
@@ -173,8 +154,8 @@ class AppsWeb:
                 return await self.write_back(
                     reader, writer, ops[1], ops[2], ops[3], headers
                 )
-            if access := ACCESS.fullmatch(path):
-                return await self.access(writer, method, access.groups(), headers)
+            if self.client.owns(path, method, headers):
+                return await self.client.handle(writer, method, path, query, headers)
             route = CARD.fullmatch(path)
             if method != "GET":
                 return await live.send(writer, "405 Method Not Allowed", b"GET only.\n")
@@ -196,62 +177,6 @@ class AppsWeb:
                 await live.send(
                     writer, "500 Internal Server Error", b"Something went wrong.\n"
                 )
-
-    async def access(
-        self,
-        writer: asyncio.StreamWriter,
-        method: str,
-        parts: tuple[str, str | None, str | None],
-        headers: dict[str, str],
-    ) -> None:
-        """A client's view of a workspace's access requests, or its answer to one."""
-        workspace, request_id, action = parts
-
-        async def reply(status: str, body: dict) -> None:
-            await live.send(
-                writer,
-                status,
-                json.dumps(body, ensure_ascii=False).encode(),
-                "application/json",
-                CLIENT_CORS,
-            )
-
-        if method == "OPTIONS":
-            return await live.send(writer, "204 No Content", headers=CLIENT_CORS)
-        if method != ("GET" if request_id is None else "POST"):
-            return await reply(
-                "405 Method Not Allowed", {"error": "GET the list, POST an answer"}
-            )
-        scheme, _, key = headers.get("authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or not key.strip():
-            return await reply("401 Unauthorized", {"error": hostenv.keys.REFUSED})
-        if (refused := await self.check(key.strip())) is not None:
-            status, error = refused
-            return await reply(
-                f"{status} {HTTPStatus(status).phrase}", {"error": error}
-            )
-        requests = self.runner.access_requests
-        if request_id is None:
-            current = await asyncio.to_thread(
-                read_access, self.runner.config.access_file, workspace
-            )
-            return await reply(
-                "200 OK",
-                {
-                    "workspace": workspace,
-                    "access": asdict(current),
-                    "requests": [requests.view(r) for r in requests.listing(workspace)],
-                },
-            )
-        try:
-            done = await self.runner.answer_access(
-                workspace, request_id, action == "approve"
-            )
-        except NoRequest as e:
-            return await reply("404 Not Found", {"error": str(e)})
-        except NotWaiting as e:
-            return await reply("409 Conflict", {"error": str(e)})
-        return await reply("200 OK", done)
 
     def allowed(self, key: tuple[str, str]) -> bool:
         """Whether the app may take another op now (RATE)."""

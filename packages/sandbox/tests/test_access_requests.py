@@ -148,12 +148,14 @@ def test_only_a_good_key_answers(r, cfg):  # noqa: F811
     assert not cfg.access_file.exists()
 
 
-def test_the_prefix_is_needed_so_an_app_named_access_is_not_mistaken(r):
+def test_without_the_prefix_only_a_key_makes_it_the_access_route(r):
     async def main():
         server, port = await served(r)
         try:
-            status, _, top = await call(port, "GET", "/access/career")
-            assert status == 302 and b"/career/apps/" not in top  # an app card's route
+            # the machine's route strips the prefix: a visit with no key is an app's page
+            status, _, top = await call(port, "GET", "/access/career", key=None)
+            assert status == 302 and b"/career/apps/" not in top
+            assert (await call(port, "GET", "/access/career"))[0] == 200
         finally:
             server.close()
 

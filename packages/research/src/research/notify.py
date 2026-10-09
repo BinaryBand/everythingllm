@@ -1,10 +1,10 @@
 """Tells the Nilson app through ntfy that a research run from one of its chats ended, on the
-topic the relay posts finished answers to (relay.notify), so the app can bring the report
-into the chat that started it. The message is the start of the question; the report's text
-never goes to ntfy.
+topic the app follows (ntfy.env's; the Nilson relay's, if it is given that one), so the app
+can bring the report into the chat that started it. The message is the start of the
+question; the report's text never goes to ntfy.
 
-Config (environment; the container gets them from ~/.config/everythingllm/relay.env, the
-relay's file, which hostctl.relay_env makes):
+Config (environment; the container gets them from ~/.config/everythingllm/ntfy.env, which
+hostctl.ntfy_env makes):
   NTFY_URL, NTFY_TOKEN  the ntfy topic and its token; no notices without NTFY_URL
 """
 

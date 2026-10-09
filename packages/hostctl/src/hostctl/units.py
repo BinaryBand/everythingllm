@@ -21,7 +21,7 @@ repo's path and @KEY@ with KEY from host.env:
            of its name never takes over while it runs; but never AnythingLLM's or the
            egress proxy's, which it leaves with a word on why. `diff` lists them all.
            An app's host units stay running while one of its containers can't start yet.
-           Given app names (`uv run hostctl units relay`), it installs and retires only
+           Given app names (`uv run hostctl units research`), it installs and retires only
            those apps' units, so services can move into containers one at a time; the
            rest wait for a later run.
 

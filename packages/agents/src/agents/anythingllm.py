@@ -43,7 +43,7 @@ class NotFound(AnythingLLMError):
 
 
 def status_error(status: int) -> str:
-    """A plain-language message for a non-2xx answer (as the relay's upstream.status_error)."""
+    """A plain-language message for a non-2xx answer."""
     if status in (401, 403):
         return "AnythingLLM refused the delegation's API key."
     if status == 404:

@@ -24,7 +24,7 @@ from typing import Any
 
 log = logging.getLogger("hostenv.keys")
 
-REFUSED = "No valid api key found."  # AnythingLLM's own words, as the relay answers
+REFUSED = "No valid api key found."  # AnythingLLM's own words
 REMEMBER = 60.0  # seconds a good key is remembered
 TIMEOUT = 10
 # For a route a client's web build calls with its key: any origin, the key in a header.

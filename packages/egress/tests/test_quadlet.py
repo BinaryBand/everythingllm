@@ -114,34 +114,6 @@ def test_a_service_container_gets_no_more_than_its_keys_say(template):
         assert outside == inside, port
 
 
-def test_relay_mounts_only_its_database_and_venv(egress):
-    """The relay has no socket and nothing in storage: the repo, its venv folder and its
-    database's folder are all it mounts, and its secrets come in as values podman reads
-    on the host (EnvironmentFile=), not as a file it can see."""
-    keys = container_keys(QUADLET / "relay.container.in")
-    data = "%h/.local/share/everythingllm"
-    assert sorted(v.split(":")[0] for v in keys["Volume"]) == sorted(
-        ["@REPO@", f"{data}/venvs/relay-ctr", f"{data}/relay"]
-    )
-    assert "GroupAdd" not in keys
-    assert keys["EnvironmentFile"] == [
-        "@REPO@/host.env",
-        "%h/.config/everythingllm/relay.env",
-    ]
-    env = dict(e.partition("=")[::2] for e in keys["Environment"])
-    assert env["UV_PROJECT_ENVIRONMENT"] == f"{data}/venvs/relay-ctr/venv"
-    assert env["UV_CACHE_DIR"] == f"{data}/venvs/relay-ctr/uv-cache"
-    # It listens on every address, since the published port arrives from its own, and
-    # believes X-Forwarded-* only from that address, the machine's route's way in.
-    assert env["RELAY_HOST"] == "0.0.0.0"
-    assert env["FORWARDED_ALLOW_IPS"] == egress.ips()["relay"]
-    assert keys["PublishPort"] == ["127.0.0.1:8446:8446"]
-    # AnythingLLM by PUBLIC_HOST, which its profile lets it reach; nothing public.
-    relay = egress.profiles["relay"]
-    assert env["ANYTHINGLLM_URL"] == "https://@PUBLIC_HOST@:3001"
-    assert ("host.example.ts.net", 3001) in relay.allow and not relay.public
-
-
 # research-runner (README, "Deep research"): what it mounts is what its code writes or
 # reads outside the repo, and nothing more.
 DATA = "%h/.local/share/everythingllm"
@@ -237,10 +209,10 @@ def test_research_reaches_searxng_through_the_proxy_and_never_anythingllm(egress
     assert shared and not {"AUTH_TOKEN", "JWT_SECRET", "JWT_SECRET?"} & set(
         shared.group(1).split()
     )
-    # The relay's ntfy settings come in as values, as the relay's do (research.notify).
+    # Its ntfy settings come in as values podman reads on the host (research.notify).
     assert keys["EnvironmentFile"] == [
         "@REPO@/host.env",
-        "%h/.config/everythingllm/relay.env",
+        "%h/.config/everythingllm/ntfy.env",
     ]
 
 

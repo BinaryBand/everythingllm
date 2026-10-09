@@ -1,15 +1,15 @@
 import sys
 
-from hostctl import relay_env
+from hostctl import ntfy_env
 
 
 def run(monkeypatch, path):
-    monkeypatch.setattr(sys, "argv", ["relay_env", str(path)])
-    relay_env.main()
+    monkeypatch.setattr(sys, "argv", ["ntfy_env", str(path)])
+    ntfy_env.main()
 
 
 def test_makes_the_file_with_only_the_ntfy_settings(monkeypatch, tmp_path):
-    path = tmp_path / "conf" / "relay.env"
+    path = tmp_path / "conf" / "ntfy.env"
     run(monkeypatch, path)
     assert path.stat().st_mode & 0o777 == 0o600
     keys = [

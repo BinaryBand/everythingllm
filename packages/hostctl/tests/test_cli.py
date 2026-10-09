@@ -57,7 +57,7 @@ def ran(monkeypatch):
 def test_every_target_is_a_command():
     for target in TARGETS:
         cli.lookup(target)
-    assert cli.lookup("relay-setup") == (cli.setup_app, ["relay"])
+    assert cli.lookup("research-setup") == (cli.setup_app, ["research"])
     assert cli.lookup("research-logs") == (cli.app_logs, ["research"])
     with pytest.raises(SystemExit):
         cli.lookup("nope-setup")
@@ -84,8 +84,8 @@ def test_diff_shows_storage_then_the_units(ran):
 
 
 def test_an_app_setup_installs_the_units_first(ran):
-    cli.main(["relay-setup"])
-    assert ran == ["units install relay", "appctl setup relay"]
+    cli.main(["research-setup"])
+    assert ran == ["units install research", "appctl setup research"]
 
 
 def test_install_keeps_going_past_a_failed_health_check(ran, monkeypatch):

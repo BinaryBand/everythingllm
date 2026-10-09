@@ -1,7 +1,8 @@
 """What sets up, syncs and checks this machine, as one command (cli: `uv run hostctl
 <command>`): rendering the units (units), syncing storage (sync), setting up apps from the
 registry (appctl), the restart guard (run_guard), the machine checks around `uv run hostctl
-install` (machine), which workspaces' prompt block is behind (prompt) and the secrets files' checks (agents_env, relay_env).
+install` (machine), which workspaces' prompt block is behind (prompt) and the secrets files'
+checks (agents_env, ntfy_env, gateway_env).
 
 `uv run` puts hostctl in the dev venv, syncing it
 first, so it works on a fresh clone with nothing but uv. The modules still use only the

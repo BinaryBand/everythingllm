@@ -55,7 +55,7 @@ def test_routes_checks_each_on_the_public_host(monkeypatch, capsys):
         {
             "https://h.example:8445/": 404,  # a root that's a 404 by design still answers
             "https://h.example:8445/_live/agents/": 502,  # the route's there, its server isn't
-            "https://h.example:3001/everythingllm/": urllib.error.URLError(
+            "https://h.example:3001/notes/": urllib.error.URLError(
                 ConnectionRefusedError(111, "Connection refused")
             ),
         },
@@ -65,13 +65,11 @@ def test_routes_checks_each_on_the_public_host(monkeypatch, capsys):
         "agents": appctl.apps.App(
             "agents", "x", serve=(Mapping(8445, 8451, "/_live/agents"),)
         ),
-        "relay": appctl.apps.App(
-            "relay", "x", serve=(Mapping(3001, 8446, "/everythingllm"),)
-        ),
+        "notes": appctl.apps.App("notes", "x", serve=(Mapping(3001, 8446, "/notes"),)),
     }
     assert appctl.routes(registry, "h.example") is False
     assert sorted(asked) == [
-        "https://h.example:3001/everythingllm/",
+        "https://h.example:3001/notes/",
         "https://h.example:8445/",
         "https://h.example:8445/_live/agents/",
     ]
@@ -81,7 +79,7 @@ def test_routes_checks_each_on_the_public_host(monkeypatch, capsys):
         "  FAIL  https://h.example:8445/_live/agents/ -> http://127.0.0.1:8451 (agents): HTTP 502"
     )
     assert (
-        out[2].startswith("  FAIL  https://h.example:3001/everythingllm/")
+        out[2].startswith("  FAIL  https://h.example:3001/notes/")
         and "refused" in out[2]
     )
     assert appctl.routes(PAGES, "h.example") is True
@@ -208,12 +206,12 @@ def test_setup_runs_its_steps_restarts_and_says_its_routes(ran, monkeypatch, cap
     appctl.setup(registry["browser"])
     assert "uv run hostctl deploy" not in capsys.readouterr().out
     ran.clear()
-    # The relay is a container, which Quadlet enables, so it's only restarted.
-    appctl.setup(registry["relay"])
+    # research-runner is a container, which Quadlet enables, so it's only restarted.
+    appctl.setup(registry["research"])
     assert ran == [
-        "python3 -m hostctl.relay_env",
+        "python3 -m hostctl.ntfy_env",
         "python3 -m hostctl service-images",
-        "systemctl --user restart relay.service",
+        "systemctl --user restart research-runner.service",
     ]
     ran.clear()
     # No app of ours has a timer now.
@@ -278,5 +276,5 @@ def test_a_failing_step_stops_the_setup(monkeypatch):
 
     monkeypatch.setattr(appctl.subprocess, "run", run)
     with pytest.raises(SystemExit) as stopped:
-        appctl.setup(appctl.apps.load()["relay"])
-    assert stopped.value.code == 1 and calls == ["python3 -m hostctl.relay_env"]
+        appctl.setup(appctl.apps.load()["research"])
+    assert stopped.value.code == 1 and calls == ["python3 -m hostctl.ntfy_env"]

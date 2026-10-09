@@ -59,9 +59,9 @@ Volume=@ANYTHINGLLM_STORAGE@/anythingllm-fs/research:@ANYTHINGLLM_STORAGE@/anyth
 Volume=%h/.local/share/everythingllm/pages/public/_webimages:%h/.local/share/everythingllm/pages/public/_webimages
 # ANYTHINGLLM_STORAGE, PUBLIC_HOST and USER_TIMEZONE.
 EnvironmentFile=@REPO@/host.env
-# The relay's ntfy topic and token (NTFY_URL, NTFY_TOKEN; research.notify), as values podman
-# reads on the host, not a file it can see. hostctl.relay_env makes the file.
-EnvironmentFile=%h/.config/everythingllm/relay.env
+# The ntfy topic and token (NTFY_URL, NTFY_TOKEN; research.notify), as values podman
+# reads on the host, not a file it can see. hostctl.ntfy_env makes the file.
+EnvironmentFile=%h/.config/everythingllm/ntfy.env
 
 [Service]
 # Its share of AnythingLLM's .env (the model keys), never the file, which holds every key

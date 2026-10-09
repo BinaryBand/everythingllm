@@ -291,22 +291,24 @@ def test_a_container_waits_for_the_proxy_it_wants(tmp_path, monkeypatch, capsys)
     proxy = unit(
         tmp_path, tmp_path / "egress-proxy.container", "x", "egress-proxy.service", True
     )
-    relay = unit(
+    research = unit(
         tmp_path,
-        tmp_path / "relay.container",
+        tmp_path / "research-runner.container",
         "[Unit]\nWants=egress-proxy.service\n[Container]\nImage=localhost/everythingllm-service\n",
-        "relay.service",
+        "research-runner.service",
         True,
     )
-    assert units.missing(relay, [proxy, relay]) == ["egress-proxy.service"]
-    assert units.hold_back(["relay.service"], [proxy, relay]) == []
+    assert units.missing(research, [proxy, research]) == ["egress-proxy.service"]
+    assert units.hold_back(["research-runner.service"], [proxy, research]) == []
     assert (
-        "not starting relay.service: no egress-proxy.service yet; "
+        "not starting research-runner.service: no egress-proxy.service yet; "
         "`uv run hostctl units egress` makes them" in capsys.readouterr().out
     )
     proxy.dest.write_text("x")
-    assert units.missing(relay, [proxy, relay]) == []
-    assert units.hold_back(["relay.service"], [proxy, relay]) == ["relay.service"]
+    assert units.missing(research, [proxy, research]) == []
+    assert units.hold_back(["research-runner.service"], [proxy, research]) == [
+        "research-runner.service"
+    ]
 
 
 def test_a_runner_cleared_when_its_host_unit_retired_isnt_asked_again(
@@ -453,8 +455,8 @@ def test_units_retires_the_old_host_unit_then_starts_its_container(
 
     user, containers = tmp_path / "user", tmp_path / "containers"
     user.mkdir()
-    (user / "relay.service").write_text(RENDERED + "[Service]\nExecStart=old\n")
-    # Everything else is installed as the repo has it, so only the old relay is left.
+    (user / "egress-proxy.service").write_text(RENDERED + "[Service]\nExecStart=old\n")
+    # Everything else is installed as the repo has it, so only the old egress proxy is left.
     planned = plan(tmp_path)
     for u in planned:
         u.dest.parent.mkdir(parents=True, exist_ok=True)
@@ -473,15 +475,15 @@ def test_units_retires_the_old_host_unit_then_starts_its_container(
     monkeypatch.setenv("UNITS_CONTAINER_DIR", str(containers))
 
     units.main(["diff"])
-    assert f"retire {user / 'relay.service'}" in capsys.readouterr().out
+    assert f"retire {user / 'egress-proxy.service'}" in capsys.readouterr().out
     units.main(["install"])
     systemctl = [c[2:] for c in calls if c[:2] == ["systemctl", "--user"]]
     assert systemctl == [
-        ["disable", "--now", "relay.service"],
+        ["disable", "--now", "egress-proxy.service"],
         ["daemon-reload"],
-        ["restart", "relay.service"],
+        ["restart", "egress-proxy.service"],
     ]
-    assert not (user / "relay.service").exists()
+    assert not (user / "egress-proxy.service").exists()
 
 
 def test_units_retires_an_orphaned_container_before_writing_its_host_unit(
@@ -607,17 +609,21 @@ def test_units_leaves_essential_and_busy_containers_and_their_host_units(
 
 
 def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, capsys):
-    """`uv run hostctl units relay` switches the relay alone; research-runner's old host unit
+    """`uv run hostctl units egress` switches the egress proxy alone; research-runner's old host unit
     and research's old timer wait for theirs."""
     import subprocess
 
     user, containers = tmp_path / "user", tmp_path / "containers"
     user.mkdir()
-    for name in ("relay.service", "research-runner.service", "research-old.timer"):
+    for name in (
+        "egress-proxy.service",
+        "research-runner.service",
+        "research-old.timer",
+    ):
         (user / name).write_text(RENDERED + "[Service]\nExecStart=old\n")
     planned = plan(tmp_path)
     for u in planned:  # installed as the repo has them, but the two containers
-        if u.service not in ("relay.service", "research-runner.service"):
+        if u.service not in ("egress-proxy.service", "research-runner.service"):
             u.dest.parent.mkdir(parents=True, exist_ok=True)
             u.dest.write_text(u.text)
     calls = []
@@ -633,16 +639,16 @@ def test_units_for_some_apps_moves_only_their_services(tmp_path, monkeypatch, ca
     monkeypatch.setenv("UNITS_USER_DIR", str(user))
     monkeypatch.setenv("UNITS_CONTAINER_DIR", str(containers))
 
-    units.main(["install", "relay"])
+    units.main(["install", "egress"])
     systemctl = [c[2:] for c in calls if c[:2] == ["systemctl", "--user"]]
     assert systemctl == [
-        ["disable", "--now", "relay.service"],
+        ["disable", "--now", "egress-proxy.service"],
         ["daemon-reload"],
-        ["restart", "relay.service"],
+        ["restart", "egress-proxy.service"],
     ]
-    assert (containers / "relay.container").exists()
+    assert (containers / "egress-proxy.container").exists()
     assert not (containers / "research-runner.container").exists()
-    assert not (user / "relay.service").exists()
+    assert not (user / "egress-proxy.service").exists()
     assert (user / "research-old.timer").exists()
     assert (user / "research-runner.service").exists()
     calls.clear()

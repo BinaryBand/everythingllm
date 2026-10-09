@@ -35,8 +35,8 @@ so the client sees the new state. The chat must have a tab; when the agent has t
 already, or it's closed, it changes nothing. Taking it over stays on the take-over view, which shows the
 screen to act on (the entry's `page` links to it).
 
-The key is checked as the relay checks it (KeyCheck: `GET /api/v1/auth`, a good key
-remembered by its hash for a minute) and never logged or kept. Anyone with a key can have
+The key is checked with AnythingLLM's `GET /api/v1/auth` (hostenv.keys.KeyCheck: a good
+key remembered by its hash for a minute) and never logged or kept. Anyone with a key can have
 the agent hand them a chat's card anyway; without one, a tab's card stays reachable only by
 its unguessable id. So this route, and only this one, answers any origin (CORS), which a web
 client needs: the tab's picture is readable from another origin only here, for a key, never

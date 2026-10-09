@@ -10,7 +10,8 @@
   setup --installed  the same for every app `uv run hostctl install` sets up
   routes             the HTTPS routes the machine must provide (each app's `serve`), each
                      checked over https://PUBLIC_HOST with OK/FAIL (an app `install`
-                     leaves out only once one of its units runs); a FAIL too when
+                     leaves out only once one of its units runs; a path that answers as
+                     its port's root does, not as its own server, isn't routed); a FAIL too when
                      PUBLIC_HOST resolves only to loopback, and a WARN when it resolves to
                      a public address; exits 1 if anything failed
   logs APP           follow the app's units and the ones it watches
@@ -52,6 +53,7 @@ ROOT = Path(__file__).resolve().parents[4]
 PYTHONPATH = f"{ROOT}/packages/hostctl/src:{ROOT}/packages/hostenv/src"
 PING_SECONDS = 5  # a runner that's up answers at once
 ROUTE_SECONDS = 5
+ANSWER_BYTES = 4096
 
 
 def app_named(registry: dict[str, apps.App], name: str) -> apps.App:
@@ -73,7 +75,7 @@ def public_host() -> str:
 def route_problem(url: str, timeout: float = ROUTE_SECONDS) -> str:
     """Why `url` doesn't answer as a route should (a verified TLS connection and a status
     below 500, as health.sh holds the loopback checks to), or "" when it does. A missing
-    path on a port whose root is routed can't be told from the server's own 404."""
+    path on a port whose root is routed answers too, as the root does: not_routed tells."""
     try:
         with urllib.request.urlopen(url, timeout=timeout):
             return ""
@@ -90,6 +92,30 @@ def route_problem(url: str, timeout: float = ROUTE_SECONDS) -> str:
         )
     except (http.client.HTTPException, ValueError) as e:  # a garbled answer, a bad name
         return f"{type(e).__name__}: {e}"
+
+
+def answer(url: str, timeout: float = ROUTE_SECONDS) -> tuple[int, bytes]:
+    """`url`'s status and the start of its body, which tells one server from another."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status, r.read(ANSWER_BYTES)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(ANSWER_BYTES)
+
+
+def not_routed(host: str, m: apps.Mapping, root: apps.Mapping) -> str:
+    """Why the path route `m` looks missing, the machine sending its path on to `root`, its
+    port's root route: it answers as root's server answers the path and not as its own
+    server does (a route may strip the path; ours take either). "" when it doesn't, or when
+    that can't be told, an answer being missing."""
+    own, fallback = f"{m.target}{m.path}/", f"{root.target}{m.path}/"
+    try:
+        got, mine, roots = (answer(u) for u in (m.url(host), own, fallback))
+    except (OSError, http.client.HTTPException, ValueError):
+        return ""
+    if got == roots != mine:
+        return f"not routed: {root.target} answers it, as it answers the port's root"
+    return ""
 
 
 def addresses(host: str) -> list[str]:
@@ -144,9 +170,17 @@ def route_report(registry: dict[str, apps.App], host: str) -> tuple[list[str], b
                 f"  --    {m.describe(shown)} ({app.name}, not set up)"
                 for m in app.serve
             ]
+    roots = {m.https: m for a in registry.values() for m in a.serve if not m.path}
+
+    def problem(m: apps.Mapping) -> str:
+        why = route_problem(m.url(host))
+        if not why and m.path and m.https in roots:
+            why = not_routed(host, m, roots[m.https])
+        return why
+
     if host:
         with ThreadPoolExecutor(len(mappings) or 1) as pool:
-            why = list(pool.map(lambda nm: route_problem(nm[1].url(host)), mappings))
+            why = list(pool.map(lambda nm: problem(nm[1]), mappings))
         fail, warn = host_problems(host)
     else:
         why, fail, warn = ["PUBLIC_HOST isn't set in host.env"] * len(mappings), "", ""

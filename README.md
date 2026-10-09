@@ -41,7 +41,7 @@ Code running on the host derives its storage paths from `ANYTHINGLLM_STORAGE`. I
 
 ### The machine's routes
 
-The network is the machine's, not the repo's. Nothing here runs `tailscale serve` or configures a proxy; the machine provides, by whatever it likes (tailscale serve, Caddy, nginx, ...), an HTTPS route for each app's `serve` entry in `apps.toml`: `https://<PUBLIC_HOST>:<https><path>` to `http://127.0.0.1:<port>`. `uv run hostctl routes` lists them and checks each answers, and `uv run hostctl health` and the install checklist do too; an app `install` leaves out (agents, the relay, the gateway) counts once one of its units runs. Today they are:
+The network is the machine's, not the repo's. Nothing here runs `tailscale serve` or configures a proxy; the machine provides, by whatever it likes (tailscale serve, Caddy, nginx, ...), an HTTPS route for each app's `serve` entry in `apps.toml`: `https://<PUBLIC_HOST>:<https><path>` to `http://127.0.0.1:<port>`. `uv run hostctl routes` lists them and checks each answers, and that a path's answer is its own server's, not its port's root's (a path the machine left out falls through to the root), and `uv run hostctl health` and the install checklist do too; an app `install` leaves out (agents, the relay, the gateway) counts once one of its units runs. Today they are:
 
 | Port | Path | To | App |
 | --- | --- | --- | --- |

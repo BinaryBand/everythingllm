@@ -2,6 +2,7 @@
 systemctl, the network and the guard faked."""
 
 import contextlib
+import io
 import ssl
 import urllib.error
 from types import SimpleNamespace
@@ -27,8 +28,8 @@ PAGES = {"pages": appctl.apps.App("pages", "x", serve=(Mapping(8445, 8445),))}
 
 
 def answers(monkeypatch, by_url, found=("100.89.16.22",)):
-    """Fake urlopen, by_url mapping a URL to a status code or an exception to raise, and
-    PUBLIC_HOST resolving to `found`; returns the URLs asked for."""
+    """Fake urlopen, by_url mapping a URL to a status code, a (status, body) or an
+    exception to raise, and PUBLIC_HOST resolving to `found`; returns the URLs asked for."""
     asked = []
 
     def urlopen(url, timeout):
@@ -36,9 +37,12 @@ def answers(monkeypatch, by_url, found=("100.89.16.22",)):
         got = by_url.get(url, 200)
         if isinstance(got, Exception):
             raise got
-        if got >= 400:
-            raise urllib.error.HTTPError(url, got, "", {}, None)
-        return contextlib.nullcontext()
+        status, body = got if isinstance(got, tuple) else (got, b"")
+        if status >= 400:
+            raise urllib.error.HTTPError(url, status, "", {}, io.BytesIO(body))
+        return contextlib.nullcontext(
+            SimpleNamespace(status=status, read=io.BytesIO(body).read)
+        )
 
     monkeypatch.setattr(appctl.urllib.request, "urlopen", urlopen)
     monkeypatch.setattr(appctl, "addresses", lambda host: list(found))
@@ -81,6 +85,43 @@ def test_routes_checks_each_on_the_public_host(monkeypatch, capsys):
         and "refused" in out[2]
     )
     assert appctl.routes(PAGES, "h.example") is True
+
+
+def test_a_path_the_machine_sends_to_its_ports_root_isnt_routed(monkeypatch, capsys):
+    # The root's Caddy answers a path it doesn't have with an empty 404, and so does the
+    # public host when the path isn't routed; the apps server's own 404 has a body.
+    caddy, runner = (404, b""), (404, b"404 Not Found")
+    answers(
+        monkeypatch,
+        {
+            "https://h.example:8445/": 404,
+            "https://h.example:8445/_live/apps/": caddy,
+            "http://127.0.0.1:8445/_live/apps/": caddy,
+            "http://127.0.0.1:8455/_live/apps/": runner,
+            "https://h.example:8445/_live/agents/": runner,
+            "http://127.0.0.1:8445/_live/agents/": caddy,
+            "http://127.0.0.1:8451/_live/agents/": runner,
+        },
+    )
+    registry = {
+        **PAGES,
+        "sandbox": appctl.apps.App(
+            "sandbox", "x", serve=(Mapping(8445, 8455, "/_live/apps"),)
+        ),
+        "agents": appctl.apps.App(
+            "agents", "x", serve=(Mapping(8445, 8451, "/_live/agents"),)
+        ),
+    }
+    assert appctl.routes(registry, "h.example") is False
+    out = capsys.readouterr().out.splitlines()
+    assert out[1] == (
+        "  FAIL  https://h.example:8445/_live/apps/ -> http://127.0.0.1:8455 (sandbox):"
+        " not routed: http://127.0.0.1:8445 answers it, as it answers the port's root"
+    )
+    assert out[2].startswith("  OK    https://h.example:8445/_live/agents/")
+    # When the servers can't be told apart, it isn't held against the route.
+    answers(monkeypatch, {"http://127.0.0.1:8455/_live/apps/": OSError("refused")})
+    assert appctl.routes(registry, "h.example") is True
 
 
 def test_a_route_without_a_valid_certificate_fails(monkeypatch):

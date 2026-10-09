@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sandbox import apps
 
 REPO = Path(__file__).resolve().parents[3]
 CADDY_IMAGE = "docker.io/library/caddy:2-alpine"
@@ -63,32 +64,48 @@ PAGE = """<!doctype html>
 <a id="download" href="data.csv" download>csv</a>
 """
 
-APP_PAGE = """<!doctype html>
-<title>An app</title>
+FORM_APP = """<!doctype html>
+<title>A form</title>
+<form id="f"><input id="field" name="q"><button id="add">Add</button></form>
+<script src="app.js"></script>
 <script>
-  fetch("/_apps/ws/x/ops", {method: "POST", headers: {"Content-Type": "text/plain"},
-                            body: JSON.stringify({token: "t", op: "check", args: {item: 1}})})
-    .then((r) => r.json()).then((j) => { window.posted = j.ok ? "read" : "unread"; })
-    .catch((e) => { window.posted = e.name; });
+  App.start(/*APP*/null);
+  window.submits = [];
+  document.getElementById("f").onsubmit = (e) => {
+    e.preventDefault();
+    window.submits.push(document.getElementById("field").value);
+  };
 </script>
 """
 
 PROBE = """
 import json, sys, threading, time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:8447/ws/"
 out = {}
 seen = []
 
+# The app after another tab's change, which the page's sync is given once it has saved its own.
+ELSEWHERE = {"title": "Groceries", "version": 3, "card": {"items": "/data/items"},
+             "data": {"items": [{"text": "Oat milk", "done": True}, {"text": "Rye", "done": False}]}}
+
 class Apps(BaseHTTPRequestHandler):
-    # The sandbox runner's write-back, as the machine routes /_apps/ to it.
+    # The sandbox runner's write-back (sandbox.appsweb), as the machine routes /_apps/ to it,
+    # played as a script: the page's patch takes the app to version 2, then another tab's
+    # to 3.
     def do_POST(self):
-        body = self.rfile.read(int(self.headers["Content-Length"]))
-        seen.append([self.path, self.headers.get("Origin"), self.headers.get("Content-Type"),
-                     json.loads(body)])
-        reply = b'{"ok": true}'
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        seen.append([self.path, self.headers.get("Origin"), self.headers.get("Content-Type"), body])
+        if self.path.endswith("/ops"):
+            answer = {"version": 2}
+        elif body.get("since") == 2:
+            answer = ELSEWHERE
+        else:
+            time.sleep(0.3)
+            answer = {"version": body.get("since")}
+        reply = json.dumps(answer).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "null")
@@ -98,7 +115,7 @@ class Apps(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-threading.Thread(target=HTTPServer(("127.0.0.1", 8455), Apps).serve_forever, daemon=True).start()
+threading.Thread(target=ThreadingHTTPServer(("127.0.0.1", 8455), Apps).serve_forever, daemon=True).start()
 with sync_playwright() as p:
     # The image has Playwright's full Chromium and no headless shell.
     browser = p.chromium.launch(headless=True, channel="chromium")
@@ -153,11 +170,27 @@ with sync_playwright() as p:
     out["listing"] = listing.inner_text("body")
     out["listing_errors"] = errors
     app = context.new_page()
+    app_errors = []
+    app.on("pageerror", lambda e: app_errors.append(str(e)))
     response = app.goto(BASE + "apps/x/")
     out["app_cache"] = response.headers.get("cache-control")
-    app.wait_for_function("window.posted !== undefined", timeout=5000)
-    out["app_posted"] = app.evaluate("window.posted")
+    out["app_first"] = app.inner_text("#items")
+    app.click("text=Oat milk")
+    app.wait_for_selector("#items >> text=Rye", timeout=8000)
+    out["app_after"] = app.inner_text("#items")
+    out["app_checked"] = app.evaluate("[...document.querySelectorAll('#items input')].map((b) => b.checked)")
+    out["app_status"] = app.inner_text("#status")
     out["app_seen"] = seen
+    out["app_errors"] = app_errors
+    form = context.new_page()
+    form.goto(BASE + "apps/f/")
+    form.fill("#field", "by enter")
+    form.press("#field", "Enter")
+    form.fill("#field", "by click")
+    form.click("#add")
+    form.wait_for_timeout(300)
+    out["form_submits"] = form.evaluate("window.submits")
+    out["form_url"] = form.url
     browser.close()
 print(json.dumps(out))
 """
@@ -181,8 +214,26 @@ def browsed(tmp_path_factory) -> dict:
     (app / "other.html").write_text("<title>Other</title>")
     (app / "sink.html").write_text("<title>Sink</title>")
     (app / "data.csv").write_text("a,b\n1,2\n")
-    (tmp / "workspaces" / "ws" / "apps" / "x").mkdir(parents=True)
-    (tmp / "workspaces" / "ws" / "apps" / "x" / "index.html").write_text(APP_PAGE)
+    # The list starter as the runner renders it, with app.js beside it.
+    x = tmp / "workspaces" / "ws" / "apps" / "x"
+    x.mkdir(parents=True)
+    groceries = apps.new("Groceries", "list")
+    groceries["version"] = 1
+    groceries["data"]["items"] = [{"text": "Oat milk", "done": False}]
+    page = apps.render(
+        apps.starter_page("list").decode(),
+        groceries,
+        "t",
+        "/_apps/ws/x/ops",
+        "/_apps/ws/x/sync",
+    )
+    (x / "index.html").write_text(page)
+    (x / "app.js").write_bytes(apps.CLIENT.read_bytes())
+    f = tmp / "workspaces" / "ws" / "apps" / "f"
+    f.mkdir(parents=True)
+    page = apps.render(FORM_APP, groceries, "t", "/_apps/ws/f/ops", "/_apps/ws/f/sync")
+    (f / "index.html").write_text(page)
+    (f / "app.js").write_bytes(apps.CLIENT.read_bytes())
     (tmp / "probe.py").write_text(PROBE)
     pod = f"pages-csp-test-{uuid.uuid4().hex[:8]}"
     # The repo's Caddyfile, with /_apps/ sent where the machine's route would send it.
@@ -255,10 +306,32 @@ def test_downloads_and_the_directory_listing_work(browsed):
     assert browsed["listing_errors"] == []
 
 
-def test_an_app_page_writes_back_to_its_own_host_and_reads_the_answer(browsed):
-    """The sandbox runner's write-back (sandbox.appsweb) answers a page's opaque origin."""
-    assert browsed["app_posted"] == "read"
-    [(path, origin, kind, body)] = browsed["app_seen"]
-    assert (path, origin, kind) == ("/_apps/ws/x/ops", "null", "text/plain")
-    assert body == {"token": "t", "op": "check", "args": {"item": 1}}
+def test_an_app_page_saves_through_app_js_and_sees_other_changes(browsed):
+    """The list starter on the client (apps/client.js) against the runner's write-back
+    (sandbox.appsweb), which answers a page's opaque origin."""
+    assert browsed["app_errors"] == []
+    assert browsed["app_first"] == "Oat milk"
+    writes = [b for path, _, _, b in browsed["app_seen"] if path.endswith("/ops")]
+    assert writes == [
+        {
+            "token": "t",
+            "patch": [
+                {"op": "test", "path": "/items/0/text", "value": "Oat milk"},
+                {"op": "replace", "path": "/items/0/done", "value": True},
+            ],
+            "version": 1,
+        }
+    ]
+    for path, origin, kind, body in browsed["app_seen"]:
+        assert path in ("/_apps/ws/x/ops", "/_apps/ws/x/sync", "/_apps/ws/f/sync")
+        assert (origin, kind, body["token"]) == ("null", "text/plain", "t")
+    # Another tab's change came in by sync, after the page's own was saved.
+    assert browsed["app_after"].split("\n") == ["Rye", "Oat milk"]
+    assert browsed["app_checked"] == [False, True]
     assert browsed["app_cache"] == "no-cache"
+
+
+def test_app_js_gives_a_form_its_submit_event_without_submitting_it(browsed):
+    """The sandbox has no allow-forms, so a form never fires submit; app.js fires one."""
+    assert browsed["form_submits"] == ["by enter", "by click"]
+    assert browsed["form_url"] == "http://127.0.0.1:8447/ws/apps/f/"

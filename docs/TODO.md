@@ -2,21 +2,20 @@
 
 Work that's been looked into but not done yet. Remove an entry when it lands.
 
-## Workspace templates
+## Apps after the starter
 
-Important, and next for apps once the list template has been used for a while. Today every app template is the repo's (`packages/sandbox/src/sandbox/apps/`), reviewed with the runner and the same in every workspace. Users will want looks and kinds of app of their own (a habit tracker, a reading log, a family's chores board) without a repo change, and a list duct-taped together per request is what templates replaced, so the way to add one has to keep that consistency.
+Apps are now pages the agent writes, with data the host keeps (2026-10-09; README, "Apps"). Left:
 
-- **Where they'd live:** a workspace's `/shared/<workspace>/apps/<template>/`, beside its Zola themes, so other workspaces can read and copy one.
-- **What has to hold:** a workspace template's page runs under the same pages CSP sandbox as any page; its ops and card can't run on the host as the repo's do (they're Python the runner imports), so either the ops become a declarative schema the runner applies (add/remove/toggle/set on typed fields) and the card a declarative layout `chatimage` draws, or both run in a sandbox container per change, which costs a container start (a second or two) on every tick.
-- **Opt-in per workspace,** turned on the way web access is (the user approves it), and a template pinned by its hash when an app is made, so the workspace changing its template doesn't silently change apps already made.
-- **The declarative route first:** it keeps a tick instant and the host free of workspace code; the repo's list template would be rewritten in it to prove it.
+- **Starters for what users make often** (notes, a table, a tracker), once a few agent-written apps show what's worth keeping: each only a page in `apps/starters/`, never code in the runner.
+- **Libraries without web access:** a page loads nothing from other hosts, so an editor or a grid library has to be in the workspace's `/public`, which needs web access to fetch; a read-only folder of vetted ones beside the themes would spare that.
+- **Sharing an app between workspaces:** copying a page from `/shared/<workspace>/apps/` works today by hand.
 
 ## Checks left from 2026-10-08's changes
 
 Everything that could be done without a person is live: the runners, gateway, egress proxy and static server run the new code, the installed units match the templates, the skills, the default prompt and its version are deployed, and the apps' routes answer. Left:
 
 - **The machine's route for the article writer.** `tailscale serve --https=8445 --set-path=/news/write off` (nothing listens on :8448 now).
-- **Apps, end to end, in a chat:** "put oat milk on the groceries list" makes the app and shows its card; ticking on its page moves the card in the chat; an older tab of the page says to reload.
+- **Apps in AnythingLLM's own chat and in Nilson:** the agent's side was tested on 2026-10-09 through the developer API (a list change, and a notes app and a reading log it wrote, driven in Chromium: saves, a second tab's sync, reloads, the card's `where`). Left: the card showing and moving in the web UI's chat and in Nilson.
 - **Each workspace's prompt.** career, cloud, algorithms, education and parity-scratch have their own copy of the block (`uv run hostctl health` lists them); `update-prompt` in each, the user's call.
 - **Checks that need a person in a chat:** `sandbox-access` turning web on shows AnythingLLM's approval prompt, and a "no" or an always-allowed skill leaves it off; a deep research run from a UI chat lands in the workspace's documents with a notice quoting its findings; `show-image` puts a chart in the chat.
 - **The Nilson app** no longer gets a report link (ntfy's `Click`) when a research run ends, since there's no report page; check what it shows instead.

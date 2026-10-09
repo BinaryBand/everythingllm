@@ -43,40 +43,54 @@ li.done span{color:var(--fade);text-decoration:line-through}
   <button id="clear" class="quiet" type="button" hidden>Clear done</button>
   <p id="status" role="status"></p>
 </main>
+<script src="app.js"></script>
 <script>
 "use strict";
-// The app's data, its write-back token and where to post ops, put here by the host when it
-// renders the page (sandbox.apps.render). Text is shown with textContent, never as markup.
-const APP = /*APP*/null;
+// The list starter (sandbox.apps.STARTERS): data {"items": [{"text", "done"}]}, its card
+// drawn from them. The host puts the app where /*APP*/ is when it renders the page; text
+// is shown with textContent, never as markup. The agent may change this page freely.
+App.start(/*APP*/null);
 const byId = (id) => document.getElementById(id);
-let busy = false;
 
 function draw() {
-  const data = APP.data;
-  document.title = data.title;
-  byId("title").textContent = data.title;
-  const open = data.items.filter((i) => !i.done);
-  const done = data.items.filter((i) => i.done);
-  byId("left").textContent = !data.items.length
+  const items = App.data.items;
+  document.title = App.title;
+  byId("title").textContent = App.title;
+  const rows = items.map((item, i) => ({ ...item, i }));
+  const open = rows.filter((r) => !r.done);
+  const done = rows.filter((r) => r.done);
+  byId("left").textContent = !items.length
     ? "Nothing on the list yet"
-    : open.length ? `${open.length} of ${data.items.length} left` : `All ${data.items.length} done`;
+    : open.length ? `${open.length} of ${items.length} left` : `All ${items.length} done`;
   const list = byId("items");
   list.replaceChildren();
-  for (const item of [...open, ...done]) {
+  for (const row of [...open, ...done]) {
     const li = document.createElement("li");
-    if (item.done) li.className = "done";
+    if (row.done) li.className = "done";
     const label = document.createElement("label");
     const box = document.createElement("input");
     box.type = "checkbox";
-    box.checked = item.done;
-    box.addEventListener("change", () => send(item.done ? "uncheck" : "check", { item: item.id }));
+    box.checked = row.done;
+    box.addEventListener("change", () => change([
+      { op: "test", path: `/items/${row.i}/text`, value: row.text },
+      { op: "replace", path: `/items/${row.i}/done`, value: !row.done },
+    ]));
     const name = document.createElement("span");
-    name.textContent = item.text;
+    name.textContent = row.text;
     label.append(box, name);
     li.append(label);
     list.append(li);
   }
   byId("clear").hidden = !done.length;
+}
+
+function change(ops) {
+  try {
+    App.patch(ops); // draws, through App.onchange
+  } catch (e) {
+    say(String(e.message || e), "bad");
+    draw(); // puts back a box the click ticked
+  }
 }
 
 function say(text, kind) {
@@ -85,43 +99,29 @@ function say(text, kind) {
   status.className = kind || "";
 }
 
-async function send(op, args) {
-  if (busy) return;
-  busy = true;
-  say("Saving…");
-  try {
-    const answer = await fetch(APP.ops, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify({ token: APP.token, op, args }),
-    });
-    const reply = await answer.json().catch(() => ({}));
-    if (!answer.ok) {
-      say(reply.error || `Couldn't save (${answer.status}).`, "bad");
-    } else {
-      APP.data = reply.data;
-      APP.token = reply.token;
-      say("Saved", "ok");
-    }
-  } catch {
-    say("Couldn't reach the server. Ask in the chat instead.", "bad");
-  } finally {
-    busy = false;
-    draw();
-  }
-}
-
 byId("add").addEventListener("click", () => {
   const field = byId("new");
-  const value = field.value.trim();
+  const value = field.value.trim().replace(/\s+/g, " ");
   if (!value) return;
   field.value = "";
-  send("add", { item: value });
+  const there = App.data.items.some((i) => !i.done && i.text.toLowerCase() === value.toLowerCase());
+  if (!there) change([{ op: "add", path: "/items/-", value: { text: value, done: false } }]);
 });
 byId("new").addEventListener("keydown", (e) => {
   if (e.key === "Enter") byId("add").click();
 });
-byId("clear").addEventListener("click", () => send("clear_done", {}));
+byId("clear").addEventListener("click", () => {
+  const ops = [];
+  App.data.items.forEach((item, i) => {
+    if (item.done) ops.unshift(
+      { op: "test", path: `/items/${i}/text`, value: item.text },
+      { op: "remove", path: `/items/${i}` },
+    );
+  });
+  if (ops.length) change(ops);
+});
+App.onchange(draw);
+App.onstatus((state, text) => say(text, state === "saved" ? "ok" : ["error", "reload", "offline"].includes(state) ? "bad" : ""));
 draw();
 </script>
 </body>

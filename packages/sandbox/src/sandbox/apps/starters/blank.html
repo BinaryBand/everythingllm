@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App</title>
+<style>
+:root{--bg:oklch(0.982 0.008 75);--ink:oklch(0.27 0.025 280);--muted:oklch(0.5 0.02 280);--line:oklch(0.895 0.014 75);--accent:oklch(0.52 0.16 272);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--ink:oklch(0.93 0.01 75);--muted:oklch(0.72 0.018 280);--line:oklch(0.36 0.022 280);--accent:oklch(0.78 0.1 272)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 32px;display:flex;flex-direction:column;gap:14px}
+h1{margin:0;font-size:22px;line-height:1.25}
+#status{margin:0;min-height:20px;font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">App</h1>
+  <div id="app"></div>
+  <p id="status" role="status"></p>
+</main>
+<script src="app.js"></script>
+<script>
+"use strict";
+// The blank starter (sandbox.apps.STARTERS): a page to make into any app. Keep the line
+// that starts it. Draw from App.data; change it with App.patch (paths are in the data,
+// e.g. /notes/-, but /title and /card), and App.onchange(draw) draws after every change.
+// Show text with textContent, never as markup. Forms work: their submit event fires.
+App.start(/*APP*/null);
+const byId = (id) => document.getElementById(id);
+
+function draw() {
+  document.title = App.title;
+  byId("title").textContent = App.title;
+  // Draw App.data into #app here.
+}
+
+App.onchange(draw);
+App.onstatus((state, text) => (byId("status").textContent = text));
+draw();
+</script>
+</body>
+</html>

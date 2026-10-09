@@ -22,3 +22,12 @@ class BadToken(SandboxError):
 
 class StaleToken(SandboxError):
     """A write-back from a page of the app's that has been rendered again since."""
+
+
+class Conflict(SandboxError):
+    """A change made against a version of the app that isn't its current one; `app` is the
+    app as it is now, for the page to start again from."""
+
+    def __init__(self, message: str, app: dict):
+        super().__init__(message)
+        self.app = app

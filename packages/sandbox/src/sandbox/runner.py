@@ -62,10 +62,11 @@ guessed and shows the same image for good. The reply's `image` is a Markdown ima
 link to it, which the agent pastes as it does a link card. They count toward
 IMAGES_MAX_BYTES a workspace, not its size limit: they're outside its folders.
 
-op_app keeps the workspace's apps (sandbox.apps): an app is a template from the repo plus
-the workspace's data for it in /project/apps/<name>/data.json; each change goes through the
-template's ops, re-renders its page in /public/apps/<name>/ with the data embedded and a
-new write-back token (kept host-only in APP_STATE's folder), and moves its live card on.
+op_app keeps the workspace's apps (sandbox.apps): an app is a page the agent writes,
+/project/apps/<name>/page.html, plus the data the host keeps for it beside it, data.json.
+Each change (a JSON patch, from the agent or the page) is checked, saved one version on,
+renders the page in /public/apps/<name>/ again with the app embedded and its write-back
+token (kept host-only in APP_STATE's folder), and moves its live card on.
 
 A site build (op_build_site) runs the repo's sitebuild.py in a container with no network
 and every folder read-only but an empty /out: it copies a Zola site from the workspace's
@@ -84,6 +85,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -104,8 +106,7 @@ import chatimage.card
 import hostrpc
 from hostrpc import safefs
 
-from sandbox import apps as app_templates
-from sandbox import appsweb, pages, workspace
+from sandbox import apps, appsweb, pages, workspace
 from sandbox import models as model_access
 from sandbox.access import (
     MAX_DAILY_TOKENS,
@@ -115,6 +116,7 @@ from sandbox.access import (
     valid_budget,
     write_access,
 )
+from sandbox.apps import patch as app_patch
 from sandbox.apps.tokens import Tokens
 from sandbox.attachments import sync_attachments
 from sandbox.containers import (
@@ -127,7 +129,7 @@ from sandbox.containers import (
     prepare,
     prepare_build,
 )
-from sandbox.errors import Busy, NoSuchApp, SandboxError
+from sandbox.errors import Busy, Conflict, NoSuchApp, SandboxError
 from sandbox.names import SLUG
 from sandbox.pages import LIST_MAX, Pages
 from sandbox.workspace import (
@@ -157,9 +159,11 @@ DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 300
 BUILD_TIMEOUT = 60  # a site build, assembling included
 WATCH_SECONDS = 3.0  # how often a run's workspace is looked at (watch)
-APP_DATA_BYTES = 1 << 20  # an app's data.json, at most
+APP_DATA_BYTES = 4 << 20  # an app's data.json, at most
+APP_PAGE_BYTES = 2 << 20  # an app's page.html, at most
+APP_SHOW_BYTES = 8 << 10  # show gives the agent an app's data up to this, as JSON
 APP_ACTIONS = ("create", "do", "show", "list", "delete")
-APP_DATA_RE = re.compile(rf"/project/apps/({SLUG})/data\.json")
+APP_DATA_RE = re.compile(rf"/project/apps/({SLUG})/(?:data\.json|page\.html)")
 # A request answers within WAIT; a run that's still going carries on, and the skill waits
 # on it again with op_wait.
 WAIT = 45
@@ -529,7 +533,7 @@ class Runner(hostrpc.Service):
             changed = sorted(
                 p for p, sig in after.files.items() if before.files.get(p) != sig
             )
-            edited = [m[1] for p in changed if (m := APP_DATA_RE.fullmatch(p))]
+            edited = sorted({m[1] for p in changed if (m := APP_DATA_RE.fullmatch(p))})
             if edited:
                 await asyncio.to_thread(self.rerender_apps, scope, edited)
         if edited:
@@ -673,13 +677,18 @@ class Runner(hostrpc.Service):
         its limit can get back under). Deleting exactly one of the workspace's mounts empties
         it."""
         s = self.scope(scope)
-        mount = split(s, path)[0]
+        mount, root, target = split(s, path)
+        app = APP_DATA_RE.fullmatch(f"{mount}/{target.relative_to(root).as_posix()}")
         async with self.exclusive(s.workspace):
             result = await self.write(s, path, content, delete)
-            if mount == "/public" and (target := split(s, path)[2]) != s.public:
+            if mount == "/public" and target != s.public:
                 result["published"] = await asyncio.to_thread(
                     self.pages.page_changes, s, {target.relative_to(s.public).parts[0]}
                 )
+            if app:  # an app's page or data, written as a run would
+                await asyncio.to_thread(self.rerender_apps, s, [app[1]])
+        if app:
+            await self.app_changed()
         return result
 
     async def write(
@@ -821,14 +830,15 @@ class Runner(hostrpc.Service):
         scope: dict[str, Any],
         action: str = "list",
         name: str = "",
-        template: str = "list",
         title: str = "",
-        op: str = "",
-        args: Any = None,
+        starter: str = "",
+        patch: Any = None,
+        version: Any = None,
     ) -> dict[str, Any]:
-        """An app of the workspace's: `create` one from a template, `do` one of its ops,
-        `show` it, `list` them, or `delete` one. Every change re-renders its page in
-        /public/apps/<name>/ and moves its live card on (sandbox.appsweb)."""
+        """An app of the workspace's: `create` it (its page.html written first, or from a
+        `starter`), `do` a JSON patch on it, `show` it (with its data when that's small),
+        `list` them, or `delete` one. Every change renders its page in /public/apps/<name>/
+        again and moves its live card on (sandbox.appsweb)."""
         if action not in APP_ACTIONS:
             raise SandboxError(f"action must be one of: {', '.join(APP_ACTIONS)}")
         s = self.scope(scope)
@@ -845,15 +855,13 @@ class Runner(hostrpc.Service):
                 return await asyncio.to_thread(self.show_app, s, name)
             if action == "delete":
                 await asyncio.to_thread(self.delete_app, s, name)
-                result: dict[str, Any] = {"name": name, "deleted": True}
+                result = {"name": name, "deleted": True}
             elif action == "create":
-                data, did = await asyncio.to_thread(
-                    self.create_app, s, name, template, title, args
-                )
-                result = self.app_reply(s, name, data, did)
+                data = await asyncio.to_thread(self.create_app, s, name, title, starter)
+                result = self.app_reply(s, name, data, "made it")
             else:
-                data, did, _ = await asyncio.to_thread(
-                    self.change_app, s, name, op, args
+                data, did = await asyncio.to_thread(
+                    self.change_app, s, name, patch, version
                 )
                 result = self.app_reply(s, name, data, did)
         await self.app_changed()
@@ -863,53 +871,89 @@ class Runner(hostrpc.Service):
         async with self.apps_changed:
             self.apps_changed.notify_all()
 
+    def read_app_file(self, s: Scope, name: str, file: str, limit: int) -> bytes | None:
+        """An app's file, read without following a symlink; None when it isn't there."""
+        raw = safefs.read_regular(s.roots["/project"], ("apps", name, file), limit + 1)
+        if raw is not None and len(raw) > limit:
+            raise SandboxError(f"{name}'s {file} is over {limit >> 20} MB")
+        return raw
+
     def read_app(self, s: Scope, name: str) -> dict[str, Any]:
-        """The app's data, read without following a symlink and checked by its template."""
-        raw = safefs.read_regular(
-            s.roots["/project"], ("apps", name, "data.json"), APP_DATA_BYTES + 1
-        )
+        """The app's data, checked."""
+        raw = self.read_app_file(s, name, "data.json", APP_DATA_BYTES)
         if raw is None:
             raise NoSuchApp(f"there's no app '{name}' (app list shows them)")
-        if len(raw) > APP_DATA_BYTES:
-            raise SandboxError(f"{name}'s data is over {APP_DATA_BYTES >> 20} MB")
         try:
-            data = json.loads(raw)
-            return app_templates.of(data).validate(data)
+            return apps.validate(json.loads(raw))
         except ValueError as e:  # AppError is one
             raise SandboxError(f"{name}'s data can't be used: {e}") from None
 
-    def save_app(
-        self, s: Scope, name: str, data: dict[str, Any]
-    ) -> tuple[dict[str, Any], str]:
-        """Write the app's data, one version on, and its page, under a new write-back
-        token; the data as saved, and the token."""
-        data = {**data, "version": data["version"] + 1}
+    def read_page(self, s: Scope, name: str) -> str:
+        raw = self.read_app_file(s, name, "page.html", APP_PAGE_BYTES)
+        if raw is None:
+            raise SandboxError(
+                f"/project/apps/{name}/page.html is missing: write the app's page there "
+                f"(with {apps.PLACEHOLDER} once), or create it from a starter"
+            )
+        return raw.decode("utf-8", "replace")
+
+    def write_app_file(self, s: Scope, name: str, file: str, data: bytes) -> None:
         try:
             with safefs.folder(s.roots["/project"], ("apps", name), make=True) as d:
-                safefs.replace(d, "data.json", json.dumps(data, indent=1).encode())
-            token = self.app_tokens.rotate(s.workspace, name)
-            page = app_templates.render(
-                data, token, f"/_apps/{quote(s.workspace)}/{quote(name)}/ops"
-            )
-            with safefs.folder(s.public, ("apps", name), make=True) as d:
-                safefs.replace(d, "index.html", page.encode())
+                safefs.replace(d, file, data)
         except OSError as e:
             raise SandboxError(f"couldn't save {name}: {e}") from None
-        return data, token
+
+    def save_app(
+        self, s: Scope, name: str, data: dict[str, Any], bump: bool = True
+    ) -> dict[str, Any]:
+        """Render the app's page, and with `bump` write its data one version on first;
+        the data as saved. The page's write-back token lasts as long as its page.html
+        (sandbox.apps.tokens)."""
+        source = self.read_page(s, name)
+        if bump:
+            data = {**data, "version": data["version"] + 1}
+            encoded = json.dumps(data, indent=1, ensure_ascii=False).encode()
+            if len(encoded) > APP_DATA_BYTES:
+                raise SandboxError(
+                    f"{name}'s data would be over {APP_DATA_BYTES >> 20} MB"
+                )
+        token = self.app_tokens.for_page(
+            s.workspace, name, hashlib.sha256(source.encode()).hexdigest()
+        )
+        where = f"/_apps/{quote(s.workspace)}/{quote(name)}"
+        try:
+            page = apps.render(source, data, token, f"{where}/ops", f"{where}/sync")
+        except ValueError as e:
+            raise SandboxError(str(e)) from None
+        if bump:
+            self.write_app_file(s, name, "data.json", encoded)
+        client = apps.CLIENT.read_bytes()
+        try:
+            with safefs.folder(s.public, ("apps", name), make=True) as d:
+                safefs.replace(d, "index.html", page.encode())
+                if not self.app_client_is(s, name, client):
+                    safefs.replace(d, "app.js", client)
+        except OSError as e:
+            raise SandboxError(f"couldn't save {name}: {e}") from None
+        return data
+
+    def app_client_is(self, s: Scope, name: str, client: bytes) -> bool:
+        """Whether the app's app.js is `client` (so it isn't written again for nothing)."""
+        held = safefs.read_regular(s.public, ("apps", name, "app.js"), len(client) + 1)
+        return held == client
 
     def app_reply(
         self, s: Scope, name: str, data: dict[str, Any], did: str = ""
     ) -> dict[str, Any]:
-        kind = app_templates.of(data)
         live = (
             f"{self.config.site_url.rstrip('/')}/_live/apps/"
             f"{quote(s.workspace)}/{quote(name)}"
         )
         return {
             "name": name,
-            "template": kind.NAME,
             "title": data["title"],
-            "summary": kind.summary(data),
+            "summary": apps.summary(data),
             "did": did,
             "version": data["version"],
             "page": self.public_url(s.workspace, f"apps/{quote(name)}/"),
@@ -917,41 +961,70 @@ class Runner(hostrpc.Service):
         }
 
     def create_app(
-        self, s: Scope, name: str, template: str, title: str, args: Any
-    ) -> tuple[dict[str, Any], str]:
-        """Make the app; its data as saved, and what was done."""
-        project = s.roots["/project"]
-        if safefs.read_regular(project, ("apps", name, "data.json"), 1) is not None:
+        self, s: Scope, name: str, title: str, starter: str
+    ) -> dict[str, Any]:
+        """Make the app, from its page.html or a starter's; its data as saved."""
+        if self.read_app_file(s, name, "data.json", APP_DATA_BYTES) is not None:
             raise SandboxError(f"there's an app '{name}' already; change it with do")
         try:
-            kind = app_templates.template(template)
-            data = kind.new(title or name.replace("-", " ").capitalize())
-            did = "made it"
-            if isinstance(args, dict) and (args.get("items") or args.get("item")):
-                data, did = kind.apply(data, "add", args)
-                did = f"made it and {did}"
+            data = apps.new(title or name.replace("-", " ").capitalize(), starter)
+            first = apps.starter_page(starter) if starter else None
         except ValueError as e:
             raise SandboxError(str(e)) from None
-        return self.save_app(s, name, data)[0], did
+        if first is not None and (
+            self.read_app_file(s, name, "page.html", APP_PAGE_BYTES) is None
+        ):
+            self.write_app_file(s, name, "page.html", first)
+        self.app_tokens.remove(s.workspace, name)  # an app of this name before
+        return self.save_app(s, name, data)
 
     def change_app(
-        self, s: Scope, name: str, op: str, args: Any, token: str | None = None
-    ) -> tuple[dict[str, Any], str, str]:
-        """Apply one of the app's ops and save it; its data as saved, what was done, and
-        the page's new token. With `token` (a page's), only when it's the app's current
-        one (Tokens.check)."""
-        data = self.read_app(s, name)
+        self,
+        s: Scope,
+        name: str,
+        patch: Any,
+        version: Any = None,
+        token: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        """Apply a JSON patch to the app and save it; its data as saved, and what was
+        done. With `token` (a page's), only when it's the app's current one
+        (Tokens.check). Conflict when `version` isn't the app's version now, and when a
+        patch with no version changes a list's item by its place untested
+        (sandbox.apps.patch.unguarded): it could be another item by now."""
         if token is not None:
             self.app_tokens.check(s.workspace, name, token)
+        data = self.read_app(s, name)
+        if version is not None and version != data["version"]:
+            raise Conflict(
+                f"{name} changed since version {version}; it's at version "
+                f"{data['version']} now (show it again)",
+                data,
+            )
+        loose = (
+            app_patch.unguarded(patch)
+            if version is None and isinstance(patch, list)
+            else []
+        )
+        if loose:
+            raise Conflict(
+                f"{', '.join(loose)} changes a list item by its place: put a test "
+                "of that item before it (e.g. its text), or pass the version show "
+                "gave, so a list changed since can't lose the wrong item",
+                data,
+            )
         try:
-            data, did = app_templates.of(data).apply(data, op, args)
+            changed = apps.validate(
+                {**app_patch.apply(data, patch), "version": data["version"]}
+            )
         except ValueError as e:
             raise SandboxError(str(e)) from None
-        saved, token = self.save_app(s, name, data)
-        return saved, did, token
+        n = len(patch)
+        return self.save_app(
+            s, name, changed
+        ), f"applied {n} change{'s' if n != 1 else ''}"
 
     def rerender_apps(self, s: Scope, names: list[str]) -> None:
-        """Render the pages of the apps whose data a run changed, so they show it."""
+        """Render the pages of the apps whose data or page a run changed, so they show it."""
         for name in names:
             try:
                 self.save_app(s, name, self.read_app(s, name))
@@ -959,30 +1032,41 @@ class Runner(hostrpc.Service):
                 log.info("app %s/%s after a run: %s", s.workspace, name, e)
 
     def show_app(self, s: Scope, name: str) -> dict[str, Any]:
-        data = self.read_app(s, name)
-        if not (s.public / "apps" / name / "index.html").is_file():
-            data, _ = self.save_app(s, name, data)  # a page a run removed comes back
-        return self.app_reply(s, name, data)
+        """The app, its page rendered again (a page.html written since shows, and a page a
+        run removed comes back), with its data when it's at most APP_SHOW_BYTES."""
+        data = self.save_app(s, name, self.read_app(s, name), bump=False)
+        out = {**self.app_reply(s, name, data), "card_spec": data["card"]}
+        shown = json.dumps(data["data"], ensure_ascii=False)
+        if len(shown) <= APP_SHOW_BYTES:
+            out["data"] = data["data"]
+        else:
+            out["data_note"] = (
+                f"its data is {len(shown) >> 10} KB: read /project/apps/{name}/data.json "
+                "with run-code"
+            )
+        return out
 
-    def list_apps(self, s: Scope) -> list[dict[str, Any]]:
-        found: list[dict[str, Any]] = []
+    def app_names(self, s: Scope) -> list[str]:
+        """The workspace's apps' folders, by name."""
         try:
             entries = sorted(
                 os.scandir(s.roots["/project"] / "apps"), key=lambda e: e.name
             )
         except OSError:
-            return found
-        for entry in entries:
-            if not entry.is_dir(follow_symlinks=False) or not SLUG_RE.fullmatch(
-                entry.name
-            ):
-                continue
+            return []
+        return [
+            e.name
+            for e in entries
+            if e.is_dir(follow_symlinks=False) and SLUG_RE.fullmatch(e.name)
+        ]
+
+    def list_apps(self, s: Scope) -> list[dict[str, Any]]:
+        found: list[dict[str, Any]] = []
+        for name in self.app_names(s):
             try:
-                found.append(
-                    self.app_reply(s, entry.name, self.read_app(s, entry.name))
-                )
+                found.append(self.app_reply(s, name, self.read_app(s, name)))
             except SandboxError as e:
-                found.append({"name": entry.name, "error": str(e)})
+                found.append({"name": name, "error": str(e)})
         return found
 
     def delete_app(self, s: Scope, name: str) -> None:
@@ -992,6 +1076,44 @@ class Runner(hostrpc.Service):
         remove_path(folder)
         remove_path(s.public / "apps" / name)
         self.app_tokens.remove(s.workspace, name)
+
+    def refresh_apps(self) -> None:
+        """Bring every workspace's apps up to the runner when it starts: an app whose app.js
+        isn't the repo's client is rendered again, page and client together, so a page
+        gets the client's changes without waiting for its next change; and a list made
+        from the old repo template is moved to today's shape with the list starter's page
+        (sandbox.apps.migrate; that part can go once every workspace's has been). Data is
+        parsed only for those."""
+        client = apps.CLIENT.read_bytes()
+        try:
+            homes = sorted(os.scandir(self.config.root), key=lambda e: e.name)
+        except OSError:
+            return
+        for home in homes:
+            s = existing_scope(self.config, home.name)
+            if s is None:
+                continue
+            for name in self.app_names(s):
+                project = s.roots["/project"]
+                try:
+                    head = safefs.read_regular(project, ("apps", name, "data.json"), 64)
+                    if head and b'"template"' in head:
+                        raw = self.read_app_file(s, name, "data.json", APP_DATA_BYTES)
+                        if (data := apps.migrate(json.loads(raw or b"null"))) is None:
+                            continue
+                        self.write_app_file(
+                            s, name, "page.html", apps.starter_page("list")
+                        )
+                        self.save_app(s, name, data)
+                        log.info(
+                            "app %s/%s: moved to a page of its own", s.workspace, name
+                        )
+                    elif not self.app_client_is(s, name, client):
+                        self.save_app(s, name, self.read_app(s, name), bump=False)
+                except (OSError, ValueError, SandboxError) as e:
+                    log.warning(
+                        "app %s/%s couldn't be refreshed: %s", s.workspace, name, e
+                    )
 
     # --- server ---
 
@@ -1012,6 +1134,7 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
     until `stop` is set, or without one until SIGTERM."""
     runner = Runner(config)
     await runner.cleanup()
+    await asyncio.to_thread(runner.refresh_apps)
     config.root.mkdir(parents=True, exist_ok=True)
     loop = asyncio.get_running_loop()
     on_sigterm = stop is None

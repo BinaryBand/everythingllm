@@ -1,6 +1,9 @@
 """Apps' write-back tokens: each app's current one, which its rendered page carries, and
-the few before it, which mark a page as out of date rather than foreign. Kept host-only,
-one file per app (mode 600), in the runner's app_state folder."""
+the few before it, which mark a page as out of date rather than foreign. A token lasts as
+long as the page's source does (its hash is kept with it): saving the data keeps it, since
+the app's version tells a page it's behind, and a changed page.html gets a new one, so a
+tab with the old page is told to reload. Kept host-only, one file per app (mode 600), in
+the runner's app_state folder."""
 
 import hmac
 import json
@@ -21,14 +24,19 @@ class Tokens:
     def file(self, workspace: str, name: str) -> Path:
         return self.folder / workspace / f"{name}.json"
 
-    def held(self, workspace: str, name: str) -> tuple[str, list[str]]:
-        """The app's current token ("" for none) and its earlier ones, newest first."""
+    def read(self, workspace: str, name: str) -> dict:
         try:
             held = json.loads(self.file(workspace, name).read_text())
         except (OSError, ValueError):
-            return "", []
-        if not isinstance(held, dict):
-            return "", []
+            return {}
+        return held if isinstance(held, dict) else {}
+
+    def held(self, workspace: str, name: str) -> tuple[str, list[str]]:
+        """The app's current token ("" for none) and its earlier ones, newest first."""
+        return self.split(self.read(workspace, name))
+
+    @staticmethod
+    def split(held: dict) -> tuple[str, list[str]]:
         current = held.get("token")
         old = held.get("old")
         return (
@@ -36,14 +44,21 @@ class Tokens:
             [t for t in old if isinstance(t, str)] if isinstance(old, list) else [],
         )
 
-    def rotate(self, workspace: str, name: str) -> str:
-        """A new token for the app; the one before joins the stale ones."""
-        current, old = self.held(workspace, name)
+    def for_page(self, workspace: str, name: str, page: str) -> str:
+        """The token for a render of the page whose source hashes to `page`: the current
+        one while the page is the same, else a new one, and the one before joins the
+        stale ones."""
+        held = self.read(workspace, name)
+        current, old = self.split(held)
+        if current and held.get("page") == page:
+            return current
         token = secrets.token_urlsafe(24)
         file = self.file(workspace, name)
         file.parent.mkdir(parents=True, exist_ok=True)
         kept = [t for t in (current, *old) if t][:OLD]
-        hostrpc.atomic_write(file, json.dumps({"token": token, "old": kept}), 0o600)
+        hostrpc.atomic_write(
+            file, json.dumps({"token": token, "old": kept, "page": page}), 0o600
+        )
         return token
 
     def check(self, workspace: str, name: str, token: str) -> None:

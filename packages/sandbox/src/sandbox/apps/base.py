@@ -1,11 +1,11 @@
-"""What every app template shares: the error it raises and how it reads text it's given."""
+"""What the apps package shares: the error it raises and how it reads text it's given."""
 
 import unicodedata
 from typing import Any
 
 
 class AppError(ValueError):
-    """A request or data the template can't take; the message is shown to the agent."""
+    """A patch or data an app can't take; the message is shown to the agent or the page."""
 
 
 def text(value: Any, what: str, most: int) -> str:

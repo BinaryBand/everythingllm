@@ -38,8 +38,7 @@ import asyncio
 import json
 import re
 from dataclasses import asdict
-from http import HTTPStatus
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import parse_qs, quote
 
 import hostenv.keys
@@ -59,12 +58,24 @@ ACCESS = re.compile(
 )
 PREFIX = "/_live/sandbox/"
 FILES = re.compile(rf"(?:/_live/sandbox)?/files/({KEY})(?:/(download|keep|delete))?")
-CORS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Authorization",
-    "Access-Control-Allow-Methods": "GET, POST",
-    "Access-Control-Max-Age": "600",
-}
+CORS = hostenv.keys.CLIENT_CORS
+
+
+class Route(NamedTuple):
+    kind: str  # access or files
+    workspace: str
+    request_id: str | None  # access: the request answered, if one
+    action: str | None
+    reads: bool  # GET to read, else POST to change
+
+
+def route(path: str) -> Route | None:
+    """The client route a path names (with or without the machine's prefix), if any."""
+    if m := ACCESS.fullmatch(path):
+        return Route("access", m[1], m[2], m[3], m[2] is None)
+    if m := FILES.fullmatch(path):
+        return Route("files", m[1], None, m[2], m[2] in (None, "download"))
+    return None
 
 
 async def reply(writer: asyncio.StreamWriter, status: str, body: dict) -> None:
@@ -85,7 +96,7 @@ class ClientWeb:
     @staticmethod
     def owns(path: str, method: str, headers: dict[str, str]) -> bool:
         """Whether the request is a client route's (see the module's docstring)."""
-        if not (ACCESS.fullmatch(path) or FILES.fullmatch(path)):
+        if route(path) is None:
             return False
         return (
             path.startswith(PREFIX) or method == "OPTIONS" or "authorization" in headers
@@ -101,35 +112,22 @@ class ClientWeb:
     ) -> None:
         """Answer a request `owns` took: preflight, the method, then the key, then the
         route."""
-        access, files = ACCESS.fullmatch(path), FILES.fullmatch(path)
+        r = route(path)
+        assert r
         if method == "OPTIONS":
             return await live.send(writer, "204 No Content", headers=CORS)
-        reads = (access and access[2] is None) or (
-            files and files[2] in (None, "download")
-        )
-        if method != ("GET" if reads else "POST"):
+        if method != ("GET" if r.reads else "POST"):
             return await reply(
                 writer,
                 "405 Method Not Allowed",
                 {"error": "GET to read, POST to change"},
             )
-        if (refused := await self.refused(headers)) is not None:
-            return await reply(writer, *refused)
-        if access:
-            return await self.access(writer, access[1], access[2], access[3])
-        assert files
-        return await self.files(writer, query, files[1], files[2])
-
-    async def refused(self, headers: dict[str, str]) -> tuple[str, dict] | None:
-        """The status and body that refuse a client's request, or None once its developer
-        API key has been checked."""
-        scheme, _, key = headers.get("authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or not key.strip():
-            return "401 Unauthorized", {"error": hostenv.keys.REFUSED}
-        if (refused := await self.check(key.strip())) is not None:
+        if (refused := await hostenv.keys.refusal(self.check, headers)) is not None:
             status, error = refused
-            return f"{status} {HTTPStatus(status).phrase}", {"error": error}
-        return None
+            return await reply(writer, status, {"error": error})
+        if r.kind == "access":
+            return await self.access(writer, r.workspace, r.request_id, r.action)
+        return await self.files(writer, query, r.workspace, r.action)
 
     async def access(
         self,

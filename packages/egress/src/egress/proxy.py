@@ -303,12 +303,9 @@ class Proxy:
             up_writer.close()
 
 
-async def serve(
-    config: Config, host: str, port: int | None = None, public_only: bool = False
-) -> asyncio.Server:
+async def serve(config: Config, host: str, public_only: bool = False) -> asyncio.Server:
     proxy = Proxy(config, public_only=public_only)
-    if port is None:
-        port = config.public_port if public_only else config.port
+    port = config.public_port if public_only else config.port
     return await asyncio.start_server(proxy.handle, host, port, limit=HEAD_LIMIT)
 
 

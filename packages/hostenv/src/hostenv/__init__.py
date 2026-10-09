@@ -34,12 +34,13 @@ class LoginFailed(Exception):
 
 
 def env_values(
-    file: str | Path, names: Iterable[str], *, environ: bool = True
+    file: str | Path, names: Iterable[str] | None = None, *, environ: bool = True
 ) -> dict[str, str]:
     """Just these KEY=value settings from an env file (AnythingLLM's .env, host.env), quotes
-    dropped, so a service doesn't hold the others. With `environ` a non-empty value in the
-    environment wins. An unreadable file reads as empty; names found nowhere are left out."""
-    names = set(names)
+    dropped, so a service doesn't hold the others; every setting when `names` is None. With
+    `environ` a non-empty value in the environment wins. An unreadable file reads as empty;
+    names found nowhere are left out."""
+    wanted = None if names is None else set(names)
     try:
         lines = Path(file).read_text().splitlines()
     except OSError:
@@ -47,10 +48,11 @@ def env_values(
     found = {}
     for line in lines:
         key, sep, value = line.partition("=")
-        if sep and key.strip() in names:
-            found[key.strip()] = value.strip().strip("'\"")
-    if environ:
-        found.update({n: os.environ[n] for n in names if os.environ.get(n)})
+        key = key.strip()
+        if sep and not key.startswith("#") and (wanted is None or key in wanted):
+            found[key] = value.strip().strip("'\"")
+    if environ and wanted:
+        found.update({n: os.environ[n] for n in wanted if os.environ.get(n)})
     return found
 
 

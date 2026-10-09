@@ -88,6 +88,11 @@ class App:
         containers' generated <x>.service."""
         return [*self.units, *self.timers, *self.watch, *self.container_units]
 
+    @property
+    def services(self) -> list[str]:
+        """Its units that aren't timers."""
+        return [u for u in self.all_units if not u.endswith(".timer")]
+
 
 def _app(name: str, raw: dict) -> App:
     unknown = set(raw) - FIELDS

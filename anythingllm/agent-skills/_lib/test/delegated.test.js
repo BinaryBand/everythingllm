@@ -69,7 +69,7 @@ test("arguments a model sends as text", () => {
   assert.equal(asObject("not json"), "not json");
   assert.equal(asFlag("true"), true);
   assert.equal(asFlag("False"), false);
-  assert.equal(asFlag(undefined), null);
+  assert.equal(asFlag(undefined), false);
   assert.equal(asInteger("7"), 7);
   assert.equal(asInteger("all"), "all");
   assert.equal(asInteger(3), 3);

@@ -71,18 +71,8 @@ def refuse_worktree(what: str) -> None:
 
 
 def env_file(file: Path) -> dict[str, str]:
-    """An env file's KEY=value lines, quotes dropped as systemd's EnvironmentFile= and
-    hostenv.env_values drop them; {} when it can't be read. The scripts' one parser."""
-    try:
-        lines = file.read_text().splitlines()
-    except OSError:
-        return {}
-    values = {}
-    for line in lines:
-        key, sep, value = line.partition("=")
-        if sep and not key.lstrip().startswith("#"):
-            values[key.strip()] = value.strip().strip("'\"")
-    return values
+    """An env file's KEY=value lines, quotes dropped; {} when it can't be read."""
+    return hostenv.env_values(file, environ=False)
 
 
 def host_settings(file: Path) -> dict[str, str]:
@@ -142,9 +132,9 @@ def render(template: str, values: dict[str, str]) -> str:
     return PLACEHOLDER.sub(lambda m: values[m.group(1)], template)
 
 
-def rendered(template: Path, values: dict[str, str], root: Path = ROOT) -> str:
+def rendered(template: Path, values: dict[str, str]) -> str:
     """The unit from `template`, under a header that says where it came from."""
-    where = template.relative_to(root / "host")
+    where = template.relative_to(ROOT / "host")
     return (
         f"# Rendered by `uv run hostctl units` from {where} in the EverythingLLM repo, with this\n"
         "# machine's host.env filled in. Edit the template and run it again, not this copy.\n"
@@ -152,25 +142,23 @@ def rendered(template: Path, values: dict[str, str], root: Path = ROOT) -> str:
     )
 
 
-def planned(
-    values: dict[str, str], containers: Path, user: Path, root: Path = ROOT
-) -> list[Unit]:
+def planned(values: dict[str, str], containers: Path, user: Path) -> list[Unit]:
     units = []
-    for t in sorted((root / "host" / "quadlet").glob("*.container.in")):
+    for t in sorted((ROOT / "host" / "quadlet").glob("*.container.in")):
         name = t.name.removesuffix(".in")
         units.append(
             Unit(
                 t,
                 containers / name,
-                rendered(t, values, root),
+                rendered(t, values),
                 name.removesuffix(".container") + ".service",
                 True,
             )
         )
     for t in sorted(
         [
-            *(root / "host" / "systemd").glob("*.service"),
-            *(root / "host" / "systemd").glob("*.timer"),
+            *(ROOT / "host" / "systemd").glob("*.service"),
+            *(ROOT / "host" / "systemd").glob("*.timer"),
         ]
     ):
         # A template (x@.service) never runs itself; its instances pick it up when next started.
@@ -178,7 +166,7 @@ def planned(
             Unit(
                 t,
                 user / t.name,
-                rendered(t, values, root),
+                rendered(t, values),
                 "" if "@." in t.name else t.name,
                 False,
             )
@@ -334,9 +322,7 @@ def hold_back(
     return now
 
 
-def retired(
-    plan: list[Unit], user: Path, containers: Path, root: Path = ROOT
-) -> list[Path]:
+def retired(plan: list[Unit], user: Path, containers: Path) -> list[Path]:
     """Units that no template makes any more: containers in `containers` that this
     rendered (first), then host units in `user` that this rendered, or linked into the
     repo's host/systemd the old way. Containers were never linked: a link is someone's."""
@@ -350,7 +336,7 @@ def retired(
                 old.append(path)
         except OSError:
             pass
-    linked_from = root / "host" / "systemd"
+    linked_from = ROOT / "host" / "systemd"
     for path in sorted([*user.glob("*.service"), *user.glob("*.timer")]):
         if path in planned_here:
             continue

@@ -146,14 +146,14 @@ class Store:
             f"select * from runs {where} order by created_at, rowid", args
         ).fetchall()
 
-    def append(self, run_id: str, name: str, data: dict[str, Any]) -> int:
-        """Add the run's next event and return its id; a terminal event also ends the run.
-        Returns 0 and adds nothing when the run has already ended."""
+    def append(self, run_id: str, name: str, data: dict[str, Any]) -> None:
+        """Add the run's next event; a terminal event also ends the run. Adds nothing when
+        the run has already ended."""
         with self.db:
             self.db.execute("begin immediate")
             run = self.get(run_id)
             if run is None or run["status"] != "running":
-                return 0
+                return
             seq = self.db.execute(
                 "select coalesce(max(seq), 0) + 1 from events where run_id = ?",
                 (run_id,),
@@ -172,7 +172,6 @@ class Store:
                         run_id,
                     ),
                 )
-        return seq
 
     def events(self, run_id: str, after: int = 0) -> list[tuple[int, str, dict]]:
         return [

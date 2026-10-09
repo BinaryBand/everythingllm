@@ -428,7 +428,7 @@ class Driver(hostrpc.Service):
 
     async def op_open(self, thread: str, url: str) -> dict[str, Any]:
         url = check_url(url)
-        self.check_sent(thread, url, unquote_plus(url))
+        self.check_sent(url, unquote_plus(url))
         page = await self.tab(thread)
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=GOTO_MS)
@@ -446,12 +446,10 @@ class Driver(hostrpc.Service):
             action == "press" and len(text) == 1
         ):  # a run of single characters is text too
             self.typed[thread] = (self.typed.get(thread, "") + text)[-TYPED:]
-            self.check_sent(thread, self.typed[thread])
+            self.check_sent(self.typed[thread])
         else:
             self.typed.pop(thread, None)
-            self.check_sent(
-                thread, text if action in ("fill", "type", "select") else ""
-            )
+            self.check_sent(text if action in ("fill", "type", "select") else "")
         page = self.existing(thread)
         target = page.locator(f'[data-bw-ref="{ref}"]').first if ref else None
         try:
@@ -523,7 +521,7 @@ class Driver(hostrpc.Service):
                 await asyncio.sleep(min(MAX_WAIT, max(0, seconds)))
 
     async def op_read(self, thread: str) -> dict[str, Any]:
-        self.check_sent(thread)
+        self.check_sent()
         return await self.view(thread, self.existing(thread))
 
     # --- saved logins ---
@@ -631,7 +629,7 @@ class Driver(hostrpc.Service):
         pass_ref: str = "",
         submit: bool = False,
     ) -> dict[str, Any]:
-        self.check_sent(thread)
+        self.check_sent()
         page = self.existing(thread)
         if not user_ref and not pass_ref:
             raise hostrpc.RunnerError(
@@ -660,7 +658,7 @@ class Driver(hostrpc.Service):
     async def op_fill_code(
         self, thread: str, site: str, code: str, ref: str, submit: bool = False
     ) -> dict[str, Any]:
-        self.check_sent(thread)
+        self.check_sent()
         page = self.existing(thread)
         target = await self.field(page, ref, site, "code")
         self.keep_filled(code, code=True)
@@ -713,7 +711,7 @@ class Driver(hostrpc.Service):
             f"the page tried to send your {site} password to {where}{clear}; it was blocked",
         )
 
-    def check_sent(self, thread: str, *texts: str) -> None:
+    def check_sent(self, *texts: str) -> None:
         """Refuse what the agent sends (an address, text to type) if it holds a piece of a
         filled secret, and lock the browser to it until the user takes over: a read hides
         such a piece, so sending guesses and seeing which come back hidden would spell a
@@ -779,7 +777,7 @@ class Driver(hostrpc.Service):
     async def op_sign_in_passkey(
         self, thread: str, site: str, credential: dict[str, Any], ref: str
     ) -> dict[str, Any]:
-        self.check_sent(thread)
+        self.check_sent()
         page = self.existing(thread)
         target = await self.on_site(
             page,

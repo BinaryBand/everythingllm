@@ -26,11 +26,16 @@ def test_env_values_keeps_only_the_names_and_lets_the_environment_win(
     tmp_path, monkeypatch
 ):
     env = tmp_path / ".env"
-    env.write_text("A='one'\n# c\nB = \"two\"\nSECRET=x\nA=last\n")
+    env.write_text("A='one'\n# c\n#HIDDEN=1\nB = \"two\"\nSECRET=x\nA=last\n")
     monkeypatch.setenv("B", "env")
     monkeypatch.delenv("C", raising=False)
     assert hostenv.env_values(env, ["A", "B", "C"]) == {"A": "last", "B": "env"}
     assert hostenv.env_values(env, ["B"], environ=False) == {"B": "two"}
+    assert hostenv.env_values(env, environ=False) == {
+        "A": "last",
+        "B": "two",
+        "SECRET": "x",
+    }
     assert hostenv.env_values(tmp_path / "missing", ["A"]) == {}
 
 

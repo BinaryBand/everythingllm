@@ -44,7 +44,7 @@ module.exports.runtime = {
       const attachments = await attachmentArgs(this);
       const seconds = asInteger(timeout);
       let r = await request("run", { language, code, ...(Number.isInteger(seconds) ? { timeout: seconds } : {}), ...attachments });
-      if (r.running && asFlag(background) === true)
+      if (r.running && asFlag(background))
         return (
           `Started in the background as run ${r.run_id} (stopped at ${r.timeout} s if it isn't done). ` +
           `Tell the user it's going; check on it with run-code and run_id ${r.run_id}. Its result is kept for a day. ` +

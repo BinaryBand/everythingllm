@@ -3,20 +3,15 @@
 // workspace comes from the invocation, never from the model; a delegated task is refused
 // (_lib/delegated.js), and a scheduled job by the runner, which also checks the rest.
 
-const { forward } = require("../_lib/runner");
+const { forwardAgents } = require("../_lib/runner");
 
 module.exports.runtime = {
   handler: async function ({ action, text, scope, id }) {
-    return forward(this, {
-      scoped: true,
-      service: "agents",
-      op: "memories",
-      args: {
-        action: String(action || "list").trim().toLowerCase(),
-        text,
-        memory_scope: scope,
-        memory_id: id,
-      },
+    return forwardAgents(this, "memories", {
+      action: String(action || "list").trim().toLowerCase(),
+      text,
+      memory_scope: scope,
+      memory_id: id,
     });
   },
 };

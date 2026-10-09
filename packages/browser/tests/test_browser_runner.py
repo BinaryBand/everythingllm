@@ -503,7 +503,7 @@ def test_a_tab_says_whether_the_agent_is_at_work_in_it_or_waits_for_the_user(tmp
         clock.t += runner_mod.ACTIVE
         await op("ask_login")
         assert r.state(tab) == r.activity(s) == "waiting"  # for a login
-        r.decline(next(iter(r.asked.values())))
+        r.login_requests.decline(next(iter(r.asked.values())))
         assert r.state(tab) == "working"
 
         await op("handoff", reason="log in")
@@ -808,22 +808,24 @@ def test_the_agent_asks_for_a_login_for_its_pages_site_and_the_user_saves_it(tmp
         assert (await r.op_ask_login(scope(thread="8")))["request"] != req.id
         # Only for one of the request's sites, and with a password.
         with pytest.raises(RunnerError, match="not 'evil.example'"):
-            await r.fulfil(req, "evil.example", "alice", "pw", "", False)
+            await r.login_requests.fulfil(req, "evil.example", "alice", "pw", "", False)
         with pytest.raises(RunnerError, match="not 'com'"):
-            await r.fulfil(req, "com", "alice", "pw", "", False)
+            await r.login_requests.fulfil(req, "com", "alice", "pw", "", False)
         with pytest.raises(RunnerError, match="enter the password"):
-            await r.fulfil(req, "google.com", "alice", "", "", False)
-        saved = await r.fulfil(req, "google.com", "alice", "hunter2", "", True)
+            await r.login_requests.fulfil(req, "google.com", "alice", "", "", False)
+        saved = await r.login_requests.fulfil(
+            req, "google.com", "alice", "hunter2", "", True
+        )
         assert "hunter2" not in str(saved)
         assert saved["site"] == "google.com" and saved["ask"]
         assert r.vault.get("career", saved["id"])["password"] == "hunter2"
-        assert r.asked_state(req) == "saved" and req.changed.is_set()
+        assert r.login_requests.asked_state(req) == "saved" and req.changed.is_set()
         assert tab.last == "You saved a login for google.com"
         # Once.
         with pytest.raises(RunnerError, match=r"isn't waiting any more \(saved\)"):
-            await r.fulfil(req, "google.com", "mallory", "x", "", False)
+            await r.login_requests.fulfil(req, "google.com", "mallory", "x", "", False)
         with pytest.raises(RunnerError, match="isn't waiting"):
-            r.decline(req)
+            r.login_requests.decline(req)
         assert len(r.vault.logins("career")) == 1
         # The agent fills it like any other.
         listed = await r.op_logins(scope())
@@ -853,20 +855,25 @@ def test_a_request_runs_out_is_kept_a_while_and_is_capped(tmp_path):
         first = r.asked[(await r.op_ask_login(scope()))["request"]]
         assert first.sites == ["linkedin.com"]
         clock.t += logins.ASK_SECONDS + 1
-        assert r.asked_state(first) == "expired"
+        assert r.login_requests.asked_state(first) == "expired"
         with pytest.raises(RunnerError, match=r"\(expired\)"):
-            await r.fulfil(first, "linkedin.com", "alice", "pw", "", False)
+            await r.login_requests.fulfil(
+                first, "linkedin.com", "alice", "pw", "", False
+            )
         # A new one takes its place, and the old one's card still says how it ended,
         # for a day.
         second = (await r.op_ask_login(scope()))["request"]
-        assert second != first.id and r.asked_by_id(first.id) is first
+        assert second != first.id and r.login_requests.by_id(first.id) is first
         clock.t += logins.KEEP_ASKED - logins.ASK_SECONDS
-        assert r.asked_by_id(first.id) is None and r.asked_by_id("lr-nope") is None
+        assert (
+            r.login_requests.by_id(first.id) is None
+            and r.login_requests.by_id("lr-nope") is None
+        )
         second = (await r.op_ask_login(scope()))["request"]
         # The browser stopping doesn't end one: the save needs only the vault.
         await r.stop("career")
-        req = r.asked_by_id(second)
-        await r.fulfil(req, "linkedin.com", "alice", "pw", "", False)
+        req = r.login_requests.by_id(second)
+        await r.login_requests.fulfil(req, "linkedin.com", "alice", "pw", "", False)
         assert r.vault.logins("career")[0]["site"] == "linkedin.com"
         # At most MAX_ASKED wait in a workspace.
         for n in range(logins.MAX_ASKED):
@@ -887,10 +894,12 @@ def test_a_save_the_vault_refuses_leaves_the_request_waiting(tmp_path):
         await r.op_open(scope(), "https://linkedin.com/")
         req = r.asked[(await r.op_ask_login(scope()))["request"]]
         with pytest.raises(RunnerError, match="too long"):
-            await r.fulfil(req, "linkedin.com", "a" * 1001, "pw", "", False)
-        assert r.asked_state(req) == "waiting"
-        r.decline(req)
-        assert r.asked_state(req) == "declined"
+            await r.login_requests.fulfil(
+                req, "linkedin.com", "a" * 1001, "pw", "", False
+            )
+        assert r.login_requests.asked_state(req) == "waiting"
+        r.login_requests.decline(req)
+        assert r.login_requests.asked_state(req) == "declined"
         assert (
             r.threads[("career", "7")].last
             == "You didn't give a login for linkedin.com"

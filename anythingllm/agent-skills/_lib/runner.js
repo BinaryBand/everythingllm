@@ -70,10 +70,15 @@ function asObject(value) {
   return value;
 }
 
-/** A true/false argument, which a model sometimes sends as text; null when it's left out. */
+/** A true/false argument, which a model sometimes sends as text; false when it's left out. */
 function asFlag(value) {
-  if (value == null || value === "") return null;
+  if (value == null || value === "") return false;
   return value === true || String(value).toLowerCase() === "true";
 }
 
-module.exports = { withRunner, forward, cardLines, asObject, asFlag, asInteger };
+/** One op of the agents runner, for the call's workspace and thread. */
+function forwardAgents(self, op, args) {
+  return forward(self, { service: "agents", scoped: true, op, args });
+}
+
+module.exports = { withRunner, forward, forwardAgents, cardLines, asObject, asFlag, asInteger };

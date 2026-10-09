@@ -373,7 +373,7 @@ class Live:
         theme: str,
     ) -> None:
         """A login request's card, or (not `image`) where it links."""
-        req = self.runner.asked_by_id(request)
+        req = self.runner.login_requests.by_id(request)
         if image and req is None:
             frame = await asyncio.to_thread(
                 progress.draw,
@@ -422,11 +422,11 @@ class Live:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.MAX_STREAM
         while True:
-            state = self.runner.asked_state(req)
+            state = self.runner.login_requests.asked_state(req)
             yield await asyncio.to_thread(asked_picture, req, state, theme)
             left = min(
                 deadline - loop.time(),
-                self.runner.asked_left(req),  # when it runs out
+                self.runner.login_requests.asked_left(req),  # when it runs out
             )
             if state not in ("waiting", "saving") or left <= 0 or gone.is_set():
                 return

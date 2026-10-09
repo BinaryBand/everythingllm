@@ -227,7 +227,10 @@ def test_every_skill_is_one_apps_and_reaches_its_runner():
     for skill, app in apps.skill_apps().items():
         assert app.runner, f"{app.name} has skills but no runner"
         code = "".join(p.read_text() for p in (skills / skill).glob("*.js"))
-        assert app.name in {n for m in reaches.findall(code) for n in m}, skill
+        named = {n for m in reaches.findall(code) for n in m}
+        if "forwardAgents(" in code:  # _lib/runner.js's helper for the agents runner
+            named.add("agents")
+        assert app.name in named, skill
 
 
 def test_a_mapping_is_a_url_on_the_public_host():

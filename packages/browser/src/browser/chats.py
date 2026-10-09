@@ -63,7 +63,14 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import hostenv
-from hostenv.keys import REFUSED, Check, KeyCheck, anythingllm_url, get_json
+from hostenv.keys import (
+    CLIENT_CORS,
+    Check,
+    KeyCheck,
+    anythingllm_url,
+    get_json,
+    refusal,
+)
 
 from browser.origin import host_of, registrable
 from browser.tabs import site_of
@@ -79,12 +86,7 @@ ROUTE = re.compile(
     r"(?:/_live/browser)?/chat/([a-z0-9_][a-z0-9_-]{0,99})(?:/([A-Za-z0-9_-]{1,64}))?(/card\.jpg|/give)?"
 )
 MAIN = "default"  # the main chat's thread in the scopes skills give (_lib/scope.js)
-CORS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Authorization",
-    "Access-Control-Allow-Methods": "GET, POST",
-    "Access-Control-Max-Age": "600",
-}
+CORS = CLIENT_CORS
 REMEMBER = 60.0  # seconds a workspace's threads are remembered
 
 # A thread's id from its workspace and slug (None: the main chat, MAIN), or None when the
@@ -190,14 +192,8 @@ class Chats:
     ) -> str:
         """The chat's thread as the runner keeps tabs by, for a request with a good key;
         raises Refused."""
-        scheme, _, key = headers.get("authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or not key.strip():
-            raise Refused("401 Unauthorized", REFUSED)
-        if (refused := await self.check(key.strip())) is not None:
-            status, error = refused
-            raise Refused(
-                f"{status} {'Forbidden' if status == 403 else 'Bad Gateway'}", error
-            )
+        if (refused := await refusal(self.check, headers)) is not None:
+            raise Refused(*refused)
         try:
             thread = await self.lookup(workspace, slug)
         except Unavailable as e:
@@ -239,7 +235,7 @@ class Chats:
         """What the runner knows of the chat's browser."""
         r = self.runner
         tab = r.threads.get((workspace, thread))
-        r.prune_asked()
+        r.login_requests.prune()
         asked = sorted(
             (
                 q
@@ -270,7 +266,7 @@ class Chats:
                     "card": f"{cards}/_live/browser/login/{q.id}.png",
                     "page": f"{cards}/_live/browser/login/{q.id}",
                     "site": registrable(q.site),
-                    "state": r.asked_state(q),
+                    "state": r.login_requests.asked_state(q),
                 }
                 for q in asked
             ],

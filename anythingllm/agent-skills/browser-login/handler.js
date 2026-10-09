@@ -39,7 +39,7 @@ module.exports.runtime = {
       const args = { login: String(login ?? "") };
       if (what === "login") Object.assign(args, { user_ref: String(user_ref ?? ""), pass_ref: String(pass_ref ?? "") });
       else args.ref = String(ref ?? "");
-      if (what !== "passkey") args.submit = asFlag(submit) === true;
+      if (what !== "passkey") args.submit = asFlag(submit);
       let r = await request(what, args);
       if (r.approval) {
         const until = Date.now() + MAX_WAIT_MS;

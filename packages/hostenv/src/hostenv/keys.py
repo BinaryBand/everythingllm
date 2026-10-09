@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Awaitable, Callable
+from http import HTTPStatus
 from typing import Any
 
 log = logging.getLogger("hostenv.keys")
@@ -26,6 +27,13 @@ log = logging.getLogger("hostenv.keys")
 REFUSED = "No valid api key found."  # AnythingLLM's own words, as the relay answers
 REMEMBER = 60.0  # seconds a good key is remembered
 TIMEOUT = 10
+# For a route a client's web build calls with its key: any origin, the key in a header.
+CLIENT_CORS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Authorization",
+    "Access-Control-Allow-Methods": "GET, POST",
+    "Access-Control-Max-Age": "600",
+}
 
 # None for a good key, else the status and error to answer with.
 Check = Callable[[str], Awaitable[tuple[int, str] | None]]
@@ -47,6 +55,18 @@ def get_json(url: str, headers: dict[str, str]) -> tuple[int, Any]:
         return status, json.loads(body)
     except ValueError:
         return status, None
+
+
+async def refusal(check: Check, headers: dict[str, str]) -> tuple[str, str] | None:
+    """The status line and error that refuse a request whose `Authorization: Bearer` key
+    is missing or not good, or None once `check` has passed it."""
+    scheme, _, key = headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not key.strip():
+        return "401 Unauthorized", REFUSED
+    if (refused := await check(key.strip())) is not None:
+        status, error = refused
+        return f"{status} {HTTPStatus(status).phrase}", error
+    return None
 
 
 class KeyCheck:

@@ -152,9 +152,7 @@ def host_problems(host: str) -> tuple[str, str]:
 def set_up(app: apps.App) -> bool:
     """Whether the app's routes are wanted: always, unless it's one `install` leaves out
     (why_not_installed), which counts once one of its units is running."""
-    return not app.why_not_installed or any(
-        active(u) for u in app.all_units if not u.endswith(".timer")
-    )
+    return not app.why_not_installed or any(active(u) for u in app.services)
 
 
 def route_report(registry: dict[str, apps.App], host: str) -> tuple[list[str], bool]:
@@ -220,9 +218,8 @@ def setup(app: apps.App) -> None:
     # enable` refuses one, so it's only restarted. One deployed by something else is
     # left to that.
     units = [*app.units, *(app.container_units if app.managed else [])]
-    guard = apps.guarded({app.name: app})
     for unit in units:
-        if unit in guard and not run_guard.ok_to_restart(unit):
+        if unit in run_guard.GUARDED and not run_guard.ok_to_restart(unit):
             raise SystemExit(f"appctl: left {unit} running")
     if units:
         systemctl("restart", *units)
@@ -317,17 +314,15 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(0 if routes(registry, public_host()) else 1)
     elif args.cmd == "logs":
         app = app_named(registry, args.app)
-        units = [u for u in app.all_units if not u.endswith(".timer")]
-        cmd = ["journalctl", "--user", "-f", *(f"-u{u}" for u in units)]
+        cmd = ["journalctl", "--user", "-f", *(f"-u{u}" for u in app.services)]
         os.execvp(cmd[0], cmd)
     elif args.cmd == "health":
         for name, url in apps.health_checks(registry):
             print(f"{name}|{url}")
     elif args.cmd == "units":
         for app in registry.values():
-            for unit in app.all_units:
-                if not unit.endswith(".timer"):
-                    print(unit)
+            for unit in app.services:
+                print(unit)
     elif args.cmd == "sockets":
         runners = apps.runners(registry)
         folder = storage() / "everythingllm"

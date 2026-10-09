@@ -186,8 +186,8 @@ def write_variable(live: dict | None, value: str) -> None:
 def print_text_diff(label: str, old: str, new: str) -> None:
     sys.stdout.writelines(
         difflib.unified_diff(
-            (old + "\n").splitlines(keepends=True),
-            (new + "\n").splitlines(keepends=True),
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
             f"live/{label}",
             f"repo/{label}",
         )
@@ -199,7 +199,9 @@ def diff() -> bool:
     unset = unset_skills()
     if (live := planned_default()) is not None:
         changed = True
-        print_text_diff("system-prompt/default", live.strip(), repo_block())
+        print_text_diff(
+            "system-prompt/default", live.strip() + "\n", repo_block() + "\n"
+        )
     if (variable := planned_variable()) is not None:
         changed = True
         live_var, value = variable
@@ -209,14 +211,7 @@ def diff() -> bool:
         old = dest.read_text() if dest.exists() else ""
         if old != text:
             changed = True
-            sys.stdout.writelines(
-                difflib.unified_diff(
-                    old.splitlines(keepends=True),
-                    text.splitlines(keepends=True),
-                    f"live/{dest.relative_to(STORAGE)}",
-                    f"repo/{dest.relative_to(STORAGE)}",
-                )
-            )
+            print_text_diff(str(dest.relative_to(STORAGE)), old, text)
     for path, app in planned_removals(unset).items():
         changed = True
         print(f"remove live/{path.relative_to(STORAGE)}: {app} isn't set up here")

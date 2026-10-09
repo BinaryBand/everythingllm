@@ -684,42 +684,6 @@ class Runner(hostrpc.Service):
         tab.moved(f"Waiting for your login for {site}")
         return {"request": req.id, "site": site, "card": self.login_card(req)}
 
-    # The requests for logins (browser.logins), for live, chats and takeover.
-
-    def waiting(self, req: LoginRequest) -> bool:
-        return self.login_requests.waiting(req)
-
-    def asked_left(self, req: LoginRequest) -> float:
-        return self.login_requests.asked_left(req)
-
-    def asked_state(self, req: LoginRequest) -> str:
-        return self.login_requests.asked_state(req)
-
-    def prune_asked(self) -> None:
-        self.login_requests.prune()
-
-    def asked_by_id(self, request: str) -> LoginRequest | None:
-        return self.login_requests.by_id(request)
-
-    async def fulfil(
-        self,
-        req: LoginRequest,
-        site: str,
-        username: str,
-        password: str,
-        totp: str,
-        ask: bool,
-    ) -> dict[str, Any]:
-        return await self.login_requests.fulfil(
-            req, site, username, password, totp, ask
-        )
-
-    def decline(self, req: LoginRequest) -> None:
-        self.login_requests.decline(req)
-
-    def answer_asked(self, req: LoginRequest, state: str, last: str) -> None:
-        self.login_requests.answer_asked(req, state, last)
-
     async def usable(
         self, scope: dict[str, Any], login: str, kind: str
     ) -> tuple[Session, Tab, dict[str, Any]]:
@@ -1014,7 +978,8 @@ class Runner(hostrpc.Service):
         if s.control == "user":
             return "waiting" if s.asked else "user"
         if any(a.thread == tab.thread for a in s.approvals.values()) or any(
-            r.tab == tab.id and self.waiting(r) for r in self.asked.values()
+            r.tab == tab.id and self.login_requests.waiting(r)
+            for r in self.asked.values()
         ):
             return "waiting"
         key = (tab.workspace, tab.thread)

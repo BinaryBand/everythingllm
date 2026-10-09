@@ -147,6 +147,25 @@ def _http(value) -> str:
     return text if text.startswith(("http://", "https://")) else ""
 
 
+def _collect(
+    data: dict, limit: int, pick: Callable[[dict], tuple[str, dict] | None]
+) -> list[dict]:
+    """The first `limit` rows `pick` makes of the results, each once by its key; `pick`
+    gives None for a result to skip. No rows at all is a failure if SearXNG says why."""
+    seen, results = set(), []
+    for r in data.get("results") or []:
+        picked = pick(r or {})
+        if picked is None or picked[0] in seen:
+            continue
+        seen.add(picked[0])
+        results.append(picked[1])
+        if len(results) >= limit:
+            break
+    if not results:
+        _no_results(data)
+    return results
+
+
 def make_search(
     url: str, client: httpx.Client, gap: float = 2.0, limit: int = 8
 ) -> Search:
@@ -154,26 +173,19 @@ def make_search(
     `limit`, paced as `_searcher` says."""
     ask = _searcher(url, client, gap)
 
+    def pick(r: dict) -> tuple[str, dict] | None:
+        link = _http(r.get("url"))
+        if not link:
+            return None
+        row = {
+            "title": str(r.get("title") or link),
+            "url": link,
+            "snippet": str(r.get("content") or ""),
+        }
+        return link, row
+
     def search(query: str) -> list[dict]:
-        data = ask(query)
-        seen, results = set(), []
-        for r in data.get("results") or []:
-            link = _http((r or {}).get("url"))
-            if not link or link in seen:
-                continue
-            seen.add(link)
-            results.append(
-                {
-                    "title": str(r.get("title") or link),
-                    "url": link,
-                    "snippet": str(r.get("content") or ""),
-                }
-            )
-            if len(results) >= limit:
-                break
-        if not results:
-            _no_results(data)
-        return results
+        return _collect(ask(query), limit, pick)
 
     return search
 
@@ -191,22 +203,20 @@ def make_image_search(
     searches through the same SearXNG."""
     ask = _searcher(url, client, gap, categories="images", safesearch=1)
 
+    def pick(r: dict) -> tuple[str, dict] | None:
+        full, thumb = _http(r.get("img_src")), _http(r.get("thumbnail_src"))
+        if not (full or thumb):
+            return None
+        page = _http(r.get("url")) or full or thumb
+        title = str(r.get("title") or "").strip()
+        return full or thumb, {
+            "title": title,
+            "page": page,
+            "thumb": thumb,
+            "full": full,
+        }
+
     def search(query: str) -> list[dict]:
-        data = ask(query)
-        seen, results = set(), []
-        for r in data.get("results") or []:
-            r = r or {}
-            full, thumb = _http(r.get("img_src")), _http(r.get("thumbnail_src"))
-            if not (full or thumb) or (full or thumb) in seen:
-                continue
-            seen.add(full or thumb)
-            page = _http(r.get("url")) or full or thumb
-            title = str(r.get("title") or "").strip()
-            results.append({"title": title, "page": page, "thumb": thumb, "full": full})
-            if len(results) >= limit:
-                break
-        if not results:
-            _no_results(data)
-        return results
+        return _collect(ask(query), limit, pick)
 
     return search

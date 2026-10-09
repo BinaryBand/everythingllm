@@ -327,7 +327,7 @@ class Takeover:
         """A login request's form, its files, its state and its POSTs."""
         r = self.runner
         request, slash, rest = what.partition("/")
-        asked = r.asked_by_id(request) if request.startswith("lr-") else None
+        asked = r.login_requests.by_id(request) if request.startswith("lr-") else None
         if asked is None:
             return await live.send(
                 writer,
@@ -346,12 +346,12 @@ class Takeover:
                 await req.read_body(reader)
                 body = req.body
                 if rest == "save":
-                    await r.fulfil(
+                    await r.login_requests.fulfil(
                         asked, text(body, "site"), text(body, "username"),
                         text(body, "password"), text(body, "totp"), body.get("ask") is True,
                     )  # fmt: skip
                 elif rest == "drop":
-                    r.decline(asked)
+                    r.login_requests.decline(asked)
                 else:
                     return await live.send(writer, "404 Not Found", b"No such thing.\n")
             except live.BadRequest as e:
@@ -362,7 +362,7 @@ class Takeover:
         if req.method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET or POST.\n")
         if rest == "":
-            state = r.asked_state(asked)
+            state = r.login_requests.asked_state(asked)
             options = "".join(
                 f'<option value="{html.escape(site)}">{html.escape(site)}</option>'
                 for site in asked.sites
@@ -392,7 +392,7 @@ class Takeover:
         await live.send(writer, "404 Not Found", b"No such thing.\n")
 
     def asked_state(self, asked) -> dict:
-        state = self.runner.asked_state(asked)
+        state = self.runner.login_requests.asked_state(asked)
         return {
             "state": state,
             "site": asked.site,
@@ -469,7 +469,7 @@ class Takeover:
         asked = [
             {"id": a.id, "site": a.site, "link": f"/login/{a.id}/"}
             for a in self.runner.asked.values()
-            if a.workspace == s.workspace and self.runner.waiting(a)
+            if a.workspace == s.workspace and self.runner.login_requests.waiting(a)
         ]
         try:
             logins = await asyncio.to_thread(self.runner.vault.logins, s.workspace)

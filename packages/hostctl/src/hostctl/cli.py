@@ -233,7 +233,7 @@ def sandbox_images() -> None:
     egress_net()
 
 
-def internal_network(name: str, subnet: str, ip_range: str = "") -> None:
+def internal_network(name: str, subnet: str, ip_range: str) -> None:
     """Create a podman network with no route out and no DNS, unless it exists as asked.
     `ip_range` is where podman picks an address for a container that names none, so one
     can't take a stopped service's address and its egress profile: a network made without
@@ -242,7 +242,7 @@ def internal_network(name: str, subnet: str, ip_range: str = "") -> None:
         if network_matches(name, subnet, ip_range):
             return
         print(
-            f"{name} isn't on {subnet} with addresses from {ip_range or 'all of it'}; making it again"
+            f"{name} isn't on {subnet} with addresses from {ip_range}; making it again"
         )
         if run("podman", "network", "rm", name, check=False):
             raise SystemExit(
@@ -250,14 +250,14 @@ def internal_network(name: str, subnet: str, ip_range: str = "") -> None:
             )
     run(
         "podman", "network", "create", "--internal", "--disable-dns",
-        "--subnet", subnet, *(["--ip-range", ip_range] if ip_range else []),
+        "--subnet", subnet, "--ip-range", ip_range,
         name,
     )  # fmt: skip
 
 
 def network_matches(name: str, subnet: str, ip_range: str) -> bool:
     """Whether podman's network `name` has the one subnet `subnet`, and gives out
-    addresses only from `ip_range` (all of the subnet when it's "")."""
+    addresses only from `ip_range`."""
     out = subprocess.run(
         ["podman", "network", "inspect", name, "--format", "json"],
         capture_output=True, text=True, check=True,
@@ -266,8 +266,6 @@ def network_matches(name: str, subnet: str, ip_range: str) -> bool:
     if [s.get("subnet") for s in subnets] != [subnet]:
         return False
     lease = subnets[0].get("lease_range")
-    if not ip_range:
-        return not lease
     pool = ipaddress.ip_network(ip_range)
     return bool(lease) and all(
         ipaddress.ip_address(lease.get(end, "0.0.0.0")) in pool

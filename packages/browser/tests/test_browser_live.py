@@ -7,10 +7,10 @@ import json
 
 import pytest
 from browser import live
-from hostenv import keys
 from browser.runner import Runner
 from browser_fakes import Clock, FakePodman, config, jpeg, scope
 from chatimage import THEMES
+from hostenv import keys
 from PIL import Image
 
 
@@ -159,7 +159,7 @@ def test_a_login_requests_card_shows_how_it_stands_and_links_to_its_form(tmp_pat
             # The stream sends the answer, then ends.
             reader, writer = await get(port, f"/_live/browser/login/{req.id}.png")
             await first_frame(reader)
-            await r.fulfil(req, "linkedin.com", "alice", "pw", "", False)
+            await r.login_requests.fulfil(req, "linkedin.com", "alice", "pw", "", False)
             rest = await asyncio.wait_for(reader.read(), 5)
             assert rest.count(b"Content-Type: image/png") == 1 and rest.endswith(
                 b"--\r\n"
@@ -283,7 +283,7 @@ def test_a_client_with_a_key_gets_its_chats_cards_and_how_they_stand(tmp_path):
                     "state": "waiting",
                 }
             ]
-            r.decline(r.asked[asked["request"]])
+            r.login_requests.decline(r.asked[asked["request"]])
             _, body = await ask(port, route, key="GOOD")
             assert body["logins"][0]["state"] == "declined"
             _, body = await ask(port, "/chat/career/chat-8", key="GOOD")

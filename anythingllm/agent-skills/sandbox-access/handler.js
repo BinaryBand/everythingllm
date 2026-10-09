@@ -5,7 +5,10 @@
 // AnythingLLM's UI, once the user approves it in AnythingLLM's own prompt
 // (requestToolApproval): anywhere else AnythingLLM answers "approved" without asking anyone
 // (a scheduled job, a skill set to run without asking, a channel with no prompt), so only
-// its "the user approved" answer counts.
+// its "the user approved" answer counts. An API chat (a client app) can't be asked there, so
+// the skill leaves a request on the host (the runner's access_ask) for the client to show and
+// answer with the user's own key; nothing here can approve it. The runner refuses a scheduled
+// job's, which has no one to ask.
 
 const { withSandbox } = require("../_lib/sandbox");
 const { asFlag, asInteger } = require("../_lib/runner");
@@ -88,11 +91,14 @@ module.exports.runtime = {
         );
       let approved = false;
       if (shown.needs_approval) {
-        if (!uiInvocation(this))
+        if (!uiInvocation(this)) {
+          await request("access_ask", { ...change, text: approval(shown, shown.would) });
           return (
-            "Error: sandbox access can only be turned on or raised from a chat in AnythingLLM's own window, where " +
-            "the user approves it. Tell the user to ask there."
+            "Waiting for the user: this chat can't show AnythingLLM's approval prompt, so the request is left for " +
+            "their app to show, where they approve or decline it. Nothing has changed yet. Tell the user to open the " +
+            "access request there, and don't ask again; when they say it's approved, check with this skill."
           );
+        }
         if (typeof this.requestToolApproval !== "function")
           return "Error: AnythingLLM gave this skill no way to ask the user, so nothing was turned on.";
         const answer = await this.requestToolApproval({

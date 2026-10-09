@@ -56,9 +56,11 @@ units = { "sandbox-runner.service" = "code sandbox runner" }
 before = ["python3 -m hostctl sandbox-images"]
 # A heavy run can go for two hours (sandbox.runner's run markers).
 guard = { runs = "sandbox/runs", noun = "Sandbox runs" }
-# The apps server (sandbox.appsweb): each app's live card, and its page's write-back.
+# The apps server (sandbox.appsweb): each app's live card, its page's write-back, and a
+# client's answers to requests for the workspace's access.
 serve = [
   { https = 8445, path = "/_live/apps", port = 8455 },
+  { https = 8445, path = "/_live/sandbox", port = 8455 },
   { https = 8447, path = "/_apps", port = 8455 },
 ]
 health = { "app cards" = "http://127.0.0.1:8455/_live/apps/" }

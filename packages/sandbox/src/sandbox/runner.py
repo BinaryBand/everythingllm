@@ -112,13 +112,14 @@ import hostrpc
 from hostrpc import safefs
 from runs import runlog
 
-from sandbox import apps, appsweb, pages, workspace
+from sandbox import accessreq, apps, appsweb, pages, workspace
 from sandbox import models as model_access
 from sandbox.access import (
     MAX_DAILY_TOKENS,
     NO_ACCESS,
     Access,
     read_access,
+    turns_on,
     valid_budget,
     write_access,
 )
@@ -205,6 +206,10 @@ class Runner(hostrpc.Service):
     # Notified whenever an app changes, for its live card (sandbox.appsweb).
     apps_changed: asyncio.Condition = field(default_factory=asyncio.Condition)
     _access_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Access a chat without AnythingLLM's prompt asked for, until a client answers.
+    access_requests: accessreq.AccessRequests = field(
+        default_factory=accessreq.AccessRequests
+    )
     # One heavy run at a time on the machine (containers.HEAVY's limits).
     _heavy: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1))
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict)
@@ -267,6 +272,34 @@ class Runner(hostrpc.Service):
         which the sandbox-access skill asks AnythingLLM for; turning it off needs nothing
         more."""
         s = self.scope(scope)
+        current, wanted, _ = self.access_change(s, web, models, daily_tokens, heavy)
+        on = turns_on(current, wanted)
+        out = {"workspace": s.workspace, **asdict(current)}
+        if wanted == current:
+            return {**out, "changed": False}
+        if apply is not True:
+            return {**out, "would": asdict(wanted), "needs_approval": on}
+        if on and approved is not True:
+            raise SandboxError(
+                "turning access on needs the user's approval in the chat, which the "
+                "sandbox-access skill asks for"
+            )
+        async with self._access_lock:
+            await self.set_access(s.workspace, wanted)
+        return {**out, **asdict(wanted), "changed": True}
+
+    async def set_access(self, workspace: str, wanted: Access) -> None:
+        """Writes the workspace's access; the caller holds _access_lock."""
+        await asyncio.to_thread(
+            write_access, self.config.access_file, workspace, wanted
+        )
+        log.info("access for %s: %s", workspace, asdict(wanted))
+
+    def access_change(
+        self, s: Scope, web: Any, models: Any, daily_tokens: Any, heavy: Any
+    ) -> tuple[Access, Access, dict[str, Any]]:
+        """The workspace's access, what it would be with the changes asked for, and the
+        changes."""
         if s.gateway:
             raise SandboxError(
                 "a gateway client's sandbox reaches only PyPI; its access can't change"
@@ -287,29 +320,51 @@ class Runner(hostrpc.Service):
             )
             if v is not None
         }
-        wanted = replace(current, **changes)
-        on = (
-            (wanted.web and not current.web)
-            or (wanted.models and not current.models)
-            or (wanted.heavy and not current.heavy)
-            or wanted.daily_tokens > current.daily_tokens
+        return current, replace(current, **changes), changes
+
+    async def op_access_ask(
+        self,
+        scope: dict[str, Any],
+        text: str,
+        web: Any = None,
+        models: Any = None,
+        daily_tokens: Any = None,
+        heavy: Any = None,
+    ) -> dict[str, Any]:
+        """For a chat that can't ask the user in AnythingLLM's own prompt (an API chat):
+        leaves a request to turn access on, with `text`, what the user is asked to
+        approve, for a client to show and answer (sandbox.accessreq, appsweb). Nothing
+        changes until then. Not for a scheduled job, which has no one to ask."""
+        s = self.scope(scope)
+        if s.workspace == "_jobs":
+            raise SandboxError("a scheduled job has no one to ask")
+        current, wanted, change = self.access_change(
+            s, web, models, daily_tokens, heavy
         )
-        out = {"workspace": s.workspace, **asdict(current)}
-        if wanted == current:
-            return {**out, "changed": False}
-        if apply is not True:
-            return {**out, "would": asdict(wanted), "needs_approval": on}
-        if on and approved is not True:
-            raise SandboxError(
-                "turning access on needs the user's approval in the chat, which the "
-                "sandbox-access skill asks for"
-            )
+        if not turns_on(current, wanted):
+            raise SandboxError("that change needs no approval")
+        if not isinstance(text, str) or not text.strip():
+            raise SandboxError("text must say what the user is asked to approve")
+        r = self.access_requests.ask(
+            s.workspace, s.thread, change, asdict(wanted), text.strip()
+        )
+        return {"workspace": s.workspace, **self.access_requests.view(r)}
+
+    async def answer_access(
+        self, workspace: str, request_id: str, approve: bool
+    ) -> dict[str, Any]:
+        """A client's answer to a request (sandbox.appsweb, after checking its key): the
+        change it asked for is applied to the access as it is now, or dropped. Raises
+        accessreq.NoRequest, accessreq.NotWaiting."""
         async with self._access_lock:
-            await asyncio.to_thread(
-                write_access, self.config.access_file, s.workspace, wanted
-            )
-        log.info("access for %s: %s", s.workspace, asdict(wanted))
-        return {**out, **asdict(wanted), "changed": True}
+            r = self.access_requests.waiting(workspace, request_id)
+            if approve:
+                current = await asyncio.to_thread(
+                    read_access, self.config.access_file, workspace
+                )
+                await self.set_access(workspace, replace(current, **r.change))
+            self.access_requests.answer(r, "approved" if approve else "declined")
+        return self.access_requests.view(r)
 
     # --- scopes (sandbox.workspace) ---
 

@@ -273,6 +273,7 @@ function uiChat(answer) {
 function accessRunner(web = false) {
   const now = { web, models: false, daily_tokens: 200000, heavy: false };
   return fakeRunner((op, args) => {
+    if (op === "access_ask") return { ok: true, result: { id: "ar-1", state: "waiting" } };
     if (op !== "access") return { ok: false, error: "?" };
     const would = { ...now };
     for (const k of ["web", "models", "daily_tokens", "heavy"]) if (args[k] !== undefined) would[k] = args[k];
@@ -322,12 +323,17 @@ test("sandbox-access never counts an approval AnythingLLM gave without asking", 
   try {
     const reply = await sandboxAccess.handler.call(uiChat({ approved: false, message: "Tool call was rejected by the user." }).self, { web: "on", apply: true });
     assert.match(reply, /Nothing changed: Tool call was rejected by the user\./);
-    // An API or Telegram chat (no invocation row) can't turn it on, and never asks.
+    // An API or Telegram chat (no invocation row) can't be asked here: it leaves a request
+    // for its client, with what the user is asked to approve, and turns nothing on.
     const api = uiChat({ approved: true, message: "User approved the tool execution." });
     delete api.self.super.handlerProps.invocation.uuid;
-    assert.match(await sandboxAccess.handler.call(api.self, { web: "on", apply: true }), /can only be turned on or raised from a chat in AnythingLLM's own window/);
+    assert.match(await sandboxAccess.handler.call(api.self, { web: "on", apply: true }), /^Waiting for the user.*Nothing has changed yet/);
     assert.equal(api.asked.length, 0);
-    assert.equal(runner.requests.filter((r) => r.args.apply).length, 0);
+    const left = runner.requests.filter((r) => r.op === "access_ask");
+    assert.equal(left.length, 1);
+    assert.equal(left[0].args.web, true);
+    assert.match(left[0].args.text, /reach public websites/);
+    assert.equal(left[0].args.approved, undefined);
   } finally {
     await runner.close();
   }

@@ -48,6 +48,16 @@ def valid_budget(daily_tokens: Any) -> bool:
     )
 
 
+def turns_on(current: Access, wanted: Access) -> bool:
+    """Whether `wanted` turns something on, or raises the budget: what needs the user."""
+    return (
+        (wanted.web and not current.web)
+        or (wanted.models and not current.models)
+        or (wanted.heavy and not current.heavy)
+        or wanted.daily_tokens > current.daily_tokens
+    )
+
+
 def read_access(file: Path, workspace: str) -> Access:
     """The workspace's access, from `file`; none when the file is missing or can't be read."""
     try:

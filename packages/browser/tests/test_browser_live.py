@@ -7,6 +7,7 @@ import json
 
 import pytest
 from browser import live
+from hostenv import keys
 from browser.runner import Runner
 from browser_fakes import Clock, FakePodman, config, jpeg, scope
 from chatimage import THEMES
@@ -418,7 +419,7 @@ def test_a_key_is_checked_with_anythingllm_and_a_good_one_remembered(monkeypatch
         asked.append((url, headers["Authorization"]))
         return answers[headers["Authorization"].removeprefix("Bearer ")], {}
 
-    monkeypatch.setattr(chats, "get_json", get_json)
+    monkeypatch.setattr(keys, "get_json", get_json)
     check = chats.KeyCheck("http://all.example", now=lambda: now[0])
 
     async def main():

@@ -51,8 +51,6 @@ Config (environment):
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import os
 import re
@@ -65,6 +63,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import hostenv
+from hostenv.keys import REFUSED, Check, KeyCheck, anythingllm_url, get_json
 
 from browser.origin import host_of, registrable
 from browser.tabs import site_of
@@ -86,65 +85,11 @@ CORS = {
     "Access-Control-Allow-Methods": "GET, POST",
     "Access-Control-Max-Age": "600",
 }
-REFUSED = "No valid api key found."  # AnythingLLM's own words, as the relay answers
-REMEMBER = 60.0  # seconds a good key, or a workspace's threads, is remembered
-TIMEOUT = 10
+REMEMBER = 60.0  # seconds a workspace's threads are remembered
 
-# None for a good key, else the status and error to answer with.
-Check = Callable[[str], Awaitable[tuple[int, str] | None]]
 # A thread's id from its workspace and slug (None: the main chat, MAIN), or None when the
 # workspace has no such thread or doesn't exist.
 Lookup = Callable[[str, str | None], Awaitable[str | None]]
-
-
-def anythingllm_url() -> str:
-    return os.environ.get("ANYTHINGLLM_URL", "http://127.0.0.1:3001").rstrip("/")
-
-
-def get_json(url: str, headers: dict[str, str]) -> tuple[int, Any]:
-    """A GET's status and JSON body (None if it isn't JSON), blocking."""
-    req = urllib.request.Request(url, headers={"Accept": "application/json", **headers})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
-            status, body = res.status, res.read()
-    except urllib.error.HTTPError as e:
-        status, body = e.code, e.read()
-    try:
-        return status, json.loads(body)
-    except ValueError:
-        return status, None
-
-
-class KeyCheck:
-    """Asks AnythingLLM whether a developer API key is good, remembering good ones by their
-    hash, so nothing here holds a key."""
-
-    def __init__(self, base_url: str | None = None, now=time.monotonic) -> None:
-        self.url = (base_url or anythingllm_url()) + "/api/v1/auth"
-        self.now = now
-        self.good: dict[bytes, float] = {}
-
-    async def __call__(self, key: str) -> tuple[int, str] | None:
-        digest = hashlib.sha256(key.encode()).digest()
-        now = self.now()
-        if self.good.get(digest, 0) > now:
-            return None
-        try:
-            status, _ = await asyncio.to_thread(
-                get_json, self.url, {"Authorization": f"Bearer {key}"}
-            )
-        except (urllib.error.URLError, OSError) as e:
-            # The exception's text can carry the URL; its class says enough for the log.
-            log.warning("checking a key failed: %s", type(e).__name__)
-            return 502, "AnythingLLM couldn't be reached to check the key."
-        if status in (401, 403):
-            return 403, REFUSED
-        if not 200 <= status < 300:
-            log.warning("checking a key answered %d", status)
-            return 502, f"AnythingLLM couldn't check the key ({status})."
-        self.good = {d: t for d, t in self.good.items() if t > now}
-        self.good[digest] = now + REMEMBER
-        return None
 
 
 class Unavailable(Exception):

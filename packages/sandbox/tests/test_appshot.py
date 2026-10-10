@@ -53,6 +53,7 @@ def test_the_container_has_no_network_and_sees_only_public(r, tmp_path):
         joined = " ".join(args)
         assert args[args.index("--network") + 1] == "none"
         assert "--dns" not in args and "proxy" not in joined
+        assert args[args.index("--tz") + 1] == "local"
         assert mounts(args) == {
             "/public": s.public,
             "/out": tmp_path / "run" / "out",

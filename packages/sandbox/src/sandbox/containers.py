@@ -307,6 +307,9 @@ def prepare_shot(scope: Scope, name: str, run_dir: Path) -> list[str]:
         "256m",
         "--network",
         "none",
+        # The machine's time zone, so a time the page shows is the user's, not UTC.
+        "--tz",
+        "local",
         "-v",
         f"{scope.public}:/public:{DATA_RO}",
         "-v",

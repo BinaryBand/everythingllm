@@ -5,41 +5,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Flashcards</title>
 <style>
-:root{--bg:oklch(0.982 0.008 75);--panel2:oklch(0.989 0.006 75);--line:oklch(0.895 0.014 75);--shadow:oklch(0.35 0.04 280 / 0.14);--hover:oklch(0.925 0.016 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
-@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel2:oklch(0.235 0.019 280);--line:oklch(0.36 0.022 280);--shadow:oklch(0 0 0 / 0.35);--hover:oklch(0.29 0.02 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
+:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--panel2:oklch(0.989 0.006 75);--line:oklch(0.895 0.014 75);--shadow:oklch(0.35 0.04 280 / 0.14);--hover:oklch(0.925 0.016 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--panel2:oklch(0.235 0.019 280);--line:oklch(0.36 0.022 280);--shadow:oklch(0 0 0 / 0.35);--hover:oklch(0.29 0.02 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
 *{box-sizing:border-box}
 [hidden]{display:none !important}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:480px;margin:0 auto;padding:20px 16px 32px;display:flex;flex-direction:column;gap:24px}
-h1{margin:0;font-size:22px;line-height:1.25}
+body{margin:0;background:var(--panel);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:480px;margin:0 auto;padding:20px 20px 32px;display:flex;flex-direction:column;gap:12px}
+h1{margin:0;font-size:22px;font-weight:600;line-height:1.25}
 p{margin:0}
 button{font:inherit;color:inherit;cursor:pointer}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 .caps{font-size:12px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .bar{height:6px;border-radius:99px;background:var(--line2);overflow:hidden}
 .bar i{display:block;height:6px;border-radius:99px;background:var(--accent)}
-.play,.done{display:flex;flex-direction:column;gap:14px}
-.stage{display:block;width:100%;height:280px;padding:0;border:0;background:none;perspective:1400px;text-align:left}
+.play{display:flex;flex-direction:column;gap:12px}
+.done{display:flex;flex-direction:column;gap:20px}
+.stage{display:block;width:100%;height:clamp(240px,62vw,300px);padding:0;border:0;background:none;perspective:1400px;text-align:left}
 .turn{position:relative;display:block;width:100%;height:100%;transform-style:preserve-3d}
 .turn.flipped{transform:rotateY(180deg);transition:transform 320ms cubic-bezier(.3,0,.2,1)}
-.face{position:absolute;inset:0;padding:18px 20px;border:1px solid var(--line);border-radius:20px;background:var(--panel2);box-shadow:0 8px 24px -12px var(--shadow);display:flex;flex-direction:column;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.face{position:absolute;inset:0;padding:16px 18px;border:1px solid var(--line);border-radius:20px;background:var(--panel2);box-shadow:0 8px 24px -12px var(--shadow);display:flex;flex-direction:column;backface-visibility:hidden;-webkit-backface-visibility:hidden}
 .face.back{transform:rotateY(180deg);border-color:var(--accent);background:var(--accent);color:var(--onaccent)}
 .face .caps{display:flex;justify-content:space-between}
-.face .word{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;font-size:clamp(34px,11vw,56px);font-weight:600;line-height:1.05;letter-spacing:-.02em;overflow-wrap:anywhere}
+.face .word{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;font-size:clamp(34px,13.3vw,60px);font-weight:600;line-height:1.05;letter-spacing:-.02em;overflow-wrap:anywhere}
 .face small{font-size:13px;text-align:center;color:var(--muted)}
 .face.back .caps,.face.back small{color:var(--onaccent);opacity:.85}
-.actions{display:flex;flex-direction:column;gap:12px}
+.actions{display:flex;flex-direction:column;gap:10px}
+.play .actions{margin-top:8px}
 .big{height:52px;padding:0 20px;border:0;border-radius:99px;background:var(--accent);color:var(--onaccent);font-size:16px;font-weight:600}
 .grades{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.grades button{display:flex;align-items:center;gap:10px}
+.grades button{display:flex;align-items:center;gap:8px}
 .grades button span{flex:1;text-align:left}
 .grades button small{font-size:16px;font-weight:400;font-variant-numeric:tabular-nums;opacity:.75}
 #miss{background:var(--hover);color:var(--ink)}
 #last{min-height:20px;font-size:13.5px;line-height:1.45;color:var(--muted)}
-.done>div:first-child{display:flex;flex-direction:column;gap:6px}
-#earned{font-size:72px;font-weight:700;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.done>div:first-child{display:flex;flex-direction:column;gap:4px}
+#earned{font-size:68px;font-weight:700;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
 .done dl{margin:0;border-top:1px solid var(--line2)}
-.done dl div{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line2);font-size:15px}
+.done dl div{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line2);font-size:15px}
 .done dt{color:var(--ink2)}
 .done dd{margin:0;font-weight:600;font-variant-numeric:tabular-nums}
 .muted{font-size:13.5px;color:var(--muted)}
@@ -52,10 +55,12 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 </head>
 <body>
 <main>
-  <h1 id="title">Flashcards</h1>
+  <header class="head">
+    <h1 class="caps" id="title">Flashcards</h1>
+    <span class="caps" id="leftText"></span>
+  </header>
   <p class="empty" id="empty" hidden>No cards yet. Ask in the chat to add some.</p>
   <section class="play" id="play" aria-label="This session">
-    <span class="caps" id="leftText"></span>
     <button class="stage" id="stage" type="button">
       <span class="turn" id="turn">
         <span class="face"><span class="caps"><span id="frontLabel"></span><span class="mark"></span></span><span class="word" id="front"></span><small id="hint"></small></span>
@@ -157,6 +162,7 @@ function draw() {
   byId("empty").hidden = cards.length > 0;
   const playing = cards.length > 0 && s.queue.length > 0;
   byId("play").hidden = !playing;
+  byId("leftText").hidden = !playing;
   byId("done").hidden = !cards.length || playing;
   if (playing) drawCard(s, total);
   else if (cards.length) drawDone(s, total);

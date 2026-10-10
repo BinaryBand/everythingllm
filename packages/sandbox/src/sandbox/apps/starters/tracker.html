@@ -9,9 +9,9 @@
 @media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
 *{box-sizing:border-box}
 [hidden]{display:none !important}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:480px;margin:0 auto;padding:20px 16px 32px;display:flex;flex-direction:column;gap:24px}
-h1{margin:0;font-size:22px;line-height:1.25}
+body{margin:0;background:var(--panel);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:480px;margin:0 auto;padding:20px 20px 32px;display:flex;flex-direction:column;gap:24px}
+h1{margin:0;font-size:22px;font-weight:600;line-height:1.25}
 header p{margin:2px 0 0;font-size:14px;color:var(--ink2)}
 button{font:inherit;color:inherit;cursor:pointer}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -30,10 +30,10 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #more{align-self:flex-start;min-height:44px;padding:0;border:0;background:none;display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
 #more svg{transition:transform .15s}
 #more[aria-expanded=true] svg{transform:rotate(90deg)}
-.grid{display:grid;grid-template-columns:minmax(0,1fr) repeat(7,26px);gap:6px;align-items:center}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) repeat(7,28px);gap:6px;align-items:center}
 .grid .head{font-size:11.5px;color:var(--muted);text-align:center}
 .grid .name{grid-row:span 2;font-size:15px;overflow-wrap:anywhere}
-.grid i{width:26px;height:26px;border-radius:8px;background:var(--line2)}
+.grid i{width:28px;height:28px;border-radius:8px;background:var(--line2)}
 .grid i.today{outline:2px solid var(--ink2);outline-offset:-2px}
 #status{margin:0;min-height:20px;font-size:13px;color:var(--muted)}
 #status.ok::before{content:"";display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:var(--ok)}

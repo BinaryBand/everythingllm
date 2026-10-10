@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pomodoro</title>
 <style>
-:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--panel2:oklch(0.989 0.006 75);--hover:oklch(0.925 0.016 75);--line:oklch(0.895 0.014 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
-@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--panel2:oklch(0.235 0.019 280);--hover:oklch(0.29 0.02 280);--line:oklch(0.36 0.022 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
+:root{--panel:oklch(0.995 0.003 75);--panel2:oklch(0.989 0.006 75);--hover:oklch(0.925 0.016 75);--line:oklch(0.895 0.014 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--panel:oklch(0.26 0.02 280);--panel2:oklch(0.235 0.019 280);--hover:oklch(0.29 0.02 280);--line:oklch(0.36 0.022 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--panel);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:440px;margin:0 auto;padding:20px 20px 32px;display:flex;flex-direction:column;align-items:center;gap:22px}
@@ -21,8 +21,9 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #clock{font:500 56px/1 ui-monospace,"JetBrains Mono",SFMono-Regular,Menlo,monospace;letter-spacing:-1px;font-variant-numeric:tabular-nums}
 #phase{font-size:13.5px;color:var(--muted)}
 .buttons{align-self:stretch;display:flex;gap:10px}
-#go{flex:1;min-height:48px;padding:0 20px;border:0;border-radius:16px;background:var(--accent);color:var(--onaccent);font-size:15.5px;font-weight:500}
-#reset{min-height:48px;padding:0 20px;border:1px solid var(--line);border-radius:16px;background:var(--panel);color:var(--ink);font-size:15.5px;font-weight:500}
+.buttons button{min-height:48px;padding:0 20px;border-radius:16px;font-size:15.5px;font-weight:500}
+#go{flex:1;border:0;background:var(--accent);color:var(--onaccent)}
+#reset{border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 .sessions{align-self:stretch;display:flex;align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:var(--panel2)}
 .sessions div{flex:1;min-width:0}
 .sessions b{display:block;font-size:15px;font-weight:500}

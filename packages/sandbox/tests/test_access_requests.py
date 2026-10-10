@@ -7,7 +7,7 @@ import json
 import pytest
 from hostenv.keys import REFUSED
 from sandbox import accessreq, appsweb, runner
-from test_runner import GATEWAY, A, B, cfg, go, make  # noqa: F401 - cfg is a fixture
+from test_runner import A, B, cfg, go, make  # noqa: F401 - cfg is a fixture
 
 TEXT = "Let this workspace's code runs reach public websites."
 
@@ -59,8 +59,6 @@ def test_an_api_chat_leaves_a_request_and_nothing_changes(r, cfg):  # noqa: F811
 
 
 def test_what_cant_be_asked_for(r):
-    with pytest.raises(runner.SandboxError, match="gateway client"):
-        ask(r, GATEWAY, web=True)
     with pytest.raises(runner.SandboxError, match="scheduled job"):
         ask(r, {"workspace": "_jobs", "thread": "default"}, web=True)
     with pytest.raises(runner.SandboxError, match="needs no approval"):

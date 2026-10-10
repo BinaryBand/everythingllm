@@ -16,12 +16,12 @@ and podman would mount wherever it points. Downloads land in <data>/downloads/<w
 without following a symlink (hostrpc.safefs), and says so in the thread's read.
 
 Each chat thread has its own tab there; a scope of {workspace, thread} says which, and comes
-from the skill's invocation, never the model. Gateway clients' `client-` workspaces have no
-browser. The container is hardened like a service container (read-only root, every
-capability dropped, keep-id, limits) and sits on egress-net at one of the browser profile's
-addresses (egress.toml), so its only way out is the egress proxy's public port: public
-hosts on 80 and 443, never the LAN, CGNAT (Tailscale's) or this machine. Chromium's own sandbox is
-off (it needs namespaces the container doesn't give), so the container is the boundary.
+from the skill's invocation, never the model. The container is hardened like a service
+container (read-only root, every capability dropped, keep-id, limits) and sits on egress-net
+at one of the browser profile's addresses (egress.toml), so its only way out is the egress
+proxy's public port: public hosts on 80 and 443, never the LAN, CGNAT (Tailscale's) or this
+machine. Chromium's own sandbox is off (it needs namespaces the container doesn't give), so
+the container is the boundary.
 
 The runner reaches the container through two Unix sockets in <data>/sockets/<slot>/: the
 driver's (browser.driver, hostrpc) and x11vnc's, which the take-over view (browser.takeover)

@@ -12,7 +12,7 @@ Apps are now pages the agent writes, with data the host keeps (2026-10-09; READM
 
 ## Checks left from 2026-10-08's changes
 
-Everything that could be done without a person is live: the runners, gateway, egress proxy and static server run the new code, the installed units match the templates, the skills, the default prompt and its version are deployed, and the apps' routes answer. Left:
+Everything that could be done without a person is live: the runners, egress proxy and static server run the new code, the installed units match the templates, the skills, the default prompt and its version are deployed, and the apps' routes answer. Left:
 
 - **The machine's route for the article writer.** `tailscale serve --https=8445 --set-path=/news/write off` (nothing listens on :8448 now).
 - **Apps in AnythingLLM's own chat and in Nilson:** the agent's side was tested on 2026-10-09 through the developer API (a list change, and a notes app and a reading log it wrote, driven in Chromium: saves, a second tab's sync, reloads, the card's `where`). Left: the card showing and moving in the web UI's chat and in Nilson.

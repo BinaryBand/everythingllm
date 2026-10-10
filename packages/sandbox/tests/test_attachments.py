@@ -12,8 +12,6 @@ from sandbox.runner import Runner
 from sandbox.workspace import Config
 from test_runner import A2, A, FakePodman, cfg, go, make, project, work  # noqa: F401
 
-CLIENT = {"workspace": "client-acme", "thread": "gateway", "gateway": True}
-
 
 @pytest.fixture
 def uploads(cfg, tmp_path):  # noqa: F811
@@ -251,13 +249,6 @@ def test_attachments_past_the_workspaces_limit_are_left_out(
     assert res["attachment_notes"] == [
         "b.csv wasn't copied: the workspace's sandbox is near its 0 MB limit"
     ]
-
-
-def test_a_gateway_clients_scope_gets_no_attachments(cfg, uploads):  # noqa: F811
-    files = [upload(uploads, "data.csv-1a.json", "data.csv", "a,b\n")]
-    res = run(make(cfg), CLIENT, attachments=files)
-    assert res["attachments"] == [] and res["attachment_notes"] == []
-    assert not attached(cfg, CLIENT).exists()
 
 
 def test_a_call_from_an_older_or_newer_skill_still_runs(cfg):  # noqa: F811

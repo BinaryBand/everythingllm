@@ -32,7 +32,7 @@ def test_import_skill_refuses_a_skill_holding_symlinks(sync, monkeypatch, tmp_pa
     live = tmp_path / "live"
     (live / "s").mkdir(parents=True)
     (live / "s" / "handler.js").write_text("x")
-    (live / "s" / "secret").symlink_to(tmp_path / "gateway.env")
+    (live / "s" / "secret").symlink_to(tmp_path / "agents.env")
     monkeypatch.setattr(sync, "LIVE_SKILLS", live)
     monkeypatch.setattr(sync, "REPO", tmp_path / "repo")
     with pytest.raises(SystemExit, match="symlinks"):

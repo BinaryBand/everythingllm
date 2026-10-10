@@ -1,13 +1,13 @@
-"""How AnythingLLM's skills and the MCP gateway talk to the services we run on the host.
+"""How AnythingLLM's skills talk to the services we run on the host.
 
 A service listens on a Unix socket in storage (hostenv.socket_path), which the container
 sees without a Quadlet change. One request per connection, each way a single line of JSON:
   -> {"op": "run", "args": {...}}
   <- {"ok": true, "result": {...}}  or  {"ok": false, "error": "..."}
 
-The services serve with `Service` and `serve`; the gateway's fronts ask with `request`
-(most through `caller`). The agent skills speak the same protocol from node, through
-anythingllm/agent-skills/_lib/hostrpc.js.
+The services serve with `Service` and `serve`, and Python asks one with `request` (the
+browser runner its driver, `agents-cli` agents-runner). The agent skills speak the same
+protocol from node, through anythingllm/agent-skills/_lib/hostrpc.js.
 
 It also holds what a service needs beside it: `atomic_write`, `local_peer`, which a
 service's HTTP server asks of each connection, and hostrpc.safefs, for opening files in
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import functools
 import inspect
 import ipaddress
 import json
@@ -33,7 +32,6 @@ from types import FunctionType
 from typing import Any
 
 LIMIT = 1 << 20  # longest line either side reads; a service can pass its own
-CALL_TIMEOUT = 55  # for an MCP tool's call; AnythingLLM gives up on one after 60 s
 
 
 class RunnerError(Exception):
@@ -140,54 +138,6 @@ def _result(reply: Any, name: str) -> Any:
     if not reply.get("ok"):
         raise RunnerError(reply.get("error") or "unknown error")
     return reply.get("result")
-
-
-def caller(
-    env: str,
-    name: str,
-    *,
-    error: type[Exception] = RunnerError,
-    timeout: float = CALL_TIMEOUT,
-    limit: int = LIMIT,
-):
-    """For an MCP server's tools: `async call(op, args)`, which asks the service whose
-    socket is $<env> (read at each call; the gateway sets it, gateway.app.host_sockets) and
-    raises `error` (the server's ToolError) with RunnerError's text."""
-
-    async def call(op: str, args: dict[str, Any]) -> Any:
-        try:
-            socket = os.environ.get(env)
-            if not socket:
-                raise Unreachable(f"The {name}'s socket isn't set (${env}).")
-            return await request(socket, op, args, timeout, name=name, limit=limit)
-        except RunnerError as e:
-            raise error(str(e)) from e
-
-    return call
-
-
-def forwarder(call: Callable, register: Callable[[Callable], Any]):
-    """A decorator for an MCP server's tools: the decorated function's signature and
-    docstring describe the tool (register is the server's add_tool), and calling it sends
-    op=<its name>, args=<every parameter, defaults applied> through `call` (from caller),
-    so a tool is written as a signature with no body. The decorator's `registered` lists
-    what it registered, which the gateway serves again over HTTP."""
-
-    def decorate(fn):
-        sig = inspect.signature(fn)
-
-        @functools.wraps(fn)
-        async def forward(*args, **kwargs):
-            bound = sig.bind(*args, **kwargs)
-            bound.apply_defaults()
-            return await call(fn.__name__, dict(bound.arguments))
-
-        register(forward)
-        decorate.registered.append(forward)
-        return forward
-
-    decorate.registered = []
-    return decorate
 
 
 class Service:

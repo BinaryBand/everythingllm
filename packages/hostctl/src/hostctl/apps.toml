@@ -106,11 +106,3 @@ serve = [{ https = 8445, path = "/_live/agents", port = 8451 }]
 health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-00000000.png" }
 why_not_installed = "it needs a developer API key in ~/.config/everythingllm/agents.env first"
 skills = ["delegate", "memories", "remind-once", "schedule-job", "scheduled-jobs", "update-prompt"]
-
-[gateway]
-summary = "the MCP gateway: the runners' MCP tools for clients other than AnythingLLM (https :8452)"
-units = { "gateway.service" = "MCP gateway" }
-before = ["python3 -m hostctl.gateway_env"]
-serve = [{ https = 8452, port = 8452 }]
-health = { "MCP gateway" = "http://127.0.0.1:8452/health" }
-why_not_installed = "it opens the runners to other MCP clients on the network, so it's set up when one is wanted"

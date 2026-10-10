@@ -10,7 +10,6 @@ import pytest
 from sandbox import containers, runner
 from sandbox.errors import Busy
 from test_runner import (  # noqa: F401 - cfg is a fixture
-    GATEWAY,
     A,
     B,
     FakePodman,
@@ -48,7 +47,7 @@ async def finished(r, scope, run):
     return run
 
 
-def test_heavy_runs_need_approval_and_a_gateway_client_cant_have_them(cfg):  # noqa: F811
+def test_heavy_runs_need_approval(cfg):  # noqa: F811
     r = make(cfg)
     shown = go(r.op_access(A, heavy=True))
     assert shown["would"]["heavy"] is True and shown["needs_approval"] is True
@@ -60,8 +59,6 @@ def test_heavy_runs_need_approval_and_a_gateway_client_cant_have_them(cfg):  # n
     assert off["heavy"] is False
     with pytest.raises(runner.SandboxError, match="must be true, false"):
         go(r.op_access(A, heavy="lots"))
-    with pytest.raises(runner.SandboxError, match="gateway client"):
-        go(r.op_access(GATEWAY, heavy=True, apply=True, approved=True))
 
 
 def test_a_long_run_of_a_heavy_workspace_gets_more_cpu_memory_and_time(cfg):  # noqa: F811

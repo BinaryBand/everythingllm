@@ -18,7 +18,6 @@ from test_runner import (  # noqa: F401 - cfg is a fixture
     public,
 )
 
-GATEWAY = {"workspace": "client-laptop", "thread": "gateway", "gateway": True}
 PAGE = '<!doctype html><title>Notes</title><script src="app.js"></script><script>App.start(/*APP*/null);</script>'
 
 
@@ -423,12 +422,10 @@ def test_what_the_op_refuses(r, args, error):
         go(r.op_app(A, **args))
 
 
-def test_a_second_create_and_a_gateway_client_are_refused(r):
+def test_a_second_create_is_refused(r):
     go(r.op_app(A, "create", "todo", starter="list"))
     with pytest.raises(runner.SandboxError, match="already"):
         go(r.op_app(A, "create", "todo", starter="list"))
-    with pytest.raises(runner.SandboxError, match="gateway client"):
-        go(r.op_app(GATEWAY, "list"))
 
 
 def test_a_run_that_edits_an_apps_data_or_page_renders_it_again(cfg):  # noqa: F811

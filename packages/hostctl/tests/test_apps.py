@@ -162,7 +162,6 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     from agents.runner import Settings as AgentsSettings
     from browser.config import LIVE_PORT as BROWSER_LIVE_PORT
     from browser.config import TAKEOVER_PORT as BROWSER_TAKEOVER_PORT
-    from gateway.app import Config as GatewayConfig
     from publicweb.pages import SEARXNG
     from research.job import Settings as ResearchSettings
     from sandbox.appsweb import PORT as APPS_PORT
@@ -173,7 +172,6 @@ def test_the_ports_are_the_ones_the_code_and_units_use():
     assert port_of("agents", "/_live/agents") == AgentsSettings.live_port
     assert port_of("browser", "/_live/browser") == BROWSER_LIVE_PORT
     assert port_of("browser") == BROWSER_TAKEOVER_PORT
-    assert port_of("gateway") == GatewayConfig.port
     pages = {m.port for app, m in apps.serve_mappings() if app == "pages"}
     assert hostenv.PAGES_PORT in pages
     assert f":{port_of('searxng')}/" in SEARXNG

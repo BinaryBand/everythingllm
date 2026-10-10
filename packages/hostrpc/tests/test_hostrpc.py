@@ -129,46 +129,22 @@ class Picky(hostrpc.Service):
         return n
 
 
-class Refused(Exception):
-    pass
-
-
-def test_a_front_calls_through_caller_and_gets_the_services_errors(sock, monkeypatch):
-    monkeypatch.setenv("PICKY_SOCKET", str(sock))
-    call = hostrpc.caller("PICKY_SOCKET", "picky service", error=Refused)
+def test_a_services_own_errors_reach_the_caller_as_they_are(sock):
+    def call(n):
+        return hostrpc.request(sock, "check", {"n": n}, 5, name="picky service")
 
     async def main():
         async with hostrpc.serving(Picky(), sock):
-            ok = await call("check", {"n": 2})
-            with pytest.raises(
-                Refused, match="n must be positive"
-            ):  # an `errors` one, not "runner error"
-                await call("check", {"n": -1})
+            ok = await call(2)
+            # an `errors` one, not "runner error"
+            with pytest.raises(hostrpc.RunnerError, match="n must be positive"):
+                await call(-1)
             return ok
 
     assert asyncio.run(main()) == 2
     assert not sock.exists()  # serving() stops the service and it removes its socket
-    with pytest.raises(Refused, match="picky service isn't running"):
-        asyncio.run(call("check", {"n": 1}))
-    monkeypatch.delenv("PICKY_SOCKET")  # read at each call, never guessed
-    with pytest.raises(Refused, match=r"picky service's socket isn't set \(\$PICKY"):
-        asyncio.run(call("check", {"n": 1}))
-
-
-def test_a_forwarder_lists_what_it_registered():
-    added = []
-    tool = hostrpc.forwarder(lambda op, args: None, added.append)
-
-    @tool
-    async def first(a: int) -> str:
-        """First."""
-
-    @tool
-    async def second() -> str:
-        """Second."""
-
-    assert tool.registered == added == [first, second]
-    assert [f.__name__ for f in tool.registered] == ["first", "second"]
+    with pytest.raises(hostrpc.RunnerError, match="picky service isn't running"):
+        asyncio.run(call(1))
 
 
 def test_atomic_write_replaces_whole_and_cleans_up(tmp_path, monkeypatch):

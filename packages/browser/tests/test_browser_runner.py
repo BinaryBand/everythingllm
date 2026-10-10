@@ -43,11 +43,9 @@ def run(test):
         {"workspace": "career\n", "thread": "1"},
         {"workspace": "career", "thread": "1\n"},
         {"workspace": "../x", "thread": "1"},
-        {"workspace": "client-claude", "thread": "gateway"},
-        {"workspace": "career", "thread": "1", "gateway": True},
     ],
 )
-def test_a_scope_is_a_workspace_and_thread_and_never_a_gateway_clients(bad):
+def test_a_scope_is_a_workspace_and_thread(bad):
     with pytest.raises(RunnerError):
         check_scope(bad)
     assert check_scope({"workspace": "_jobs", "thread": "default"}) == (

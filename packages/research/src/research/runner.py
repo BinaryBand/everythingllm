@@ -4,14 +4,14 @@ service container (host/quadlet/research-runner.container.in).
 The skill (anythingllm/agent-skills/deep-research) asks over its socket (hostrpc):
 
   start(question, depth?, planner?, worker?, planner_fallback?, sub_questions?, title?,
-        owner?, scope?) -> {run_id, queued, card}
+        scope?) -> {run_id, queued, card}
 
 `sub_questions` is the calling agent's own split of the question (each a goal, or {goal,
 queries}), which the planner then doesn't make; `title` is the report's title with them.
-  wait(run_id, since=0, owner?)
+  wait(run_id, since=0)
                           up to WAIT seconds for news: {events (from `since` on), done,
                           result ({status, reply, sources}) once done}
-  runs(owner?)            the runs this runner holds: {run_id, question, started, done}
+  runs()                  the runs this runner holds: {run_id, question, started, done}
   images(query? | url?, count?, alt?)
                           pictures from the web for the chat, saved anew on the pages site
                           (research.images, for the image-search skill): up to `count`
@@ -19,11 +19,9 @@ queries}), which the planner then doesn't make; `title` is the report's title wi
                           page, source, width, height}], skipped}, `image` the Markdown
                           line to paste
 
-`owner` is a gateway client's (gateway.research adds it from the client's token): its runs
-are its own, and it sees no others (runs.service). The skill gives none and sees them all.
 `scope` is the chat the skill was called from ({workspace, thread}, _lib/scope.js): when a
 run from a workspace's chat ends, the Nilson app hears of it through ntfy (research.notify);
-a gateway client's run and a scheduled job's ("_jobs") tell no one.
+a scheduled job's runs ("_jobs") tell no one.
 
 `card` is the run's live progress card for the agent to paste (research.live, which
 this runner serves on its own port); "" without PUBLIC_HOST.
@@ -95,13 +93,9 @@ def check_split(sub_questions: Any, title: Any, depth: Any = None) -> None:
         raise RunnerError(f"title must be text of at most {MAX_TITLE} characters.")
 
 
-def told(owner: str | None, scope: Any) -> dict | None:
+def told(scope: Any) -> dict | None:
     """The chat told when the run ends, if any (see the module's docstring)."""
-    if (
-        owner is None
-        and isinstance(scope, dict)
-        and scope.get("workspace") not in (None, "", "_jobs")
-    ):
+    if isinstance(scope, dict) and scope.get("workspace") not in (None, "", "_jobs"):
         return scope
     return None
 
@@ -123,13 +117,11 @@ class Runner(RunService):
     async def op_start(
         self,
         question: str,
-        owner: str | None = None,
         scope: dict | None = None,
         **args,
     ) -> dict:
         """args: depth, planner, worker, planner_fallback, sub_questions, title
-        (job.Request's fields); None or "" takes the default. `owner`, `scope`: the
-        module's."""
+        (job.Request's fields); None or "" takes the default. `scope`: the module's."""
         if not isinstance(question, str) or not question.strip():
             raise RunnerError("No research question was given.")
         check_split(
@@ -139,8 +131,8 @@ class Runner(RunService):
             req = job.Request.of(question, **args)
         except TypeError as e:
             raise RunnerError(f"bad arguments for start: {e}") from None
-        run = self.new_run(req.question, owner)
-        if chat := told(owner, scope):
+        run = self.new_run(req.question)
+        if chat := told(scope):
             self.chats[run.id] = chat
         card = live.Live.card_line(self.settings.pages_url, run.id, req.question)
         req = replace(req, run_id=run.id, card=card)

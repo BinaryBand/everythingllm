@@ -250,10 +250,8 @@ class Runner(hostrpc.Service):
     # --- access (sandbox.access) ---
 
     def access(self, scope: Scope) -> Access:
-        """The workspace's access, from access_file; none for a gateway client's, and none
-        when the file is missing or can't be read."""
-        if scope.gateway:
-            return NO_ACCESS
+        """The workspace's access, from access_file; none when the file is missing or can't
+        be read."""
         return read_access(self.config.access_file, scope.workspace)
 
     async def op_access(
@@ -300,10 +298,6 @@ class Runner(hostrpc.Service):
     ) -> tuple[Access, Access, dict[str, Any]]:
         """The workspace's access, what it would be with the changes asked for, and the
         changes."""
-        if s.gateway:
-            raise SandboxError(
-                "a gateway client's sandbox reaches only PyPI; its access can't change"
-            )
         for name, value in (("web", web), ("models", models), ("heavy", heavy)):
             if value is not None and not isinstance(value, bool):
                 raise SandboxError(f"{name} must be true, false or left out")
@@ -374,7 +368,7 @@ class Runner(hostrpc.Service):
 
     def app_scope(self, workspace: str) -> Scope | None:
         """A workspace's scope for its apps, as an address names it (sandbox.appsweb): None
-        if it has no sandbox or is a gateway client's. Nothing is made."""
+        if it has no sandbox. Nothing is made."""
         return existing_scope(self.config, workspace)
 
     def lock(self, workspace: str) -> asyncio.Lock:
@@ -994,8 +988,6 @@ class Runner(hostrpc.Service):
         if action not in APP_ACTIONS:
             raise SandboxError(f"action must be one of: {', '.join(APP_ACTIONS)}")
         s = self.scope(scope)
-        if s.gateway:
-            raise SandboxError("a gateway client has no chat to show an app in")
         if action != "list" and not (isinstance(name, str) and SLUG_RE.fullmatch(name)):
             raise SandboxError(
                 "name must be 1-63 lowercase letters, digits or hyphens, e.g. 'groceries'"

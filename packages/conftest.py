@@ -39,8 +39,8 @@ def no_host_settings(monkeypatch, tmp_path_factory):
     ):
         monkeypatch.delenv(key, raising=False)
     # Nor does any test reach this machine's runners.
-    # Set, not just left out, so what a test sets with os.environ.setdefault (the
-    # gateway's host_sockets) is undone after it rather than left for the tests after.
+    # Set, not just left out, so what a test sets with os.environ.setdefault is undone
+    # after it rather than left for the tests after.
     for folder in ("sandbox", "agents", "research", "browser"):
         monkeypatch.setenv(
             f"{folder.upper()}_SOCKET", f"/nonexistent/{folder}/runner.sock"

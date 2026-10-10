@@ -151,10 +151,9 @@ def sync_attachments(
     /work/attachments/.manifest.json says which source each copy came from and what was
     written. When `known` (the skill's lookup was whole), a copy whose file is no
     longer attached goes, if it's unchanged; an edited one stays, as the chat's own. A
-    source that's gone is skipped, and its copy kept. A gateway client's scope has no
-    chat, and gets nothing. Nothing here follows a symlink: code in the sandbox can put
-    one anywhere in /work."""
-    if scope.gateway or not (attachments or known):
+    source that's gone is skipped, and its copy kept. Nothing here follows a symlink: code
+    in the sandbox can put one anywhere in /work."""
+    if not (attachments or known):
         return [], []
     notes: list[str] = []
     if not isinstance(attachments, list):

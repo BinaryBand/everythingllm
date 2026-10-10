@@ -24,7 +24,6 @@ TARGETS = [
     "test-skills",
     "apps",
     "routes",
-    "gateway-client",
     "sandbox-images",
     "service-images",
     "browser-images",
@@ -186,15 +185,6 @@ def test_import_takes_a_name_and_needs_one(ran):
     assert ran == ["sync import-skill weather"]
     with pytest.raises(SystemExit, match="import-skill"):
         cli.main(["import-skill"])
-
-
-def test_gateway_client_takes_the_clients_name(ran, monkeypatch):
-    added = []
-    monkeypatch.setattr(cli.gateway_env, "add_client", added.append)
-    cli.main(["gateway-client", "laptop"])
-    assert added == ["laptop"] and ran == []
-    with pytest.raises(SystemExit, match="gateway-client <name>"):
-        cli.main(["gateway-client"])
 
 
 def test_test_runs_without_host_env(ran, monkeypatch):

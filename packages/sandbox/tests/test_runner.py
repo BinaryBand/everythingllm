@@ -184,8 +184,6 @@ def test_each_workspace_writes_its_own_shared_folder_and_reads_the_others(cfg):
 
 # --- web access ---
 
-GATEWAY = {"workspace": "client-laptop", "thread": "gateway", "gateway": True}
-
 
 def test_a_workspace_reaches_the_web_only_once_the_user_approved_it(cfg):
     r = make(cfg)
@@ -225,15 +223,6 @@ def test_a_workspace_reaches_the_web_only_once_the_user_approved_it(cfg):
     go(r.op_run(A, "bash", "ls"))
     assert "ip=10.89.79.4" in " ".join(r.podman.runs()[2][0])
     assert "/shared/home" in mounts(r.podman.runs()[2][0])
-
-
-def test_a_gateway_client_reaches_only_pypi(cfg):
-    r = make(cfg)
-    cfg.access_file.parent.mkdir(parents=True)
-    cfg.access_file.write_text('{"client-laptop": {"web": true}}')
-    with pytest.raises(runner.SandboxError, match="gateway client"):
-        go(r.op_access(GATEWAY, web=True, apply=True, approved=True))
-    assert go(r.op_run(GATEWAY, "bash", "ls"))["web"] is False
 
 
 @pytest.mark.parametrize(
@@ -279,21 +268,6 @@ def test_another_workspaces_shared_folder_is_read_only_to_the_runner_too(cfg):
     (shared(cfg, B) / "peek").symlink_to(project(cfg, A))
     with pytest.raises(runner.SandboxError, match="outside /shared/home"):
         go(r.op_write(B, "/shared/home/peek/x", "x"))
-
-
-def test_client_workspaces_are_only_the_gateways(cfg):
-    """An AnythingLLM workspace named "Client Acme" (slug client-acme) can't share the
-    gateway client acme's sandbox: the skills never say gateway, and the gateway always
-    does, with a client- workspace."""
-    r = make(cfg)
-    with pytest.raises(runner.SandboxError, match="rename the workspace"):
-        go(r.op_write({"workspace": "client-acme", "thread": "default"}, "a", "x"))
-    with pytest.raises(runner.SandboxError, match="a gateway client's scope"):
-        go(r.op_write({**A, "gateway": True}, "a", "x"))
-    client = {"workspace": "client-acme", "thread": "gateway", "gateway": True}
-    go(r.op_write(client, "a", "x"))
-    assert (work(cfg, client) / "a").read_text() == "x"
-    assert not (cfg.root / "career").exists()
 
 
 def test_runs_in_different_workspaces_overlap(cfg, monkeypatch):

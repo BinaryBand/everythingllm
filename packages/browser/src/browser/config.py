@@ -29,7 +29,6 @@ from hostrpc import RunnerError
 
 PROFILE = "browser"  # egress.toml's profile, whose addresses the containers take
 REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/browser/src/browser/
-CLIENT_PREFIX = "client-"  # the MCP gateway's clients' sandboxes, which have no browser
 # As the sandbox's: workspace slugs and thread ids.
 KEY_RE = re.compile(r"[a-z0-9_][a-z0-9_-]{0,99}")
 VAULT_KEY = Path("~/.config/everythingllm/browser-vault.key").expanduser()
@@ -94,6 +93,4 @@ def check_scope(scope: Any) -> tuple[str, str]:
     for what, key in (("workspace", workspace), ("thread", thread)):
         if not KEY_RE.fullmatch(key):
             raise RunnerError(f"bad {what} '{key}'")
-    if workspace.startswith(CLIENT_PREFIX) or scope.get("gateway"):
-        raise RunnerError("the MCP gateway's clients have no browser")
     return workspace, thread

@@ -26,7 +26,7 @@ from pathlib import Path
 
 import tomllib
 
-from hostctl import appctl, apps, gateway_env, machine, run_guard, units
+from hostctl import appctl, apps, machine, run_guard, units
 
 ROOT = units.ROOT
 SERVICE = "anythingllm.service"
@@ -211,14 +211,6 @@ def app_logs(app: str) -> None:
 )
 def routes() -> None:
     appctl.main(["routes"])
-
-
-@command(
-    "gateway-client",
-    "give an MCP gateway client a token (kept if it has one) and print its `claude mcp add` command: gateway-client <name>",
-)
-def gateway_client(name: str) -> None:
-    gateway_env.add_client(name)
 
 
 @command(

@@ -167,23 +167,23 @@ def test_a_name_on_loopback_fails_since_the_containers_cant_reach_it(
 
 
 def test_an_opt_in_app_thats_not_set_up_isnt_checked(monkeypatch, capsys):
-    asked = answers(monkeypatch, {"https://h.example:8452/": 502})
+    asked = answers(monkeypatch, {"https://h.example:8460/": 502})
     monkeypatch.setattr(appctl, "active", lambda unit: False)
-    gateway = appctl.apps.App(
-        "gateway",
+    notes = appctl.apps.App(
+        "notes",
         "x",
-        units={"gateway.service": "MCP gateway"},
-        serve=(Mapping(8452, 8452),),
+        units={"notes.service": "notes"},
+        serve=(Mapping(8460, 8460),),
         why_not_installed="opt-in",
     )
-    assert appctl.routes({"gateway": gateway}, "h.example") is True
+    assert appctl.routes({"notes": notes}, "h.example") is True
     assert asked == []
     assert capsys.readouterr().out == (
-        "  --    https://h.example:8452/ -> http://127.0.0.1:8452 (gateway, not set up)\n"
+        "  --    https://h.example:8460/ -> http://127.0.0.1:8460 (notes, not set up)\n"
     )
     # Once one of its units runs, it counts.
     monkeypatch.setattr(appctl, "active", lambda unit: True)
-    assert appctl.routes({"gateway": gateway}, "h.example") is False
+    assert appctl.routes({"notes": notes}, "h.example") is False
 
 
 def test_setup_runs_its_steps_restarts_and_says_its_routes(ran, monkeypatch, capsys):

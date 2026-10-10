@@ -3,8 +3,7 @@ hold (Usage) against the workspace's limits, the file helpers the runner uses on
 the runner's config (Config).
 
 A scope is where a call came from, {workspace, thread} as the skills in AnythingLLM pass it
-(never chosen by the model); its folders are made on first use. A gateway client's scope
-says "gateway": true, and its workspace is a CLIENT_PREFIX one. Paths into a scope's folders
+(never chosen by the model); its folders are made on first use. Paths into a scope's folders
 stay inside the caller's own (split, resolve), and the file helpers never follow a symlink
 or open a FIFO a run could have left.
 
@@ -58,10 +57,6 @@ log = logging.getLogger("sandbox-runner")
 PROFILE = "sandbox"  # egress.toml's profile, whose addresses the runs take
 WEB_PROFILE = "sandbox-web"  # its profile for the runs of a workspace with web access
 KEY_RE = re.compile(f"^{KEY}$")
-# The MCP gateway's clients' workspaces (gateway.sandbox): kept for scopes that say
-# "gateway": true, which AnythingLLM's skills never do, so a workspace someone happens to
-# name "Client X" can't share a gateway client's folders.
-CLIENT_PREFIX = "client-"
 SLUG_RE = re.compile(f"^{SLUG}$")
 REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/sandbox/src/sandbox/
 SYSTEM_THEMES = REPO / "packages" / "sandbox" / "zola" / "themes"  # the repo's themes
@@ -165,7 +160,6 @@ class Scope:
     thread: str
     home: Path
     public: Path
-    gateway: bool = False  # a gateway client's: no chat behind it
 
     @property
     def roots(self) -> dict[str, Path]:
@@ -188,20 +182,11 @@ def make_scope(config: Config, scope: dict[str, Any]) -> Scope:
     for what, key in (("workspace", workspace), ("thread", thread)):
         if not KEY_RE.match(key):
             raise SandboxError(f"bad {what} '{key}'")
-    gateway = scope.get("gateway") is True
-    if workspace.startswith(CLIENT_PREFIX) != gateway:
-        raise SandboxError(
-            f"a gateway client's scope is a '{CLIENT_PREFIX}' workspace"
-            if gateway
-            else f"workspace '{workspace}': names starting '{CLIENT_PREFIX}' are the "
-            "MCP gateway's clients' sandboxes; rename the workspace to use the sandbox"
-        )
     s = Scope(
         workspace,
         thread,
         config.root / workspace,
         config.public_root / workspace,
-        gateway,
     )
     for d in s.roots.values():
         d.mkdir(parents=True, exist_ok=True)
@@ -211,8 +196,8 @@ def make_scope(config: Config, scope: dict[str, Any]) -> Scope:
 
 def existing_scope(config: Config, workspace: str) -> Scope | None:
     """A workspace's scope as an address names it (its apps', sandbox.appsweb): None if it
-    has no sandbox or is a gateway client's. Nothing is made."""
-    if workspace.startswith(CLIENT_PREFIX) or not KEY_RE.fullmatch(workspace):
+    has no sandbox. Nothing is made."""
+    if not KEY_RE.fullmatch(workspace):
         return None
     s = Scope(
         workspace,

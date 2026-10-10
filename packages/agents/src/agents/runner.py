@@ -5,7 +5,7 @@ headless, in the workspace of its role (agents.profiles), and an optional `then`
 gets their results. Callers (the delegate skill, agents-run) ask over its socket:
 
   delegate(goal, tasks: [{name, profile, instructions, material?, tools?}],
-           then?: {profile, instructions, material?, tools?}, owner?, chat?)
+           then?: {profile, instructions, material?, tools?}, chat?)
                           -> {run_id, queued, card}, at once; `chat` ({workspace,
                           thread}, the delegate skill's) is told when it ends
                           (agents.postback)
@@ -13,13 +13,10 @@ gets their results. Callers (the delegate skill, agents-run) ask over its socket
                           when the deep research run `run_id` ends, put its report in
                           the workspace's documents and tell `chat`, if it's a chat in
                           the UI (the deep-research skill; agents.postback)
-  wait(run_id, since=0, owner?)
+  wait(run_id, since=0)
                           up to WAIT seconds for news: {events, done, result once done}
-  runs(owner?)            the delegations it holds: {run_id, goal, started, done}
-  cancel(run_id, owner?)  tasks that haven't started won't; running ones finish, unused
-
-`owner` is a gateway client's (gateway.agents adds it from the client's token): its
-delegations are its own, and it sees and cancels no others (runs.service).
+  runs()                  the delegations it holds: {run_id, goal, started, done}
+  cancel(run_id)          tasks that haven't started won't; running ones finish, unused
   update_prompt(scope, apply=False)
                           refresh the calling workspace's EverythingLLM block (hostenv.prompt)
                           from anythingllm/system-prompt.md, keeping its own text around it;
@@ -405,7 +402,6 @@ class Runner(RunService):
         goal: str,
         tasks: list,
         then: dict | None = None,
-        owner: str | None = None,
         chat: dict | None = None,
     ) -> dict:
         goal = str(goal or "").strip()
@@ -425,7 +421,7 @@ class Runner(RunService):
         if len(set(names)) != len(names):
             raise RunnerError("task names must differ")
         last = replace(task_of(then, "then"), name="then") if then else None
-        told = check_chat(chat) if chat is not None and owner is None else None
+        told = check_chat(chat) if chat is not None else None
         if sum(len(t.material) for t in [*parsed, *([last] if last else [])]) > (
             MAX_MATERIAL_TOTAL
         ):
@@ -447,7 +443,7 @@ class Runner(RunService):
                 "hours). Tell the user, or do the work yourself."
             )
         client = self.anythingllm()
-        run = self.new_run(goal, owner)
+        run = self.new_run(goal)
         if told:
             self.chats[run.id] = told
         card = AgentsLive.card_line(self.settings.pages_url, run.id, goal)
@@ -472,8 +468,8 @@ class Runner(RunService):
         can't reach AnythingLLM)."""
         return await self.following.add(run_id, chat, card, question, workspace)
 
-    async def op_cancel(self, run_id: str, owner: str | None = None) -> dict:
-        run = self.held(run_id, owner)
+    async def op_cancel(self, run_id: str) -> dict:
+        run = self.held(run_id)
         if not run.done:
             self.cancelled.add(run_id)
         return {"run_id": run_id, "cancelled": not run.done}

@@ -1,4 +1,4 @@
-# uv workspace for the host services, the MCP gateway and libraries: one member per packages/
+# uv workspace for the host services, hostctl and libraries: one member per packages/
 # subdirectory, all locked in uv.lock. `uv sync --all-packages` puts the dev venv at .venv,
 # where editors look.
 [tool.uv.workspace]
@@ -37,12 +37,3 @@ cache-dir = ".ruff_cache"
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
-
-# The gateway's fronts' tools are signatures whose bodies hostrpc.forwarder supplies.
-[[tool.ty.overrides]]
-include = [
-  "packages/gateway/src/gateway/agents.py",
-  "packages/gateway/src/gateway/research.py",
-  "packages/gateway/src/gateway/sandbox.py",
-]
-rules = { empty-body = "ignore" }

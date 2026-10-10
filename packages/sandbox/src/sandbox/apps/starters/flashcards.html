@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Flashcards</title>
 <style>
-:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--panel2:oklch(0.989 0.006 75);--line:oklch(0.895 0.014 75);--shadow:oklch(0.35 0.04 280 / 0.14);--hover:oklch(0.925 0.016 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
-@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--panel2:oklch(0.235 0.019 280);--line:oklch(0.36 0.022 280);--shadow:oklch(0 0 0 / 0.35);--hover:oklch(0.29 0.02 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
+:root{--bg:oklch(0.982 0.008 75);--panel2:oklch(0.989 0.006 75);--line:oklch(0.895 0.014 75);--shadow:oklch(0.35 0.04 280 / 0.14);--hover:oklch(0.925 0.016 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel2:oklch(0.235 0.019 280);--line:oklch(0.36 0.022 280);--shadow:oklch(0 0 0 / 0.35);--hover:oklch(0.29 0.02 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
 *{box-sizing:border-box}
 [hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -24,11 +24,10 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .turn.flipped{transform:rotateY(180deg);transition:transform 320ms cubic-bezier(.3,0,.2,1)}
 .face{position:absolute;inset:0;padding:18px 20px;border:1px solid var(--line);border-radius:20px;background:var(--panel2);box-shadow:0 8px 24px -12px var(--shadow);display:flex;flex-direction:column;backface-visibility:hidden;-webkit-backface-visibility:hidden}
 .face.back{transform:rotateY(180deg);border-color:var(--accent);background:var(--accent);color:var(--onaccent)}
-.face.back .caps{color:var(--onaccent);opacity:.85}
 .face .caps{display:flex;justify-content:space-between}
 .face .word{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;font-size:clamp(34px,11vw,56px);font-weight:600;line-height:1.05;letter-spacing:-.02em;overflow-wrap:anywhere}
 .face small{font-size:13px;text-align:center;color:var(--muted)}
-.face.back small{color:var(--onaccent);opacity:.85}
+.face.back .caps,.face.back small{color:var(--onaccent);opacity:.85}
 .actions{display:flex;flex-direction:column;gap:12px}
 .big{height:52px;padding:0 20px;border:0;border-radius:99px;background:var(--accent);color:var(--onaccent);font-size:16px;font-weight:600}
 .grades{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
@@ -116,6 +115,7 @@ const levelOf = (xp) => { let l = 1; while (levelStart(l + 1) <= xp) l++; return
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const goal = () => Math.max(1, Number(App.data.goal) || 12);
 const graded = (key) => App.data.days[key] || 0;
+const xpNow = () => Number(App.data.xp) || 0;
 
 function fresh(cards, missed = [], combo = 0) {
   const all = cards.map((_, i) => i);
@@ -159,7 +159,7 @@ function draw() {
   byId("play").hidden = !playing;
   byId("done").hidden = !cards.length || playing;
   if (playing) drawCard(s, total);
-  else if (cards.length) drawDone(s, total, levelOf(Number(d.xp) || 0));
+  else if (cards.length) drawDone(s, total);
 }
 
 function drawCard(s, total) {
@@ -189,7 +189,8 @@ function drawCard(s, total) {
   byId("hit").setAttribute("aria-label", `Got it: ${next} XP`);
 }
 
-function drawDone(s, total, level) {
+function drawDone(s, total) {
+  const level = levelOf(xpNow());
   byId("earned").textContent = `+${s.xp}`;
   const rows = [["Right first time", `${s.firstTry} of ${total}`], ["Cards graded", String(s.graded)],
     ["Longest run", `${s.best} in a row`], ["Now", `Level ${level} · ${plural(streak(), "day", "days")} in a row`]];
@@ -227,7 +228,7 @@ function grade(correct) {
   };
   const key = dayKey(ago(0));
   const today = graded(key) + 1;
-  const xp = (Number(d.xp) || 0) + gain;
+  const xp = xpNow() + gain;
   byId("last").textContent = correct
     ? `Got it · +${gain} XP · ${combo} in a row`
     : `Missed · ${d.cards[id].front} ${back ? `comes back after ${plural(back, "card", "cards")}` : "comes straight back"}`;
@@ -249,7 +250,7 @@ function startAgain() {
   change([
     { op: "test", path: "/session", value: d.session }, // so two open pages grade a card once
     { op: "add", path: "/session", value: next },
-    { op: "replace", path: "/card", value: cardFor(Number(d.xp) || 0, graded(dayKey(ago(0))), next) },
+    { op: "replace", path: "/card", value: cardFor(xpNow(), graded(dayKey(ago(0))), next) },
   ]);
 }
 

@@ -1,5 +1,6 @@
 """The sandbox's containers: running podman, and the podman arguments of a run's container
-(on egress-net, the egress proxy its only way out) and of a site build's (no network).
+(on egress-net, the egress proxy its only way out), of a site build's and of an app's
+picture's (both no network).
 
 Both are hardened alike (`hardening`): a read-only root, every capability dropped, no new
 privileges, a keep-id user namespace, and memory, CPU, process, file size and open file
@@ -29,13 +30,14 @@ DATA_RO = "ro,noexec,nosuid,nodev"
 
 @dataclass(frozen=True)
 class Limits:
-    """A run's CPUs, memory (swap none) and /tmp, as podman takes them, and its longest
-    timeout in seconds."""
+    """A run's CPUs, memory (swap none) and /tmp, as podman takes them, its longest
+    timeout in seconds, and how many processes and threads it may have."""
 
     cpus: str
     memory: str
     tmp: str
     max_timeout: int
+    pids: str = "256"
 
 
 NORMAL = Limits(cpus="1", memory="1g", tmp="256m", max_timeout=300)
@@ -50,7 +52,13 @@ def limits_for(access: Access, timeout: int) -> Limits:
     return HEAVY if access.heavy and timeout > NORMAL.max_timeout else NORMAL
 
 
+# An app's picture (sandbox.appshot): Chromium, which runs a thread pool or two per process.
+SHOT = Limits(cpus="1", memory="1g", tmp="256m", max_timeout=40, pids="1024")
 SITEBUILD = Path(__file__).with_name("sitebuild.py")  # the build helper, from the repo
+# An app's picture's script, run in the browser image.
+SHOOT = Path(__file__).with_name("apps") / "shoot.py"
+# Also browser.containers' IMAGE; the browser's setup builds it (hostctl browser-images).
+BROWSER_IMAGE = "localhost/everythingllm-browser"
 MODEL_CLIENT = Path(__file__).with_name("model_client.py")  # a run's way to ask a model
 MODELS_DIR = "/run/everythingllm"  # where a run with model access finds its socket
 OUTPUT_BYTES = 20_000  # per stream of a run
@@ -147,7 +155,7 @@ def hardening(name: str, limits: Limits = NORMAL) -> list[str]:
         "--cpus",
         limits.cpus,
         "--pids-limit",
-        "256",
+        limits.pids,
         "--ulimit",
         f"fsize={FILE_MAX_BYTES}:{FILE_MAX_BYTES}",
         "--ulimit",
@@ -279,8 +287,34 @@ def prepare_build(config: Config, name: str, scope: Scope, run_dir: Path) -> lis
         ),
         *read_only_mounts(config, scope.workspace),
         "-v",
-        f"{run_dir / 'out'}:/out:rw,noexec,nosuid,nodev",
+        f"{run_dir / 'out'}:/out:{DATA_RW}",
         "-v",
         f"{run_dir / 'code'}:/sandbox:ro",
         IMAGE,
+    ]
+
+
+def prepare_shot(scope: Scope, name: str, run_dir: Path) -> list[str]:
+    """An app's picture's container's podman arguments, up to the script's own: the browser
+    image with no network, the workspace's /public alone and read-only, an empty /out and
+    the script."""
+    (run_dir / "code").mkdir(parents=True)
+    (run_dir / "out").mkdir()
+    shutil.copyfile(SHOOT, run_dir / "code" / "shoot.py")
+    return [
+        *hardening(name, SHOT),
+        "--shm-size",
+        "256m",
+        "--network",
+        "none",
+        "-v",
+        f"{scope.public}:/public:{DATA_RO}",
+        "-v",
+        f"{run_dir / 'out'}:/out:{DATA_RW}",
+        "-v",
+        f"{run_dir / 'code'}:/sandbox:ro",
+        "--entrypoint",
+        "python3",
+        BROWSER_IMAGE,
+        "/sandbox/shoot.py",
     ]

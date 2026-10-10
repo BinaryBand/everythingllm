@@ -6,9 +6,11 @@ it does research's and the browser's cards:
   GET /_live/apps/<workspace>/<name>.png[?theme=light]
       the app's card, live (chatimage.live's server push): a frame now, and a new one
       whenever the app changes, through the app op, its page or a run's edit to its
-      data (and any other edit, looked for every POLL seconds), for at most MAX_STREAM. An app that's gone gets
-      one frame saying so, so an old chat's card doesn't break; one whose data can't be
-      used says that, and shows the app again once it's fixed.
+      data or page (and any other edit, looked for every POLL seconds), for at most
+      MAX_STREAM. A frame is a picture of the app's page (sandbox.appshot); until that's
+      taken, or when it can't be, the card drawn from its data comes first. An app
+      that's gone gets one frame saying so, so an old chat's card doesn't break; one
+      whose data can't be used says that, and shows the app again once it's fixed.
   GET /_live/apps/<workspace>/<name>
       a redirect to its page, on the workspace pages site (:8447).
 
@@ -52,7 +54,8 @@ import os
 import re
 import time
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import hostenv.keys
@@ -61,6 +64,7 @@ from chatimage import BAR, PAD, THEMES, WIDTH, font, frame, live
 from PIL import Image, ImageDraw
 
 from sandbox import apps
+from sandbox.appshot import Shots
 from sandbox.clientweb import ClientWeb
 from sandbox.errors import (
     BadToken,
@@ -98,6 +102,15 @@ def refusal(e: hostrpc.RunnerError) -> tuple[str, dict]:
     return STATUS.get(type(e), "400 Bad Request"), {"error": str(e)}
 
 
+def file_stamp(path: Path) -> tuple:
+    """A file's identity, time and size, without following a symlink; () when it's gone."""
+    try:
+        st = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return ()
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
+
 GONE = "This app was deleted."
 BROKEN = "This app's data can't be shown."
 
@@ -120,6 +133,7 @@ class AppsWeb:
     def __init__(self, runner: Runner, check: hostenv.keys.Check | None = None):
         self.runner = runner
         self.client = ClientWeb(runner, check or hostenv.keys.KeyCheck())
+        self.shots = Shots(runner)
         self.recent: dict[tuple[str, str], deque[float]] = {}
         self.waiting: dict[tuple[str, str], int] = {}
         # Each synced app's data file stamp and the version it held, so a sync of an app
@@ -302,21 +316,23 @@ class AppsWeb:
 
     def stamp(self, s, name: str) -> tuple:
         """What changes when the app does: its data file's identity and time."""
-        try:
-            st = os.stat(
-                s.roots["/project"] / "apps" / name / "data.json", follow_symlinks=False
-            )
-        except OSError:
-            return ()
-        return (st.st_ino, st.st_mtime_ns, st.st_size)
+        return file_stamp(s.roots["/project"] / "apps" / name / "data.json")
 
-    async def frames(self, s, name: str, theme: str) -> AsyncIterator[bytes]:
+    def card_stamp(self, s, name: str) -> tuple:
+        """What changes when the app's card does: its data file's stamp, and its rendered
+        page's, which is written after the data."""
+        return (
+            self.stamp(s, name),
+            file_stamp(s.public / "apps" / name / "index.html"),
+        )
+
+    async def frames(self, s, name: str, theme: str) -> AsyncGenerator[bytes]:
         """A frame now, then one whenever the app changes, until MAX_STREAM or it's gone."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + MAX_STREAM
         shown = None
         while True:
-            stamp = await asyncio.to_thread(self.stamp, s, name)
+            stamp = await asyncio.to_thread(self.card_stamp, s, name)
             if stamp != shown:
                 shown = stamp
                 try:
@@ -327,7 +343,13 @@ class AppsWeb:
                 except hostrpc.RunnerError:  # data a run broke: drawn again once fixed
                     yield await asyncio.to_thread(gone_card, theme, BROKEN)
                 else:
-                    yield await asyncio.to_thread(apps.card, data, theme)
+                    key = await asyncio.to_thread(self.shots.key, s, name, theme)
+                    picture = self.shots.kept_card(key)
+                    if picture is None:
+                        yield await asyncio.to_thread(apps.card, data, theme)
+                        picture = await self.shots.take(key, s, name, data["title"])
+                    if picture is not None:
+                        yield picture
             if loop.time() > deadline:
                 return
             await self.changed_within(POLL)

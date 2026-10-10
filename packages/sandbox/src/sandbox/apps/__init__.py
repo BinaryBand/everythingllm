@@ -6,7 +6,8 @@ An app is a workspace's folder /project/apps/<name>/ (docs/.proposals/sandbox-ap
               the app ({title, version, card, data, token, ops, sync}) as JSON when it
               renders the page to /public/apps/<name>/index.html, beside CLIENT as app.js
   data.json   {"title", "version", "card", "data"}: `data` is the page's, any JSON; `card`
-              is what the chat's card shows (card.py): {"summary"?, "lines": [text]} or
+              is what the chat's card shows until a picture of the page is taken, or when
+              one can't be (card.py, sandbox.appshot): {"summary"?, "lines": [text]} or
               {"summary"?, "items": "/<a list in the data>", "text"?: key, "done"?: key,
               "where"?: {key: value}}, rows with a checkbox read from the data (those
               whose keys have those values), so the card can't drift from it

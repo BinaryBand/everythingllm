@@ -1,18 +1,21 @@
-"""An app's card for the chat, drawn from its data as chatimage draws every card.
+"""An app's card for the chat, as chatimage draws every card: a picture of its page
+(`pictured`, sandbox.appshot), or, until there is one or when it can't be taken, drawn from
+its data (`draw`).
 
-What it shows is the app's `card` (sandbox.apps): rows with a checkbox each, read from a list
-in its data, or lines of text the page or the agent wrote; open rows come first, done ones
-struck through, at most ROWS and a count of the rest.
+What `draw` shows is the app's `card` (sandbox.apps): rows with a checkbox each, read from a
+list in its data, or lines of text the page or the agent wrote; open rows come first, done
+ones struck through, at most ROWS and a count of the rest.
 """
 
 from __future__ import annotations
 
 import io
 
-from chatimage import BAR, PAD, THEMES, WIDTH, clean, fit, font, frame
+from chatimage import BAR, PAD, RADIUS, THEMES, WIDTH, clean, fit, font, frame
 from PIL import Image, ImageDraw
 
 ROWS = 6
+MOST_SIDE = 4000  # a picture's width or height, at most, before it's decoded
 
 
 def draw(
@@ -68,7 +71,51 @@ def draw(
     if rest > 0:
         d.text((x, y), f"+ {rest} more", font=small, fill=p.faint)
         y += row_h
-    d.text((x, height - 46 - 32), "→ tap to open", font=small, fill=p.faint)
+    return footed(d, image, height, p)
+
+
+def pictured(title: str, shot: bytes, theme: str) -> bytes:
+    """The card with `shot`, a picture of the app's page, under its title: scaled to the
+    card's width and cut to no taller than it is wide. ValueError when `shot` isn't a
+    picture of a usable size, which Pillow decodes only once its header says so."""
+    p = THEMES[theme]
+    try:
+        with Image.open(io.BytesIO(shot)) as raw:
+            if raw.format != "PNG" or max(raw.size) > MOST_SIDE:
+                raise ValueError("not a picture of the page")
+            picture = raw.convert("RGB")
+    except OSError as e:  # not an image, or a broken one
+        raise ValueError(f"not a picture of the page: {e}") from None
+    x, width = BAR + PAD, WIDTH - BAR - 2 * PAD
+    scaled = round(picture.height * width / picture.width)
+    picture = picture.resize((width, scaled), Image.Resampling.LANCZOS)
+    picture = picture.crop((0, 0, width, min(scaled, width)))
+    small = font("regular", 32)
+    top = 52 + 38 + 30
+    height = top + picture.height + 40 + 32 + 46
+    image = Image.new("RGBA", (WIDTH, height), (0, 0, 0, 0))
+    d = ImageDraw.Draw(image)
+    frame(d, height, p.app, p)
+    label = f"App · {named}" if (named := clean(title)) else "App"
+    d.text((x, 52), fit(d, label, small, width), font=small, fill=p.app)
+    corners = Image.new("L", picture.size, 0)
+    ImageDraw.Draw(corners).rounded_rectangle(
+        (0, 0, picture.width - 1, picture.height - 1), RADIUS // 2, fill=255
+    )
+    image.paste(picture, (x, top), corners)
+    d.rounded_rectangle(
+        (x, top, x + picture.width - 1, top + picture.height - 1),
+        RADIUS // 2,
+        outline=p.line,
+        width=2,
+    )
+    return footed(d, image, height, p)
+
+
+def footed(d: ImageDraw.ImageDraw, image: Image.Image, height: int, p) -> bytes:
+    """`image`, `height` tall, with the footer every app card has, as a PNG."""
+    small = font("regular", 32)
+    d.text((BAR + PAD, height - 46 - 32), "→ tap to open", font=small, fill=p.faint)
     out = io.BytesIO()
     image.save(out, "PNG", optimize=True)
     return out.getvalue()

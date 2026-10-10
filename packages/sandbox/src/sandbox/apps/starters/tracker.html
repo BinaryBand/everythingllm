@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Habits</title>
+<style>
+:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--line:oklch(0.895 0.014 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--muted:oklch(0.5 0.02 280);--fade:oklch(0.62 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--line:oklch(0.36 0.022 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--muted:oklch(0.72 0.018 280);--fade:oklch(0.6 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:560px;margin:0 auto;padding:20px 16px 32px;display:flex;flex-direction:column;gap:14px}
+h1{margin:0;font-size:22px;line-height:1.25}
+header p{margin:2px 0 0;font-size:13.5px;color:var(--muted)}
+button{font:inherit;cursor:pointer}
+ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+li{border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.row{display:flex;align-items:center;gap:6px;padding-right:6px}
+.tick{flex:none;width:56px;height:56px;border:0;background:none;display:grid;place-items:center}
+.tick i{width:28px;height:28px;border:2px solid var(--line);border-radius:50%;display:grid;place-items:center;font-style:normal;color:transparent;font-weight:700;line-height:1}
+.tick:focus-visible,.name:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:10px}
+li.today .tick i{background:var(--ok);border-color:var(--ok);color:var(--onaccent)}
+.name{flex:1;min-width:0;min-height:56px;padding:0;border:0;background:none;color:var(--ink);text-align:left}
+.name b{display:block;font-weight:500;overflow-wrap:anywhere}
+.name small{display:block;font-size:13px;color:var(--muted)}
+.more{padding:2px 16px 14px 62px;display:flex;flex-direction:column;gap:10px}
+.week{display:flex;gap:6px}
+.week span{flex:1;max-width:36px;text-align:center;font-size:11px;color:var(--fade)}
+.week span i{display:block;height:10px;margin-bottom:3px;border-radius:5px;background:var(--line2)}
+.week span.on i{background:var(--ok)}
+.quiet{align-self:flex-start;min-height:40px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+.quiet.sure{border-color:var(--bad);color:var(--bad)}
+.add{display:flex;gap:8px}
+.add input{flex:1;min-width:0;height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font:inherit}
+.add input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+#add{min-height:44px;padding:0 18px;border:0;border-radius:10px;background:var(--accent);color:var(--onaccent);font-weight:500}
+#status{margin:0;min-height:20px;font-size:13px;color:var(--muted)}
+#status.ok::before{content:"";display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:var(--ok)}
+#status.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="title">Habits</h1>
+    <p id="left"></p>
+  </header>
+  <ul id="habits"></ul>
+  <div class="add">
+    <input id="new" aria-label="Add a habit" placeholder="Add a habit" maxlength="80" autocomplete="off">
+    <button id="add" type="button">Add</button>
+  </div>
+  <p id="status" role="status"></p>
+</main>
+<script src="app.js"></script>
+<script>
+"use strict";
+// The tracker starter (sandbox.apps.STARTERS): data {"habits": [{"id", "name", "days"}]},
+// days the dates ("2026-10-09", the viewer's own calendar) a habit was done. One tap
+// marks today; a habit's name opens its last two weeks and removal, the only second
+// level. The card lists the names. The agent may change this page freely.
+App.start(/*APP*/null);
+const byId = (id) => document.getElementById(id);
+let open = null; // the id of the habit whose second level is showing
+let sure = null; // the id of the habit asked to be removed once more
+
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const ago = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
+
+function streak(days) {
+  const set = new Set(days);
+  let n = 0;
+  for (let back = set.has(dayKey(ago(0))) ? 0 : 1; set.has(dayKey(ago(back))); back++) n++;
+  return n;
+}
+
+function draw() {
+  const habits = App.data.habits;
+  const today = dayKey(ago(0));
+  document.title = App.title;
+  byId("title").textContent = App.title;
+  const did = habits.filter((h) => h.days.includes(today)).length;
+  byId("left").textContent = !habits.length
+    ? "No habits yet: add one below"
+    : did === habits.length ? "All done for today" : `${did} of ${habits.length} done today`;
+  const list = byId("habits");
+  list.replaceChildren();
+  habits.forEach((habit, i) => {
+    const done = habit.days.includes(today);
+    const li = document.createElement("li");
+    if (done) li.className = "today";
+    const row = document.createElement("div");
+    row.className = "row";
+    const tick = document.createElement("button");
+    tick.className = "tick";
+    tick.type = "button";
+    tick.setAttribute("aria-pressed", String(done));
+    tick.setAttribute("aria-label", `${habit.name}: done today`);
+    tick.innerHTML = "<i>✓</i>";
+    tick.addEventListener("click", () => toggle(i, today));
+    const name = document.createElement("button");
+    name.className = "name";
+    name.type = "button";
+    name.setAttribute("aria-expanded", String(open === habit.id));
+    const label = document.createElement("b");
+    label.textContent = habit.name;
+    const run = streak(habit.days);
+    const meta = document.createElement("small");
+    meta.textContent = run > 1 ? `${run} days in a row` : done ? "Done today" : "Not yet today";
+    name.append(label, meta);
+    name.addEventListener("click", () => { open = open === habit.id ? null : habit.id; sure = null; draw(); });
+    row.append(tick, name);
+    li.append(row);
+    if (open === habit.id) li.append(more(habit, i));
+    list.append(li);
+  });
+}
+
+function more(habit, i) {
+  const box = document.createElement("div");
+  box.className = "more";
+  const week = document.createElement("div");
+  week.className = "week";
+  for (let back = 13; back >= 0; back--) {
+    const d = ago(back);
+    const cell = document.createElement("span");
+    if (habit.days.includes(dayKey(d))) cell.className = "on";
+    cell.append(document.createElement("i"), String(d.getDate()));
+    week.append(cell);
+  }
+  const remove = document.createElement("button");
+  remove.className = "quiet" + (sure === habit.id ? " sure" : "");
+  remove.type = "button";
+  remove.textContent = sure === habit.id ? "Tap again to remove" : "Remove habit";
+  remove.addEventListener("click", () => {
+    if (sure !== habit.id) { sure = habit.id; draw(); return; }
+    open = sure = null;
+    change([{ op: "test", path: `/habits/${i}/id`, value: habit.id }, { op: "remove", path: `/habits/${i}` }]);
+  });
+  box.append(week, remove);
+  return box;
+}
+
+function toggle(i, today) {
+  const habit = App.data.habits[i];
+  const at = habit.days.indexOf(today);
+  const ops = [{ op: "test", path: `/habits/${i}/id`, value: habit.id }];
+  if (at < 0) ops.push({ op: "add", path: `/habits/${i}/days/-`, value: today });
+  else ops.push({ op: "test", path: `/habits/${i}/days/${at}`, value: today }, { op: "remove", path: `/habits/${i}/days/${at}` });
+  change(ops);
+}
+
+function change(ops) {
+  try {
+    App.patch(ops); // draws, through App.onchange
+  } catch (e) {
+    say(String(e.message || e), "bad");
+    draw();
+  }
+}
+
+function say(text, kind) {
+  const status = byId("status");
+  status.textContent = text;
+  status.className = kind || "";
+}
+
+byId("add").addEventListener("click", () => {
+  const field = byId("new");
+  const value = field.value.trim().replace(/\s+/g, " ");
+  if (!value) return;
+  field.value = "";
+  if (App.data.habits.some((h) => h.name.toLowerCase() === value.toLowerCase())) return;
+  const id = Math.random().toString(36).slice(2, 10);
+  change([{ op: "add", path: "/habits/-", value: { id, name: value, days: [] } }]);
+});
+byId("new").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") byId("add").click();
+});
+let lastDay = dayKey(ago(0));
+App.onchange(draw);
+App.onstatus((state, text) => say(text, state === "saved" ? "ok" : ["error", "reload", "offline"].includes(state) ? "bad" : ""));
+draw();
+setInterval(() => { // a new day: redraw
+  if (dayKey(ago(0)) !== lastDay) { lastDay = dayKey(ago(0)); draw(); }
+}, 30000);
+</script>
+</body>
+</html>

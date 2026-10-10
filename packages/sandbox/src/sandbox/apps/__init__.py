@@ -53,6 +53,24 @@ MAX_KEY = 64
 # A starter's first data and card; its page is starters/<name>.html.
 STARTERS: dict[str, dict[str, Any]] = {
     "list": {"data": {"items": []}, "card": {"items": "/data/items"}},
+    "tracker": {
+        "data": {"habits": []},
+        "card": {"items": "/data/habits", "text": "name"},
+    },
+    "pomodoro": {
+        "data": {
+            "focus": 25,
+            "rest": 5,
+            "phase": "focus",
+            "endsAt": None,
+            "left": 1500,
+            "log": [],
+        },
+        "card": {
+            "summary": "Focus",
+            "lines": ["25 minutes, ready", "0 focus sessions today"],
+        },
+    },
     "blank": {"data": {}, "card": {}},
 }
 

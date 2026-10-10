@@ -227,6 +227,23 @@ def test_an_old_list_is_moved_to_the_list_starter():
     assert apps.starter_page("list").count(apps.PLACEHOLDER.encode()) == 1
 
 
+@pytest.mark.parametrize("name", sorted(apps.STARTERS))
+def test_every_starter_is_a_page_and_a_valid_first_app(name):
+    assert apps.starter_page(name).count(apps.PLACEHOLDER.encode()) == 1
+    first = apps.new("T", name)
+    assert first["data"] == apps.STARTERS[name]["data"]
+    assert apps.rows(first) is not None
+
+
+def test_the_pomodoro_starter_is_stopped_with_its_whole_focus_left():
+    data = apps.STARTERS["pomodoro"]["data"]
+    assert (
+        data["endsAt"] is None
+        and data["left"] == data["focus"] * 60
+        and data["log"] == []
+    )
+
+
 # --- the runner's op ---
 
 

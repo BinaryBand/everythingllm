@@ -1,13 +1,13 @@
 """An app's page as a picture, for its card (sandbox.appshot): run by the sandbox runner in
 a container of the browser image with no network (containers.prepare_shot).
 
-  python3 /sandbox/shoot.py <page url> <workspace> <theme>
+  python3 /sandbox/shoot.py <page url> <workspace> <theme> <time zone>
 
 /public is the workspace's /public, read-only. Chromium opens the page at its own address on
 the pages site, but nothing leaves the container: a request on that site under the
 workspace's prefix is answered from /public, the page's write-back and sync (/_apps/) are
 held unanswered, so the page shows no failure and saves nothing, and anything else is
-refused. The page is told the card's theme as its colour scheme, gets SETTLE seconds once it
+refused. The page is told the card's theme as its colour scheme and the user's time zone, gets SETTLE seconds once it
 has loaded and its fonts are in, and its top VIEW (CSS pixels, at SCALE) is saved as
 /out/shot.png. Standard library and Playwright only: it runs outside the repo's venv.
 """
@@ -59,7 +59,7 @@ def local(url: str, site: str, workspace: str, public: Path = PUBLIC) -> Path | 
     return target
 
 
-async def shoot(url: str, workspace: str, theme: str) -> None:
+async def shoot(url: str, workspace: str, theme: str, zone: str) -> None:
     from playwright.async_api import (  # ty: ignore[unresolved-import] - the image has it
         async_playwright,
     )
@@ -87,6 +87,7 @@ async def shoot(url: str, workspace: str, theme: str) -> None:
             viewport={"width": VIEW[0], "height": VIEW[1]},
             device_scale_factor=SCALE,
             color_scheme="light" if theme == "light" else "dark",
+            timezone_id=zone,
             service_workers="block",
             accept_downloads=False,
         )
@@ -102,4 +103,4 @@ async def shoot(url: str, workspace: str, theme: str) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(shoot(*sys.argv[1:4]))
+    asyncio.run(shoot(*sys.argv[1:5]))

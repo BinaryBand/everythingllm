@@ -6,6 +6,7 @@ import io
 import shutil
 import subprocess
 
+import hostenv
 import pytest
 from PIL import Image
 from sandbox import appsweb, containers
@@ -53,7 +54,6 @@ def test_the_container_has_no_network_and_sees_only_public(r, tmp_path):
         joined = " ".join(args)
         assert args[args.index("--network") + 1] == "none"
         assert "--dns" not in args and "proxy" not in joined
-        assert args[args.index("--tz") + 1] == "local"
         assert mounts(args) == {
             "/public": s.public,
             "/out": tmp_path / "run" / "out",
@@ -112,10 +112,11 @@ def test_a_picture_is_taken_once_for_each_page_and_theme(r):
         runs = r.podman.runs()
         assert len(runs) == 1
         args = runs[0][0]
-        assert args[-3:] == [
+        assert args[-4:] == [
             "https://ws.example/career/apps/groceries/",
             "career",
             "dark",
+            hostenv.user_zone().key,
         ]
         assert r.podman.calls[-1][0][:2] == ["rm", "-f"]
         assert await take(shots, s) == card

@@ -25,6 +25,7 @@ import shutil
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
+import hostenv
 from hostrpc import safefs
 
 from sandbox.apps.card import pictured
@@ -106,7 +107,9 @@ class Shots:
             args = await asyncio.to_thread(prepare_shot, s, container, run_dir)
             async with self.turn, runner.slot():
                 code, out, err, timed_out = await runner.podman(
-                    [*args, url, s.workspace, theme], SHOT.max_timeout, container
+                    [*args, url, s.workspace, theme, hostenv.user_zone().key],
+                    SHOT.max_timeout,
+                    container,
                 )
             if timed_out or code != 0:
                 why = f"took over {SHOT.max_timeout} s" if timed_out else (err or out)

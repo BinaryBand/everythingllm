@@ -6,9 +6,13 @@ Work that's been looked into but not done yet. Remove an entry when it lands.
 
 Apps are now pages the agent writes, with data the host keeps (2026-10-09; README, "Apps"). Left:
 
-- **Starters for what users make often** (notes, a table, a tracker), once a few agent-written apps show what's worth keeping: each only a page in `apps/starters/`, never code in the runner.
+- **Starters for what users make often** (notes, a table), once a few agent-written apps show what's worth keeping: each only a page in `apps/starters/`, never code in the runner.
 - **Libraries without web access:** a page loads nothing from other hosts, so an editor or a grid library has to be in the workspace's `/public`, which needs web access to fetch; a read-only folder of vetted ones beside the themes would spare that.
 - **Sharing an app between workspaces:** copying a page from `/shared/<workspace>/apps/` works today by hand.
+- **One Pomodoro, not two.** The `pomodoro` starter (`apps/starters/pomodoro.html`: `focus`, `rest`, `phase`, `endsAt`, and `left` in seconds) and cloud's own Pomodoro app (rewritten 2026-10-10 to keep `timer: {phase, round, endAt, left}`, in ms, with long breaks, rounds and a task) keep the same timer in two shapes. Decide which is the reference: move cloud's app onto the starter, mapping its data over, or make the starter the richer page.
+- **The app skill's wording.** Fold its two "test first" rules (a list item by its place, a timer ending) into one: a change that depends on what the page saw tests it first. And say that the top of the page has to stay true in a still picture (when a phase ends, not only how long is left), since the card is mostly the page's picture now and its `lines` show only until the picture is taken.
+- **A timer in `system-prompt.md`.** "Something to use (a timer, flashcards, a calculator)" still sends a timer to a plain page in `/public`, which keeps no state; a timer is an app now (starter pomodoro). Drop "a timer" there.
+- **The picture's locale.** The browser image runs with `LANG=C.UTF-8`, so a time in an app's picture is en-US and 12-hour ("04:13 PM"). Nothing holds the user's locale: a `USER_LOCALE` beside `USER_TIMEZONE` in `hostenv`, passed to `apps/shoot.py`'s context as `locale`, would.
 
 ## Checks left from 2026-10-08's changes
 
@@ -25,7 +29,7 @@ Everything that could be done without a person is live: the runners, egress prox
 Built 2026-10-08: the view's "Type into the browser" field (text and password, sent as text through the driver, with Enter, Tab and Backspace), focused on a phone at take-over, and the handoff naming Google, GitHub, Microsoft or Apple on their sign-in pages. Left:
 
 - **Check by hand.** Gboard on an Android phone (the keyboard opens at take-over, and text lands in the field), a password manager's fill of the view's password field, and a Swedish keyboard on Linux, at `https://the-internet.herokuapp.com/login` in a scratch workspace.
-- **The desktop keymap.** Type `@`, `{` and å, ä, ö over VNC on a Swedish layout; if they arrive wrong, start x11vnc with `-xkb` (and check Xvfb's keymap) so keys map by symbol (`host/containers/browser/entrypoint.sh`). The field sidesteps it meanwhile.
+- **The desktop keymap.** Type `@`, `{` and `å`, `ä`, `ö` over VNC on a Swedish layout; if they arrive wrong, start x11vnc with `-xkb` (and check Xvfb's keymap) so keys map by symbol (`host/containers/browser/entrypoint.sh`). The field sidesteps it meanwhile.
 - **VNC input while the agent has the browser.** Only noVNC's `viewOnly` in the page stops it: the take-over view's websocket bridge passes keys and clicks whoever has the browser. The new typing routes refuse on the runner; VNC would need the bridge to drop RFB key and pointer messages unless `control == "user"`.
 
 ## Gaps the Muse probes showed

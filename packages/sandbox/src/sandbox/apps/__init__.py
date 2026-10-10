@@ -71,6 +71,21 @@ STARTERS: dict[str, dict[str, Any]] = {
             "lines": ["25 minutes, ready", "0 focus sessions today"],
         },
     },
+    "flashcards": {
+        "data": {
+            "cards": [],
+            "labels": {"front": "Front", "back": "Back"},
+            "goal": 12,
+            "xp": 0,
+            "days": {},
+            "session": None,
+        },
+        "card": {"summary": "Level 1", "lines": ["No cards yet"]},
+    },
+    "calendar": {
+        "data": {"events": []},
+        "card": {"summary": "Nothing coming up", "lines": []},
+    },
     "blank": {"data": {}, "card": {}},
 }
 

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calendar</title>
+<style>
+:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--line:oklch(0.895 0.014 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--sel:oklch(0.93 0.028 272);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--line:oklch(0.36 0.022 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--sel:oklch(0.33 0.045 272);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:480px;margin:0 auto;padding:20px 16px 32px;display:flex;flex-direction:column;gap:22px}
+h1{margin:0;font-size:22px;line-height:1.25}
+p{margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.day{display:flex;align-items:flex-end;gap:16px}
+#selDay{font:500 64px/.9 ui-monospace,"JetBrains Mono",SFMono-Regular,Menlo,monospace;letter-spacing:-2px;font-variant-numeric:tabular-nums}
+.day .when{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding-bottom:2px}
+#selWeekday{font-size:17px;font-weight:600;line-height:1.3}
+#selMonth{font-size:14px;color:var(--muted)}
+.quiet{flex:none;min-height:44px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:14px;font-weight:500}
+.month{border-top:1px solid var(--line2);padding-top:8px;display:flex;flex-direction:column;gap:4px}
+.month header{display:flex;align-items:center;height:44px}
+.month h2{flex:1;min-width:0;margin:0;font-size:15px;font-weight:600}
+.icon{width:44px;height:44px;flex:none;border:0;border-radius:9px;background:none;color:var(--ink2);display:flex;align-items:center;justify-content:center}
+.week,.cells{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+.week{font-size:11.5px;color:var(--muted);text-align:center}
+.cells{row-gap:2px}
+.cells button{height:44px;border:0;border-radius:10px;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:15px;font-variant-numeric:tabular-nums}
+.cells button i{width:4px;height:4px;border-radius:50%;background:currentColor;opacity:0}
+.cells button.has i{opacity:1}
+.cells button[aria-pressed=true]{background:var(--sel);font-weight:600}
+.cells button.today{background:var(--accent);color:var(--onaccent);font-weight:600}
+.cells button.today[aria-pressed=true]{box-shadow:inset 0 0 0 2px var(--accent),inset 0 0 0 4px var(--panel)}
+ul{list-style:none;margin:0;padding:0;border-top:1px solid var(--line2)}
+li{min-height:48px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:12px}
+li b{width:52px;flex:none;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+li span{flex:1;min-width:0;overflow-wrap:anywhere}
+li.none{color:var(--muted)}
+li .icon{color:var(--muted)}
+.add{display:flex;gap:8px}
+.add input{height:44px;min-width:0;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font:inherit}
+#time{width:108px;flex:none;font-variant-numeric:tabular-nums}
+#what{flex:1}
+#add{flex:none;min-height:44px;padding:0 16px;border:0;border-radius:10px;background:var(--accent);color:var(--onaccent);font-size:14px;font-weight:500}
+#undo{display:flex;align-items:center;gap:10px;font-size:14px}
+#undo button{min-height:40px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font-size:13px;font-weight:500}
+#status{min-height:20px;font-size:13px;color:var(--muted)}
+#status.ok::before{content:"";display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:var(--ok)}
+#status.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Calendar</h1>
+  <div class="day">
+    <span id="selDay" aria-hidden="true"></span>
+    <span class="when"><span id="selWeekday"></span><span id="selMonth"></span></span>
+    <button class="quiet" id="today" type="button">Today</button>
+  </div>
+  <section class="month" aria-labelledby="monthTitle">
+    <header>
+      <h2 id="monthTitle"></h2>
+      <button class="icon" id="prev" type="button" aria-label="Previous month"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4l-4 4 4 4"/></svg></button>
+      <button class="icon" id="next" type="button" aria-label="Next month"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg></button>
+    </header>
+    <div class="week" aria-hidden="true"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
+    <div class="cells" id="cells"></div>
+  </section>
+  <ul id="agenda" aria-label="Events"></ul>
+  <div class="add">
+    <input id="time" type="time" aria-label="Time" value="12:00">
+    <input id="what" aria-label="New event" maxlength="120" autocomplete="off">
+    <button id="add" type="button">Add</button>
+  </div>
+  <p id="undo" hidden><span id="undoText"></span><button id="undoButton" type="button">Undo</button></p>
+  <p id="status" role="status"></p>
+</main>
+<script src="app.js"></script>
+<script>
+"use strict";
+// The calendar starter (sandbox.apps.STARTERS): data {"events": [{"id", "date":
+// "2026-10-10", "time": "19:00", "title"}]}, dates in the viewer's own calendar and times
+// on a 24-hour clock. The page opens on today; the month and the day picked are the page's
+// own, never saved. The card lists what's next, each with its date, so it stays true on
+// another day. The agent may change this page freely.
+App.start(/*APP*/null);
+const byId = (id) => document.getElementById(id);
+const two = (n) => String(n).padStart(2, "0");
+const keyOf = (d) => `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+const dateOf = (key) => { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d); };
+const fmt = (d, o) => d.toLocaleDateString([], o);
+const short = (d) => fmt(d, { weekday: "short", day: "numeric", month: "short" });
+const count = (n) => (!n ? "nothing planned" : n === 1 ? "1 event" : `${n} events`);
+let sel; // the day picked
+let shown; // the first of the month showing
+let undo = null; // what the Undo button does, until the next change of the page's own
+
+const valid = (e) => e && typeof e.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.date);
+const on = (key) => App.data.events.filter((e) => e.date === key)
+  .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+
+function goToday() {
+  const t = new Date();
+  sel = keyOf(t);
+  shown = new Date(t.getFullYear(), t.getMonth(), 1);
+}
+
+function cardFor(events) {
+  const t = new Date();
+  const now = `${keyOf(t)} ${two(t.getHours())}:${two(t.getMinutes())}`;
+  const next = events.filter((e) => valid(e) && `${e.date} ${e.time || "23:59"}` >= now)
+    .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).slice(0, 4);
+  return { summary: next.length ? "Coming up" : "Nothing coming up",
+    lines: next.map((e) => `${short(dateOf(e.date))} · ${e.time ? e.time + " " : ""}${e.title}`) };
+}
+
+function draw() {
+  const today = keyOf(new Date());
+  const d = dateOf(sel);
+  const agenda = on(sel);
+  const counts = new Map();
+  for (const e of App.data.events) counts.set(e.date, (counts.get(e.date) || 0) + 1);
+  document.title = App.title;
+  byId("title").textContent = App.title;
+  byId("selDay").textContent = String(d.getDate());
+  byId("selWeekday").textContent = fmt(d, { weekday: "long" });
+  byId("selMonth").textContent = `${fmt(d, { month: "long", year: "numeric" })} · ${count(agenda.length)}`;
+  byId("today").hidden = sel === today;
+  byId("monthTitle").textContent = fmt(shown, { month: "long", year: "numeric" });
+  const days = new Date(shown.getFullYear(), shown.getMonth() + 1, 0).getDate();
+  const lead = (shown.getDay() + 6) % 7; // weeks start on Monday
+  byId("cells").replaceChildren(...Array.from({ length: days }, (_, i) => {
+    const day = new Date(shown.getFullYear(), shown.getMonth(), i + 1);
+    const key = keyOf(day);
+    const n = counts.get(key) || 0;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = (key === today ? "today" : "") + (n ? " has" : "");
+    if (i === 0) b.style.gridColumnStart = String(lead + 1);
+    b.setAttribute("aria-pressed", String(key === sel));
+    b.setAttribute("aria-label", `${fmt(day, { weekday: "long", day: "numeric", month: "long" })}${key === today ? ", today" : ""}, ${count(n)}`);
+    b.append(String(i + 1), document.createElement("i"));
+    b.addEventListener("click", () => { sel = key; draw(); });
+    return b;
+  }));
+  const list = byId("agenda");
+  list.replaceChildren(...agenda.map((e) => {
+    const li = document.createElement("li");
+    const time = document.createElement("b");
+    time.textContent = e.time || "";
+    const title = document.createElement("span");
+    title.textContent = e.title;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "icon";
+    x.setAttribute("aria-label", `Remove ${e.title}`);
+    x.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+    x.addEventListener("click", () => remove(e));
+    li.append(time, title, x);
+    return li;
+  }));
+  if (!agenda.length) {
+    const li = document.createElement("li");
+    li.className = "none";
+    li.textContent = "Nothing planned.";
+    list.append(li);
+  }
+  byId("what").placeholder = `Add to ${short(d)}`;
+  byId("undo").hidden = !undo;
+}
+
+function put(event) {
+  change([{ op: "add", path: "/events/-", value: event },
+    { op: "replace", path: "/card", value: cardFor([...App.data.events, event]) }]);
+}
+
+function add() {
+  const field = byId("what");
+  const title = field.value.trim().replace(/\s+/g, " ");
+  if (!title) { field.focus(); return; }
+  field.value = "";
+  undo = null;
+  put({ id: Math.random().toString(36).slice(2, 10), date: sel, time: byId("time").value || "", title });
+}
+
+function remove(e) {
+  const i = App.data.events.indexOf(e);
+  change([{ op: "test", path: `/events/${i}/id`, value: e.id }, { op: "remove", path: `/events/${i}` },
+    { op: "replace", path: "/card", value: cardFor(App.data.events.filter((x) => x !== e)) }]);
+  if (App.data.events.includes(e)) return; // it wasn't removed
+  undo = () => put(e);
+  byId("undoText").textContent = `Removed ${e.title}`;
+  byId("undo").hidden = false;
+}
+
+function change(ops) {
+  try {
+    App.patch(ops); // draws, through App.onchange
+  } catch (e) {
+    say(String(e.message || e), "bad");
+    draw();
+  }
+}
+
+function say(text, kind) {
+  const status = byId("status");
+  status.textContent = text;
+  status.className = kind || "";
+}
+
+const move = (n) => { shown = new Date(shown.getFullYear(), shown.getMonth() + n, 1); draw(); };
+byId("prev").addEventListener("click", () => move(-1));
+byId("next").addEventListener("click", () => move(1));
+byId("today").addEventListener("click", () => { goToday(); draw(); });
+byId("add").addEventListener("click", add);
+byId("what").addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+byId("undoButton").addEventListener("click", () => { const back = undo; undo = null; back(); });
+goToday();
+let lastDay = sel;
+App.onchange(draw);
+App.onstatus((state, text) => say(text, state === "saved" ? "ok" : ["error", "reload", "offline"].includes(state) ? "bad" : ""));
+draw();
+setInterval(() => { // a new day: follow it if today was showing
+  const now = keyOf(new Date());
+  if (now === lastDay) return;
+  if (sel === lastDay) goToday();
+  lastDay = now;
+  draw();
+}, 30000);
+</script>
+</body>
+</html>

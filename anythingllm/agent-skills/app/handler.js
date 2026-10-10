@@ -1,7 +1,7 @@
 // App: the workspace's apps (packages/sandbox's app op, sandbox.apps). An app is a page the
 // agent writes, /project/apps/<name>/page.html, plus data the host keeps for it, which the
 // page and this skill change with a JSON patch; the runner renders the page with the data
-// embedded and moves the app's live card on. 'list', 'tracker', 'pomodoro' and 'blank' are starter pages to begin from.
+// embedded and moves the app's live card on. 'list', 'tracker', 'pomodoro', 'flashcards', 'calendar' and 'blank' are starter pages to begin from.
 
 const { withSandbox } = require("../_lib/sandbox");
 const { asObject, asInteger, cardLines } = require("../_lib/runner");

@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flashcards</title>
+<style>
+:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--hover:oklch(0.925 0.016 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--hover:oklch(0.29 0.02 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:480px;margin:0 auto;padding:20px 16px 32px;display:flex;flex-direction:column;gap:24px}
+h1{margin:0;font-size:22px;line-height:1.25}
+p{margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.stats div{padding:12px 6px;border-radius:16px;background:var(--hover);display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
+.stats b{font-size:26px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.caps{font-size:12px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.level{display:flex;flex-direction:column;gap:10px}
+.level div{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:14px}
+.level span:last-child{color:var(--muted);font-variant-numeric:tabular-nums}
+.bar{height:12px;border-radius:99px;background:var(--hover);overflow:hidden}
+.bar i{display:block;height:12px;border-radius:99px;background:var(--accent)}
+.play,.done{display:flex;flex-direction:column;gap:14px}
+.play .top{display:flex;justify-content:space-between;gap:12px}
+.stage{position:relative;display:block;width:100%;height:280px;margin-bottom:18px;padding:0;border:0;background:none;perspective:1400px;text-align:left}
+.stage .under{position:absolute;top:0;border:2px solid var(--ink);border-radius:24px;background:var(--panel)}
+#far{left:22px;right:22px;bottom:-18px}
+#near{left:11px;right:11px;bottom:-12px}
+.turn{position:relative;display:block;width:100%;height:100%;transform-style:preserve-3d}
+.turn.flipped{transform:rotateY(180deg);transition:transform 320ms cubic-bezier(.3,0,.2,1)}
+.face{position:absolute;inset:0;padding:18px 20px;border:2px solid var(--ink);border-radius:24px;background:var(--panel);box-shadow:0 6px 0 var(--ink);display:flex;flex-direction:column;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.face.back{transform:rotateY(180deg);background:var(--accent);color:var(--onaccent)}
+.face.back .caps{color:var(--onaccent);opacity:.85}
+.face .caps{display:flex;justify-content:space-between}
+.face .word{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;font-size:clamp(34px,11vw,56px);font-weight:700;line-height:1.05;letter-spacing:-.02em;overflow-wrap:anywhere}
+.face small{font-size:13px;text-align:center;color:var(--muted)}
+.face.back small{color:var(--onaccent);opacity:.85}
+.actions{display:flex;flex-direction:column;gap:12px}
+.big{height:52px;padding:0 20px;border:0;border-radius:99px;background:var(--ink);color:var(--panel);font-size:16px;font-weight:600}
+.grades{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.grades button{display:flex;align-items:center;gap:10px}
+.grades button span{flex:1;text-align:left}
+.grades button small{font-size:16px;font-weight:400;font-variant-numeric:tabular-nums;opacity:.75}
+#miss{background:var(--hover);color:var(--ink)}
+#last{min-height:20px;font-size:13.5px;line-height:1.45;color:var(--muted)}
+.done>div:first-child{display:flex;flex-direction:column;gap:6px}
+#earned{font-size:72px;font-weight:700;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.done dl{margin:0;border-top:1px solid var(--line2)}
+.done dl div{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line2);font-size:15px}
+.done dt{color:var(--ink2)}
+.done dd{margin:0;font-weight:600;font-variant-numeric:tabular-nums}
+.muted{font-size:13.5px;color:var(--muted)}
+.empty{padding:24px 0;text-align:center;color:var(--muted)}
+#status{min-height:20px;font-size:13px;color:var(--muted)}
+#status.ok::before{content:"";display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:var(--ok)}
+#status.bad{color:var(--bad)}
+@media (prefers-reduced-motion: reduce){.turn.flipped{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Flashcards</h1>
+  <div class="stats" id="stats"></div>
+  <div class="level">
+    <div><span id="levelText"></span><span id="xpText"></span></div>
+    <div class="bar" aria-hidden="true"><i id="xpFill"></i></div>
+  </div>
+  <p class="empty" id="empty" hidden>No cards yet. Ask in the chat to add some.</p>
+  <section class="play" id="play" aria-label="This session">
+    <div class="top caps"><span id="cleared"></span><span id="leftText"></span></div>
+    <button class="stage" id="stage" type="button">
+      <span class="under" id="far" aria-hidden="true"></span>
+      <span class="under" id="near" aria-hidden="true"></span>
+      <span class="turn" id="turn">
+        <span class="face"><span class="caps"><span id="frontLabel"></span><span class="mark"></span></span><span class="word" id="front"></span><small id="hint"></small></span>
+        <span class="face back"><span class="caps"><span id="backLabel"></span><span class="mark"></span></span><span class="word" id="back"></span><small id="note"></small></span>
+      </span>
+    </button>
+    <div class="bar" aria-hidden="true"><i id="sessionFill"></i></div>
+    <div class="actions">
+      <button class="big" id="show" type="button">Show answer</button>
+      <div class="grades" id="grades" hidden>
+        <button class="big" id="miss" type="button"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Missed</span><small id="missGain"></small></button>
+        <button class="big" id="hit" type="button"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg><span>Got it</span><small id="hitGain"></small></button>
+      </div>
+      <p id="last" aria-live="polite"></p>
+    </div>
+  </section>
+  <section class="done" id="done" aria-label="Session complete" hidden>
+    <div>
+      <span class="caps">Session complete</span>
+      <span id="earned"></span>
+      <span style="color:var(--ink2)">XP earned this session</span>
+    </div>
+    <dl id="results"></dl>
+    <div class="actions">
+      <button class="big" id="again" type="button">Go again</button>
+      <p class="muted" id="againText"></p>
+    </div>
+  </section>
+  <p id="status" role="status"></p>
+</main>
+<script src="app.js"></script>
+<script>
+"use strict";
+// The flashcards starter (sandbox.apps.STARTERS): data {"cards": [{"front", "back",
+// "note"?}], "labels": {"front", "back"} (what each side is, e.g. "Svenska", "English"),
+// "hint"? (under the front), "goal" (cards a day), "xp", "days": {"2026-10-10": cards
+// graded}, "session"}. session is null until a card is graded, then {"queue": [card
+// indexes], "missed", "size" (cards when it began: ones added since join its end),
+// "cleared", "firstTry", "graded", "combo", "best", "xp"}, kept in the data so closing
+// the page loses nothing; each grade tests the session it saw, so two pages count it once.
+// A card got right earns HIT times the combo's multiplier (one more every three in a row,
+// to x3), a miss MISS, ends the combo and brings the card back RETURN cards later.
+// Level L takes 100 x L XP. The agent may change this page freely, or the rules here.
+App.start(/*APP*/null);
+const byId = (id) => document.getElementById(id);
+const HIT = 10;
+const MISS = 2;
+const RETURN = 3;
+const FIRST = `A missed card comes back ${RETURN} cards later.`;
+let flipped = null; // how many cards were graded when the card was turned, or null
+
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const ago = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
+const mult = (combo) => Math.min(3, 1 + Math.floor(combo / 3));
+const levelStart = (l) => 50 * l * (l - 1);
+const levelOf = (xp) => { let l = 1; while (levelStart(l + 1) <= xp) l++; return l; };
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const goal = () => Math.max(1, Number(App.data.goal) || 12);
+const graded = (key) => App.data.days[key] || 0;
+
+function fresh(cards, missed = [], combo = 0) {
+  const all = cards.map((_, i) => i);
+  return { queue: [...missed, ...all.filter((i) => !missed.includes(i))], missed: [], size: cards.length,
+    cleared: 0, firstTry: 0, graded: 0, combo, best: combo, xp: 0 };
+}
+
+// The session as it stands: the saved one, cards removed since left out, ones added joined.
+function session() {
+  const cards = App.data.cards;
+  const s = App.data.session || fresh(cards);
+  const added = cards.map((_, i) => i).filter((i) => i >= s.size);
+  return { ...s, queue: [...s.queue.filter((i) => i < cards.length), ...added] };
+}
+
+function streak() {
+  let n = 0;
+  for (let back = 1; graded(dayKey(ago(back))) >= goal(); back++) n++;
+  return n + (graded(dayKey(ago(0))) >= goal() ? 1 : 0);
+}
+
+function cardFor(xp, today, s) {
+  const level = levelOf(xp);
+  const run = streak();
+  return {
+    summary: `Level ${level}${run ? ` · ${run}-day streak` : ""}`,
+    lines: [s.queue.length ? `${plural(s.queue.length, "card", "cards")} to go` : "Session complete",
+      `${today} of ${goal()} cards today`],
+  };
+}
+
+function draw() {
+  const d = App.data;
+  const cards = d.cards;
+  const s = session();
+  const total = Math.max(s.size, cards.length);
+  const today = graded(dayKey(ago(0)));
+  const xp = Number(d.xp) || 0;
+  const level = levelOf(xp);
+  const into = xp - levelStart(level);
+  document.title = App.title;
+  byId("title").textContent = App.title;
+  stats([[String(streak()), "day streak"], [`×${mult(s.combo)}`, `${s.combo} in a row`],
+    [`${today}/${goal()}`, today >= goal() ? "goal met" : "cards today"]]);
+  byId("levelText").textContent = `Level ${level}`;
+  byId("xpText").textContent = `${into} / ${100 * level} XP to level ${level + 1}`;
+  byId("xpFill").style.width = `${(100 * into / (100 * level)).toFixed(1)}%`;
+  byId("empty").hidden = cards.length > 0;
+  const playing = cards.length > 0 && s.queue.length > 0;
+  byId("play").hidden = !playing;
+  byId("done").hidden = !cards.length || playing;
+  if (playing) drawCard(s, total);
+  else if (cards.length) drawDone(s, total, level);
+}
+
+function stats(rows) {
+  byId("stats").replaceChildren(...rows.map(([value, key]) => {
+    const box = document.createElement("div");
+    const b = document.createElement("b");
+    b.textContent = value;
+    const k = document.createElement("span");
+    k.className = "caps";
+    k.textContent = key;
+    box.append(b, k);
+    return box;
+  }));
+}
+
+function drawCard(s, total) {
+  const d = App.data;
+  const card = d.cards[s.queue[0]];
+  const labels = d.labels || {};
+  const again = s.missed.includes(s.queue[0]);
+  const next = HIT * mult(s.combo + 1);
+  const turned = flipped === s.graded; // a grade, here or in another page, turns it back
+  byId("cleared").textContent = `${s.cleared} of ${total} cleared`;
+  byId("leftText").textContent = `${s.queue.length} left`;
+  byId("near").style.opacity = s.queue.length > 1 ? "1" : "0";
+  byId("far").style.opacity = s.queue.length > 2 ? "1" : "0";
+  byId("frontLabel").textContent = labels.front || "Front";
+  byId("backLabel").textContent = labels.back || "Back";
+  for (const m of document.querySelectorAll(".mark")) m.textContent = again ? "Again" : "";
+  byId("front").textContent = card.front;
+  byId("back").textContent = card.back;
+  byId("hint").textContent = d.hint || "Think of the answer, then turn the card.";
+  byId("note").textContent = card.note || "";
+  // Turning to the answer is animated; the next card arrives face up at once.
+  byId("turn").classList.toggle("flipped", turned);
+  byId("stage").setAttribute("aria-label", turned
+    ? `Answer: ${card.back}${card.note ? ". " + card.note : ""}. Tap to turn the card back.`
+    : `${card.front}${again ? ", seen before in this session" : ""}. Tap to show the answer.`);
+  byId("sessionFill").style.width = `${(100 * s.cleared / Math.max(1, total)).toFixed(1)}%`;
+  byId("show").hidden = turned;
+  byId("grades").hidden = !turned;
+  byId("hitGain").textContent = `+${next}`;
+  byId("hit").setAttribute("aria-label", `Got it: ${next} XP`);
+}
+
+function drawDone(s, total, level) {
+  byId("earned").textContent = `+${s.xp}`;
+  const rows = [["Right first time", `${s.firstTry} of ${total}`], ["Cards graded", String(s.graded)],
+    ["Longest run", `${s.best} in a row`], ["Now", `Level ${level} · ${plural(streak(), "day", "days")} in a row`]];
+  byId("results").replaceChildren(...rows.map(([k, v]) => {
+    const row = document.createElement("div");
+    const dt = document.createElement("dt");
+    dt.textContent = k;
+    const dd = document.createElement("dd");
+    dd.textContent = v;
+    row.append(dt, dd);
+    return row;
+  }));
+  byId("againText").textContent = s.missed.length
+    ? `The ${plural(s.missed.length, "card", "cards")} you missed ${s.missed.length === 1 ? "comes" : "come"} first.`
+    : "Nothing missed. Same deck, same order.";
+}
+
+function grade(correct) {
+  const d = App.data;
+  const s = session();
+  const id = s.queue[0];
+  const rest = s.queue.slice(1);
+  const combo = correct ? s.combo + 1 : 0;
+  const gain = correct ? HIT * mult(combo) : MISS;
+  const back = Math.min(RETURN, rest.length);
+  const again = s.missed.includes(id);
+  const next = {
+    queue: correct ? rest : [...rest.slice(0, back), id, ...rest.slice(back)],
+    missed: correct || again ? s.missed : [...s.missed, id],
+    size: d.cards.length,
+    cleared: s.cleared + (correct ? 1 : 0),
+    firstTry: s.firstTry + (correct && !again ? 1 : 0),
+    graded: s.graded + 1,
+    combo, best: Math.max(s.best, combo), xp: s.xp + gain,
+  };
+  const key = dayKey(ago(0));
+  const today = graded(key) + 1;
+  const xp = (Number(d.xp) || 0) + gain;
+  byId("last").textContent = correct
+    ? `Got it · +${gain} XP · ${combo} in a row`
+    : `Missed · +${gain} XP · ${d.cards[id].front} ${back ? `comes back after ${plural(back, "card", "cards")}` : "comes straight back"}`;
+  change([
+    { op: "test", path: "/session", value: d.session }, // so two open pages grade a card once
+    { op: "add", path: "/session", value: next },
+    { op: "add", path: "/xp", value: xp },
+    { op: "add", path: `/days/${key}`, value: today },
+    { op: "replace", path: "/card", value: cardFor(xp, today, next) },
+  ]);
+}
+
+function startAgain() {
+  const d = App.data;
+  const s = session();
+  const next = fresh(d.cards, s.missed.filter((i) => i < d.cards.length), s.combo);
+  flipped = null;
+  byId("last").textContent = FIRST;
+  change([
+    { op: "test", path: "/session", value: d.session }, // so two open pages grade a card once
+    { op: "add", path: "/session", value: next },
+    { op: "replace", path: "/card", value: cardFor(Number(d.xp) || 0, graded(dayKey(ago(0))), next) },
+  ]);
+}
+
+function change(ops) {
+  try {
+    App.patch(ops); // draws, through App.onchange
+  } catch (e) {
+    say(String(e.message || e), "bad");
+    draw();
+  }
+}
+
+function say(text, kind) {
+  const status = byId("status");
+  status.textContent = text;
+  status.className = kind || "";
+}
+
+const flip = () => { const at = session().graded; flipped = flipped === at ? null : at; draw(); };
+byId("stage").addEventListener("click", flip);
+byId("show").addEventListener("click", () => { flip(); byId("hit").focus(); });
+byId("hit").addEventListener("click", () => grade(true));
+byId("miss").addEventListener("click", () => grade(false));
+byId("again").addEventListener("click", startAgain);
+// What doesn't change with the data: the miss's gain, and the line under the buttons until a grade.
+byId("missGain").textContent = `+${MISS}`;
+byId("miss").setAttribute("aria-label", `Missed: ${MISS} XP, the combo ends and the card comes back`);
+byId("last").textContent = FIRST;
+let lastDay = dayKey(ago(0));
+App.onchange(draw);
+App.onstatus((state, text) => say(text, state === "saved" ? "ok" : ["error", "reload", "offline"].includes(state) ? "bad" : ""));
+draw();
+setInterval(() => { // a new day: redraw
+  if (dayKey(ago(0)) !== lastDay) { lastDay = dayKey(ago(0)); draw(); }
+}, 30000);
+</script>
+</body>
+</html>

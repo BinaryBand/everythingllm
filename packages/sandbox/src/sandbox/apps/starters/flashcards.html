@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Flashcards</title>
 <style>
-:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--hover:oklch(0.925 0.016 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
-@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--hover:oklch(0.29 0.02 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
+:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--panel2:oklch(0.989 0.006 75);--line:oklch(0.895 0.014 75);--shadow:oklch(0.35 0.04 280 / 0.14);--hover:oklch(0.925 0.016 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--ok:oklch(0.62 0.14 160);--bad:oklch(0.47 0.16 20);color-scheme:light dark}
+@media (prefers-color-scheme: dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--panel2:oklch(0.235 0.019 280);--line:oklch(0.36 0.022 280);--shadow:oklch(0 0 0 / 0.35);--hover:oklch(0.29 0.02 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--ok:oklch(0.72 0.14 160);--bad:oklch(0.83 0.085 20)}}
 *{box-sizing:border-box}
 [hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -15,32 +15,22 @@ h1{margin:0;font-size:22px;line-height:1.25}
 p{margin:0}
 button{font:inherit;color:inherit;cursor:pointer}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.stats div{padding:12px 6px;border-radius:16px;background:var(--hover);display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
-.stats b{font-size:26px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
 .caps{font-size:12px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
-.level{display:flex;flex-direction:column;gap:10px}
-.level div{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:14px}
-.level span:last-child{color:var(--muted);font-variant-numeric:tabular-nums}
-.bar{height:12px;border-radius:99px;background:var(--hover);overflow:hidden}
-.bar i{display:block;height:12px;border-radius:99px;background:var(--accent)}
+.bar{height:6px;border-radius:99px;background:var(--line2);overflow:hidden}
+.bar i{display:block;height:6px;border-radius:99px;background:var(--accent)}
 .play,.done{display:flex;flex-direction:column;gap:14px}
-.play .top{display:flex;justify-content:space-between;gap:12px}
-.stage{position:relative;display:block;width:100%;height:280px;margin-bottom:18px;padding:0;border:0;background:none;perspective:1400px;text-align:left}
-.stage .under{position:absolute;top:0;border:2px solid var(--ink);border-radius:24px;background:var(--panel)}
-#far{left:22px;right:22px;bottom:-18px}
-#near{left:11px;right:11px;bottom:-12px}
+.stage{display:block;width:100%;height:280px;padding:0;border:0;background:none;perspective:1400px;text-align:left}
 .turn{position:relative;display:block;width:100%;height:100%;transform-style:preserve-3d}
 .turn.flipped{transform:rotateY(180deg);transition:transform 320ms cubic-bezier(.3,0,.2,1)}
-.face{position:absolute;inset:0;padding:18px 20px;border:2px solid var(--ink);border-radius:24px;background:var(--panel);box-shadow:0 6px 0 var(--ink);display:flex;flex-direction:column;backface-visibility:hidden;-webkit-backface-visibility:hidden}
-.face.back{transform:rotateY(180deg);background:var(--accent);color:var(--onaccent)}
+.face{position:absolute;inset:0;padding:18px 20px;border:1px solid var(--line);border-radius:20px;background:var(--panel2);box-shadow:0 8px 24px -12px var(--shadow);display:flex;flex-direction:column;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.face.back{transform:rotateY(180deg);border-color:var(--accent);background:var(--accent);color:var(--onaccent)}
 .face.back .caps{color:var(--onaccent);opacity:.85}
 .face .caps{display:flex;justify-content:space-between}
-.face .word{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;font-size:clamp(34px,11vw,56px);font-weight:700;line-height:1.05;letter-spacing:-.02em;overflow-wrap:anywhere}
+.face .word{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;font-size:clamp(34px,11vw,56px);font-weight:600;line-height:1.05;letter-spacing:-.02em;overflow-wrap:anywhere}
 .face small{font-size:13px;text-align:center;color:var(--muted)}
 .face.back small{color:var(--onaccent);opacity:.85}
 .actions{display:flex;flex-direction:column;gap:12px}
-.big{height:52px;padding:0 20px;border:0;border-radius:99px;background:var(--ink);color:var(--panel);font-size:16px;font-weight:600}
+.big{height:52px;padding:0 20px;border:0;border-radius:99px;background:var(--accent);color:var(--onaccent);font-size:16px;font-weight:600}
 .grades{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .grades button{display:flex;align-items:center;gap:10px}
 .grades button span{flex:1;text-align:left}
@@ -64,17 +54,10 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 <body>
 <main>
   <h1 id="title">Flashcards</h1>
-  <div class="stats" id="stats"></div>
-  <div class="level">
-    <div><span id="levelText"></span><span id="xpText"></span></div>
-    <div class="bar" aria-hidden="true"><i id="xpFill"></i></div>
-  </div>
   <p class="empty" id="empty" hidden>No cards yet. Ask in the chat to add some.</p>
   <section class="play" id="play" aria-label="This session">
-    <div class="top caps"><span id="cleared"></span><span id="leftText"></span></div>
+    <span class="caps" id="leftText"></span>
     <button class="stage" id="stage" type="button">
-      <span class="under" id="far" aria-hidden="true"></span>
-      <span class="under" id="near" aria-hidden="true"></span>
       <span class="turn" id="turn">
         <span class="face"><span class="caps"><span id="frontLabel"></span><span class="mark"></span></span><span class="word" id="front"></span><small id="hint"></small></span>
         <span class="face back"><span class="caps"><span id="backLabel"></span><span class="mark"></span></span><span class="word" id="back"></span><small id="note"></small></span>
@@ -84,7 +67,7 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
     <div class="actions">
       <button class="big" id="show" type="button">Show answer</button>
       <div class="grades" id="grades" hidden>
-        <button class="big" id="miss" type="button"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Missed</span><small id="missGain"></small></button>
+        <button class="big" id="miss" type="button" aria-label="Missed: the combo ends and the card comes back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Missed</span></button>
         <button class="big" id="hit" type="button"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg><span>Got it</span><small id="hitGain"></small></button>
       </div>
       <p id="last" aria-live="polite"></p>
@@ -115,12 +98,12 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 // "cleared", "firstTry", "graded", "combo", "best", "xp"}, kept in the data so closing
 // the page loses nothing; each grade tests the session it saw, so two pages count it once.
 // A card got right earns HIT times the combo's multiplier (one more every three in a row,
-// to x3), a miss MISS, ends the combo and brings the card back RETURN cards later.
-// Level L takes 100 x L XP. The agent may change this page freely, or the rules here.
+// to x3); a miss earns nothing, ends the combo and brings the card back RETURN cards
+// later. Level L takes 100 x L XP; the level and the XP show on the card in the chat and
+// when a session ends. The agent may change this page freely, or the rules here.
 App.start(/*APP*/null);
 const byId = (id) => document.getElementById(id);
 const HIT = 10;
-const MISS = 2;
 const RETURN = 3;
 const FIRST = `A missed card comes back ${RETURN} cards later.`;
 let flipped = null; // how many cards were graded when the card was turned, or null
@@ -160,7 +143,7 @@ function cardFor(xp, today, s) {
   return {
     summary: `Level ${level}${run ? ` · ${run}-day streak` : ""}`,
     lines: [s.queue.length ? `${plural(s.queue.length, "card", "cards")} to go` : "Session complete",
-      `${today} of ${goal()} cards today`],
+      `${xp - levelStart(level)} of ${100 * level} XP to level ${level + 1}`, `${today} of ${goal()} cards today`],
   };
 }
 
@@ -169,36 +152,14 @@ function draw() {
   const cards = d.cards;
   const s = session();
   const total = Math.max(s.size, cards.length);
-  const today = graded(dayKey(ago(0)));
-  const xp = Number(d.xp) || 0;
-  const level = levelOf(xp);
-  const into = xp - levelStart(level);
   document.title = App.title;
   byId("title").textContent = App.title;
-  stats([[String(streak()), "day streak"], [`×${mult(s.combo)}`, `${s.combo} in a row`],
-    [`${today}/${goal()}`, today >= goal() ? "goal met" : "cards today"]]);
-  byId("levelText").textContent = `Level ${level}`;
-  byId("xpText").textContent = `${into} / ${100 * level} XP to level ${level + 1}`;
-  byId("xpFill").style.width = `${(100 * into / (100 * level)).toFixed(1)}%`;
   byId("empty").hidden = cards.length > 0;
   const playing = cards.length > 0 && s.queue.length > 0;
   byId("play").hidden = !playing;
   byId("done").hidden = !cards.length || playing;
   if (playing) drawCard(s, total);
-  else if (cards.length) drawDone(s, total, level);
-}
-
-function stats(rows) {
-  byId("stats").replaceChildren(...rows.map(([value, key]) => {
-    const box = document.createElement("div");
-    const b = document.createElement("b");
-    b.textContent = value;
-    const k = document.createElement("span");
-    k.className = "caps";
-    k.textContent = key;
-    box.append(b, k);
-    return box;
-  }));
+  else if (cards.length) drawDone(s, total, levelOf(Number(d.xp) || 0));
 }
 
 function drawCard(s, total) {
@@ -208,10 +169,7 @@ function drawCard(s, total) {
   const again = s.missed.includes(s.queue[0]);
   const next = HIT * mult(s.combo + 1);
   const turned = flipped === s.graded; // a grade, here or in another page, turns it back
-  byId("cleared").textContent = `${s.cleared} of ${total} cleared`;
   byId("leftText").textContent = `${s.queue.length} left`;
-  byId("near").style.opacity = s.queue.length > 1 ? "1" : "0";
-  byId("far").style.opacity = s.queue.length > 2 ? "1" : "0";
   byId("frontLabel").textContent = labels.front || "Front";
   byId("backLabel").textContent = labels.back || "Back";
   for (const m of document.querySelectorAll(".mark")) m.textContent = again ? "Again" : "";
@@ -255,7 +213,7 @@ function grade(correct) {
   const id = s.queue[0];
   const rest = s.queue.slice(1);
   const combo = correct ? s.combo + 1 : 0;
-  const gain = correct ? HIT * mult(combo) : MISS;
+  const gain = correct ? HIT * mult(combo) : 0;
   const back = Math.min(RETURN, rest.length);
   const again = s.missed.includes(id);
   const next = {
@@ -272,7 +230,7 @@ function grade(correct) {
   const xp = (Number(d.xp) || 0) + gain;
   byId("last").textContent = correct
     ? `Got it · +${gain} XP · ${combo} in a row`
-    : `Missed · +${gain} XP · ${d.cards[id].front} ${back ? `comes back after ${plural(back, "card", "cards")}` : "comes straight back"}`;
+    : `Missed · ${d.cards[id].front} ${back ? `comes back after ${plural(back, "card", "cards")}` : "comes straight back"}`;
   change([
     { op: "test", path: "/session", value: d.session }, // so two open pages grade a card once
     { op: "add", path: "/session", value: next },
@@ -316,10 +274,7 @@ byId("show").addEventListener("click", () => { flip(); byId("hit").focus(); });
 byId("hit").addEventListener("click", () => grade(true));
 byId("miss").addEventListener("click", () => grade(false));
 byId("again").addEventListener("click", startAgain);
-// What doesn't change with the data: the miss's gain, and the line under the buttons until a grade.
-byId("missGain").textContent = `+${MISS}`;
-byId("miss").setAttribute("aria-label", `Missed: ${MISS} XP, the combo ends and the card comes back`);
-byId("last").textContent = FIRST;
+byId("last").textContent = FIRST; // until the first grade
 let lastDay = dayKey(ago(0));
 App.onchange(draw);
 App.onstatus((state, text) => say(text, state === "saved" ? "ok" : ["error", "reload", "offline"].includes(state) ? "bad" : ""));

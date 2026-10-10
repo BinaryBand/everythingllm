@@ -16,7 +16,7 @@ header p{margin:2px 0 0;font-size:14px;color:var(--ink2)}
 button{font:inherit;color:inherit;cursor:pointer}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .rings{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.ring{display:flex;flex-direction:column;align-items:center;gap:10px;padding:8px 0;border:0;border-radius:12px;background:none}
+.ring{display:flex;flex-direction:column;align-items:center;gap:10px;padding:8px 0;border:0;border-radius:16px;background:none}
 .dial{width:100px;height:100px;border-radius:50%;display:grid;place-items:center}
 .dial span{width:86px;height:86px;border-radius:50%;background:var(--panel);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15}
 .dial b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
@@ -33,7 +33,7 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .grid{display:grid;grid-template-columns:minmax(0,1fr) repeat(7,26px);gap:6px;align-items:center}
 .grid .head{font-size:11.5px;color:var(--muted);text-align:center}
 .grid .name{grid-row:span 2;font-size:15px;overflow-wrap:anywhere}
-.grid i{width:26px;height:26px;border-radius:6px;background:var(--line2)}
+.grid i{width:26px;height:26px;border-radius:8px;background:var(--line2)}
 .grid i.today{outline:2px solid var(--ink2);outline-offset:-2px}
 #status{margin:0;min-height:20px;font-size:13px;color:var(--muted)}
 #status.ok::before{content:"";display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:var(--ok)}

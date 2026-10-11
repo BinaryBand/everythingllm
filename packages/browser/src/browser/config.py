@@ -53,9 +53,7 @@ class Config:
         host = get("PUBLIC_HOST")
         egress = egress_config.load()
         return cls(
-            root=Path(
-                get("BROWSER_ROOT", hostenv.data_dir() / "sandbox" / "workspaces")
-            ),
+            root=Path(get("BROWSER_ROOT") or hostenv.sandbox_root()),
             data=Path(get("BROWSER_DATA", hostenv.data_dir() / "browser")),
             ips=dict(egress.profiles[PROFILE].ips),
             network=egress.network,

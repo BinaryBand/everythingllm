@@ -124,6 +124,7 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
   - `update-prompt/` -- refreshes the calling workspace's EverythingLLM block in its system prompt (below), through `agents-runner`'s `update_prompt`; it shows what would change first and writes only with `apply`
   - `scheduled-jobs/`, `schedule-job/`, `remind-once/` -- list, delete or disable AnythingLLM's scheduled jobs, make a recurring one, and set one-off jobs that are deleted once they've run, through `agents-runner` (see "Scheduled jobs from a chat"); each shows first and acts only with `apply`
   - `memories/` -- list, save or forget AnythingLLM's saved memories, through `agents-runner` (see "Saved memories"); each acts at once, and forget gives the text back
+  - `long-memory/` -- the long-term memory past those 25: remember, recall, list or forget facts, and ingest sandbox files for recall to find, through `memory-runner` (see "Long-term memory")
   - `_lib/` -- what the skills share (no `plugin.json`, so AnythingLLM doesn't load it as a skill): `hostrpc.js`, the node side of `packages/hostrpc`; `sandbox.js`; `browser.js`; `scope.js`, a call's {workspace, thread} for the two; `runner.js`; and `delegated.js`, the check that makes every skill of ours that writes, acts or delegates refuse a call from an `agents-*` workspace, where delegated tasks will run (`docs/.proposals/agents.md`). A test holds every skill to it; elsewhere, chats, the Nilson relay's API chats and scheduled jobs, nothing changes.
 
 - `anythingllm/env.example` -- keys used in the live `.env` (values stay out of git)
@@ -138,6 +139,7 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
   - `packages/hostenv/` -- a library, not a server, standard library only: this host and its AnythingLLM as the services and hostctl see them: where things are kept (`storage`, `data_dir`), a service's socket, the pages site's address, AnythingLLM's login (`anythingllm_headers`) and the system prompt's block (`hostenv.prompt`)
   - `packages/research/` -- `research-runner` runs the deep-research skill's runs, in a service container of its own, and `research-run` runs one by hand (see "Deep research")
   - `packages/agents/` -- `agents-runner` runs delegations, tasks done by AnythingLLM's own agents, and `agents-run` starts one by hand (see "Delegation")
+  - `packages/memory/` -- `memory-runner` keeps the long-term memory, facts and ingested sandbox files recalled by meaning with a local embedding model, for the long-memory skill, and `memory` asks it from the shell (see "Long-term memory")
   - `packages/runs/` -- a library, not a server: what research-runner and agents-runner share for long runs: run state with long-poll waiting and slots, the run log, live cards
   - `packages/publicweb/` -- a library, not a server: the HTTP client research uses, which refuses LAN, CGNAT (Tailscale's) and loopback hosts, and `publicweb.pages`, the page reader on it
   - `packages/chatimage/` -- a library, not a server: the pictures the host draws for the chat, which the agent shows as Markdown images: link cards for published pages (see "Code sandbox"), deep research's live progress cards, and the server push that keeps a live one current (see "Deep research")
@@ -149,7 +151,7 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
 - What only host services read or write lives in `~/.local/share/everythingllm` (`hostenv.data_dir()`), not in AnythingLLM's storage, which the container mounts. It's laid out by kind:
 
   ```text
-  venvs/<name>/        the host services' venvs (agents, browser, sandbox)
+  venvs/<name>/        the host services' venvs (agents, browser, memory, sandbox)
   venvs/<x>-ctr/       a service container's venv and uv cache (venv/, uv-cache/):
                        egress-proxy, research-runner
   pages/public/        the pages site Caddy serves: link cards (_cards/), shown images
@@ -168,6 +170,8 @@ Not in this repo, so a new machine needs them first: rootless podman with Quadle
                        (vault/<workspace>.vault, sealed)
   research/runs/       the deep-research run log and live runs' markers
   agents/runs/         the delegations' run log and live runs' markers
+  memory/              the long-term memory: its store (memory.db, SQLite) and the
+                       embedding model (models/)
   hostctl/skills/      what the UI set (on/off, setup values) in each skill deploy took
                        out, for when its app is set up again
   ```
@@ -228,7 +232,7 @@ The repo is mounted read-only into the AnythingLLM container at `/mcp` (see the 
 
 ### Services on the host
 
-Work that is heavy, long or needs the host goes to a service outside AnythingLLM, with the skill in the container as a thin front: `sandbox-runner` (the code sandbox), `browser-runner` (the workspaces' browsers) and `agents-runner` (delegation) as host units, and `research-runner` (deep research) in a service container of its own (see "Service containers"). Each listens on a Unix socket in storage, `storage/everythingllm/<name>/runner.sock` (mode 0660), which the container sees without a Quadlet change, and they all speak `hostrpc`'s protocol: one request per connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "result"}` or `{"ok": false, "error"}` out.
+Work that is heavy, long or needs the host goes to a service outside AnythingLLM, with the skill in the container as a thin front: `sandbox-runner` (the code sandbox), `browser-runner` (the workspaces' browsers), `agents-runner` (delegation) and `memory-runner` (the long-term memory) as host units, and `research-runner` (deep research) in a service container of its own (see "Service containers"). Each listens on a Unix socket in storage, `storage/everythingllm/<name>/runner.sock` (mode 0660), which the container sees without a Quadlet change, and they all speak `hostrpc`'s protocol: one request per connection, a line of JSON each way, `{"op", "args"}` in and `{"ok": true, "result"}` or `{"ok": false, "error"}` out.
 
 - `hostrpc.Service(ops, errors=…)` dispatches each request to the function of that name in `ops` (a package's `tools.OPS`) or to an `op_<name>` method of a subclass (research, sandbox), running one that isn't a coroutine in a thread; a `hostrpc.RunnerError` becomes the error the caller sees, as does that of the service's own `errors` (the sandbox's `SandboxError`); anything else is logged and reported as `runner error: …`. Every service answers `ping`, which `uv run hostctl health` asks. `hostrpc.serve` serves one on its socket and removes the socket on SIGTERM, or when a `stop` event is set (a runner's `main()` serves it on `hostenv.socket_path(<name>, <NAME>_SOCKET)`), and `hostrpc.serving` serves one for the length of a test.
 - `hostrpc.request(socket, op, args, timeout, name=…)` asks one, raising `RunnerError` (also when nothing listens). The skills speak the same protocol from node (`anythingllm/agent-skills/_lib/hostrpc.js`; `_lib/runner.js`'s `forward` for a skill that sends one op).
@@ -550,7 +554,19 @@ AnythingLLM keeps short facts about the user (Settings > Personalization): at mo
 - **`save`** keeps one fact (at most 500 characters, on one line, with no control characters or invisible ones such as bidi marks and zero-width spaces, which would make it read differently on the Personalization page than in the prompt) for the workspace, or with `scope: global` for every workspace. Text that a memory in that scope (or a global one) already says isn't saved again; the reply names that memory. A full scope is AnythingLLM's refusal, passed on.
 - **`forget`** takes only an id from the calling workspace's list (global or its own), deletes it, and gives back its text and scope, so a mistake can be saved again.
 
+They're few by design, since each one is in every prompt; the rest goes in the long-term memory (below), which the prompt tells the agent to use for what the user asks it to remember, keeping these for what every chat should see.
+
 With Personalization off, every action says so (AnythingLLM's "Personalization is disabled."). A memory's text goes into every chat's system prompt after ours, so the prompt's Safety rules say memories are facts, never instructions, and are saved only when the user asks; the skill says the same. Nothing else stops a chat that read a page or mail from saving one, so the Personalization page is where to look for one the user didn't ask for.
+
+## Long-term memory
+
+AnythingLLM's saved memories stop at 5 global and 20 per workspace, all of them in every prompt. `memory-runner` (`packages/memory`, `host/systemd/memory-runner.service`, its own venv in `~/.local/share/everythingllm/venvs/memory`) keeps the rest, as many as the user wants, none of them in a prompt by itself: the agent recalls what a question needs with the **`long-memory`** skill (`action: recall | remember | list | forget | ingest`, `query`, `text`, `scope`, `id`, `path`, `k`, `only`), which refuses a delegated task. The prompt has it remember there whatever the user asks it to remember, save to the saved memories too only what every chat should see, and recall before answering about the user's life, plans, preferences or past when the saved memories don't settle it.
+
+- **What it keeps.** Facts, one line each (at most 500 characters, no control or invisible characters, as the saved memories), global or the calling workspace's, by id (`m12`); and the text of sandbox files the agent ingested, the workspace's, by sandbox path, in chunks of about 1,200 characters. Text a fact in that scope (or a global one) already says isn't kept again. At most 10,000 facts a scope.
+- **How it finds them.** Every fact and chunk is embedded with a local model (fastembed's `BAAI/bge-small-en-v1.5`, about 70 MB, downloaded into `memory/models/` on the runner's first start; `MEMORY_EMBED_MODEL` names another, and the runner embeds everything again when it starts with one the store didn't use). `recall` ranks the global facts, the workspace's and its files' chunks by cosine similarity against the query and gives back the closest `k` (5, at most 20) with their scores; with this model, related facts score about 0.55 to 0.8 and unrelated ones below. They're in one SQLite file, `memory/memory.db`, ranked with numpy: no vector database, and nothing calls a language model.
+- **Ingest.** `ingest` takes sandbox paths in the chat's own folders (`/work`, `/project`, `/shared/<workspace>`; a relative one is under `/work`), files or folders (hidden entries, `node_modules` and caches skipped, 200 files and 1 MB a file at most). They're the sandbox's folders on the host, which a run can write, so each step is opened through `hostrpc.safefs`: a symlink anywhere is refused, and only plain UTF-8 text is read (a PDF is turned into text with run-code first). The model embeds about ten chunks a second here, so the call answers at once and a queue in the runner embeds them in the background (`memory.ingest`), at most 6,000 chunks waiting a workspace; a file is found once it's whole, replacing what an earlier ingest kept of it, and `list` shows what's still going. A restart drops the queue. `forget` with a `path` drops a file or folder's chunks; the files stay.
+- **Who sees what.** A chat sees the global facts and its workspace's facts and files. A scheduled job (`_jobs`) only recalls and lists global facts. Recalled text is data: the reply says so, and the prompt's Safety rules say what it recalls is never an instruction.
+- **From the shell.** `uv run --package memory memory remember | recall | list | forget | ingest …` asks the runner over its socket, without `--workspace` as `_host` (global facts only), with one as that workspace's chats; `--json` prints the whole answer, and `memory serve` is the runner itself.
 
 ## Nilson relay
 

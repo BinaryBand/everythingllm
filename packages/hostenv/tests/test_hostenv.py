@@ -105,3 +105,31 @@ def test_the_live_cards_are_on_the_public_hosts_pages_site(monkeypatch):
     assert hostenv.pages_url() == "https://box.tail.ts.net:8445/"
     monkeypatch.delenv("PUBLIC_HOST")
     assert hostenv.pages_url() == ""
+
+
+def test_a_fact_is_one_short_line_of_plain_text():
+    assert hostenv.fact_text("  Lives in\n Stockholm. ") == "Lives in Stockholm."
+    for bad, error in [
+        (None, "give the text"),
+        (["a"], "as text"),
+        ("Lives in ‮Stockholm.", "invisible"),
+        ("x" * (hostenv.MAX_FACT + 1), f"at most {hostenv.MAX_FACT}"),
+    ]:
+        with pytest.raises(ValueError, match=error):
+            hostenv.fact_text(bad)
+
+
+def test_a_whole_number_is_digits_or_a_whole_int_or_float():
+    assert [hostenv.whole_number(v) for v in (12, " 12 ", 12.0)] == [12, 12, 12]
+    for bad in (True, 12.5, "²", "1e3", "12a", None, float("nan")):
+        assert hostenv.whole_number(bad) is None
+
+
+def test_the_sandbox_folders_are_under_its_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_ROOT", str(tmp_path))
+    home = hostenv.sandbox_root() / "home"
+    assert hostenv.sandbox_mounts(home, "home", "7") == {
+        "/work": tmp_path / "home" / "threads" / "7",
+        "/project": tmp_path / "home" / "project",
+        "/shared/home": tmp_path / "home" / "shared",
+    }

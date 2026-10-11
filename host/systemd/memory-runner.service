@@ -1,0 +1,19 @@
+[Unit]
+Description=Long-term memory: facts and ingested sandbox files, recalled by meaning, for the long-memory skill (socket in storage/everythingllm/memory/)
+After=network.target
+# Keep retrying after a crash loop instead of giving up for good.
+StartLimitIntervalSec=0
+
+[Service]
+EnvironmentFile=@REPO@/host.env
+Environment=UV_PROJECT_ENVIRONMENT=%h/.local/share/everythingllm/venvs/memory
+ExecStart=/usr/local/bin/uv run --frozen --no-dev --project @REPO@ --package memory memory-runner
+# uv exits 143 on the SIGTERM that stops it: a clean stop, not a failure.
+SuccessExitStatus=143
+# Embedding a file someone ingested shouldn't slow a chat.
+Nice=10
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

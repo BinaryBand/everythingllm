@@ -1,7 +1,9 @@
 """This host and the AnythingLLM on it, as the services and hostctl see them: where things
 are kept (`storage`, AnythingLLM's, and its .env, `anythingllm_env`; `data_dir`, ours, laid
 out by kind; `site_dir`), a service's socket (`socket_path`), the pattern of a workspace's
-slug (`WORKSPACE`), the pages site's address (`pages_url`), the user's time zone
+slug (`WORKSPACE`) and a scheduled job's (`JOBS`), a remembered fact's text (`fact_text`)
+and an id the model gave (`whole_number`), the sandbox's folders (`sandbox_root`,
+`sandbox_mounts`), the pages site's address (`pages_url`), the user's time zone
 (`user_zone`), settings read from an env file (`env_values`), and the login for
 AnythingLLM's internal API (`anythingllm_headers`). The EverythingLLM block of the system
 prompt is hostenv.prompt.
@@ -14,6 +16,8 @@ Config (environment):
   ANYTHINGLLM_ENV      AnythingLLM's .env (default <storage>/.env)
   PUBLIC_HOST          the machine's HTTPS name, for pages_url ("" without it)
   USER_TIMEZONE        the user's time zone (default Europe/Stockholm)
+  SANDBOX_ROOT         the sandbox's workspace folders (default
+                       ~/.local/share/everythingllm/sandbox/workspaces)
 """
 
 from __future__ import annotations
@@ -35,6 +39,58 @@ SOCKET = "runner.sock"  # a service's socket file in its folder there
 # A workspace's slug in AnythingLLM, as the sandbox and the runners take it (thread ids too).
 WORKSPACE = r"[a-z0-9_][a-z0-9_-]{0,99}"
 WORKSPACE_RE = re.compile(WORKSPACE)  # use with fullmatch
+
+# A scheduled job's workspace in a skill's scope (anythingllm/agent-skills/_lib/scope.js):
+# it has none, and no one asked for what it does.
+JOBS = "_jobs"
+
+MAX_FACT = 500  # characters in a remembered fact
+# What a remembered fact (AnythingLLM's saved memories, the long-term memory's facts) can't
+# hold: control characters, and the invisible ones that would make it read differently where
+# it's shown than in the prompt: C1, bidi marks, overrides and isolates, zero-width spaces
+# and the BOM (not ZWJ/ZWNJ, which emoji and scripts need).
+HIDDEN = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\u061c\u200b\u200e\u200f\u202a-\u202e\u2060-\u2069\ufeff]"
+)
+
+
+def one_line(text: object) -> str:
+    """`text` on one line, its runs of white space one space each."""
+    return " ".join(str(text or "").split())
+
+
+def fact_text(value: object) -> str:
+    """A fact to remember as the model gave it, on one line; ValueError, saying what's
+    wrong, unless it's short plain text."""
+    if value is not None and not isinstance(value, str):
+        raise ValueError("give the text to remember as text: one short fact")
+    text = one_line(value)
+    if not text:
+        raise ValueError("give the text to remember: one short fact about the user")
+    if HIDDEN.search(text):
+        raise ValueError(
+            "the text can't have control characters or invisible ones (bidi marks, "
+            "zero-width spaces)"
+        )
+    if len(text) > MAX_FACT:
+        raise ValueError(
+            f"a fact is one short sentence, at most {MAX_FACT} characters; this is "
+            f"{len(text)}. Shorten it, or save two."
+        )
+    return text
+
+
+def whole_number(value: object) -> int | None:
+    """An id or count the model gave, as an int: a whole number, or its digits as text;
+    None for anything else, since int() would make true 1 and 12.7 12, and act on that one."""
+    if isinstance(value, str):
+        value = value.strip()
+        return int(value) if re.fullmatch(r"[0-9]{1,18}", value) else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None  # also inf and nan
+    return int(value)
 
 
 class LoginFailed(Exception):
@@ -144,6 +200,7 @@ def data_dir() -> Path:
       agents/runs/         the delegations' run log and live runs' markers; agents/ also
                            keeps the one-offs made (once.json) and the research runs
                            followed for their chats (followed.json)
+      memory/              the long-term memory's store (memory.db) and model (models/)
       hostctl/skills/      what the UI set in each skill deploy took out (hostctl.sync)"""
     return Path("~/.local/share/everythingllm").expanduser()
 
@@ -151,6 +208,21 @@ def data_dir() -> Path:
 def site_dir() -> Path:
     """The pages site's folder on the host, which Caddy serves on :8445."""
     return data_dir() / "pages" / "public"
+
+
+def sandbox_root() -> Path:
+    """The sandbox's workspace folders on the host (SANDBOX_ROOT), one per workspace."""
+    return Path(os.environ.get("SANDBOX_ROOT") or data_dir() / "sandbox" / "workspaces")
+
+
+def sandbox_mounts(home: Path, workspace: str, thread: str) -> dict[str, Path]:
+    """The folders a sandbox run of `workspace`'s chat `thread` writes, by where the run
+    sees them, as they are on the host under the workspace's folder `home`."""
+    return {
+        "/work": home / "threads" / thread,
+        "/project": home / "project",
+        f"/shared/{workspace}": home / "shared",
+    }
 
 
 def socket_path(folder: str, env: str) -> Path:

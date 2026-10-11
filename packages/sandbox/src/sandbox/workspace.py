@@ -129,9 +129,7 @@ class Config:
             model_sockets=hostenv.data_dir() / "sandbox" / "m",
             app_state=hostenv.data_dir() / "sandbox" / "apps",
             apps_port=int(get("APPS_PORT") or appsweb.PORT),
-            root=Path(
-                get("SANDBOX_ROOT", hostenv.data_dir() / "sandbox" / "workspaces")
-            ),
+            root=hostenv.sandbox_root(),
             system_themes=Path(get("SANDBOX_SYSTEM_THEMES", SYSTEM_THEMES)),
             site_dir=Path(get("SANDBOX_SITE_DIR", hostenv.site_dir())),
             site_url=get("SANDBOX_SITE_URL", hostenv.pages_url()),
@@ -160,12 +158,8 @@ class Scope:
 
     @property
     def roots(self) -> dict[str, Path]:
-        return {
-            "/work": self.home / "threads" / self.thread,
-            "/project": self.home / "project",
-            f"/shared/{self.workspace}": self.home / "shared",
-            "/public": self.public,
-        }
+        mounts = hostenv.sandbox_mounts(self.home, self.workspace, self.thread)
+        return {**mounts, "/public": self.public}
 
 
 def make_scope(config: Config, scope: dict[str, Any]) -> Scope:

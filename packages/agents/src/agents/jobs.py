@@ -28,6 +28,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import hostrpc
+from hostenv import whole_number
 from hostrpc import RunnerError
 from runs.runlog import iso
 
@@ -61,19 +62,6 @@ def zone(name: str) -> ZoneInfo:
             f"USER_TIMEZONE is '{name}', which isn't a time zone (e.g. Europe/Stockholm); "
             "fix it in host.env and restart agents-runner."
         ) from None
-
-
-def whole_number(value: Any) -> int | None:
-    """An id the model gave, as an int: a whole number, or its digits as text; None for
-    anything else, since int() would make true 1 and 12.7 12, and act on that one."""
-    if isinstance(value, str):
-        value = value.strip()
-        return int(value) if re.fullmatch(r"[0-9]{1,18}", value) else None
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    if isinstance(value, float) and not value.is_integer():
-        return None  # also inf and nan
-    return int(value)
 
 
 def when(text: Any) -> datetime | None:

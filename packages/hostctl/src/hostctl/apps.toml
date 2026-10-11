@@ -106,3 +106,10 @@ serve = [{ https = 8445, path = "/_live/agents", port = 8451 }]
 health = { "delegation live cards" = "http://127.0.0.1:8451/_live/agents/dg-00000000.png" }
 why_not_installed = "it needs a developer API key in ~/.config/everythingllm/agents.env first"
 skills = ["delegate", "memories", "remind-once", "schedule-job", "scheduled-jobs", "update-prompt"]
+
+[memory]
+summary = "memory-runner, the long-term memory: facts and ingested sandbox files, recalled by meaning with a local model"
+runner = "memory-runner.service"
+units = { "memory-runner.service" = "long-term memory" }
+install = true
+skills = ["long-memory"]

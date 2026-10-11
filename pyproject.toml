@@ -15,6 +15,7 @@ hostctl = { workspace = true }
 hostenv = { workspace = true }
 hostrpc = { workspace = true }
 llm = { workspace = true }
+memory = { workspace = true }
 publicweb = { workspace = true }
 research = { workspace = true }
 runs = { workspace = true }

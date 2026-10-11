@@ -131,6 +131,7 @@ def test_the_registrys_views():
         "browser-runner": "browser",
         "research-runner": "research",
         "agents-runner": "agents",
+        "memory-runner": "memory",
     }
     guarded = apps.guarded()
     assert {u: (g.runs, g.noun) for u, g in guarded.items()} == {
@@ -200,12 +201,6 @@ def test_a_container_publishes_its_apps_ports_on_the_hosts_loopback():
         assert published <= ports, app.name
         if app.managed and app.container and not app.units:
             assert ports == published, app.name
-
-
-def test_the_skills_socket_list_is_the_registrys():
-    test = REPO / "anythingllm" / "agent-skills" / "_lib" / "test" / "delegated.test.js"
-    named = set(re.findall(r'"([A-Z]+)_SOCKET"', test.read_text()))
-    assert named == {name.upper() for name in apps.runners().values()}
 
 
 def test_every_skill_is_one_apps_and_reaches_its_runner():

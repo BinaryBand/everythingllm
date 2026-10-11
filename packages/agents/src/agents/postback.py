@@ -31,13 +31,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from hostenv import WORKSPACE_RE, prompt
+from hostenv import JOBS, WORKSPACE_RE, one_line, prompt
 from hostrpc import RunnerError, safefs
 from runs.runlog import find_many
 
 from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI, tag_safe
 from agents.jobs import Registry, clipped, repeat
-from agents.memories import one_line
 
 log = logging.getLogger("agents-runner")
 
@@ -63,7 +62,7 @@ def chat_only(scope: dict, what: str) -> None:
     """Refuse a call from a scheduled job (no workspace) or a delegation role's workspace:
     only a chat, where the user sees what's shown first, may `what`."""
     slug = str((scope or {}).get("workspace") or "")
-    if not slug or slug == "_jobs":
+    if not slug or slug == JOBS:
         raise RunnerError(f"a scheduled job can't {what}; only a chat can")
     if slug.startswith(prompt.DELEGATED):
         raise RunnerError(f"a delegated task can't {what}")

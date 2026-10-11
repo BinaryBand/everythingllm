@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const { asObject, asFlag, asInteger, forward } = require("../runner");
@@ -16,9 +17,11 @@ function agent(workspace) {
 }
 
 test("every skill that writes, acts or delegates refuses a delegated task, before reaching any service", async () => {
-  const service = await fakeService(() => ({ ok: true, result: "done" }));
-  const envs = ["SANDBOX_SOCKET", "RESEARCH_SOCKET", "AGENTS_SOCKET", "BROWSER_SOCKET"];
-  for (const env of envs) process.env[env] = service.socket;
+  // No runner is reachable: storage is an empty folder and no socket is named, so a skill
+  // that doesn't refuse answers that its service isn't running, whichever service it is.
+  const saved = { ...process.env };
+  for (const env of Object.keys(process.env)) if (env.endsWith("_SOCKET")) delete process.env[env];
+  process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "no-runners-"));
   try {
     const skills = fs.readdirSync(SKILLS).filter((d) => fs.existsSync(path.join(SKILLS, d, "plugin.json")));
     assert.ok(skills.includes("delegate") && skills.includes("run-code"));
@@ -28,10 +31,10 @@ test("every skill that writes, acts or delegates refuses a delegated task, befor
       const reply = await handler.call(agent("agents-worker"), {});
       assert.match(reply, /^Error: this tool isn't available to a delegated task/, skill);
     }
-    assert.deepEqual(service.requests, []);
   } finally {
-    for (const env of envs) delete process.env[env];
-    await service.close();
+    fs.rmSync(process.env.STORAGE_DIR, { recursive: true, force: true });
+    for (const env of Object.keys(process.env)) if (!(env in saved)) delete process.env[env];
+    Object.assign(process.env, saved);
   }
 });
 

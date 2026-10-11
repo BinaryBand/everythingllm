@@ -7,33 +7,21 @@ Config (environment, from host.env through the unit):
   USER_TIMEZONE  the user's time zone, for the "last used" times `list` shows
 """
 
-import re
 from dataclasses import dataclass
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from hostenv import fact_text, one_line, whole_number
 from hostrpc import RunnerError
 
 from agents.anythingllm import InternalAPI, NotFound
-from agents.jobs import DEFAULT_TIMEZONE, local, when, whole_number, zone
+from agents.jobs import DEFAULT_TIMEZONE, local, when, zone
 
 LIMITS = {"global": 5, "workspace": 20}  # AnythingLLM's caps (its Memory model)
-MAX_TEXT = 500  # a memory is one short fact
-# Control characters, and the invisible ones that would make a memory read differently in
-# AnythingLLM's Personalization page than in the prompt: C1, bidi marks, overrides and
-# isolates, zero-width spaces and the BOM (not ZWJ/ZWNJ, which emoji and scripts need).
-HIDDEN = re.compile(
-    r"[\x00-\x1f\x7f-\x9f\u061c\u200b\u200e\u200f\u202a-\u202e\u2060-\u2069\ufeff]"
-)
 
 
 def scope_of(memory: dict) -> str:
     return "global" if memory.get("scope") == "global" else "workspace"
-
-
-def one_line(text: Any) -> str:
-    """A memory's text on one line (the UI's and AnythingLLM's own may have line breaks)."""
-    return " ".join(str(text or "").split())
 
 
 @dataclass
@@ -73,26 +61,13 @@ class SavedMemories:
         return "\n".join(lines)
 
     async def save(self, slug: str, text: Any, scope: Any) -> str:
-        if text is not None and not isinstance(text, str):
-            raise RunnerError("give the text to remember as text: one short fact")
-        text = one_line(text)
+        try:
+            text = fact_text(text)
+        except ValueError as e:
+            raise RunnerError(str(e)) from None
         scope = str(scope or "workspace").strip().lower()
         if scope not in LIMITS:
             raise RunnerError("scope must be workspace (the default) or global")
-        if not text:
-            raise RunnerError(
-                "give the text to remember: one short fact about the user"
-            )
-        if HIDDEN.search(text):
-            raise RunnerError(
-                "the text can't have control characters or invisible ones (bidi marks, "
-                "zero-width spaces)"
-            )
-        if len(text) > MAX_TEXT:
-            raise RunnerError(
-                f"a memory is one short fact, at most {MAX_TEXT} characters; this is "
-                f"{len(text)}. Shorten it, or save two."
-            )
         # A global one is in every chat already; the same text twice only takes a slot.
         found = await self.found(slug)
         same = next(

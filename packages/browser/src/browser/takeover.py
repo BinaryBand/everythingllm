@@ -94,13 +94,14 @@ ICON = (
     '<path d="{1}"></path></svg>'
 )
 KEY = ICON.format(
-    14, "M10.5 2.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M8.3 7.7 2.5 13.5 M4.5 11.5l1.5 1.5"
+    16, "M10.5 2.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M8.3 7.7 2.5 13.5 M4.5 11.5l1.5 1.5"
 )
 KEYBOARD = ICON.format(
     16, "M1.8 4.5h12.4v7H1.8z M4.2 7h.1 M6.7 7h.1 M9.2 7h.1 M11.7 7h.1 M5 9.3h6"
 )
 FIT = ICON.format(16, "M2.5 6V2.5H6 M10 2.5h3.5V6 M13.5 10v3.5H10 M6 13.5H2.5V10")
 CLOSE = ICON.format(16, "M4 4l8 8M12 4l-8 8")
+BACK = ICON.format(16, "M9.5 3.5 5 8l4.5 4.5")
 LOCK = ICON.format(13, "M4 7.5h8v6H4z M5.8 7.5V5.2a2.2 2.2 0 0 1 4.4 0v2.3")
 GLOBE = ICON.format(
     18,
@@ -119,32 +120,32 @@ PAGE = f"""<!doctype html>
 </head>
 <body class="connecting">
 <header id="bar">
-  <div id="title">
-    <span id="who"><span id="state">Connecting…</span></span>
-    <span id="where"><span id="url"></span></span>
-  </div>
-  <span id="workspace">{{workspace}}</span>
-  <button id="logins-open" type="button" class="tool" aria-expanded="false" aria-controls="logins" aria-label="Saved logins">{KEY}<span class="label">Saved logins</span></button>
+  <span id="dot" aria-hidden="true"></span>
+  <h1 id="title">
+    <span id="state">Connecting…</span>
+    <span id="where"><span id="workspace">{{workspace}}</span><span id="url"></span></span>
+  </h1>
+  <button id="logins-open" type="button" class="icon" aria-expanded="false" aria-controls="logins" aria-label="Saved logins" title="Saved logins">{KEY}</button>
   <div id="actions">
     <button id="keyboard" type="button" class="icon" aria-label="Keyboard" title="Keyboard" hidden>{KEYBOARD}</button>
-    <button id="fit" type="button" class="icon" aria-label="Fit the screen" title="Fit the screen" aria-pressed="true">{FIT}</button>
+    <button id="fit" type="button" class="icon" aria-label="Show the whole page" title="Show the whole page" aria-pressed="false" hidden>{FIT}</button>
     <button id="take" class="primary" hidden>Take over</button>
     <button id="give" class="primary" hidden><span class="long">Hand back to the agent</span><span class="short">Hand back</span></button>
   </div>
 </header>
 <div id="view">
-<p id="reason" class="notice you" hidden></p>
-<p id="gone" class="notice bad" hidden>Disconnected. Reload the page to see the browser again.</p>
-<p id="problem" class="notice bad" hidden></p>
-<section id="approvals"></section>
-<section id="asked"></section>
-<section id="offers"></section>
-<p id="making" class="notice you" hidden><span></span><button id="stop" type="button" class="quiet">Stop waiting</button></p>
-<main id="stage">
-  <div id="screen"></div>
-  <p id="caption"></p>
-</main>
+<main id="stage"><div id="screen"></div></main>
 <footer id="dock">
+  <div id="notices" role="status">
+    <div id="reason" class="notice" hidden><span class="text"><span></span></span></div>
+    <div id="gone" class="notice bad" hidden><span class="text"><span>Disconnected. Reload to reconnect.</span></span></div>
+    <div id="problem" class="notice bad" hidden><span class="text"><span></span></span></div>
+    <div id="approvals"></div>
+    <div id="asked"></div>
+    <div id="offers"></div>
+    <div id="making" class="notice" hidden><span class="text"><span>Add a passkey on the site's page now.</span></span><button id="stop" type="button" class="quiet">Stop waiting</button></div>
+  </div>
+  <p id="caption"></p>
   <form id="typing" hidden>
     <label for="type-text">Type into the browser</label>
     <span class="row">
@@ -169,25 +170,33 @@ PAGE = f"""<!doctype html>
 </footer>
 <div id="scrim" hidden></div>
 <aside id="logins" aria-label="Saved logins" hidden>
-  <div class="head">
-    <h2>Saved logins</h2>
-    <button id="logins-close" type="button" class="icon" aria-label="Close saved logins">{CLOSE}</button>
+  <div id="logins-list">
+    <div class="head">
+      <h2>Saved logins</h2>
+      <button type="button" class="icon close" aria-label="Close saved logins">{CLOSE}</button>
+    </div>
+    <p class="note">The agent can use them, never read them.</p>
+    <div class="columns" aria-hidden="true"><span>Ask first</span></div>
+    <ul id="login-list"></ul>
+    <button id="add-open" type="button" class="quiet">Add a login</button>
+    <div id="passkey">
+      <button id="make" type="button" class="quiet" hidden>Make a passkey</button>
+      <p id="make-note" class="note"></p>
+    </div>
   </div>
-  <p class="note">The agent can use these on their own sites, but never read them.</p>
-  <ul id="login-list"></ul>
-  <form id="add">
-    <h3>Add a login</h3>
+  <form id="add" hidden>
+    <div class="head">
+      <button id="add-back" type="button" class="icon back" aria-label="Back to saved logins">{BACK}</button>
+      <h2>Add a login</h2>
+      <button type="button" class="icon close" aria-label="Close saved logins">{CLOSE}</button>
+    </div>
     <input name="site" aria-label="Site" placeholder="Site, like linkedin.com" required autocomplete="off">
     <input name="username" aria-label="Username or email" placeholder="Username or email" autocomplete="off">
     <input name="password" aria-label="Password" type="password" placeholder="Password" autocomplete="new-password" required>
-    <label><input name="ask" type="checkbox"> Ask me before each use</label>
+    <div class="ask"><span>Ask me before each use</span><button id="add-ask" type="button" class="switch" role="switch" aria-checked="false" aria-label="Ask me before each use"></button></div>
     <button class="primary">Save login</button>
     <span id="add-error" class="error"></span>
   </form>
-  <div id="passkey">
-    <button id="make" type="button" class="quiet" hidden>Make a passkey</button>
-    <p id="make-note" class="note"></p>
-  </div>
 </aside>
 </div>
 <script type="module" src="app.js"></script>

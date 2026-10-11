@@ -1,7 +1,8 @@
 /* The take-over view (browser.takeover) and a login request's form, after the design
    canvas's browser boards: its colour tokens, light or dark as the device is, and the
-   system's fonts. --tone is the colour of who has the browser: the accent while the agent
-   has it, amber while you do, red once the view lost it. */
+   system's fonts. --tone is the colour of who has the browser, in the bar's dot: the accent
+   while the agent has it, amber while you do (the screen is framed in it then), red once
+   the view lost it. */
 :root {
   --bg: oklch(0.982 0.008 75); --panel: oklch(0.995 0.003 75); --panel2: oklch(0.989 0.006 75);
   --line: oklch(0.895 0.014 75); --line2: oklch(0.928 0.012 75);
@@ -12,9 +13,11 @@
   --warnfg: oklch(0.45 0.1 70); --warnbg: oklch(0.95 0.045 80);
   --badfg: oklch(0.47 0.16 20); --badbg: oklch(0.95 0.025 20);
   --scrim: oklch(0.25 0.03 280 / 0.4); --shadow: oklch(0.35 0.04 280 / 0.14);
-  --tone: var(--accent); --tonebg: var(--accentbg);
+  --tone: var(--accent);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --control: 32px; --field: 40px; /* a notice's buttons, and the fields and theirs: 44px on a phone */
+  --serif: "Instrument Serif", ui-serif, Georgia, serif;
+  --off: oklch(0.84 0.012 75); /* a switch that's off */
+  --control: 36px; --field: 40px; /* a notice's buttons, and the fields and theirs: 44px on a phone */
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -28,139 +31,163 @@
     --warnfg: oklch(0.84 0.1 80); --warnbg: oklch(0.33 0.05 70);
     --badfg: oklch(0.83 0.085 20); --badbg: oklch(0.33 0.06 20);
     --scrim: oklch(0.1 0.02 280 / 0.6); --shadow: oklch(0 0 0 / 0.35);
+    --off: oklch(0.42 0.02 280);
   }
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
-body { display: flex; flex-direction: column; background: var(--hover); color: var(--ink); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-body.mine { --tone: var(--warnfg); --tonebg: var(--warnbg); }
-body.gone { --tone: var(--badfg); --tonebg: var(--badbg); }
-body.connecting { --tone: var(--muted); --tonebg: var(--hover); }
+body { display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+body.mine { --tone: var(--warnfg); }
+body.gone { --tone: var(--badfg); }
+body.connecting { --tone: var(--muted); }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 input { font: inherit; color: var(--ink); }
 input::placeholder { color: var(--fade); }
-input:not([type=checkbox], [type=radio]):focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-input[type=checkbox] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex: none; }
 svg { flex: none; }
-h2, h3, p { margin: 0; }
+h1, h2, h3, p { margin: 0; }
 .note { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
 .error { color: var(--badfg); }
 .error:empty { display: none; }
-.primary { min-height: 36px; padding: 0 16px; border-radius: 10px; background: var(--accent); color: var(--onaccent); font-weight: 500; }
-.quiet { min-height: 36px; padding: 0 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-weight: 500; }
-.icon { width: 36px; height: 36px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; color: var(--ink2); }
-.icon:hover, .tool:hover { background: var(--hover); }
-.icon[aria-pressed=true] { background: var(--sel); color: var(--ink); }
+.primary { min-height: var(--control); padding: 0 16px; border-radius: 10px; background: var(--accent); color: var(--onaccent); font-size: 14px; font-weight: 500; }
+.quiet { min-height: var(--control); padding: 0 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 14px; font-weight: 500; }
+.icon { width: 44px; height: 44px; flex: none; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; color: var(--ink2); }
+.icon:hover { background: var(--hover); }
+.icon[aria-pressed=true], .icon[aria-expanded=true] { background: var(--sel); color: var(--ink); }
+/* A switch: a button with role=switch, drawn as a track and its knob. */
+.switch { width: 56px; height: 44px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.switch::before { content: ""; width: 34px; height: 20px; border-radius: 99px; background: var(--off) radial-gradient(circle 8px at 10px 50%, var(--panel) 98%, transparent) no-repeat; transition: background-position 0.15s; }
+.switch[aria-checked=true]::before { background-color: var(--accent); background-position: 14px 0; }
 
-/* The bar: who has the browser, the page's address, the workspace, its logins and the
-   buttons that take the browser and hand it back. */
-#bar { flex: none; min-height: 56px; padding: 10px 16px; display: flex; align-items: center; gap: 12px; background: var(--bg); border-bottom: 1px solid var(--line); }
-#title { display: contents; }
-#who { flex: none; height: 32px; padding: 0 12px 0 10px; display: flex; align-items: center; gap: 8px; border-radius: 99px; background: var(--tonebg); color: var(--tone); font-size: 13.5px; font-weight: 600; white-space: nowrap; }
-#who::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-#where { flex: 1; min-width: 0; height: 36px; padding: 0 12px; display: flex; align-items: center; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); color: var(--ink2); font: 12.5px var(--mono); }
-#url { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-#workspace { flex: none; font-size: 13px; color: var(--muted); }
-.tool { flex: none; min-height: 36px; padding: 0 12px; display: flex; align-items: center; gap: 6px; border-radius: 10px; background: var(--hover); font-size: 14px; font-weight: 500; }
-.tool[aria-expanded=true] { background: var(--sel); }
-#actions { flex: none; display: flex; align-items: center; gap: 6px; font-size: 14px; }
-#give .short { display: none; }
+/* The bar: a dot in the colour of who has the browser, who that is, the workspace and the
+   page's address, the saved logins and the button that takes it or hands it back. */
+#bar { flex: none; min-height: 64px; padding: 8px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line2); }
+#dot { width: 10px; height: 10px; flex: none; margin-right: 4px; border-radius: 50%; background: var(--tone); }
+#title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-weight: 400; }
+#state { font: 26px/1.15 var(--serif); letter-spacing: -0.4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#where { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; line-height: 1.3; color: var(--muted); white-space: nowrap; overflow: hidden; }
+#workspace { flex: none; }
+#url { min-width: 0; font: 12px var(--mono); color: var(--ink2); overflow: hidden; text-overflow: ellipsis; }
+#bar .icon { width: 40px; height: 40px; }
+#actions { flex: none; display: flex; align-items: center; gap: 8px; }
+#actions .primary { min-height: 40px; padding: 0 20px; font-size: 14.5px; }
+#fit, #give .short { display: none; }
 
-/* What waits for you, a line each under the bar. */
-.notice { flex: none; min-height: 44px; padding: 8px 20px; border-bottom: 1px solid var(--line2); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; background: var(--panel2); color: var(--ink2); font-size: 13.5px; line-height: 1.4; }
-.notice > span { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
-.notice.you { background: var(--warnbg); color: var(--warnfg); }
-.notice.ask { background: var(--accentbg); color: var(--ink); }
-.notice.bad { background: var(--badbg); color: var(--badfg); }
-.notice .primary, .notice .quiet { min-height: var(--control); padding: 0 12px; border-radius: 8px; font-size: 13.5px; }
-.notice a.quiet { display: inline-flex; align-items: center; text-decoration: none; }
-.notice input:not([type=checkbox]) { width: 200px; height: var(--control); padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 13.5px; }
-.notice label { display: flex; align-items: center; gap: 6px; min-height: var(--control); }
-
-/* The browser's screen, framed in --tone, and what it's doing under it. */
+/* The browser's screen, outlined in amber while it's yours and dimmed once the view lost it. */
 #view { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-#stage { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px 24px 14px; }
-#screen { flex: 1; min-height: 0; }
+/* The screen's box is the browser's 1280 x 720 at most, so what's under it sits right under
+   it; it shrinks, and noVNC scales the screen into it, when the window is short. */
+#stage { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 16px 24px 0; }
+#screen { flex: 0 1 auto; min-height: 0; width: 100%; max-width: 1280px; margin: 0 auto; aspect-ratio: 16 / 9; }
 /* noVNC crops what's drawn outside its canvas and sets the canvas's outline inline: the
    frame is an outline inside it. */
-#screen canvas { border-radius: 10px; outline: 2px solid var(--tone) !important; outline-offset: -2px; box-shadow: 0 16px 40px -20px var(--shadow); }
+#screen canvas { border-radius: 12px; outline: none !important; box-shadow: 0 0 0 1px var(--line), 0 16px 40px -20px var(--shadow); }
+body.mine #screen canvas { outline: 2px solid var(--tone) !important; outline-offset: -2px; }
 body.gone #screen canvas { filter: brightness(0.55); }
-#caption { text-align: center; font-size: 12.5px; color: var(--muted); }
-#caption:empty { display: none; }
 
-/* Under the screen: the typing field while the browser is yours, and on a phone the buttons. */
-#dock { flex: none; padding: 12px 20px 16px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); border-top: 1px solid var(--line); }
-#dock:has(> #typing[hidden]):has(> #row:empty) { display: none; }
+/* Under the screen: a card for each thing that waits for you (or the last step when none
+   does), and the typing field once you open it. */
+#dock { flex: none; width: 100%; max-width: calc(1280px + 48px); margin: 0 auto; padding: 12px 24px 16px; display: flex; flex-direction: column; gap: 8px; }
+#notices, #approvals, #asked, #offers { display: contents; }
+.notice { min-height: 64px; padding: 10px 16px 10px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+.notice .text { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 14.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.notice .text span + span { font-size: 12.5px; color: var(--muted); }
+.notice.bad .text { color: var(--badfg); }
+.notice .acts { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.notice .acts .pair { display: flex; gap: 8px; }
+.notice a.primary { display: inline-flex; align-items: center; text-decoration: none; }
+.notice input { width: 200px; height: var(--control); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 13.5px; }
+.notice .ask { display: flex; align-items: center; gap: 2px; font-size: 13.5px; color: var(--ink2); white-space: nowrap; }
+.notice .switch { height: var(--control); width: 48px; }
+#caption { padding: 4px 4px 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+#caption:empty { display: none; }
 #row:empty { display: none; }
 #typing { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 #typing > label { flex-basis: 100%; font-size: 13px; font-weight: 600; color: var(--ink2); }
 #typing .row { flex: 1 1 16rem; display: flex; gap: 8px; align-items: center; }
-#typing .row input { flex: 1; min-width: 0; height: var(--field); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2); background: var(--panel); }
+#typing .row input { flex: 1; min-width: 0; height: var(--field); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
 #typing .row .primary, #typing .keys .quiet { min-height: var(--field); }
 #typing .keys { flex: 0 1 auto; }
 #typing .note { flex-basis: 100%; }
 
-/* Saved logins: a panel at the side, a sheet on a phone. */
-#logins { position: absolute; top: 0; right: 0; bottom: 0; z-index: 2; width: 400px; max-width: 100%; padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 14px; overflow: auto; background: var(--panel); border-left: 1px solid var(--line); box-shadow: -12px 0 32px -16px var(--shadow); }
+/* Saved logins: a panel at the side, a sheet on a phone, its list or the form that adds one. */
+#logins { position: absolute; top: 0; right: 0; bottom: 0; z-index: 2; width: 400px; max-width: 100%; padding: 16px 20px 20px; overflow: auto; background: var(--panel); border-left: 1px solid var(--line); box-shadow: -12px 0 32px -16px var(--shadow); }
+#logins-list, #add { display: flex; flex-direction: column; gap: 14px; }
+#add { gap: 8px; }
 #logins .head { display: flex; align-items: center; gap: 8px; }
+#add .head { margin-bottom: 6px; }
 #logins h2 { flex: 1; font-size: 16px; font-weight: 600; }
-#logins .head .icon { width: 44px; height: 44px; margin-right: -10px; }
+#logins .close { margin-right: -10px; }
+#logins .back { margin-left: -10px; }
 #scrim { display: none; }
+#logins .columns { margin-bottom: -10px; padding-right: 46px; display: flex; justify-content: flex-end; font-size: 12px; color: var(--muted); }
+#logins .columns span { width: 56px; text-align: center; }
 #login-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line2); }
-#login-list li { padding: 6px 0; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line2); }
+#login-list li { padding: 8px 0; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line2); }
 #login-list li.note, #login-list li.error { padding: 12px 0; font-size: 13px; }
 #login-list .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 #login-list strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 #login-list .who span { font-size: 12.5px; color: var(--ink2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-#login-list label { flex: none; min-height: 44px; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink2); }
-#login-list button { flex: none; min-height: 44px; padding: 0 10px; border-radius: 8px; font-size: 13px; color: var(--ink2); }
-#login-list button:hover { background: var(--hover); color: var(--badfg); }
-#add { display: flex; flex-direction: column; gap: 8px; }
-#add h3 { font-size: 13px; font-weight: 600; color: var(--ink2); }
-#add input:not([type=checkbox]) { height: var(--field); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
-#add label { min-height: var(--field); display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink2); }
+#login-list .icon { margin-right: -10px; }
+#login-list .icon:hover { color: var(--badfg); }
+#add-open, #make { align-self: flex-start; min-height: var(--field); }
+#add input { height: var(--field); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
+#add .ask { min-height: 44px; display: flex; align-items: center; font-size: 13.5px; color: var(--ink2); }
+#add .ask span { flex: 1; }
 #add .primary { align-self: flex-start; min-height: var(--field); }
 #add .error { font-size: 13px; }
-#passkey { padding-top: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border-top: 1px solid var(--line2); }
-#passkey .quiet { min-height: var(--field); padding: 0 14px; }
+#passkey { padding-top: 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line2); }
+#make-note:empty { display: none; }
+#passkey:has(#make[hidden]):has(#make-note:empty) { display: none; }
 
-/* A phone: who and the address in one block, the buttons at the bottom, a sheet. */
+/* A phone: the screen fits at the top while the agent has it and fills the view while it's
+   yours; what waits for you, the buttons and the typing field are a bar at the bottom. */
 @media (max-width: 800px) {
   :root { --control: 44px; --field: 44px; }
-  #bar { min-height: 60px; gap: 10px; }
-  #title { flex: 1; min-width: 0; display: grid; grid-template-columns: 10px minmax(0, 1fr); column-gap: 10px; align-items: center; }
-  #title::before { content: ""; grid-row: 1 / 3; width: 10px; height: 10px; border-radius: 50%; background: var(--tone); }
-  #who { height: auto; padding: 0; background: none; color: var(--ink); font-size: 14.5px; }
-  #who::before { display: none; }
-  #where { height: auto; padding: 0; border: 0; background: none; color: var(--muted); font-size: 11.5px; }
-  #workspace { font-size: 12.5px; }
-  .tool { width: 44px; height: 44px; margin-right: -10px; padding: 0; justify-content: center; background: none; color: var(--ink2); }
-  .tool .label, #give .long { display: none; }
-  #give .short { display: inline; }
-  .notice { padding: 8px 16px; }
-  .notice > span { flex-basis: 100%; }
-  .notice input:not([type=checkbox]) { flex: 1 1 100%; width: auto; font-size: 15px; }
-  .notice label { flex: 1 1 100%; }
-  #stage { padding: 12px 12px 10px; }
-  body:not(.fit) #stage { padding: 0 0 10px; }
+  #bar { min-height: 60px; padding: 0 6px 0 16px; gap: 10px; }
+  #dot { margin-right: 0; }
+  #state { font-size: 24px; line-height: 1.1; }
+  #where { font-size: 12px; }
+  #url { font-size: 11.5px; }
+  #bar .icon { width: 44px; height: 44px; }
+  #stage { padding: 16px 16px 0; }
+  body:not(.fit) #stage { flex: 1; padding: 0; }
+  body:not(.fit) #screen { flex: 1; max-width: none; aspect-ratio: auto; }
   body:not(.fit) #screen canvas { border-radius: 0; box-shadow: none; }
-  #caption { padding: 0 16px; }
-  #dock { padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
+  #dock { max-width: none; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); gap: 12px; border-top: 1px solid transparent; }
+  body.mine #dock { border-top-color: var(--line2); }
+  .notice { min-height: 0; padding: 0; flex-direction: column; align-items: stretch; gap: 12px; background: none; border: 0; border-radius: 0; }
+  .notice .text { flex: none; }
+  .notice .acts { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+  .notice .acts .pair { display: flex; gap: 8px; margin-top: 8px; }
+  .notice .acts .pair > * { flex: 1; }
+  .notice .primary, .notice .quiet { min-height: 48px; border-radius: 12px; font-size: 15px; justify-content: center; }
+  .notice input { width: auto; font-size: 15px; background: var(--panel); }
+  .notice .ask { min-height: 44px; font-size: 14px; }
+  .notice .ask span { flex: 1; }
+  .notice .switch { width: 56px; }
+  #caption { padding: 0; }
   #row { display: flex; }
   #actions { flex: 1; gap: 4px; }
-  #actions .icon { width: 44px; height: 44px; }
-  #actions .primary { flex: 1; min-height: 48px; margin-left: 4px; border-radius: 12px; font-size: 15px; }
+  #actions .primary { flex: 1; min-height: 48px; border-radius: 12px; font-size: 15px; }
+  #actions .icon:not([hidden]) ~ .primary { margin-left: 4px; }
+  #fit:not([hidden]) { display: inline-flex; }
+  #give .long { display: none; }
+  #give .short { display: inline; }
   #typing .row input { font-size: 16px; }
   #typing .keys { flex: 1 1 100%; display: flex; gap: 8px; }
   #typing .keys .quiet { flex: 1; }
   #scrim { display: block; position: fixed; inset: 0; z-index: 2; background: var(--scrim); }
   #logins { position: fixed; top: 72px; left: 0; width: auto; z-index: 3; padding: 8px 20px 24px; border-left: 0; border-radius: 20px 20px 0 0; box-shadow: 0 -12px 32px -12px var(--shadow); }
+  #logins-list { gap: 12px; }
   #logins h2 { font-size: 17px; }
-  #add input:not([type=checkbox]) { font-size: 16px; }
+  #logins .columns { padding-right: 42px; }
+  #login-list li { padding: 6px 0; gap: 8px; }
+  #add-open, #make { align-self: stretch; }
+  #add input { border-color: var(--line2); font-size: 16px; }
   #add .primary { align-self: stretch; min-height: 48px; border-radius: 12px; font-size: 15px; }
-  #passkey { align-items: stretch; }
 }
 
 /* A login request's form (/login/<id>/): one card. */

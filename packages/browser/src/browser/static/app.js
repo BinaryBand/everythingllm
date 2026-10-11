@@ -1,12 +1,15 @@
 // The take-over view's page (browser.takeover): noVNC showing the workspace's browser,
-// view-only while the agent has it, framed in the colour of who has it (the body's class),
-// with the page's address and its last step, and the buttons that take it and hand it back; the
-// agent's requests to use a saved login or for one it hasn't got, offers to save what you
-// logged in with, and the workspace's saved logins and passkeys. Everything from the server goes in as text, never as HTML: a
-// username can come from a web page. While the browser is yours, a field under the screen
-// types into it as text (POST type), so a phone's keyboard, a paste and a password manager
-// work where the canvas takes none of them; on a phone it's focused as you take over. On a
-// phone the buttons move from the bar to the bottom, and the saved logins open as a sheet.
+// view-only while the agent has it, with a dot in the colour of who has it (the body's
+// class), the page's address and its last step, and the button that takes it or hands it
+// back. Under the screen, a card for each thing that waits for you: the agent's requests to
+// use a saved login or for one it hasn't got, and offers to save what you logged in with;
+// while one waits, its buttons are the only way on, so take over and hand back aren't
+// drawn. The workspace's saved logins and passkeys open in a panel. Everything from the
+// server goes in as text, never as HTML: a username can come from a web page. While the
+// browser is yours, the keyboard button opens a field that types into it as text (POST
+// type), so a phone's keyboard, a paste and a password manager work where the canvas takes
+// none of them; on a phone it opens as you take over. On a phone the buttons move from the
+// bar to the bottom, and the saved logins open as a sheet.
 import RFB from "./novnc/core/rfb.js";
 
 const base = location.pathname.replace(/[^/]*$/, ""); // /<token>/
@@ -20,15 +23,16 @@ let gone = false; // the screen's connection ended: only a reload brings it back
 let shownState = {}; // the state last drawn, drawn again as the connection ends
 
 // Scaled to fit a phone, the 1280 px screen's text is a few pixels high and nothing can be
-// tapped. So below NARROW the view shows it at its own size and a drag pans it (a tap still
-// clicks once it's yours); the button fits it to the view instead, or back.
+// tapped. So below NARROW, while the browser is yours, the view shows it at its own size and
+// a drag pans it (a tap still clicks); the button fits it to the view instead, or back.
+// While the agent has it, it's only to watch, and fits.
 const NARROW = window.matchMedia("(max-width: 800px)");
 const TOUCH = window.matchMedia("(pointer: coarse)");
-let fit = null; // the user's choice, once they've made one
+let fit = false; // the user's choice while it's theirs on a phone
 
 function size() {
-  const scaled = fit ?? !NARROW.matches;
-  $("fit").setAttribute("aria-pressed", String(scaled));
+  const scaled = !NARROW.matches || control !== "user" || gone || fit;
+  $("fit").setAttribute("aria-pressed", String(fit));
   document.body.classList.toggle("fit", scaled);
   if (!rfb) return;
   rfb.scaleViewport = scaled;
@@ -53,7 +57,7 @@ function connect() {
 const WHO = {
   working: "The agent is browsing",
   idle: "The agent has the tab, idle",
-  waiting: "The agent is waiting",
+  waiting: "The agent has the tab",
   user: "You have the tab",
 };
 
@@ -63,34 +67,55 @@ function shown(s) {
   return tabs.find((t) => t.id === s.front) || (tabs.length === 1 ? tabs[0] : null);
 }
 
-function caption(s, t) {
-  if (gone) return "The picture is the last one this view got.";
-  if (s.control === "user") return "Your clicks and typing go to this tab.";
-  const last = t?.last ? ` Last step: ${t.last}` : "";
-  if (s.state === "waiting") return "View only. The agent goes on once you answer.";
-  if (s.state === "idle") return `View only. The agent has the browser but isn't using it now.${last}`;
-  return `View only while the agent has the tab.${last}`;
-}
+let typing = false; // the typing field is open (only while the browser is yours)
 
 function show(s) {
   control = s.control;
   if (rfb) rfb.viewOnly = control !== "user";
   const mine = control === "user" && !gone;
+  if (!mine) typing = false;
   $("state").textContent = gone ? "Disconnected" : WHO[mine ? "user" : s.state] || WHO.idle;
   const t = shown(s);
   const count = (s.tabs || []).length;
   $("url").textContent = t ? t.url || t.title : count ? `${count} tabs open` : "No page open";
   $("url").title = t?.url || "";
-  $("caption").textContent = caption(s, t);
-  $("take").hidden = mine || gone;
-  $("give").hidden = $("keyboard").hidden = $("typing").hidden = $("reason").hidden = !mine;
-  $("reason").textContent =
-    s.waiting && s.reason ? `The agent asked: ${s.reason}` : "The agent waits while you have the tab.";
+  $("caption").textContent = !mine && !gone && t?.last ? `Last step: ${t.last}` : "";
+  // A request waiting for your answer is the only way on.
+  const asked = [s.approvals, s.asked, s.offers].some((x) => x?.length);
+  $("take").hidden = mine || gone || asked;
+  $("give").hidden = !mine || asked;
+  $("keyboard").hidden = $("fit").hidden = $("reason").hidden = !mine;
+  $("typing").hidden = !typing;
+  says($("reason"), s.waiting && s.reason ? `The agent asked: ${s.reason}` : "The agent waits while you have the tab.");
   $("gone").hidden = !gone;
   document.body.classList.remove("connecting");
   document.body.classList.toggle("mine", mine);
   document.body.classList.toggle("gone", gone);
+  size();
 }
+
+// A card's text: what waits, and a line under it.
+function text(main, sub) {
+  return el("span", { className: "text" }, el("span", { textContent: main }), ...(sub ? [el("span", { textContent: sub })] : []));
+}
+
+function says(notice, main, sub) {
+  notice.firstElementChild.replaceWith(text(main, sub));
+}
+
+// A switch (role=switch) for `label`, flipped by a click unless `onflip` says otherwise.
+function toggle(label, on, onflip) {
+  const b = el("button", { type: "button", className: "switch" });
+  b.setAttribute("role", "switch");
+  b.setAttribute("aria-label", label);
+  set(b, on);
+  b.onclick = () => (onflip ? onflip(b) : set(b, !isOn(b)));
+  return b;
+}
+const isOn = (b) => b.getAttribute("aria-checked") === "true";
+const set = (b, on) => b.setAttribute("aria-checked", String(!!on));
+const TRASH =
+  '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h11 M6 4.5V3h4v1.5 M4 4.5l.6 8.5h6.8l.6-8.5"></path></svg>';
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -105,9 +130,9 @@ function who(x) {
 
 // What went wrong with the last thing you did, until the next thing works. Kept out of the
 // rows: the poll rebuilds the logins and drops an offer that's gone.
-function problem(text) {
-  $("problem").textContent = text || "";
-  $("problem").hidden = !text;
+function problem(error) {
+  says($("problem"), error || "");
+  $("problem").hidden = !error;
 }
 
 // A POST for a button, its error (if any) shown as `doing`.
@@ -129,10 +154,9 @@ function showApprovals(approvals) {
     const deny = el("button", { textContent: "Don't allow", className: "quiet" });
     const row = el(
       "div",
-      { className: "notice ask" },
-      el("span", { textContent: `The agent in ${chat} wants to use your ${a.kind} for ${who(a)}, on ${a.url}.` }),
-      allow,
-      deny
+      { className: "notice" },
+      text(`The agent wants to use your ${a.kind} for ${who(a)}.`, `From ${chat}, on ${a.url}.`),
+      el("div", { className: "acts" }, el("div", { className: "pair" }, allow, deny))
     );
     row.dataset.id = a.id;
     allow.onclick = () => act("allow the request", `approve/${a.id}`);
@@ -147,11 +171,15 @@ function showAsked(asked) {
     ...asked.map((a) =>
       el(
         "div",
-        { className: "notice ask" },
-        el("span", { textContent: `The agent needs your login for ${a.site} to go on.` }),
-        el("a", {
-          href: a.link, textContent: "Enter login", className: "quiet", target: "_blank", rel: "noopener noreferrer",
-        })
+        { className: "notice" },
+        text(`The agent needs your login for ${a.site}.`),
+        el(
+          "div",
+          { className: "acts" },
+          el("a", {
+            href: a.link, textContent: "Enter login", className: "primary", target: "_blank", rel: "noopener noreferrer",
+          })
+        )
       )
     )
   );
@@ -164,21 +192,25 @@ function showOffers(offers) {
   for (const o of offers) {
     if (box.querySelector(`[data-id="${o.id}"]`)) continue; // keep what's being typed
     const name = el("input", { value: o.username, placeholder: "Username", autocomplete: "off" });
-    const ask = el("input", { type: "checkbox" });
+    name.setAttribute("aria-label", "Username");
+    const ask = toggle("Ask me before each use", false);
     const save = el("button", { textContent: "Save login", className: "primary" });
     const drop = el("button", { textContent: "Not now", className: "quiet" });
     const row = el(
       "div",
-      { className: "notice you" },
-      el("span", { textContent: `Save the login you just used on ${o.site}?` }),
-      name,
-      el("label", {}, ask, " Ask me before each use"),
-      save,
-      drop
+      { className: "notice" },
+      text(`Save the login you just used on ${o.site}?`),
+      el(
+        "div",
+        { className: "acts" },
+        name,
+        el("div", { className: "ask" }, el("span", { textContent: "Ask me before each use" }), ask),
+        el("div", { className: "pair" }, save, drop)
+      )
     );
     row.dataset.id = o.id;
     save.onclick = () =>
-      act(`save the login for ${o.site}`, `offers/${o.id}/save`, { username: name.value, ask: ask.checked });
+      act(`save the login for ${o.site}`, `offers/${o.id}/save`, { username: name.value, ask: isOn(ask) });
     drop.onclick = () => act(`drop the login for ${o.site}`, `offers/${o.id}/drop`);
     box.append(row);
   }
@@ -193,14 +225,14 @@ function showLogins(logins) {
       list.append(el("li", { textContent: l.error, className: "error" }));
       continue;
     }
-    const ask = el("input", { type: "checkbox", checked: l.ask });
-    ask.onchange = async () => {
-      if (await act(`change the login for ${who(l)}`, `logins/${l.id}/ask`, { ask: ask.checked })) {
-        ask.checked = !ask.checked;
-      }
-    };
+    const ask = toggle(`Ask first for ${who(l)}`, l.ask, async (b) => {
+      const on = !isOn(b);
+      set(b, on);
+      if (await act(`change the login for ${who(l)}`, `logins/${l.id}/ask`, { ask: on })) set(b, !on);
+    });
     const kind = l.kind;
-    const remove = el("button", { textContent: "Delete", className: "quiet" });
+    const remove = el("button", { type: "button", className: "icon", title: "Delete", innerHTML: TRASH });
+    remove.setAttribute("aria-label", `Delete the ${kind} for ${who(l)}`);
     remove.onclick = () =>
       confirm(`Delete the ${kind} for ${who(l)}?`) && act(`delete the ${kind} for ${who(l)}`, `logins/${l.id}/delete`);
     const extra = kind === "passkey" ? " · passkey" : "";
@@ -210,7 +242,7 @@ function showLogins(logins) {
         "li",
         {},
         el("div", { className: "who" }, el("strong", { textContent: l.site }), el("span", { textContent: line, title: line })),
-        el("label", {}, ask, "ask first"),
+        ask,
         remove
       )
     );
@@ -218,20 +250,18 @@ function showLogins(logins) {
 }
 
 // Making a passkey: only while you have the browser, and the site makes it on your click.
-// While the view waits for one, a line under the bar says so too, with the same button.
-const MAKING = "Waiting for the site to make one: add a passkey on its page now. It's saved here, asking first.";
+// While the view waits for one, a card under the screen says so too, with the same button.
 function showMaking(s) {
   const mine = s.control === "user" && !gone;
   $("make").hidden = !mine;
   $("make").textContent = s.making ? "Stop waiting" : "Make a passkey";
   $("make").onclick = $("stop").onclick = () => act("make a passkey", "passkeys/make", { on: !s.making });
   $("making").hidden = !(mine && s.making);
-  $("making").firstElementChild.textContent = MAKING;
   $("make-note").textContent = !mine
-    ? s.made || "Take over the browser to make a passkey for a site."
+    ? s.made || "Take over to make a passkey."
     : s.making
-      ? MAKING
-      : s.made || "Press this, then add a passkey on the site's page. It's kept here, on this machine alone.";
+      ? "Add one on the site's page."
+      : s.made || "";
 }
 
 async function refresh() {
@@ -249,6 +279,8 @@ function render(s) {
   showOffers(s.offers || []);
   showLogins(s.logins || []);
   showMaking(s);
+  // The last step shows only while nothing waits for you.
+  $("caption").hidden = [...$("notices").querySelectorAll(".notice")].some((n) => !n.closest("[hidden]"));
 }
 
 async function post(what, body) {
@@ -275,6 +307,7 @@ async function post(what, body) {
 // The typing field, focused. A phone opens its keyboard only for a focus in the tap's own
 // handler, so this runs before anything is awaited.
 function keyboard() {
+  typing = true;
   $("typing").hidden = false;
   $("type-text").focus();
   $("type-text").scrollIntoView({ block: "nearest" });
@@ -310,7 +343,7 @@ for (const button of $("typing").querySelectorAll("button")) {
   );
 }
 $("fit").addEventListener("click", () => {
-  fit = !(fit ?? !NARROW.matches);
+  fit = !fit;
   size();
 });
 
@@ -324,14 +357,22 @@ NARROW.addEventListener("change", () => {
   size();
 });
 
-// The saved logins, a panel opened from the bar; the focus goes with it.
-function logins(open) {
+// The saved logins, a panel opened from the bar, showing their list or the form that adds
+// one; the focus goes with it.
+function logins(open, adding = false) {
   $("logins").hidden = $("scrim").hidden = !open;
   $("logins-open").setAttribute("aria-expanded", String(open));
-  $(open ? "logins-close" : "logins-open").focus();
+  $("logins-list").hidden = adding;
+  $("add").hidden = !adding;
+  if (!open) $("logins-open").focus();
+  else if (adding) $("add").site.focus();
+  else $("logins-list").querySelector(".close").focus();
 }
 $("logins-open").addEventListener("click", () => logins($("logins").hidden));
-$("logins-close").addEventListener("click", () => logins(false));
+for (const close of $("logins").querySelectorAll(".close")) close.addEventListener("click", () => logins(false));
+$("add-open").addEventListener("click", () => logins(true, true));
+$("add-back").addEventListener("click", () => logins(true));
+$("add-ask").addEventListener("click", (e) => set(e.currentTarget, !isOn(e.currentTarget)));
 $("scrim").addEventListener("click", () => logins(false));
 $("logins").addEventListener("keydown", (e) => e.key === "Escape" && logins(false));
 $("give").addEventListener("click", () => act("hand back", "give"));
@@ -340,10 +381,13 @@ $("add").addEventListener("submit", async (e) => {
   const f = e.target;
   const error = await post("logins", {
     site: f.site.value, username: f.username.value, password: f.password.value,
-    ask: f.ask.checked,
+    ask: isOn($("add-ask")),
   });
   $("add-error").textContent = error || "";
-  if (!error) f.reset();
+  if (error) return;
+  f.reset();
+  set($("add-ask"), false);
+  logins(true);
 });
 place();
 connect();

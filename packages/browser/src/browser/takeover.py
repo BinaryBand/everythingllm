@@ -17,7 +17,8 @@ container, so a stopped browser's old address goes nowhere.
                                  with it (Runner.activity), `tabs` the open ones (id, title, url
                                  and the last step, as their cards say), `approvals` the agent's waits for
                                  the user's OK, one per chat in the order asked, each naming
-                                 its chat by its tab's page (`chat`, null without one), logins
+                                 its chat by its tab's page (`chat`, null without one) and how
+                                 many minutes an OK lasts (`minutes`), logins
                                  (and passkeys) and offers without their secrets
   POST /<token>/take             the user takes the browser
   POST /<token>/give             the user hands it back to the agent
@@ -68,6 +69,7 @@ from chatimage import live
 
 from browser import websocket
 from browser.origin import registrable
+from browser.runner import GRANT
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -125,7 +127,8 @@ PAGE = f"""<!doctype html>
   <span id="dot" aria-hidden="true"></span>
   <h1 id="title">
     <span id="state">Connecting…</span>
-    <span id="where"><span id="workspace">{{workspace}}</span><span id="url"></span></span>
+    <span id="page"></span>
+    <span id="where"><span id="workspace">{{workspace}}</span><span id="who"></span><span id="url"></span></span>
   </h1>
   <button id="logins-open" type="button" class="icon" aria-expanded="false" aria-controls="logins" aria-label="Saved logins" title="Saved logins">{KEY}</button>
   <div id="actions">
@@ -136,18 +139,18 @@ PAGE = f"""<!doctype html>
   </div>
 </header>
 <div id="view">
-<main id="stage"><div id="screen"></div></main>
+<main id="stage"><div id="screen"></div><button id="touch" type="button" aria-label="Take over" hidden></button></main>
 <footer id="dock">
   <div id="notices" role="status">
     <div id="reason" class="notice" hidden><span class="text"><span></span></span></div>
-    <div id="gone" class="notice bad" hidden><span class="text"><span>Disconnected. Reload to reconnect.</span></span></div>
+    <div id="gone" class="notice" hidden><span class="text"><span>The connection to the browser dropped.</span></span><button id="reconnect" type="button" class="quiet">Reconnect</button></div>
     <div id="problem" class="notice bad" hidden><span class="text"><span></span></span></div>
     <div id="approvals"></div>
     <div id="asked"></div>
     <div id="offers"></div>
     <div id="making" class="notice" hidden><span class="text"><span>Add a passkey on the site's page now.</span></span><button id="stop" type="button" class="quiet">Stop waiting</button></div>
+    <div id="caption" class="notice" hidden><span class="text"><span></span></span></div>
   </div>
-  <p id="caption"></p>
   <form id="typing" hidden>
     <label for="type-text">Type into the browser</label>
     <span class="row">
@@ -196,6 +199,7 @@ PAGE = f"""<!doctype html>
     <input name="username" aria-label="Username or email" placeholder="Username or email" autocomplete="off">
     <input name="password" aria-label="Password" type="password" placeholder="Password" autocomplete="new-password" required>
     <div class="ask"><span>Ask me before each use</span><button id="add-ask" type="button" class="switch" role="switch" aria-checked="false" aria-label="Ask me before each use"></button></div>
+    <p class="note">The saved password is never shown.</p>
     <button class="primary">Save login</button>
     <span id="add-error" class="error"></span>
   </form>
@@ -218,16 +222,15 @@ LOGIN_PAGE = f"""<!doctype html>
 <p class="eyebrow">{LOCK}Secure login request</p>
 <div class="intro">
   <h1>The agent needs your login</h1>
-  <p>The agent in <strong>{{workspace}}</strong> has this page of <strong>{{owner}}</strong>
-  open, and can't go further without signing in.</p>
+  <p>It has this page open in <strong>{{workspace}}</strong> and can't go further without
+  signing in.</p>
 </div>
 <div class="site">
   <span class="globe">{GLOBE}</span>
   <span><strong>{{owner}}</strong><span class="url">{{url}}</span></span>
 </div>
-<p class="warning"{{new_hidden}}>{WARN}<span>No login in this workspace is for {{owner}} yet.
-Make sure that's the site you mean before you enter a password: a page can name itself after
-another.</span></p>
+<p class="warning"{{new_hidden}}>{WARN}<span>First login for {{owner}} here. Check it is the
+site you mean: a page can name itself after another.</span></p>
 <form id="ask-form">
   <div class="fields">
     <label><span>Username</span><input name="username" placeholder="Name or email" autocomplete="off"></label>
@@ -246,8 +249,8 @@ another.</span></p>
     <button type="button" id="decline" class="quiet">Not now</button>
     <button class="primary">Save login</button>
   </div>
-  <p class="foot">{LOCK}<span>The agent can use it but never read it, and only on the site you
-  pick here. It stays in this workspace's logins, where you can remove it.</span></p>
+  <p class="foot">{LOCK}<span>The agent can use it but never read it. It stays in this
+  workspace's logins, where you can remove it.</span></p>
 </form>
 <div id="result">
   <span class="mark">{{mark}}</span>
@@ -554,6 +557,7 @@ class Takeover:
                 "site": a.site,
                 "username": a.username,
                 "url": a.url,
+                "minutes": GRANT // 60,
                 "chat": self.runner.subject(tab)
                 if (tab := self.runner.threads.get((s.workspace, a.thread))) is not None
                 else None,

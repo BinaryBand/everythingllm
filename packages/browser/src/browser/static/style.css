@@ -1,8 +1,8 @@
 /* The take-over view (browser.takeover) and a login request's form, after the design
    canvas's browser boards: its colour tokens, light or dark as the device is, and the
-   system's fonts. --tone is the colour of who has the browser, in the bar's dot: the accent
-   while the agent has it, amber while you do (the screen is framed in it then), red once
-   the view lost it. */
+   system's fonts. --tone is the colour of who has the browser, in the header's dot and only
+   there: the accent while the agent has it, amber while you do, red once the view lost it.
+   While it's yours the screen is outlined in ink. */
 :root {
   --bg: oklch(0.982 0.008 75); --panel: oklch(0.995 0.003 75);
   --line: oklch(0.895 0.014 75); --line2: oklch(0.928 0.012 75);
@@ -15,9 +15,8 @@
   --scrim: oklch(0.25 0.03 280 / 0.4); --shadow: oklch(0.35 0.04 280 / 0.14);
   --tone: var(--accent);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --serif: "Instrument Serif", ui-serif, Georgia, serif;
   --off: oklch(0.84 0.012 75); /* a switch that's off */
-  --control: 36px; --field: 40px; /* a notice's buttons, and the fields and theirs: 44px on a phone */
+  --control: 36px; --field: 40px; /* a card's buttons, and the fields and theirs: 44px on a phone */
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -51,9 +50,9 @@ h1, h2, h3, p { margin: 0; }
 .note { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
 .error { color: var(--badfg); }
 .error:empty { display: none; }
-.primary { min-height: var(--control); padding: 0 16px; border-radius: 10px; background: var(--accent); color: var(--onaccent); font-size: 14px; font-weight: 500; }
-.quiet { min-height: var(--control); padding: 0 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 14px; font-weight: 500; }
-.icon { width: 44px; height: 44px; flex: none; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; color: var(--ink2); }
+.primary { min-height: var(--control); padding: 0 16px; border-radius: 12px; background: var(--accent); color: var(--onaccent); font-size: 14px; font-weight: 500; }
+.quiet { min-height: var(--control); padding: 0 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 14px; font-weight: 500; }
+.icon { width: 44px; height: 44px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--ink2); }
 .icon:hover { background: var(--hover); }
 .icon[aria-pressed=true], .icon[aria-expanded=true] { background: var(--sel); color: var(--ink); }
 /* A switch: a button with role=switch, drawn as a track and its knob. */
@@ -61,53 +60,56 @@ h1, h2, h3, p { margin: 0; }
 .switch::before { content: ""; width: 34px; height: 20px; border-radius: 99px; background: var(--off) radial-gradient(circle 8px at 10px 50%, var(--panel) 98%, transparent) no-repeat; transition: background-position 0.15s; }
 .switch[aria-checked=true]::before { background-color: var(--accent); background-position: 14px 0; }
 
-/* The bar: a dot in the colour of who has the browser, who that is, the workspace and the
-   page's address, the saved logins and the button that takes it or hands it back. */
+/* The header: a dot in the colour of who has the browser, who that is, the workspace and
+   the page's address, the saved logins and the button that takes it or hands it back. A
+   phone names the page instead, with who has it beside the address. */
 #bar { flex: none; min-height: 64px; padding: 8px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line2); }
 #dot { width: 10px; height: 10px; flex: none; margin-right: 4px; border-radius: 50%; background: var(--tone); }
 #title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-weight: 400; }
-#state { font: 26px/1.15 var(--serif); letter-spacing: -0.4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#state, #page { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#state { font-size: 22px; line-height: 1.15; letter-spacing: -0.3px; }
+#page, #who { display: none; }
 #where { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; line-height: 1.3; color: var(--muted); white-space: nowrap; overflow: hidden; }
 #workspace { flex: none; }
 #url { min-width: 0; font: 12px var(--mono); color: var(--ink2); overflow: hidden; text-overflow: ellipsis; }
 #bar .icon { width: 40px; height: 40px; }
 #actions { flex: none; display: flex; align-items: center; gap: 8px; }
 #actions .primary { min-height: 40px; padding: 0 20px; font-size: 14.5px; }
-#fit, #give .short { display: none; }
+#fit, #give .short, #touch { display: none; }
 
-/* The browser's screen, outlined in amber while it's yours and dimmed once the view lost it. */
+/* The browser's screen, outlined in ink while it's yours and dimmed once the view lost it. */
 #view { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* The screen's box is the browser's 1280 x 720 at most, so what's under it sits right under
    it; it shrinks, and noVNC scales the screen into it, when the window is short. */
-#stage { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 16px 24px 0; }
+#stage { position: relative; flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 16px 24px 0; }
 #screen { flex: 0 1 auto; min-height: 0; width: 100%; max-width: 1280px; margin: 0 auto; aspect-ratio: 16 / 9; }
 /* noVNC crops what's drawn outside its canvas and sets the canvas's outline inline: the
    frame is an outline inside it. */
-#screen canvas { border-radius: 12px; outline: none !important; box-shadow: 0 0 0 1px var(--line), 0 16px 40px -20px var(--shadow); }
-body.mine #screen canvas { outline: 2px solid var(--tone) !important; outline-offset: -2px; }
+#screen canvas { border-radius: 16px; outline: none !important; box-shadow: 0 0 0 1px var(--line), 0 16px 40px -20px var(--shadow); }
+body.mine #screen canvas { outline: 2px solid var(--ink) !important; outline-offset: -2px; }
 body.gone #screen canvas { filter: brightness(0.55); }
 
-/* Under the screen: a card for each thing that waits for you (or the last step when none
-   does), and the typing field once you open it. */
+/* Under the screen, one card: what waits for you, or the last step when nothing does; and
+   the typing field once you open it. */
 #dock { flex: none; width: 100%; max-width: calc(1280px + 48px); margin: 0 auto; padding: 12px 24px 16px; display: flex; flex-direction: column; gap: 8px; }
 #notices, #approvals, #asked, #offers { display: contents; }
-.notice { min-height: 64px; padding: 10px 16px 10px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+/* One card: the last step, or that the agent waits, only while nothing else does. */
+#notices:has(.notice:not(#caption, #reason.plain, [hidden])) :is(#caption, #reason.plain) { display: none; }
+.notice { min-height: 64px; padding: 10px 16px 10px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 20px; }
 .notice .text { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 14.5px; line-height: 1.4; overflow-wrap: anywhere; }
 .notice .text span + span { font-size: 12.5px; color: var(--muted); }
 .notice.bad .text { color: var(--badfg); }
-.notice .acts { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.notice .acts, .notice .opts { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .notice .acts .pair { display: flex; gap: 8px; }
 .notice a.primary { display: inline-flex; align-items: center; text-decoration: none; }
-.notice input { width: 200px; height: var(--control); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 13.5px; }
+.notice input { width: 200px; height: var(--control); padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 13.5px; }
 .notice .ask { display: flex; align-items: center; gap: 2px; font-size: 13.5px; color: var(--ink2); white-space: nowrap; }
 .notice .switch { height: var(--control); width: 48px; }
-#caption { padding: 4px 4px 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
-#caption:empty { display: none; }
 #row:empty { display: none; }
 #typing { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 #typing > label { flex-basis: 100%; font-size: 13px; font-weight: 600; color: var(--ink2); }
 #typing .row { flex: 1 1 16rem; display: flex; gap: 8px; align-items: center; }
-#typing .row input { flex: 1; min-width: 0; height: var(--field); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+#typing .row input { flex: 1; min-width: 0; height: var(--field); padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); }
 #typing .row .primary, #typing .keys .quiet { min-height: var(--field); }
 #typing .keys { flex: 0 1 auto; }
 #typing .note { flex-basis: 100%; }
@@ -129,11 +131,11 @@ body.gone #screen canvas { filter: brightness(0.55); }
 #login-list li.note, #login-list li.error { padding: 12px 0; font-size: 13px; }
 #login-list .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 #login-list strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-#login-list .who span { font-size: 12.5px; color: var(--ink2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#login-list .who > span { font-size: 12.5px; color: var(--ink2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #login-list .icon { margin-right: -10px; }
 #login-list .icon:hover { color: var(--badfg); }
 #add-open, #make { align-self: flex-start; min-height: var(--field); }
-#add input { height: var(--field); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
+#add input { height: var(--field); padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
 #add .ask { min-height: 44px; display: flex; align-items: center; font-size: 13.5px; color: var(--ink2); }
 #add .ask span { flex: 1; }
 #add .primary { align-self: flex-start; min-height: var(--field); }
@@ -142,52 +144,64 @@ body.gone #screen canvas { filter: brightness(0.55); }
 #make-note:empty { display: none; }
 #passkey:has(#make[hidden]):has(#make-note:empty) { display: none; }
 
-/* A phone: the screen fits at the top while the agent has it and fills the view while it's
-   yours; what waits for you, the buttons and the typing field are a bar at the bottom. */
+/* A phone: the page fills the view under the header, fitted while the agent has it and at
+   its own size while it's yours; touching it takes it. Over its foot float a card for what
+   waits for you, or the last step as a chip, and while it's yours the bar with the buttons. */
 @media (max-width: 800px) {
   :root { --control: 44px; --field: 44px; }
-  #bar { min-height: 60px; padding: 0 6px 0 16px; gap: 10px; }
-  #dot { margin-right: 0; }
-  #state { font-size: 24px; line-height: 1.1; }
-  #where { font-size: 12px; }
-  #url { font-size: 11.5px; }
-  #bar .icon { width: 44px; height: 44px; }
-  #stage { padding: 16px 16px 0; }
-  body:not(.fit) #stage { flex: 1; padding: 0; }
-  body:not(.fit) #screen { flex: 1; max-width: none; aspect-ratio: auto; }
-  body:not(.fit) #screen canvas { border-radius: 0; box-shadow: none; }
-  #dock { max-width: none; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); gap: 12px; border-top: 1px solid transparent; }
-  body.mine #dock { border-top-color: var(--line2); }
-  .notice { min-height: 0; padding: 0; flex-direction: column; align-items: stretch; gap: 12px; background: none; border: 0; border-radius: 0; }
-  .notice .text { flex: none; }
-  .notice .acts { flex-direction: column; align-items: stretch; gap: 4px; }
-  .notice .acts .pair { margin-top: 8px; }
+  #bar { padding: 0 10px 0 16px; gap: 6px; border-bottom: 0; }
+  #title { margin: 0 2px; gap: 0; line-height: 1.2; }
+  #state, #workspace { display: none; }
+  #page { display: block; font-size: 15.5px; }
+  #who { display: inline; flex: none; }
+  #who:not(:empty)::after { content: " ·"; }
+  #where { gap: 4px; }
+  #bar .icon { width: 44px; height: 44px; color: var(--ink); }
+  #bar .icon:not([aria-expanded=true]) { background: var(--hover); }
+  #stage { flex: 1; padding: 0; border-top: 1px solid var(--line2); }
+  #screen { flex: 1; max-width: none; aspect-ratio: auto; }
+  #screen canvas { margin-top: 0 !important; border-radius: 0; box-shadow: none; } /* the page from its top */
+  body.mine #screen canvas { outline: 0 !important; }
+  body.mine #stage::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 3px var(--ink); pointer-events: none; }
+  #touch:not([hidden]) { display: block; position: absolute; inset: 0; }
+  #dock { position: absolute; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: auto; max-width: none; padding: 0; gap: 8px; pointer-events: none; }
+  #dock > * { pointer-events: auto; }
+  /* What floats there: a card, the typing field and the bar. */
+  .notice, #typing, #row { background: var(--panel); border: 1px solid var(--line2); box-shadow: 0 12px 32px -10px var(--shadow); }
+  .notice { min-height: 0; padding: 16px; flex-direction: column; align-items: stretch; gap: 12px; border-radius: 24px; }
+  .notice .text { flex: none; font-size: 15px; line-height: 1.35; }
+  .notice .text > span:first-child { font-weight: 600; }
+  .notice .opts, #reason.plain { display: none; }
+  .notice .acts .pair { flex: 1; }
   .notice .acts .pair > * { flex: 1; }
-  .notice .primary, .notice .quiet { min-height: 48px; border-radius: 12px; font-size: 15px; justify-content: center; }
-  .notice input { width: auto; font-size: 15px; background: var(--panel); }
-  .notice .ask { min-height: 44px; font-size: 14px; }
-  .notice .ask span { flex: 1; }
-  .notice .switch { width: 56px; }
-  #caption { padding: 0; }
-  #row { display: flex; }
-  #actions { flex: 1; gap: 4px; }
-  #actions .primary { flex: 1; min-height: 48px; border-radius: 12px; font-size: 15px; }
-  #actions .icon:not([hidden]) ~ .primary { margin-left: 4px; }
-  #fit:not([hidden]) { display: inline-flex; }
-  #give .long { display: none; }
-  #give .short { display: inline; }
+  .notice .primary, .notice .quiet { min-height: 52px; border-radius: 16px; font-size: 16px; display: inline-flex; align-items: center; justify-content: center; }
+  .notice .acts { flex-wrap: nowrap; }
+  .notice .acts > .primary { flex: 1; }
+  #caption { align-self: flex-start; max-width: 100%; padding: 10px 14px; border-radius: 20px; box-shadow: none; pointer-events: none; }
+  #caption .text { font-size: 13px; }
+  #caption .text > span:first-child { font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #typing { padding: 16px; border-radius: 24px; }
   #typing .row input { font-size: 16px; }
   #typing .keys { flex: 1 1 100%; }
   #typing .keys .quiet { flex: 1; }
+  #row { display: flex; padding: 6px; border-radius: 28px; }
+  body:not(.mine) #row { display: none; }
+  #actions { flex: 1; gap: 2px; }
+  #actions .primary { margin-left: auto; min-height: 44px; padding: 0 18px; border-radius: 22px; font-size: 14px; font-weight: 600; }
+  #fit:not([hidden]) { display: inline-flex; }
+  #give .long { display: none; }
+  #give .short { display: inline; }
   #scrim { display: block; position: fixed; inset: 0; z-index: 2; background: var(--scrim); }
-  #logins { position: fixed; top: 72px; left: 0; width: auto; z-index: 3; padding: 8px 20px 24px; border-left: 0; border-radius: 20px 20px 0 0; box-shadow: 0 -12px 32px -12px var(--shadow); }
+  #logins { position: fixed; top: 72px; left: 0; width: auto; z-index: 3; padding: 8px 20px 24px; border-left: 0; border-radius: 28px 28px 0 0; box-shadow: 0 -12px 32px -12px var(--shadow); }
   #logins-list { gap: 12px; }
   #logins h2 { font-size: 17px; }
-  #logins .columns { padding-right: 42px; }
-  #login-list li { padding: 6px 0; gap: 8px; }
+  /* A phone's list names each login and whether it's a passkey; asking first and the last
+     use are the desktop's. */
+  #logins .columns, #login-list .switch, #login-list .used, #add .ask { display: none; }
+  #login-list li { min-height: 56px; padding: 6px 0; gap: 8px; }
   #add-open, #make { align-self: stretch; }
   #add input { border-color: var(--line2); font-size: 16px; }
-  #add .primary { align-self: stretch; min-height: 48px; border-radius: 12px; font-size: 15px; }
+  #add .primary { align-self: stretch; min-height: 48px; border-radius: 16px; font-size: 15px; }
 }
 
 /* A login request's form (/login/<id>/): one card. */

@@ -1,15 +1,16 @@
 // The take-over view's page (browser.takeover): noVNC showing the workspace's browser,
 // view-only while the agent has it, with a dot in the colour of who has it (the body's
-// class), the page's address and its last step, and the button that takes it or hands it
-// back. Under the screen, a card for each thing that waits for you: the agent's requests to
-// use a saved login or for one it hasn't got, and offers to save what you logged in with;
-// while one waits, its buttons are the only way on, so take over and hand back aren't
+// class), the page's address, and the button that takes it or hands it back. Under the
+// screen, one card: what waits for you (the agent's requests to use a saved login or for one
+// it hasn't got, and offers to save what you logged in with), or the last step when nothing
+// does; while one waits, its buttons are the only way on, so take over and hand back aren't
 // drawn. The workspace's saved logins and passkeys open in a panel. Everything from the
 // server goes in as text, never as HTML: a username can come from a web page. While the
 // browser is yours, the keyboard button opens a field that types into it as text (POST
 // type), so a phone's keyboard, a paste and a password manager work where the canvas takes
-// none of them; on a phone it opens as you take over. On a phone the buttons move from the
-// bar to the bottom, and the saved logins open as a sheet.
+// none of them. On a phone the page fills the view under a header naming it: touching it
+// takes it, the cards float over its foot (the last step as a chip), the buttons are a bar
+// there while it's yours, and the saved logins open as a sheet.
 import RFB from "./novnc/core/rfb.js";
 
 const base = location.pathname.replace(/[^/]*$/, ""); // /<token>/
@@ -34,7 +35,6 @@ let fit = false; // the user's choice while it's theirs on a phone
 function size() {
   const scaled = !NARROW.matches || control !== "user" || gone || fit;
   $("fit").setAttribute("aria-pressed", String(fit));
-  document.body.classList.toggle("fit", scaled);
   if (!rfb) return;
   rfb.scaleViewport = scaled;
   rfb.clipViewport = !scaled;
@@ -76,24 +76,33 @@ function show(s) {
   const mine = control === "user" && !gone;
   if (!mine) typing = false;
   $("state").textContent = gone ? "Disconnected" : WHO[mine ? "user" : s.state] || WHO.idle;
+  // On a phone, under the page's title, only who.
+  $("who").textContent = gone ? "Disconnected" : mine ? "You have it" : "Agent has it";
   const t = shown(s);
   const count = (s.tabs || []).length;
-  $("url").textContent = t ? t.url || t.title : count ? `${count} tabs open` : "No page open";
+  const none = count ? `${count} tabs open` : "No page open";
+  $("page").textContent = t?.title || t?.url || none;
+  $("url").textContent = t ? address(t.url || t.title) : none;
   $("url").title = t?.url || "";
-  $("caption").textContent = !mine && !gone && t?.last ? `Last step: ${t.last}` : "";
+  says($("caption"), !mine && !gone && t?.last ? `Last step: ${t.last}` : "");
   // A request waiting for your answer is the only way on.
   const asked = [s.approvals, s.asked, s.offers].some((x) => x?.length);
-  $("take").hidden = mine || gone || asked;
+  $("take").hidden = $("touch").hidden = mine || gone || asked;
   $("give").hidden = !mine || asked;
   $("keyboard").hidden = $("fit").hidden = $("reason").hidden = !mine;
   $("typing").hidden = !typing;
-  says($("reason"), s.waiting && s.reason ? `The agent asked: ${s.reason}` : "The agent waits while you have the tab.");
+  const reason = s.waiting && s.reason;
+  says($("reason"), reason ? `The agent asked: ${reason}` : "The agent waits.");
+  $("reason").classList.toggle("plain", !reason); // drawn only while nothing else waits, never on a phone
   $("gone").hidden = !gone;
   document.body.classList.remove("connecting");
   document.body.classList.toggle("mine", mine);
   document.body.classList.toggle("gone", gone);
   size();
 }
+
+// An address as shown: https:// goes without saying, http:// stays in sight.
+const address = (url) => url.replace(/^https:\/\//, "");
 
 // A card's text: what waits, and a line under it.
 function text(main, sub) {
@@ -160,6 +169,7 @@ function keyed(box, items, make) {
 function showApprovals(approvals) {
   keyed($("approvals"), approvals, (a) => {
     const chat = a.chat ? `the chat browsing “${a.chat}”` : "one of this workspace's chats";
+    const as = a.username ? `As ${a.username}, from` : "From";
     const allow = el("button", { textContent: "Allow", className: "primary" });
     const deny = el("button", { textContent: "Don't allow", className: "quiet" });
     allow.onclick = () => act("allow the request", `approve/${a.id}`);
@@ -167,8 +177,8 @@ function showApprovals(approvals) {
     return el(
       "div",
       { className: "notice" },
-      text(`The agent wants to use your ${a.kind} for ${who(a)}.`, `From ${chat}, on ${a.url}.`),
-      el("div", { className: "acts" }, el("div", { className: "pair" }, allow, deny))
+      text(`The agent wants your ${a.kind} for ${a.site} for ${a.minutes} minutes.`, `${as} ${chat}, on ${address(a.url)}.`),
+      el("div", { className: "acts" }, el("div", { className: "pair" }, deny, allow))
     );
   });
 }
@@ -210,9 +220,8 @@ function showOffers(offers) {
       el(
         "div",
         { className: "acts" },
-        name,
-        el("div", { className: "ask" }, el("span", { textContent: "Ask me before each use" }), ask),
-        el("div", { className: "pair" }, save, drop)
+        el("span", { className: "opts" }, name, el("div", { className: "ask" }, el("span", { textContent: "Ask me before each use" }), ask)),
+        el("div", { className: "pair" }, drop, save)
       )
     );
   });
@@ -238,12 +247,18 @@ function showLogins(logins) {
     remove.onclick = () =>
       confirm(`Delete the ${kind} for ${who(l)}?`) && act(`delete the ${kind} for ${who(l)}`, `logins/${l.id}/delete`);
     const extra = kind === "passkey" ? " · passkey" : "";
-    const line = `${l.username || "(no username)"}${extra}${l.used ? ` · used ${l.used}` : ""}`;
+    const line = `${l.username || "(no username)"}${extra}`;
+    const used = l.used ? ` · used ${l.used}` : ""; // not on a phone
     list.append(
       el(
         "li",
         {},
-        el("div", { className: "who" }, el("strong", { textContent: l.site }), el("span", { textContent: line, title: line })),
+        el(
+          "div",
+          { className: "who" },
+          el("strong", { textContent: l.site }),
+          el("span", { title: line + used }, line, el("span", { className: "used", textContent: used }))
+        ),
         ask,
         remove
       )
@@ -284,8 +299,7 @@ function render(s, raw) {
   showOffers(s.offers || []);
   showLogins(s.logins || []);
   showMaking(s);
-  // The last step shows only while nothing waits for you.
-  $("caption").hidden = [...$("notices").querySelectorAll(".notice")].some((n) => !n.closest("[hidden]"));
+  $("caption").hidden = !$("caption").textContent;
 }
 
 async function post(what, body) {
@@ -329,9 +343,12 @@ async function send(field) {
 }
 
 $("take").addEventListener("click", () => {
-  if (NARROW.matches || TOUCH.matches) keyboard();
+  if (TOUCH.matches) keyboard();
   act("take over", "take");
 });
+// On a phone there's no button: touching the page takes it.
+$("touch").addEventListener("click", () => act("take over", "take"));
+$("reconnect").addEventListener("click", () => location.reload());
 $("keyboard").addEventListener("click", keyboard);
 $("typing").addEventListener("submit", (e) => e.preventDefault());
 for (const field of [$("type-text"), $("type-password")]) {
@@ -352,7 +369,7 @@ $("fit").addEventListener("click", () => {
   size();
 });
 
-// The buttons sit in the bar, or at the bottom on a phone.
+// The buttons sit in the header, or in a bar at the foot on a phone.
 function place() {
   if (NARROW.matches) $("row").append($("actions"));
   else $("logins-open").after($("actions"));

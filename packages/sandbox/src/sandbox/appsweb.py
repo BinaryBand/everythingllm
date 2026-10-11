@@ -11,9 +11,10 @@ it does research's and the browser's cards:
       taken, or when it can't be, the card drawn from its data comes first. An app
       that's gone gets one frame saying so, so an old chat's card doesn't break; one
       whose data can't be used says that, and shows the app again once it's fixed.
-  GET /_live/apps/<workspace>/<name>
+  GET /_live/apps/<workspace>/<name>?theme=light|dark
       a redirect to its page, on the workspace pages site (:8447), which a client may
-      keep for REDIRECT_AGE, so opening the app again goes to the page directly.
+      keep for REDIRECT_AGE, so opening the app again goes to the page directly; a
+      theme asked for goes with it, and the page keeps to it (apps/client.js).
 
 and https://<PUBLIC_HOST>:8447/_apps/ here, the page's own origin, for its write-back
 (sandbox.apps; its client is apps/client.js, the page's app.js):
@@ -58,6 +59,7 @@ from collections import deque
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qs
 
 import hostenv.keys
 import hostrpc
@@ -180,6 +182,8 @@ class AppsWeb:
             workspace, name, image = route[1], route[2], bool(route[3])
             if not image:
                 page = self.runner.public_url(workspace, f"apps/{name}/")
+                if "theme" in parse_qs(query):
+                    page += f"?theme={live.theme(query)}"
                 return await live.send(
                     writer,
                     "302 Found",

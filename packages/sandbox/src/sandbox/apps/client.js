@@ -17,6 +17,10 @@
 //                        from elsewhere (another tab, the agent, a run)
 //   App.onstatus(fn)     fn(state, text): saving, saved, offline, conflict, reload, error
 //
+// A page opened with ?theme=light or ?theme=dark, as the chat app opens it in its own
+// theme, keeps to that theme whatever the device's: each prefers-color-scheme condition in
+// the page's style sheets holds or not as the theme says, and color-scheme is that theme.
+//
 // Forms don't submit on the pages site (its CSP sandbox has no allow-forms), so a form's
 // submit event never fires: this turns Enter in one of its fields and a click on its
 // submit button into a submit event its handler sees. Nothing is sent by it.
@@ -344,6 +348,35 @@ const App = (() => {
       ? new SubmitEvent("submit", { bubbles: true, cancelable: true, submitter })
       : new Event("submit", { bubbles: true, cancelable: true });
     form.dispatchEvent(event);
+  }
+  const SCHEME = /\(\s*prefers-color-scheme\s*:\s*(light|dark)\s*\)/gi;
+  function keepTheme(theme) {
+    // A condition that always holds, and one that never does.
+    const fix = (media) => {
+      const text = media.mediaText;
+      const kept = text.replace(SCHEME, (_, scheme) =>
+        scheme.toLowerCase() === theme ? "(min-width: 0px)" : "(max-width: -1px)");
+      if (kept !== text) media.mediaText = kept;
+    };
+    const visit = (rules) => {
+      for (const rule of rules) {
+        if (rule.media) fix(rule.media);
+        if (rule.cssRules) visit(rule.cssRules);
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      if (sheet.media) fix(sheet.media);
+      try {
+        visit(sheet.cssRules);
+      } catch {
+        // A sheet from another origin can't be read.
+      }
+    }
+    document.documentElement.style.colorScheme = theme;
+  }
+  if (typeof location !== "undefined" && typeof document !== "undefined" && document.styleSheets) {
+    const theme = new URLSearchParams(location.search).get("theme");
+    if (theme === "light" || theme === "dark") keepTheme(theme);
   }
   const NOT_TEXT = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
   if (typeof document !== "undefined" && document.addEventListener) {

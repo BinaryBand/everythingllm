@@ -52,6 +52,21 @@ def test_the_card_address_without_png_leads_to_the_page(r):
                     b"Location: https://ws.example/career/apps/groceries/\r\n" in head
                 )
                 assert b"Cache-Control: max-age=86400\r\n" in head
+            # A theme asked for goes to the page, which keeps to it.
+            for asked, given in (
+                (b"light", b"light"),
+                (b"dark", b"dark"),
+                (b"x", b"dark"),
+            ):
+                head = await ask(
+                    port,
+                    b"GET /_live/apps/career/groceries?theme=" + asked + b" HTTP/1.1",
+                )
+                assert (
+                    b"Location: https://ws.example/career/apps/groceries/?theme="
+                    + given
+                    + b"\r\n"
+                ) in head
             assert (
                 b"404" in (await ask(port, b"GET /_live/apps/Career/x HTTP/1.1"))[:20]
             )

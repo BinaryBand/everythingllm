@@ -78,6 +78,17 @@ FORM_APP = """<!doctype html>
 </script>
 """
 
+# A page whose colours follow the device's theme, with the client that can keep it to another.
+THEMED = """<!doctype html>
+<title>Themed</title>
+<style>
+body{background:rgb(255, 255, 255)}
+@media (prefers-color-scheme: dark){body{background:rgb(0, 0, 0)}}
+@media screen and (prefers-color-scheme: light){body{color:rgb(1, 2, 3)}}
+</style>
+<script src="app.js"></script>
+"""
+
 PROBE = """
 import json, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -191,6 +202,17 @@ with sync_playwright() as p:
     form.wait_for_timeout(300)
     out["form_submits"] = form.evaluate("window.submits")
     out["form_url"] = form.url
+    out["themes"] = {}
+    for device in ("light", "dark"):
+        themed = browser.new_context(color_scheme=device)
+        for asked in ("", "light", "dark"):
+            shown = themed.new_page()
+            shown.goto(BASE + "apps/t/" + (f"?theme={asked}" if asked else ""))
+            out["themes"][f"{device}/{asked or '-'}"] = shown.evaluate(
+                "[getComputedStyle(document.body).backgroundColor, "
+                "getComputedStyle(document.body).color, "
+                "getComputedStyle(document.documentElement).colorScheme]")
+        themed.close()
     browser.close()
 print(json.dumps(out))
 """
@@ -234,6 +256,9 @@ def browsed(tmp_path_factory) -> dict:
     page = apps.render(FORM_APP, groceries, "t", "/_apps/ws/f/ops", "/_apps/ws/f/sync")
     (f / "index.html").write_text(page)
     (f / "app.js").write_bytes(apps.CLIENT.read_bytes())
+    t = tmp / "workspaces" / "ws" / "apps" / "t"
+    t.mkdir(parents=True)
+    (t / "index.html").write_text(apps.inline_client(THEMED))
     (tmp / "probe.py").write_text(PROBE)
     pod = f"pages-csp-test-{uuid.uuid4().hex[:8]}"
     # The repo's Caddyfile, with /_apps/ sent where the machine's route would send it.
@@ -335,3 +360,16 @@ def test_app_js_gives_a_form_its_submit_event_without_submitting_it(browsed):
     """The sandbox has no allow-forms, so a form never fires submit; app.js fires one."""
     assert browsed["form_submits"] == ["by enter", "by click"]
     assert browsed["form_url"] == "http://127.0.0.1:8447/ws/apps/f/"
+
+
+def test_app_js_keeps_a_page_to_the_theme_it_was_asked_for(browsed):
+    """The chat app opens a page in its own theme (?theme=), which may not be the device's."""
+    white, black, ink = "rgb(255, 255, 255)", "rgb(0, 0, 0)", "rgb(1, 2, 3)"
+    themes = browsed["themes"]
+    # Asked for nothing, the page follows the device.
+    assert themes["light/-"][:2] == [white, ink]
+    assert themes["dark/-"][0] == black and themes["dark/-"][1] != ink
+    for device in ("light", "dark"):
+        assert themes[f"{device}/light"] == [white, ink, "light"]
+        background, color, scheme = themes[f"{device}/dark"]
+        assert (background, scheme) == (black, "dark") and color != ink

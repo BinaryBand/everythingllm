@@ -1082,6 +1082,14 @@ class Runner(hostrpc.Service):
             raise SandboxError(f"couldn't save {name}: {e}") from None
         return data
 
+    def app_page_loads_client(self, s: Scope, name: str) -> bool:
+        """Whether the app's rendered page loads app.js rather than holding it, as one rendered
+        before the client was put in the page does."""
+        page = safefs.read_regular(
+            s.public, ("apps", name, "index.html"), APP_PAGE_BYTES + APP_DATA_BYTES
+        )
+        return page is not None and apps.CLIENT_TAG.encode() in page
+
     def app_client_is(self, s: Scope, name: str, client: bytes) -> bool:
         """Whether the app's app.js is `client` (so it isn't written again for nothing)."""
         held = safefs.read_regular(s.public, ("apps", name, "app.js"), len(client) + 1)
@@ -1223,8 +1231,9 @@ class Runner(hostrpc.Service):
 
     def refresh_apps(self) -> None:
         """Bring every workspace's apps up to the runner when it starts: an app whose app.js
-        isn't the repo's client is rendered again, page and client together, so a page
-        gets the client's changes without waiting for its next change; and a list made
+        isn't the repo's client, or whose page still loads it rather than holding it, is
+        rendered again, page and client together, so a page gets the client's changes
+        without waiting for its next change; and a list made
         from the old repo template is moved to today's shape with the list starter's page
         (sandbox.apps.migrate; that part can go once every workspace's has been). Data is
         parsed only for those."""
@@ -1252,7 +1261,9 @@ class Runner(hostrpc.Service):
                         log.info(
                             "app %s/%s: moved to a page of its own", s.workspace, name
                         )
-                    elif not self.app_client_is(s, name, client):
+                    elif not self.app_client_is(
+                        s, name, client
+                    ) or self.app_page_loads_client(s, name):
                         self.save_app(s, name, self.read_app(s, name), bump=False)
                 except (OSError, ValueError, SandboxError) as e:
                     log.warning(

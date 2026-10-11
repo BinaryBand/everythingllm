@@ -12,7 +12,8 @@ it does research's and the browser's cards:
       that's gone gets one frame saying so, so an old chat's card doesn't break; one
       whose data can't be used says that, and shows the app again once it's fixed.
   GET /_live/apps/<workspace>/<name>
-      a redirect to its page, on the workspace pages site (:8447).
+      a redirect to its page, on the workspace pages site (:8447), which a client may
+      keep for REDIRECT_AGE, so opening the app again goes to the page directly.
 
 and https://<PUBLIC_HOST>:8447/_apps/ here, the page's own origin, for its write-back
 (sandbox.apps; its client is apps/client.js, the page's app.js):
@@ -83,6 +84,7 @@ log = logging.getLogger("sandbox.appsweb")
 PORT = 8455
 MAX_STREAM = 30 * 60
 POLL = 10.0  # a fallback: an op and a run's edit announce themselves
+REDIRECT_AGE = 24 * 3600  # a day, not for good: the pages site has moved before
 CARD = re.compile(rf"(?:/_live/apps)?/({KEY})/({SLUG})(\.png)?")
 OPS = re.compile(rf"(?:/_apps)?/({KEY})/({SLUG})/(ops|sync)")
 MAX_BODY = 256 << 10
@@ -178,7 +180,14 @@ class AppsWeb:
             workspace, name, image = route[1], route[2], bool(route[3])
             if not image:
                 page = self.runner.public_url(workspace, f"apps/{name}/")
-                return await live.send(writer, "302 Found", headers={"Location": page})
+                return await live.send(
+                    writer,
+                    "302 Found",
+                    headers={
+                        "Location": page,
+                        "Cache-Control": f"max-age={REDIRECT_AGE}",
+                    },
+                )
             theme = live.theme(query)
             s = self.runner.app_scope(workspace)
             if s is None:

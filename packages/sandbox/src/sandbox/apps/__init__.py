@@ -4,7 +4,9 @@ An app is a workspace's folder /project/apps/<name>/ (docs/.proposals/sandbox-ap
 
   page.html   the agent's page, with PLACEHOLDER once inside a <script>, where the host puts
               the app ({title, version, card, data, token, ops, sync}) as JSON when it
-              renders the page to /public/apps/<name>/index.html, beside CLIENT as app.js
+              renders the page to /public/apps/<name>/index.html, beside CLIENT as app.js;
+              each CLIENT_TAG in it is rendered as the client itself, so opening the page
+              takes one request
   data.json   {"title", "version", "card", "data"}: `data` is the page's, any JSON; `card`
               is what the chat's card shows until a picture of the page is taken, or when
               one can't be (card.py, sandbox.appshot): {"summary"?, "lines": [text]} or
@@ -32,6 +34,7 @@ from sandbox.apps.base import AppError, text
 
 __all__ = [
     "CLIENT",
+    "CLIENT_TAG",
     "PLACEHOLDER",
     "STARTERS",
     "AppError",
@@ -47,6 +50,8 @@ __all__ = [
 
 PLACEHOLDER = "/*APP*/null"
 CLIENT = Path(__file__).with_name("client.js")
+# How a page loads CLIENT, as the starters do.
+CLIENT_TAG = '<script src="app.js"></script>'
 MAX_TITLE = 120
 MAX_LINE = 200
 MAX_KEY = 64
@@ -263,14 +268,26 @@ def embed(value: Any) -> str:
     )
 
 
+def inline_client(page: str) -> str:
+    """`page` with each CLIENT_TAG replaced by a script holding CLIENT, so the page needs no
+    second request for it. `</` in the client is written `<\\/`, which can't end the script
+    and reads the same in the comments and strings it's in."""
+    if CLIENT_TAG not in page:
+        return page
+    client = CLIENT.read_text().replace("</", "<\\/")
+    return page.replace(CLIENT_TAG, f"<script>{client}</script>")
+
+
 def render(page: str, app: dict[str, Any], token: str, ops: str, sync: str) -> str:
     """The app's page with the app, its write-back token and where to post in place of
-    PLACEHOLDER."""
+    PLACEHOLDER, and the client in place of CLIENT_TAG (inline_client)."""
     if page.count(PLACEHOLDER) != 1:
         raise AppError(
             f"page.html must have {PLACEHOLDER} exactly once, inside a <script> "
             f"(e.g. App.start({PLACEHOLDER}))"
         )
-    return page.replace(
-        PLACEHOLDER, embed({**app, "token": token, "ops": ops, "sync": sync})
+    return inline_client(
+        page.replace(
+            PLACEHOLDER, embed({**app, "token": token, "ops": ops, "sync": sync})
+        )
     )

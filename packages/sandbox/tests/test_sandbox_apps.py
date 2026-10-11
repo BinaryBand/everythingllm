@@ -200,6 +200,18 @@ def test_the_page_embeds_the_app_where_no_markup_can_end_the_script():
             apps.render(bad, app, "t", "o", "s")
 
 
+def test_the_page_holds_its_client_in_place_of_loading_it():
+    app = apps.new("Notes")
+    page = apps.render(PAGE, app, "tok", "/_apps/w/n/ops", "/_apps/w/n/sync")
+    assert apps.CLIENT_TAG not in page
+    held = re.search(r"<script>(.*?)</script>", page, re.DOTALL)[1]
+    assert held == apps.CLIENT.read_text().replace("</", "<\\/")
+    assert embedded(page)["token"] == "tok"
+    # A page that loads the client some other way still does.
+    other = PAGE.replace(apps.CLIENT_TAG, '<script src="./app.js"></script>')
+    assert '<script src="./app.js"></script>' in apps.render(other, app, "t", "o", "s")
+
+
 def test_an_old_list_is_moved_to_the_list_starter():
     old = {
         "template": "list",
@@ -514,6 +526,17 @@ def test_the_runner_refreshes_apps_when_it_starts(r, cfg):  # noqa: F811
     assert (public(cfg, A) / "apps" / "groceries" / "app.js").exists()
     # Today's apps get the current client, and nothing else changes.
     assert old_client.read_bytes() == apps.CLIENT.read_bytes()
+    assert go(r.op_app(A, "show", "notes"))["version"] == 1
+
+
+def test_the_runner_puts_the_client_in_a_page_that_still_loads_it(r, cfg):  # noqa: F811
+    notes(cfg)
+    go(r.op_app(A, "create", "notes"))
+    index = public(cfg, A) / "apps" / "notes" / "index.html"
+    # As a page was rendered before.
+    index.write_text(f"<!doctype html>{apps.CLIENT_TAG}")
+    r.refresh_apps()
+    assert apps.CLIENT_TAG not in index.read_text()
     assert go(r.op_app(A, "show", "notes"))["version"] == 1
 
 

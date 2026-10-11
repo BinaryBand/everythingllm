@@ -75,7 +75,6 @@ Ops (each takes `scope`):
   logins()                       the workspace's saved logins, no secrets -> {logins, site}
   login(login, user_ref?, pass_ref?, submit?)  fill a saved login -> {page}, or
                                  {approval, card} while it waits for the user's OK
-  code(login, ref, submit?)      fill a saved login's 2FA code -> as login
   passkey(login, ref)            click ref, the button that signs in with a passkey, with
                                  the saved passkey `login` in the page -> as login
   wait_approval(approval)        up to WAIT s -> {done, approved}
@@ -131,7 +130,7 @@ from browser.tabs import (
     sign_in_provider,
     site_of,
 )
-from browser.vault import Vault, VaultError, credential, totp
+from browser.vault import Vault, VaultError, credential
 
 log = logging.getLogger("browser-runner")
 
@@ -150,7 +149,7 @@ POLLED = (
     10  # seconds after a client last asked for a tab's card that it still watches it
 )
 # The ops that are the agent at work in its chat's tab (not wait_approval, which waits).
-WORK = {"open", "act", "read", "handoff", "close", "logins", "login", "code", "passkey",
+WORK = {"open", "act", "read", "handoff", "close", "logins", "login", "passkey",
         "ask_login"}  # fmt: skip
 
 
@@ -556,7 +555,7 @@ class Runner(hostrpc.Service):
     # --- saved logins ---
 
     async def op_logins(self, scope: dict[str, Any]) -> dict[str, Any]:
-        """The workspace's saved logins (never a password or 2FA secret), and the site of
+        """The workspace's saved logins (never a secret), and the site of
         the thread's page, whose logins are the ones that can fill there."""
         workspace, thread = check_scope(scope)
         logins = await asyncio.to_thread(self.vault.logins, workspace)
@@ -596,26 +595,6 @@ class Runner(hostrpc.Service):
             + as_who(entry["username"]),
             view,
         )
-        return {"page": pagetext.render(view)}
-
-    async def op_code(
-        self, scope: dict[str, Any], login: str, ref: str, submit: bool = False
-    ) -> dict[str, Any]:
-        s, tab, entry = await self.usable(scope, login, "login")
-        if not entry.get("totp"):
-            raise RunnerError(
-                f"the {entry['site']} login has no 2FA secret saved; hand the browser to the user for the code"
-            )
-        if waiting := self.approval(s, tab, entry):
-            return waiting
-        view = await self.call(
-            s,
-            "fill_code",
-            {"thread": tab.thread, "site": entry["site"], "code": totp(entry["totp"]),
-             "ref": ref or "", "submit": bool(submit)},
-        )  # fmt: skip
-        await self.used(s.workspace, entry)
-        tab.moved(f"Filled in the 2FA code for {entry['site']}", view)
         return {"page": pagetext.render(view)}
 
     async def op_passkey(
@@ -826,7 +805,7 @@ class Runner(hostrpc.Service):
         taken = await self.call(s, "peek_offer", {"id": offer})
         name = taken["username"] if username is None else str(username)
         saved = await asyncio.to_thread(
-            self.vault.add, s.workspace, taken["site"], name, taken["password"], "", ask
+            self.vault.add, s.workspace, taken["site"], name, taken["password"], ask
         )
         try:
             await self.call(s, "drop_offer", {"id": offer})

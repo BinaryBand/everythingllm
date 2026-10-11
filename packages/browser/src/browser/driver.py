@@ -18,14 +18,13 @@ download that fails is.
 Saved logins (browser.vault) come from the runner and go only into fields on their own
 site: the page and the frame a field is in must be on the login's site (browser.origin), as
 Playwright sees them, not the page's scripts; a password goes only into a password field;
-and nothing filled is ever said back. A read hides any piece of a filled password or code
+and nothing filled is ever said back. A read hides any piece of a filled password
 (PIECE characters of it) wherever it shows, and shows a field holding one as filled, even
 once the page makes it a text field. A field holding one is the agent's only to submit,
 leave or replace: typing, a key other than SECRET_KEYS, or a choice in it is refused, so
 the agent can't make a value a read would show part of. And `press` sends only plain keys
 (KEYS, and Shift with SHIFTED), never a shortcut, so nothing reaches the clipboard to be
-pasted elsewhere. Passwords are hidden for the container's life (only stale 2FA codes are
-let go), and so are those the user typed while they had the browser, sent or not, over VNC
+pasted elsewhere. Passwords are hidden for the container's life, and so are those the user typed while they had the browser, sent or not, over VNC
 or through the take-over view's field (`user_type`, which puts text in as text, so any
 keyboard layout, a phone's keyboard and a password manager work). As a
 read hides what the agent sends too, sending a guess and seeing it hidden would spell a
@@ -50,7 +49,6 @@ notes}, snapshot.js's reading of the page (browser.page renders it).
   read(thread)                      the view as it is
   fill_login(thread, site, username, password, user_ref, pass_ref, submit)
                                     a saved login into the fields with those refs
-  fill_code(thread, site, code, ref, submit)  a 2FA code into the field `ref`
   screenshot(thread)                {jpeg (base64), title, url}; the front tab's without a thread
   front(thread)                     bring the thread's tab to the front of the window -> {url}
   close(thread)                     close the thread's tab (and its popups)
@@ -131,7 +129,6 @@ BOT_BOX = (
     "browser-handoff rather than reloading or waiting longer."
 )
 USERLIKE = {"text", "email", "tel", ""}  # input types a username goes into
-CODELIKE = {"text", "tel", "number", "password", ""}  # and a 2FA code
 MAX_OFFERS = 5
 OFFER_SECONDS = 600  # how long a login the user sent waits to be saved
 MAX_SECRET = 1000
@@ -148,7 +145,6 @@ AUTHENTICATOR = {
 }  # fmt: skip
 MAX_DOWNLOADS = 10  # downloads a thread's pages may start between two reads
 DOWNLOAD_BYTES = 256 << 20  # the largest download kept
-MAX_CODES = 20  # the latest 2FA codes kept to hide (passwords are kept for the container's life)
 PIECE = (
     6  # characters of a filled secret that a read never shows (all of a shorter one)
 )
@@ -262,10 +258,8 @@ class Driver(hostrpc.Service):
         # id -> {site, username, password, at}
         self.offers: dict[str, dict[str, Any]] = {}
         # Passwords filled from the vault or typed by the user, kept until the container
-        # stops: dropping one would let a read show it again. 2FA codes go stale, so only
-        # the last MAX_CODES are.
-        self.passwords: list[str] = []
-        self.codes: list[str] = []
+        # stops: dropping one would let a read show it again.
+        self.filled: list[str] = []
         self.pieces: dict[int, set[str]] = {}  # theirs, as `pieces` makes them
         # Whether the agent sent part of a secret: it's refused until the user takes over.
         self.locked = False
@@ -562,7 +556,7 @@ class Driver(hostrpc.Service):
         runner's idea of the page can be stale (a popup on the site, closed by the page
         that opened it, leaves that page behind)."""
         await self.on_site(page, ref, site, f"the {kind} field", "a saved login fills")
-        kinds = {"password": {"password"}, "username": USERLIKE, "code": CODELIKE}[kind]
+        kinds = {"password": {"password"}, "username": USERLIKE}[kind]
         target = page.locator(f'input[data-bw-ref="{ref}"]').first
         handle, kind_of = None, None
         try:
@@ -655,31 +649,15 @@ class Driver(hostrpc.Service):
         await self.fill(page, fields, submit)
         return await self.view(thread, self.existing(thread))
 
-    async def op_fill_code(
-        self, thread: str, site: str, code: str, ref: str, submit: bool = False
-    ) -> dict[str, Any]:
-        self.check_sent()
-        page = self.existing(thread)
-        target = await self.field(page, ref, site, "code")
-        self.keep_filled(code, code=True)
-        await self.fill(page, [(target, code)], submit)
-        return await self.view(thread, self.existing(thread))
-
-    @property
-    def filled(self) -> list[str]:
-        return [*self.passwords, *self.codes]
-
-    def keep_filled(self, secret: str, code: bool = False, site: str = "") -> None:
+    def keep_filled(self, secret: str, site: str = "") -> None:
         """Remember a secret about to be filled (or that the user typed), so reads never
         say it back and the agent can't edit a field holding it; a password's `site`, so
         it's sent nowhere else (guard_requests)."""
-        kept = self.codes if code else self.passwords
-        if secret in kept:
-            kept.remove(secret)
-        kept.append(secret)
-        del self.codes[:-MAX_CODES]
+        if secret in self.filled:
+            self.filled.remove(secret)
+        self.filled.append(secret)
         self.pieces = pieces(self.filled)
-        if site and not code:
+        if site:
             self.sites[secret] = site
 
     async def guard_requests(self) -> None:
@@ -1172,8 +1150,7 @@ def holds_secret(text: str, pieces: dict[int, set[str]]) -> bool:
 def scrub(view: dict[str, Any], pieces: dict[int, set[str]]) -> dict[str, Any]:
     """A read with no piece of a filled secret in it. snapshot.js never says a password
     field's value, but a page can make the field a text one (a "show password" button, which
-    the agent can click), a 2FA code often goes into a text field, and a page can show
-    either in its text. A field holding one is shown as filled. The address keeps its host,
+    the agent can click), and a page can show it in its text. A field holding one is shown as filled. The address keeps its host,
     which the runner checks logins against."""
     url = view.get("url") or ""
     at = url.find("/", url.find("://") + 3) if "://" in url else 0

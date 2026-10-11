@@ -525,15 +525,10 @@ def test_the_starting_runner_removes_its_old_containers(tmp_path):
     test(tmp_path)
 
 
-RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
-
-
 def test_the_agent_logs_in_with_a_saved_login_without_seeing_it(tmp_path):
     @run
     async def test(r, podman, clock):
-        saved = r.vault.add(
-            "career", "linkedin.com", "alice", "hunter2", totp=RFC_SECRET
-        )
+        saved = r.vault.add("career", "linkedin.com", "alice", "hunter2")
         r.vault.add("education", "linkedin.com", "bob", "other")
         await r.op_open(scope(), "https://www.linkedin.com/login")
         listed = await r.op_logins(scope())
@@ -541,7 +536,7 @@ def test_the_agent_logs_in_with_a_saved_login_without_seeing_it(tmp_path):
             "site": "www.linkedin.com",
             "logins": [{**r.vault.logins("career")[0], "here": True}],
         }
-        assert "hunter2" not in str(listed) and RFC_SECRET not in str(listed)
+        assert "hunter2" not in str(listed)
         done = await r.op_login(scope(), saved["id"], "e1", "e2", True)
         assert "hunter2" not in str(done) and "Sign in" in done["page"]
         driver = podman.drivers["everythingllm-browser-career"]
@@ -549,8 +544,6 @@ def test_the_agent_logs_in_with_a_saved_login_without_seeing_it(tmp_path):
                                      "password": "hunter2", "user_ref": "e1", "pass_ref": "e2", "submit": True}  # fmt: skip
         assert r.threads[("career", "7")].last == "Logged in for linkedin.com as alice"
         assert r.vault.logins("career")[0]["used"]
-        coded = await r.op_code(scope(), saved["id"], "e3")
-        assert "Sign in" in coded["page"] and len(driver.filled[-1]["code"]) == 6
         # Another workspace's login isn't there, and a login fills only on its site.
         await r.op_open(scope("education"), "https://www.linkedin.com/login")
         with pytest.raises(RunnerError, match="no saved login"):
@@ -561,17 +554,6 @@ def test_the_agent_logs_in_with_a_saved_login_without_seeing_it(tmp_path):
             match="that login is for linkedin.com, and this chat's page is on evil.example",
         ):
             await r.op_login(scope(), saved["id"], "e1", "e2")
-
-    test(tmp_path)
-
-
-def test_a_login_without_2fa_has_no_code(tmp_path):
-    @run
-    async def test(r, podman, clock):
-        saved = r.vault.add("career", "linkedin.com", "alice", "pw")
-        await r.op_open(scope(), "https://linkedin.com/")
-        with pytest.raises(RunnerError, match="no 2FA secret"):
-            await r.op_code(scope(), saved["id"], "e3")
 
     test(tmp_path)
 
@@ -806,13 +788,13 @@ def test_the_agent_asks_for_a_login_for_its_pages_site_and_the_user_saves_it(tmp
         assert (await r.op_ask_login(scope(thread="8")))["request"] != req.id
         # Only for one of the request's sites, and with a password.
         with pytest.raises(RunnerError, match="not 'evil.example'"):
-            await r.login_requests.fulfil(req, "evil.example", "alice", "pw", "", False)
+            await r.login_requests.fulfil(req, "evil.example", "alice", "pw", False)
         with pytest.raises(RunnerError, match="not 'com'"):
-            await r.login_requests.fulfil(req, "com", "alice", "pw", "", False)
+            await r.login_requests.fulfil(req, "com", "alice", "pw", False)
         with pytest.raises(RunnerError, match="enter the password"):
-            await r.login_requests.fulfil(req, "google.com", "alice", "", "", False)
+            await r.login_requests.fulfil(req, "google.com", "alice", "", False)
         saved = await r.login_requests.fulfil(
-            req, "google.com", "alice", "hunter2", "", True
+            req, "google.com", "alice", "hunter2", True
         )
         assert "hunter2" not in str(saved)
         assert saved["site"] == "google.com" and saved["ask"]
@@ -821,7 +803,7 @@ def test_the_agent_asks_for_a_login_for_its_pages_site_and_the_user_saves_it(tmp
         assert tab.last == "You saved a login for google.com"
         # Once.
         with pytest.raises(RunnerError, match=r"isn't waiting any more \(saved\)"):
-            await r.login_requests.fulfil(req, "google.com", "mallory", "x", "", False)
+            await r.login_requests.fulfil(req, "google.com", "mallory", "x", False)
         with pytest.raises(RunnerError, match="isn't waiting"):
             r.login_requests.decline(req)
         assert len(r.vault.logins("career")) == 1
@@ -855,9 +837,7 @@ def test_a_request_runs_out_is_kept_a_while_and_is_capped(tmp_path):
         clock.t += logins.ASK_SECONDS + 1
         assert r.login_requests.asked_state(first) == "expired"
         with pytest.raises(RunnerError, match=r"\(expired\)"):
-            await r.login_requests.fulfil(
-                first, "linkedin.com", "alice", "pw", "", False
-            )
+            await r.login_requests.fulfil(first, "linkedin.com", "alice", "pw", False)
         # A new one takes its place, and the old one's card still says how it ended,
         # for a day.
         second = (await r.op_ask_login(scope()))["request"]
@@ -871,7 +851,7 @@ def test_a_request_runs_out_is_kept_a_while_and_is_capped(tmp_path):
         # The browser stopping doesn't end one: the save needs only the vault.
         await r.stop("career")
         req = r.login_requests.by_id(second)
-        await r.login_requests.fulfil(req, "linkedin.com", "alice", "pw", "", False)
+        await r.login_requests.fulfil(req, "linkedin.com", "alice", "pw", False)
         assert r.vault.logins("career")[0]["site"] == "linkedin.com"
         # At most MAX_ASKED wait in a workspace.
         for n in range(logins.MAX_ASKED):
@@ -892,9 +872,7 @@ def test_a_save_the_vault_refuses_leaves_the_request_waiting(tmp_path):
         await r.op_open(scope(), "https://linkedin.com/")
         req = r.asked[(await r.op_ask_login(scope()))["request"]]
         with pytest.raises(RunnerError, match="too long"):
-            await r.login_requests.fulfil(
-                req, "linkedin.com", "a" * 1001, "pw", "", False
-            )
+            await r.login_requests.fulfil(req, "linkedin.com", "a" * 1001, "pw", False)
         assert r.login_requests.asked_state(req) == "waiting"
         r.login_requests.decline(req)
         assert r.login_requests.asked_state(req) == "declined"

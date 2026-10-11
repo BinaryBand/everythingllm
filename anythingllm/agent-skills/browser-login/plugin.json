@@ -4,7 +4,7 @@
   "name": "Browser Login",
   "schema": "skill-1.0.0",
   "version": "1.0.0",
-  "description": "Log in with a login or passkey saved in this workspace's vault without seeing it; it works only on its own site. list: the saved logins and passkeys and which fit this page. login: fill a login into user_ref and/or pass_ref from the last read. code: fill its current 2FA code into ref. passkey: sign in with a saved passkey by clicking ref, the page's button that signs in with a passkey. ask (on the sign-in page, when none is saved): returns a card where the user saves one; put it in your reply and end the reply. Some wait for the user's OK first. Never ask for a password in the chat.",
+  "description": "Log in with a login or passkey saved in this workspace's vault without seeing it; it works only on its own site. list: the saved logins and passkeys and which fit this page. login: fill a login into user_ref and/or pass_ref from the last read. passkey: sign in with a saved passkey by clicking ref, the page's button that signs in with a passkey. ask (on the sign-in page, when none is saved): returns a card where the user saves one; put it in your reply and end the reply. Some wait for the user's OK first. Never ask for a password in the chat; a 2FA code is the user's to enter (browser-handoff).",
   "author": "anything",
   "license": "MIT",
   "imported": true,
@@ -24,10 +24,6 @@
     {
       "prompt": "(the list shows 7c01e2aa, a passkey for github.com, and the page has a \"Sign in with a passkey\" button e7)",
       "call": "{\"action\": \"passkey\", \"login\": \"7c01e2aa\", \"ref\": \"e7\"}"
-    },
-    {
-      "prompt": "(the site asks for a 2FA code)",
-      "call": "{\"action\": \"code\", \"login\": \"3f2a9c1d\", \"ref\": \"e2\", \"submit\": true}"
     }
   ],
   "entrypoint": {
@@ -39,10 +35,9 @@
           "list",
           "ask",
           "login",
-          "code",
           "passkey"
         ],
-        "description": "list, login, code, passkey or ask."
+        "description": "list, login, passkey or ask."
       },
       "login": {
         "type": "string",
@@ -58,7 +53,7 @@
       },
       "ref": {
         "type": "string",
-        "description": "code: the 2FA code field's ref. passkey: the button that signs in with a passkey."
+        "description": "passkey: the button that signs in with a passkey."
       },
       "submit": {
         "type": "boolean",

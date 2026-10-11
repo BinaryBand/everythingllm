@@ -115,12 +115,6 @@ class FakeDriver(hostrpc.Service):
                             "user_ref": user_ref, "pass_ref": pass_ref, "submit": submit})  # fmt: skip
         return self.view(thread)
 
-    async def op_fill_code(self, thread, site, code, ref, submit=False):
-        self.filled.append(
-            {"thread": thread, "site": site, "code": code, "ref": ref, "submit": submit}
-        )
-        return self.view(thread)
-
     async def op_capture(self, on, user=False):
         if not on:
             self.making = False

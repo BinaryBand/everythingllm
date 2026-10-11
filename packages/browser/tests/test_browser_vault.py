@@ -8,10 +8,8 @@ import time
 
 import pytest
 from browser import origin
-from browser.vault import Vault, VaultError, public, totp, totp_secret
+from browser.vault import Vault, VaultError, public
 from browser_fakes import passkey
-
-RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"  # RFC 6238's "12345678901234567890"
 
 
 @pytest.fixture
@@ -28,7 +26,7 @@ def test_a_saved_login_is_sealed_and_comes_back_only_for_its_workspace(vault, tm
         ask=True,
     )
     assert saved == {"id": saved["id"], "kind": "login", "site": "linkedin.com",
-                     "username": "alice@example.com", "totp": False, "ask": True,
+                     "username": "alice@example.com", "ask": True,
                      "used": ""}  # fmt: skip
     raw = vault.file("career").read_bytes()
     assert b"hunter2" not in raw and b"alice" not in raw and raw.startswith(b"bwv1")
@@ -47,8 +45,8 @@ def test_a_saved_login_is_sealed_and_comes_back_only_for_its_workspace(vault, tm
 
 def test_saving_the_same_site_and_username_again_replaces_its_password(vault):
     first = vault.add("career", "linkedin.com", "alice", "old")
-    again = vault.add("career", "www.linkedin.com", "alice", "new", totp=RFC_SECRET)
-    assert again["id"] == first["id"] and again["totp"] and not again["ask"]
+    again = vault.add("career", "www.linkedin.com", "alice", "new")
+    assert again["id"] == first["id"] and not again["ask"]
     assert vault.get("career", first["id"])["password"] == "new"
     other = vault.add("career", "linkedin.com", "bob", "pw")
     assert len(vault.logins("career")) == 2 and other["id"] != first["id"]
@@ -95,10 +93,9 @@ def test_a_key_that_cant_be_read_is_the_vaults_error(vault):
         vault.key_file.chmod(0o600)
 
 
-def test_a_login_needs_something_secret(vault):
+def test_a_login_needs_a_password(vault):
     with pytest.raises(VaultError, match="needs a password"):
         vault.add("career", "x.com", "a", "")
-    assert vault.add("career", "x.com", "a", "", totp=RFC_SECRET)["totp"]
 
 
 def test_public_never_has_the_secrets():
@@ -109,14 +106,12 @@ def test_public_never_has_the_secrets():
             "site": "x.com",
             "username": "a",
             "password": "p",
-            "totp": "S",
             "ask": False,
         }
     )
-    assert "p" not in shown.values() and "S" not in shown.values()
+    assert "p" not in shown.values()
     assert (
-        set(shown) == {"id", "kind", "site", "username", "totp", "ask", "used"}
-        and shown["totp"] is True
+        set(shown) == {"id", "kind", "site", "username", "ask", "used"}
         and shown["kind"] == "login"
     )
 
@@ -141,7 +136,7 @@ def test_an_entry_is_used_only_as_its_kind(vault):
 def test_a_passkey_is_saved_for_its_site_asking_first_and_never_shown(vault):
     saved = vault.add_passkey("career", passkey("www.GitHub.com"))
     assert saved == {"id": saved["id"], "kind": "passkey", "site": "github.com",
-                     "username": "alice", "totp": False, "ask": True, "used": ""}  # fmt: skip
+                     "username": "alice", "ask": True, "used": ""}  # fmt: skip
     entry = vault.get("career", saved["id"], "passkey")
     assert entry["rp_id"] == "www.github.com" and entry["sign_count"] == 1
     assert entry["private_key"] == passkey()["privateKey"] and entry["resident"]
@@ -169,25 +164,6 @@ def test_a_passkey_is_refused_unless_its_a_sites_and_whole(vault, credential):
     with pytest.raises(VaultError):
         vault.add_passkey("career", credential)
     assert vault.logins("career") == []
-
-
-def test_2fa_codes_are_rfc_6238s():
-    assert totp(RFC_SECRET, 59) == "287082"
-    assert totp(RFC_SECRET, 1111111109) == "081804"
-    assert totp_secret("gezd gnbv gy3t qojq gezd gnbv gy3t qojq") == RFC_SECRET
-    assert (
-        totp_secret(
-            f"otpauth://totp/LinkedIn:alice?secret={RFC_SECRET}&issuer=LinkedIn"
-        )
-        == RFC_SECRET
-    )
-    for bad in (
-        "not base32!",
-        "AAAA",
-        f"otpauth://totp/x?secret={RFC_SECRET}&digits=8",
-    ):
-        with pytest.raises(VaultError):
-            totp_secret(bad)
 
 
 def test_a_login_fills_only_on_its_site_and_its_subdomains():

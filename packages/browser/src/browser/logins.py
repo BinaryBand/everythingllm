@@ -97,7 +97,6 @@ class LoginRequests:
         site: str,
         username: str,
         password: str,
-        totp: str,
         ask: bool,
     ) -> dict[str, Any]:
         """Save what the user sent for a request into the vault, for the site they chose
@@ -116,7 +115,7 @@ class LoginRequests:
         req.state = "saving"
         try:
             saved = await asyncio.to_thread(
-                self.vault().add, req.workspace, site, username, password, totp, ask
+                self.vault().add, req.workspace, site, username, password, ask
             )
         except BaseException:
             req.state = "waiting"  # for the user to fix and send again

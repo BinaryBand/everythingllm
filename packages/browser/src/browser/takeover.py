@@ -22,7 +22,7 @@ container, so a stopped browser's old address goes nowhere.
   POST /<token>/take             the user takes the browser
   POST /<token>/give             the user hands it back to the agent
   POST /<token>/approve/<id>, deny/<id>   answer the agent's wish to use a saved login
-  POST /<token>/logins           save a login {site, username, password, totp, ask}
+  POST /<token>/logins           save a login {site, username, password, ask}
   POST /<token>/logins/<id>/delete, logins/<id>/ask {ask}
   POST /<token>/offers/<id>/save {username, ask}, offers/<id>/drop
                                  save, or not, a login the user just sent in the browser
@@ -39,7 +39,7 @@ container, so a stopped browser's old address goes nowhere.
   GET  /login/<id>/              the form for a login the agent asked for (Runner.op_ask_login),
                                  which the request's card links to; login.js, style.css beside it
   GET  /login/<id>/state         {state, site, sites}
-  POST /login/<id>/save {site, username, password, totp, ask}, /login/<id>/drop
+  POST /login/<id>/save {site, username, password, ask}, /login/<id>/drop
                                  save the login in the vault, for the request's site or a
                                  parent of it the user picks; or turn the request down
   GET  /health                   ok
@@ -47,7 +47,7 @@ container, so a stopped browser's old address goes nowhere.
 A POST or a WebSocket must come from the page's own origin (its Origin header), so no
 other page can drive the browser. A login request's form needs no token: its id, long and
 known only to its card, is its key, and it can only add a login for the site the agent's
-page was on. Nothing here ever sends a password or 2FA secret back:
+page was on. Nothing here ever sends a password back:
 the page can save and delete logins, not read them. Nor what the user types: it goes on to
 the driver, and is in no answer or log line. Connections are taken only from loopback or the
 server's own address (hostrpc.local_peer), where the machine's HTTPS routes deliver them.
@@ -107,7 +107,6 @@ GLOBE = ICON.format(
     "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2z M2 8h12 M8 2c-2 1.8-2 10.2 0 12 M8 2c2 1.8 2 10.2 0 12",
 )
 WARN = ICON.format(15, "M8 2.5 14 13H2z M8 6.5v3 M8 11.3v.2")
-PLUS = ICON.format(14, "M8 3v10M3 8h10")
 DONE = ICON.format(12, "M3.5 8.5 6.5 11.5 12.5 5")
 NOT = ICON.format(12, "M4 8h8")
 PAGE = f"""<!doctype html>
@@ -180,8 +179,7 @@ PAGE = f"""<!doctype html>
     <h3>Add a login</h3>
     <input name="site" aria-label="Site" placeholder="Site, like linkedin.com" required autocomplete="off">
     <input name="username" aria-label="Username or email" placeholder="Username or email" autocomplete="off">
-    <input name="password" aria-label="Password" type="password" placeholder="Password" autocomplete="new-password">
-    <input name="totp" aria-label="2FA secret" placeholder="2FA secret (optional)" autocomplete="off">
+    <input name="password" aria-label="Password" type="password" placeholder="Password" autocomplete="new-password" required>
     <label><input name="ask" type="checkbox"> Ask me before each use</label>
     <button class="primary">Save login</button>
     <span id="add-error" class="error"></span>
@@ -223,8 +221,6 @@ another.</span></p>
   <div class="fields">
     <label><span>Username</span><input name="username" placeholder="Name or email" autocomplete="off"></label>
     <label><span>Password</span><input name="password" type="password" placeholder="Required" autocomplete="new-password" required></label>
-    <label id="totp" hidden><span>2FA secret</span><input name="totp" placeholder="Optional" autocomplete="off"></label>
-    <button type="button" id="add-totp">{PLUS}Add a 2FA secret</button>
   </div>
   <fieldset class="chips">
     <legend>The browser may fill it in on</legend>
@@ -416,7 +412,7 @@ class Takeover:
                 if rest == "save":
                     await r.login_requests.fulfil(
                         asked, text(body, "site"), text(body, "username"),
-                        text(body, "password"), text(body, "totp"), body.get("ask") is True,
+                        text(body, "password"), body.get("ask") is True,
                     )  # fmt: skip
                 elif rest == "drop":
                     r.login_requests.decline(asked)
@@ -485,7 +481,7 @@ class Takeover:
             case ["logins"]:
                 await asyncio.to_thread(
                     r.vault.add, ws, text(body, "site"), text(body, "username"),
-                    text(body, "password"), text(body, "totp"), body.get("ask") is True,
+                    text(body, "password"), body.get("ask") is True,
                 )  # fmt: skip
             case ["logins", login, "delete"]:
                 await asyncio.to_thread(r.vault.delete, ws, login)

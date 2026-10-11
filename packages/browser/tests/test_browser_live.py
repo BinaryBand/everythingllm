@@ -159,7 +159,7 @@ def test_a_login_requests_card_shows_how_it_stands_and_links_to_its_form(tmp_pat
             # The stream sends the answer, then ends.
             reader, writer = await get(port, f"/_live/browser/login/{req.id}.png")
             await first_frame(reader)
-            await r.login_requests.fulfil(req, "linkedin.com", "alice", "pw", "", False)
+            await r.login_requests.fulfil(req, "linkedin.com", "alice", "pw", False)
             rest = await asyncio.wait_for(reader.read(), 5)
             assert rest.count(b"Content-Type: image/png") == 1 and rest.endswith(
                 b"--\r\n"

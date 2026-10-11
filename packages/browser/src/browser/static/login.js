@@ -39,12 +39,7 @@ $("ask-form").addEventListener("submit", (e) => {
   const f = e.target;
   post("save", {
     site: f.site.value, username: f.username.value, password: f.password.value,
-    totp: f.totp.value, ask: f.ask.value === "yes",
+    ask: f.ask.value === "yes",
   });
 });
 $("decline").addEventListener("click", () => post("drop"));
-$("add-totp").addEventListener("click", () => {
-  $("totp").hidden = false;
-  $("add-totp").remove();
-  $("ask-form").totp.focus();
-});

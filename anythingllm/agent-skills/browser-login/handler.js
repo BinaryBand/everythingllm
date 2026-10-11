@@ -1,10 +1,10 @@
 // Browser Login: uses a login saved in this workspace's vault (browser-runner, packages/browser)
 // without ever seeing it: lists the logins and passkeys (site and username only), or has the
-// runner fill one, or its current 2FA code, into fields on the login's own site, or sign in
-// with a passkey by clicking the page's button for it. A login the user marked
-// "ask me first" waits here for their OK in the take-over view, which the chat's card opens.
-// Without one, `ask` gives the agent a card for its reply that opens a form for the user's
-// login for the site of the chat's page, which goes into the vault.
+// runner fill one into fields on the login's own site, or sign in with a passkey by clicking
+// the page's button for it. A 2FA code is the user's to enter (browser-handoff). A login the
+// user marked "ask me first" waits here for their OK in the take-over view, which the chat's
+// card opens. Without one, `ask` gives the agent a card for its reply that opens a form for
+// the user's login for the site of the chat's page, which goes into the vault.
 
 const { withBrowser } = require("../_lib/browser");
 const { asFlag, cardLines } = require("../_lib/runner");
@@ -16,7 +16,7 @@ function listing(r) {
     return "No logins are saved in this workspace. Ask the user for one with action ask (on the site's sign-in page), or hand the browser to them with browser-handoff.";
   const lines = r.logins.map(
     (l) =>
-      `- ${l.id}: ${l.kind === "passkey" ? "a passkey for " : ""}${l.site}${l.username ? ` as ${l.username}` : ""}${l.totp ? ", with 2FA codes" : ""}${l.ask ? ", asks the user first" : ""}${l.here ? " (fits this page)" : ""}`
+      `- ${l.id}: ${l.kind === "passkey" ? "a passkey for " : ""}${l.site}${l.username ? ` as ${l.username}` : ""}${l.ask ? ", asks the user first" : ""}${l.here ? " (fits this page)" : ""}`
   );
   return [`Saved logins${r.site ? ` (this chat's page is on ${r.site})` : ""}:`, ...lines].join("\n");
 }
@@ -35,11 +35,10 @@ module.exports.runtime = {
         const what = `it opens a form for a login. Ask the user to open it and save their ${r.site} login there (never in the chat), and end your reply. When they say it's saved, list the logins and log in with it.`;
         return cardLines(r.card, what).join("\n");
       }
-      if (!["login", "code", "passkey"].includes(what)) return `Error: action is list, ask, login, code or passkey, not '${what}'.`;
+      if (!["login", "passkey"].includes(what)) return `Error: action is list, ask, login or passkey, not '${what}'.`;
       const args = { login: String(login ?? "") };
-      if (what === "login") Object.assign(args, { user_ref: String(user_ref ?? ""), pass_ref: String(pass_ref ?? "") });
+      if (what === "login") Object.assign(args, { user_ref: String(user_ref ?? ""), pass_ref: String(pass_ref ?? ""), submit: asFlag(submit) });
       else args.ref = String(ref ?? "");
-      if (what !== "passkey") args.submit = asFlag(submit);
       let r = await request(what, args);
       if (r.approval) {
         const until = Date.now() + MAX_WAIT_MS;

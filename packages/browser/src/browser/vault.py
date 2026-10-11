@@ -1,6 +1,6 @@
 """The workspaces' saved logins: browser-runner's vault, which the agent can use but never
 read. Like Muse's, it lives outside the agent and outside the browser: the runner keeps it
-on the host, and a login's password (or 2FA code) goes from here straight into a field on
+on the host, and a login's password goes from here straight into a field on
 the login's own site (browser.driver), never into a reply, a log or the model.
 
 One file per workspace, `<folder>/<workspace>.vault` (mode 0600), as the profiles are: a
@@ -9,9 +9,8 @@ from the data dir and its backups (`key_file`, made on first use), and the works
 as associated data, so one workspace's file can't stand in for another's.
 
 An entry has a `kind`; a login (`kind` "login", or none, as entries were saved before
-kinds): {id, kind, site, username, password, totp, ask, added, used}. `site` is a host name
-(browser.origin); `totp` an optional base32 2FA secret, from which the runner makes the
-current code; `ask` whether the user wants to approve each use. What leaves the vault for
+kinds): {id, kind, site, username, password, ask, added, used}. `site` is a host name
+(browser.origin); `ask` whether the user wants to approve each use. What leaves the vault for
 anyone but the driver is `public()`: no password, no secret.
 
 A passkey (`kind` "passkey"): {id, kind, site, rp_id, username, credential_id,
@@ -28,10 +27,7 @@ page, and nothing else is kept until it has a way of its own.
 
 from __future__ import annotations
 
-import base64
 import contextlib
-import hashlib
-import hmac
 import json
 import os
 import re
@@ -41,7 +37,6 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
 
 import hostrpc
 from cryptography.exceptions import InvalidTag
@@ -61,44 +56,6 @@ KEY_FIELDS = {"credential_id": "credentialId", "private_key": "privateKey",
 
 class VaultError(hostrpc.RunnerError):
     pass
-
-
-def totp_secret(text: str) -> str:
-    """A 2FA secret as saved: base32, upper case, no spaces, from the secret itself or an
-    otpauth:// address (a QR code's). VaultError for anything else, or for an otpauth that
-    asks for other than SHA-1, 6 digits and 30 seconds, the codes `totp` makes."""
-    text = (text or "").strip()
-    if text.lower().startswith("otpauth://"):
-        query = {k: v[0] for k, v in parse_qs(urlsplit(text).query).items()}
-        if (
-            query.get("algorithm", "SHA1").upper() != "SHA1"
-            or query.get("digits", "6") != "6"
-            or query.get("period", "30") != "30"
-        ):
-            raise VaultError(
-                "only 2FA codes of 6 digits, every 30 seconds, by SHA-1 are supported"
-            )
-        text = query.get("secret", "")
-    secret = re.sub(r"[\s-]", "", text).upper().rstrip("=")
-    try:
-        if len(base64.b32decode(secret + "=" * (-len(secret) % 8))) < 10:
-            raise ValueError
-    except ValueError:
-        raise VaultError(
-            "that isn't a 2FA secret (the base32 text under a QR code)"
-        ) from None
-    return secret
-
-
-def totp(secret: str, now: float | None = None) -> str:
-    """The 2FA code for `secret` at `now` (RFC 6238: SHA-1, 30 seconds, 6 digits)."""
-    key = base64.b32decode(secret + "=" * (-len(secret) % 8))
-    counter = int((time.time() if now is None else now) // 30)
-    mac = hmac.new(key, counter.to_bytes(8, "big"), hashlib.sha1).digest()
-    at = mac[-1] & 0x0F
-    return str(
-        (int.from_bytes(mac[at : at + 4], "big") & 0x7FFFFFFF) % 1_000_000
-    ).zfill(6)
 
 
 def entry(logins: list[dict[str, Any]], kind: str, **match: str) -> dict[str, Any]:
@@ -130,13 +87,12 @@ def credential(passkey: dict[str, Any]) -> dict[str, Any]:
 
 
 def public(login: dict[str, Any]) -> dict[str, Any]:
-    """What may be shown of a login: never its password or 2FA secret."""
+    """What may be shown of a login: never its password or key."""
     return {
         "id": login["id"],
         "kind": login["kind"],
         "site": login["site"],
         "username": login["username"],
-        "totp": bool(login.get("totp")),
         "ask": bool(login.get("ask")),
         "used": login.get("used", ""),
     }
@@ -276,11 +232,10 @@ class Vault:
         site: str,
         username: str,
         password: str,
-        totp: str = "",
         ask: bool = False,
     ) -> dict[str, Any]:
-        """Save a login, or replace the password (and 2FA secret, if given) of the one with
-        the same site and username. `ask` turns asking first on, never off: saving a new
+        """Save a login, or replace the password of the one with the same site and
+        username. `ask` turns asking first on, never off: saving a new
         password keeps a login the user said to ask about asking (the list's toggle turns
         it off). Returns it, public."""
         try:
@@ -288,17 +243,13 @@ class Vault:
         except ValueError as e:
             raise VaultError(str(e)) from None
         username, password = str(username or ""), str(password or "")
-        if not password and not totp:
-            raise VaultError("a login needs a password or a 2FA secret")
+        if not password:
+            raise VaultError("a login needs a password")
         if len(username) > MAX_FIELD or len(password) > MAX_FIELD:
             raise VaultError("that's too long for a login")
-        secret = totp_secret(totp) if totp else ""
         with self.changing(workspace) as logins:
             login = entry(logins, "login", site=site, username=username)
-            if password:
-                login["password"] = password
-            if secret:
-                login["totp"] = secret
+            login["password"] = password
             login["ask"] = bool(ask) or bool(login.get("ask"))
         return public(login)
 

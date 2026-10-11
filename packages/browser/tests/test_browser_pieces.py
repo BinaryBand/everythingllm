@@ -304,7 +304,7 @@ def test_a_password_goes_only_into_a_password_field(password):
 
 
 def test_a_filled_secret_isnt_read_back_when_the_page_shows_it():
-    # A "show password" button makes the password field a text one; a code goes into one.
+    # A "show password" button makes the password field a text one.
     page = login_page()
 
     async def evaluate(script, limit):
@@ -312,14 +312,12 @@ def test_a_filled_secret_isnt_read_back_when_the_page_shows_it():
         return {"elements": [
             f'[e1] input[email] "Email" value="{fields["e1"]}"',
             f'[e2] input[text] "Password" value="{fields["e2"]}" (disabled)',
-            f'[e3] input[text] "Code" value="{fields["e3"]}"',
         ], "text": "Welcome", "more": False}  # fmt: skip
 
     async def title():
         return "Sign in"
 
     page.evaluate, page.title = evaluate, title
-    page.elements["e3"] = FakeElement("input", "text", page.url)
     d = driver.Driver(None, None)
     d.stacks["t1"] = [page]
     view = asyncio.run(
@@ -327,8 +325,6 @@ def test_a_filled_secret_isnt_read_back_when_the_page_shows_it():
     )
     assert "hunter2" not in str(view) and 'value="me@x.org"' in view["elements"][0]
     assert view["elements"][1] == '[e2] input[text] "Password" (filled) (disabled)'
-    view = asyncio.run(d.op_fill_code("t1", "linkedin.com", "123456", "e3"))
-    assert "123456" not in str(view) and "hunter2" not in str(view)
 
 
 def hidden(text, *secrets):
@@ -681,16 +677,6 @@ def test_an_oversized_download_isnt_kept(tmp_path, monkeypatch):
     assert "wasn't kept" in d.notes["7"][0]
 
 
-def test_a_password_stays_hidden_however_many_codes_are_filled_after():
-    d = driver.Driver(None, None)
-    d.keep_filled("hunter2pass")
-    for i in range(50):
-        d.keep_filled(f"{i:06d}", code=True)
-    assert "hunter2pass" in d.filled and len(d.codes) == driver.MAX_CODES
-    assert "000049" in d.codes and "000000" not in d.codes
-    assert "hunter2pass" not in driver.hide('value="hunter2pass"', d.pieces)
-
-
 @pytest.mark.parametrize(
     "send",
     [
@@ -765,7 +751,7 @@ def test_what_the_user_typed_in_a_password_field_is_hidden_once_the_agent_has_it
     d = driver.Driver(context, None)
     asyncio.run(d.op_capture(True))
     asyncio.run(d.op_capture(False))
-    assert d.passwords == ["typed-not-sent", "other-pass"]
+    assert d.filled == ["typed-not-sent", "other-pass"]
     assert d.sites == {"typed-not-sent": "x.example", "other-pass": "x.example"}
     assert [p for p, _ in context.routes] == ["**/*"]  # and they're sent nowhere else
 
@@ -777,7 +763,7 @@ def test_a_login_the_user_sends_is_hidden_from_the_agent():
         {"frame": FakeFrame("https://www.linkedin.com/login")},
         {"username": "me@x.org", "password": "s3cret-pass"},
     )
-    assert "s3cret-pass" in d.passwords and len(d.offers) == 1
+    assert "s3cret-pass" in d.filled and len(d.offers) == 1
 
 
 def test_a_login_doesnt_fill_in_the_clear():
@@ -1119,15 +1105,15 @@ def test_a_password_the_user_types_through_the_field_is_hidden_from_the_agent():
     d = user_driver(page)
     asyncio.run(d.op_user_type("s3cret-pass", thread="t1"))
     assert field.filled == "s3cret-pass"
-    assert d.passwords == ["s3cret-pass"] and d.sites == {"s3cret-pass": "x.example"}
+    assert d.filled == ["s3cret-pass"] and d.sites == {"s3cret-pass": "x.example"}
     assert "s3cret" not in driver.hide("you typed s3cret-pass", d.pieces)
-    # Sent as a password into a text field (a 2FA box, a page that masks its own): kept too.
+    # Sent as a password into a text field (a page that masks its own): kept too.
     text = TypingPage(
         "https://www.y.example/", field=FakeElement("input", "text", "", "")
     )
     d = user_driver(text)
     asyncio.run(d.op_user_type("other-secret", secret=True, thread="t1"))
-    assert d.passwords == ["other-secret"] and d.sites == {"other-secret": "y.example"}
+    assert d.filled == ["other-secret"] and d.sites == {"other-secret": "y.example"}
 
 
 def test_the_users_text_isnt_the_agents_to_be_refused_or_locked():

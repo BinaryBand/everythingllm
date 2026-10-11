@@ -203,7 +203,7 @@ function showLogins(logins) {
     const remove = el("button", { textContent: "Delete", className: "quiet" });
     remove.onclick = () =>
       confirm(`Delete the ${kind} for ${who(l)}?`) && act(`delete the ${kind} for ${who(l)}`, `logins/${l.id}/delete`);
-    const extra = kind === "passkey" ? " · passkey" : l.totp ? " · 2FA" : "";
+    const extra = kind === "passkey" ? " · passkey" : "";
     const line = `${l.username || "(no username)"}${extra}${l.used ? ` · used ${l.used}` : ""}`;
     list.append(
       el(
@@ -340,7 +340,7 @@ $("add").addEventListener("submit", async (e) => {
   const f = e.target;
   const error = await post("logins", {
     site: f.site.value, username: f.username.value, password: f.password.value,
-    totp: f.totp.value, ask: f.ask.checked,
+    ask: f.ask.checked,
   });
   $("add-error").textContent = error || "";
   if (!error) f.reset();

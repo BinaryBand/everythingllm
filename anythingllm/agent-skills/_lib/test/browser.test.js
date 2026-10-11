@@ -175,7 +175,7 @@ test("browser-login lists logins without secrets, fills one, and waits for the u
   let asked = 0;
   const runner = await fakeRunner((op, args) => {
     if (op === "logins")
-      return { ok: true, result: { site: "www.linkedin.com", logins: [{ id: "3f2a9c1d", site: "linkedin.com", username: "alice", totp: true, ask: true, here: true }] } };
+      return { ok: true, result: { site: "www.linkedin.com", logins: [{ id: "3f2a9c1d", site: "linkedin.com", username: "alice", ask: true, here: true }] } };
     if (op === "login" && asked++ === 0) return { ok: true, result: { approval: "ap1", card: CARD } };
     if (op === "wait_approval") return { ok: true, result: { done: true, approved: true } };
     return { ok: true, result: { page: "Page: feed" } };
@@ -183,7 +183,7 @@ test("browser-login lists logins without secrets, fills one, and waits for the u
   try {
     const listed = await login.handler.call(agent(), { action: "list" });
     assert.match(listed, /this chat's page is on www\.linkedin\.com/);
-    assert.match(listed, /- 3f2a9c1d: linkedin\.com as alice, with 2FA codes, asks the user first \(fits this page\)/);
+    assert.match(listed, /- 3f2a9c1d: linkedin\.com as alice, asks the user first \(fits this page\)/);
     const lines = [];
     const self = { ...agent(), introspect: (m) => lines.push(m) };
     const done = await login.handler.call(self, { action: "login", login: "3f2a9c1d", user_ref: "e1", pass_ref: "e2", submit: "true" });
@@ -193,7 +193,7 @@ test("browser-login lists logins without secrets, fills one, and waits for the u
     assert.deepEqual(runner.requests[1].args, {
       scope: { workspace: "career", thread: "12" }, login: "3f2a9c1d", user_ref: "e1", pass_ref: "e2", submit: true,
     });
-    assert.match(await login.handler.call(agent(), { action: "steal" }), /^Error: action is list, ask, login, code or passkey/);
+    assert.match(await login.handler.call(agent(), { action: "steal" }), /^Error: action is list, ask, login or passkey/);
   } finally {
     delete process.env.BROWSER_SOCKET;
     await runner.close();
@@ -204,7 +204,7 @@ test("browser-login lists a passkey and signs in with it through the user's OK",
   let asked = 0;
   const runner = await fakeRunner((op) => {
     if (op === "logins")
-      return { ok: true, result: { site: "github.com", logins: [{ id: "7c01e2aa", kind: "passkey", site: "github.com", username: "alice", totp: false, ask: true, here: true }] } };
+      return { ok: true, result: { site: "github.com", logins: [{ id: "7c01e2aa", kind: "passkey", site: "github.com", username: "alice", ask: true, here: true }] } };
     if (op === "passkey" && asked++ === 0) return { ok: true, result: { approval: "ap3", card: CARD } };
     if (op === "wait_approval") return { ok: true, result: { done: true, approved: true } };
     return { ok: true, result: { page: "Page: dashboard" } };
@@ -223,10 +223,10 @@ test("browser-login lists a passkey and signs in with it through the user's OK",
 
 test("browser-login says so when the user refuses", async () => {
   const runner = await fakeRunner((op) =>
-    op === "code" ? { ok: true, result: { approval: "ap2", card: CARD } } : { ok: true, result: { done: true, approved: false } }
+    op === "login" ? { ok: true, result: { approval: "ap2", card: CARD } } : { ok: true, result: { done: true, approved: false } }
   );
   try {
-    assert.match(await login.handler.call(agent(), { action: "code", login: "x", ref: "e3" }), /didn't allow that login/);
+    assert.match(await login.handler.call(agent(), { action: "login", login: "x", pass_ref: "e3" }), /didn't allow that login/);
   } finally {
     delete process.env.BROWSER_SOCKET;
     await runner.close();

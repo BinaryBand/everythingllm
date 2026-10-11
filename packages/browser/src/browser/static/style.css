@@ -181,10 +181,9 @@ body.ask-login { display: block; height: auto; min-height: 100%; padding: 24px 1
 #ask-form { display: flex; flex-direction: column; gap: 16px; }
 .fields { display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line2); border-radius: 14px; background: var(--bg); }
 .fields > * + * { border-top: 1px solid var(--line2); }
-.fields label, #add-totp { min-height: 48px; padding: 0 14px; display: flex; align-items: center; gap: 12px; }
+.fields label { min-height: 48px; padding: 0 14px; display: flex; align-items: center; gap: 12px; }
 .fields label span { flex: none; width: 92px; font-size: 0.85rem; color: var(--muted); }
 .fields input { flex: 1; min-width: 0; height: 46px; padding: 0; border: 0; border-radius: 6px; background: none; font-size: 0.9rem; outline-offset: -2px; }
-#add-totp { text-align: left; font-size: 0.85rem; color: var(--accent); }
 .chips { margin: 0; padding: 0; border: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .chips legend { margin-bottom: 8px; padding: 0; font-size: 0.8rem; color: var(--muted); }
 .chips label { position: relative; }

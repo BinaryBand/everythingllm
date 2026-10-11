@@ -201,11 +201,11 @@ def test_the_view_saves_and_deletes_logins_but_never_shows_a_secret(tmp_path):
         s = r.sessions["career"]
         head, body = await post(port, f"/{s.token}/logins", {
             "site": "https://www.linkedin.com/", "username": "alice", "password": "hunter2",
-            "totp": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", "ask": True,
+            "ask": True,
         })  # fmt: skip
-        assert "200 OK" in head and b"hunter2" not in body and b"GEZDGNBV" not in body
+        assert "200 OK" in head and b"hunter2" not in body
         [login] = json.loads(body)["logins"]
-        assert login["site"] == "linkedin.com" and login["totp"] and login["ask"]
+        assert login["site"] == "linkedin.com" and login["ask"]
         head, body = await post(
             port, f"/{s.token}/logins", {"site": "localhost", "password": "x"}
         )

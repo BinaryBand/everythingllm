@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import json
-import os
 from pathlib import Path
 
 import hostrpc
@@ -453,9 +452,9 @@ def test_the_results_page_escapes_the_replies(fake, tmp_path):
 
 
 def test_agents_run_starts_a_delegation_and_prints_its_replies(
-    fake, tmp_path, monkeypatch, capsys
+    fake, tmp_path, monkeypatch, capsys, short_sock
 ):
-    sock = Path("/tmp") / f"agents-test-{os.getpid()}.sock"  # AF_UNIX paths are short
+    sock = short_sock
     monkeypatch.setenv("AGENTS_SOCKET", str(sock))
     notes = tmp_path / "notes.txt"
     notes.write_text("the notes")
@@ -478,10 +477,7 @@ def test_agents_run_starts_a_delegation_and_prints_its_replies(
         async with hostrpc.serving(make(fake, tmp_path), sock):
             return await cli.run(args)
 
-    try:
-        assert asyncio.run(main()) == 0
-    finally:
-        sock.unlink(missing_ok=True)
+    assert asyncio.run(main()) == 0
     out = capsys.readouterr().out
     assert "https://h:8445/_live/agents/dg-" in out and "a: done in" in out
     assert "\nok ($0.0200)" in out and "== then (planner): ok" in out

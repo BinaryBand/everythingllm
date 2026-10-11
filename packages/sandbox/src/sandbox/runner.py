@@ -97,7 +97,6 @@ import os
 import re
 import secrets
 import shutil
-import signal
 import stat
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine
@@ -1293,11 +1292,6 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
     await runner.cleanup()
     await asyncio.to_thread(runner.refresh_apps)
     config.root.mkdir(parents=True, exist_ok=True)
-    loop = asyncio.get_running_loop()
-    on_sigterm = stop is None
-    if stop is None:
-        stop = asyncio.Event()
-        loop.add_signal_handler(signal.SIGTERM, stop.set)
     gc = asyncio.create_task(runner.gc_loop())
     web = (
         await appsweb.AppsWeb(runner).serve(config.apps_port)
@@ -1310,8 +1304,6 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
         gc.cancel()
         if web is not None:
             web.close()
-        if on_sigterm:
-            loop.remove_signal_handler(signal.SIGTERM)
 
 
 def main() -> None:

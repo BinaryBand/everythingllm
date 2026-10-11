@@ -16,7 +16,7 @@ import os
 import secrets
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -106,21 +106,35 @@ def since(dir: Path, started: str) -> Iterator[dict]:
 def find(dir: Path, run_id: str, months: int = 2) -> dict | None:
     """The line of the run called `run_id`, from the newest `months` of
     the log; None when it isn't there (an older run, or one still going)."""
+    return find_many(dir, [run_id], months).get(run_id)
+
+
+def find_many(dir: Path, run_ids: Iterable[str], months: int = 2) -> dict[str, dict]:
+    """The lines of several runs, as find's, in one read of the log: each run's line by
+    its id, for those found."""
+    wanted = set(run_ids)
+    found: dict[str, dict] = {}
+    if not wanted:
+        return found
     for file in sorted(dir.glob("*.jsonl"), reverse=True)[:months]:
         try:
             lines = file.read_text(encoding="utf-8").splitlines()
         except OSError:
             continue
         for line in reversed(lines):
-            if f'"{run_id}"' not in line:
+            if not any(f'"{run_id}"' in line for run_id in wanted):
                 continue
             try:
                 record = json.loads(line)
             except ValueError:
                 continue
-            if record.get("run_id") == run_id:
-                return record
-    return None
+            run_id = record.get("run_id")
+            if isinstance(run_id, str) and run_id in wanted:
+                found[run_id] = record
+                wanted.discard(run_id)
+                if not wanted:
+                    return found
+    return found
 
 
 class RunLog:

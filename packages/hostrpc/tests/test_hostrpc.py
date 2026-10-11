@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-from pathlib import Path
 
 import hostrpc
 import pytest
@@ -27,10 +26,8 @@ class Echo(Service):
 
 
 @pytest.fixture
-def sock():
-    path = Path("/tmp") / f"hostrpc-test-{os.getpid()}.sock"  # AF_UNIX paths are short
-    yield path
-    path.unlink(missing_ok=True)
+def sock(short_sock):
+    return short_sock
 
 
 async def served(service, sock):

@@ -62,7 +62,7 @@ class Settings:
         return cls(
             storage=storage,
             searxng_url=searxng_url(),
-            env_file=get("ANYTHINGLLM_ENV", str(storage / ".env")),
+            env_file=str(hostenv.anythingllm_env()),
             runlogs=hostenv.data_dir() / "research" / "runs",
             pages_url=hostenv.pages_url(),
             live_port=int(get("RESEARCH_LIVE_PORT", "8450")),

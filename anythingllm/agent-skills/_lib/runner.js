@@ -10,12 +10,12 @@ const { scopeOf } = require("./scope");
  * Run `work(request)` for a skill, where request(op, args) calls the runner of `service` (its
  * folder in storage and its unit's name: agents -> agents-runner; <SERVICE>_SOCKET can point
  * at another socket) and, when `scoped`, adds the call's scope ({workspace, thread}, from the
- * invocation, never the model). `label` names the service in a failure, and `closed` is the
- * reply when the chat closes first.
+ * invocation, never the model). `label` names the service in a failure, `hint` is a
+ * sentence added to the reply to one, and `closed` is the reply when the chat closes first.
  */
 async function withRunner(
   self,
-  { service, label = `The ${service} service`, scoped = false, timeoutMs = 120_000, closed = "The chat closed." },
+  { service, label = `The ${service} service`, scoped = false, timeoutMs = 120_000, hint = "", closed = "The chat closed." },
   work
 ) {
   const refused = delegatedRefusal(self);
@@ -29,10 +29,13 @@ async function withRunner(
   } catch (e) {
     if (e instanceof Closed) return closed;
     self.logger?.(`${service}: ${e?.message || e}`);
-    if (e instanceof Down)
-      return `${label} isn't running on the server (${e.message}). Tell the user it needs \`uv run hostctl ${service}-setup\`.`;
-    if (e instanceof Refused) return `Error: ${e.message}`;
-    return `${label} failed: ${e?.message || e}`;
+    const reply =
+      e instanceof Down
+        ? `${label} isn't running on the server (${e.message}). Tell the user it needs \`uv run hostctl ${service}-setup\`.`
+        : e instanceof Refused
+          ? `Error: ${e.message}`
+          : `${label} failed: ${e?.message || e}`;
+    return hint ? `${reply} ${hint}` : reply;
   }
 }
 

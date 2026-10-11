@@ -18,7 +18,6 @@ Config (environment):
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,8 +28,6 @@ from hostrpc import RunnerError
 
 PROFILE = "browser"  # egress.toml's profile, whose addresses the containers take
 REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/browser/src/browser/
-# As the sandbox's: workspace slugs and thread ids.
-KEY_RE = re.compile(r"[a-z0-9_][a-z0-9_-]{0,99}")
 VAULT_KEY = Path("~/.config/everythingllm/browser-vault.key").expanduser()
 LIVE_PORT = 8453
 TAKEOVER_PORT = 8454
@@ -91,6 +88,6 @@ def check_scope(scope: Any) -> tuple[str, str]:
         str(scope.get("thread") or ""),
     )
     for what, key in (("workspace", workspace), ("thread", thread)):
-        if not KEY_RE.fullmatch(key):
+        if not hostenv.WORKSPACE_RE.fullmatch(key):
             raise RunnerError(f"bad {what} '{key}'")
     return workspace, thread

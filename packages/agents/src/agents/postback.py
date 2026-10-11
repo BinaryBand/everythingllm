@@ -31,9 +31,9 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from hostenv import prompt
+from hostenv import WORKSPACE_RE, prompt
 from hostrpc import RunnerError, safefs
-from runs.runlog import find
+from runs.runlog import find_many
 
 from agents.anythingllm import AnythingLLM, AnythingLLMError, InternalAPI, tag_safe
 from agents.jobs import Registry, clipped, repeat
@@ -53,7 +53,6 @@ CARD_LINK = re.compile(r"\]\((https://[^)\s]+)\)\s*$")
 FOLLOW_SECONDS = 2 * 24 * 3600  # a research run not in its log by then is let go
 POLL = 30  # seconds between looks at research's run log
 REPORT_BYTES = 2 << 20  # the most of a report file that goes into the documents
-WORKSPACE_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")  # as the sandbox's
 
 Tell = Callable[[dict, str], Awaitable[None]]
 # Puts a report in a workspace's documents: (workspace, text, metadata) -> its location.
@@ -281,10 +280,14 @@ class Following:
         """See to the followed runs that have ended, and let them go."""
         async with self.registry.lock:
             entries = await self.registry.read()
+            if not entries:
+                return
+            records = await asyncio.to_thread(
+                find_many, self.runlogs, [e["id"] for e in entries]
+            )
             ended, left = [], []
             for entry in entries:
-                record = await asyncio.to_thread(find, self.runlogs, entry["id"])
-                if record is not None:
+                if (record := records.get(entry["id"])) is not None:
                     ended.append((entry, record))
                 elif self.now() - entry["since"] < FOLLOW_SECONDS:
                     left.append(entry)

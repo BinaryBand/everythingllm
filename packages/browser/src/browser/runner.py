@@ -97,7 +97,6 @@ import asyncio
 import base64
 import logging
 import secrets
-import signal
 import time
 from collections.abc import Callable
 from typing import Any
@@ -364,13 +363,16 @@ class Runner(hostrpc.Service):
         except hostrpc.Unreachable:
             pass  # gone: forgotten below
         else:
-            if thread := args.get("thread"):
+            # A view the agent reads says what its thread downloaded since; nothing else
+            # (a screenshot, the user's keys) collects, so it waits for the next view.
+            if (
+                isinstance(result, dict)
+                and "notes" in result
+                and (thread := args.get("thread"))
+            ):
                 await self.collect(s.workspace)
                 told = self.downloaded.pop((s.workspace, thread), [])
-                if told and isinstance(result, dict) and "notes" in result:
-                    result["notes"] = [*result["notes"], *told]
-                elif told:  # for the thread's next read
-                    self.downloaded[(s.workspace, thread)] = told
+                result["notes"] = [*result["notes"], *told]
             return result
         if self.sessions.get(s.workspace) is s:
             del self.sessions[s.workspace]
@@ -990,11 +992,6 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
     config.root.mkdir(parents=True, exist_ok=True)  # the sandbox's, for downloads
     runner = Runner(config)
     await runner.cleanup()
-    loop = asyncio.get_running_loop()
-    on_sigterm = stop is None
-    if stop is None:
-        stop = asyncio.Event()
-        loop.add_signal_handler(signal.SIGTERM, stop.set)
     cards = await live.Live(runner).serve(config.live_port)
     view = await takeover.Takeover(runner).serve(config.takeover_port)
     idle = asyncio.create_task(runner.idle_loop())
@@ -1008,8 +1005,6 @@ async def serve(config: Config, stop: asyncio.Event | None = None) -> None:
         view.close()
         for workspace in list(runner.sessions):
             await runner.stop(workspace)
-        if on_sigterm:
-            loop.remove_signal_handler(signal.SIGTERM)
 
 
 def main() -> None:

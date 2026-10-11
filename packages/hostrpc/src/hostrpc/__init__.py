@@ -233,7 +233,8 @@ async def serve(
 ) -> None:
     """Serve `service` on `socket` (group-writable, for the container) until `stop` is set,
     or without one until SIGTERM, then remove the socket. A process that runs other servers
-    too passes `stop` and handles its signals itself."""
+    too closes them once this returns (in a `finally`), and needs no signal handler of its
+    own for SIGTERM."""
     socket.parent.mkdir(parents=True, exist_ok=True)
     socket.unlink(missing_ok=True)
     server = await asyncio.start_unix_server(

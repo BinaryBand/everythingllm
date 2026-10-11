@@ -45,6 +45,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import hostenv
+
 from hostctl import apps, run_guard
 from hostctl.units import SKILLS, active, host_settings, storage
 
@@ -325,10 +327,10 @@ def main(argv: list[str] | None = None) -> None:
                 print(unit)
     elif args.cmd == "sockets":
         runners = apps.runners(registry)
-        folder = storage() / "everythingllm"
+        folder = storage() / hostenv.SOCKETS
         with ThreadPoolExecutor(len(runners) or 1) as pool:
             why = list(
-                pool.map(lambda f: ping(folder / f / "runner.sock"), runners.values())
+                pool.map(lambda f: ping(folder / f / hostenv.SOCKET), runners.values())
             )
         for name, problem in zip(runners, why):
             print(

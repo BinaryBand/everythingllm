@@ -18,7 +18,6 @@ before there were two. A card is read and written without following a symlink (`
 mustn't send the host's write elsewhere.
 """
 
-import contextlib
 import hashlib
 import io
 import json
@@ -28,6 +27,7 @@ import stat
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
+from hostrpc import safefs
 from PIL import Image, ImageDraw
 from PIL.PngImagePlugin import PngInfo
 
@@ -88,9 +88,6 @@ def remove(site_dir: Path, url: str) -> None:
         card_path(site_dir, url, theme).unlink(missing_ok=True)
 
 
-DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-
-
 def drawn(file: Path) -> str | None:
     """The version of the card in `file`, from its PNG text; None when there's none (or it
     isn't a plain file)."""
@@ -110,31 +107,8 @@ def save(site_dir: Path, name: str, png: bytes) -> None:
     relative to the site's, and the file goes in through a temp file of its own, so a
     symlink in either place is refused or replaced, never followed."""
     site_dir.mkdir(mode=0o755, parents=True, exist_ok=True)  # the caller's own
-    site = os.open(site_dir, DIR_FLAGS)
-    try:
-        with contextlib.suppress(FileExistsError):
-            os.mkdir(FOLDER, 0o755, dir_fd=site)
-        folder = os.open(FOLDER, DIR_FLAGS, dir_fd=site)
-    finally:
-        os.close(site)
-    tmp = f".{name}.{os.urandom(4).hex()}.tmp"
-    try:
-        fd = os.open(
-            tmp,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o644,
-            dir_fd=folder,
-        )
-        with os.fdopen(fd, "wb") as f:
-            os.fchmod(f.fileno(), 0o644)
-            f.write(png)
-        os.replace(tmp, name, src_dir_fd=folder, dst_dir_fd=folder)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp, dir_fd=folder)
-        raise
-    finally:
-        os.close(folder)
+    with safefs.folder(site_dir, [FOLDER], make=True) as folder:
+        safefs.replace(folder, name, png)
 
 
 def card_path(site_dir: Path, url: str, theme: str = THEME) -> Path:

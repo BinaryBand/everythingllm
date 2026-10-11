@@ -16,7 +16,6 @@ import inspect
 import ipaddress
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -24,6 +23,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import hostenv
 import tomllib
 
 from hostctl import appctl, apps, machine, run_guard, units
@@ -47,7 +47,6 @@ EGRESS_TOML = ROOT / "packages" / "egress" / "src" / "egress" / "egress.toml"
 BROWSER = ROOT / "host" / "containers" / "browser"
 BROWSER_IMAGE = "localhost/everythingllm-browser"
 BROWSER_PREFIX = "everythingllm-browser-"
-WORKSPACE_RE = re.compile(r"[a-z0-9_][a-z0-9_-]{0,99}")  # as the sandbox's KEY_RE
 EXPORTED = ("PUBLIC_HOST", "ANYTHINGLLM_STORAGE")
 
 # name: (help, function); `uv run hostctl` lists them in this order.
@@ -324,7 +323,7 @@ def browser_images() -> None:
     "wipe a workspace's browser profile (its sessions, cookies and history; not its saved logins), stopping its browser first: browser-reset <workspace>",
 )
 def browser_reset(workspace: str) -> None:
-    if not WORKSPACE_RE.fullmatch(workspace):
+    if not hostenv.WORKSPACE_RE.fullmatch(workspace):
         raise SystemExit(f"browser-reset: '{workspace}' isn't a workspace's slug")
     run("podman", "rm", "-f", "--time", "5", BROWSER_PREFIX + workspace, check=False)
     profile = browser_data() / "profiles" / workspace

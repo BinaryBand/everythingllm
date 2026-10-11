@@ -97,8 +97,8 @@ def test_what_a_call_may_not_ask(tmp_path, args, error):
     assert asked == []
 
 
-def test_the_client_asks_through_the_socket(tmp_path, monkeypatch):
-    sock = Path("/tmp") / f"models-test-{os.getpid()}.sock"
+def test_the_client_asks_through_the_socket(tmp_path, monkeypatch, short_sock):
+    sock = short_sock
     s = service(tmp_path)
 
     async def main():
@@ -111,10 +111,7 @@ def test_the_client_asks_through_the_socket(tmp_path, monkeypatch):
                 await asyncio.to_thread(model_client.ask, "x", model="nope")
             return answer
 
-    try:
-        assert go(main()) == "HELLO"
-    finally:
-        sock.unlink(missing_ok=True)
+    assert go(main()) == "HELLO"
     monkeypatch.setattr(model_client, "MODELS", "")
     with pytest.raises(RuntimeError, match="no model access"):
         model_client.ask("x")

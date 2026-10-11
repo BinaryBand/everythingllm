@@ -152,7 +152,7 @@ test("a start the runner refuses says why", async () => {
   const runner = await fakeRunner(() => ({ ok: false, error: "No research question was given." }));
   try {
     const reply = await runtime.handler.call(agent(), { question: " " });
-    assert.match(reply, /couldn't start: No research question was given\./);
+    assert.match(reply, /^Error: No research question was given\. Tell the user what went wrong/);
   } finally {
     await runner.close();
   }

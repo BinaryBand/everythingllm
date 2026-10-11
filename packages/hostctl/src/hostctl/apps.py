@@ -9,6 +9,7 @@ any python3 with packages/hostctl/src on PYTHONPATH can import it (health.sh, th
     runners(), guarded(), app_of(unit), serve_mappings(), health_checks(), skill_apps()
 """
 
+import functools
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -118,8 +119,10 @@ def _app(name: str, raw: dict) -> App:
     )
 
 
+@functools.cache
 def load(path: Path = REGISTRY) -> dict[str, App]:
-    """Every app, by name, in the file's order; ValueError for a field it doesn't know."""
+    """Every app, by name, in the file's order; ValueError for a field it doesn't know.
+    Read once per path, so the dict is shared: don't change it."""
     with path.open("rb") as f:
         return {name: _app(name, raw) for name, raw in tomllib.load(f).items()}
 

@@ -27,6 +27,7 @@ from urllib.parse import quote
 import hostenv
 import hostrpc
 import httpx
+from hostenv.keys import anythingllm_url
 
 THINKING = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 TIMEOUT = httpx.Timeout(connect=10, read=30, write=30, pool=10)
@@ -100,7 +101,7 @@ class AnythingLLM:
                 "no ANYTHINGLLM_API_KEY: make one in AnythingLLM's settings and put it in "
                 "~/.config/everythingllm/agents.env (uv run hostctl agents-setup checks it)."
             )
-        return cls(os.environ.get("ANYTHINGLLM_URL", "http://127.0.0.1:3001"), key)
+        return cls(anythingllm_url(), key)
 
     async def call(
         self,
@@ -229,8 +230,8 @@ class InternalAPI:
     @classmethod
     def from_env(cls) -> "InternalAPI":
         return cls(
-            os.environ.get("ANYTHINGLLM_URL", "http://127.0.0.1:3001"),
-            Path(os.environ.get("ANYTHINGLLM_ENV") or hostenv.storage() / ".env"),
+            anythingllm_url(),
+            hostenv.anythingllm_env(),
         )
 
     @property

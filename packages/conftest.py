@@ -1,5 +1,8 @@
 import functools
+import os
+import secrets
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +48,39 @@ def no_host_settings(monkeypatch, tmp_path_factory):
         monkeypatch.setenv(
             f"{folder.upper()}_SOCKET", f"/nonexistent/{folder}/runner.sock"
         )
+
+
+@pytest.fixture
+def short_sock():
+    """A path for a test's AF_UNIX socket, in /tmp since those paths are short (tmp_path's
+    can be too long); removed after."""
+    path = Path("/tmp") / f"test-{os.getpid()}-{secrets.token_hex(4)}.sock"
+    yield path
+    path.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def fake_dns(monkeypatch):
+    """`fake_dns(*answers)`: each name lookup (socket.getaddrinfo) gets the next answer, one
+    address or a list of them; it returns the names looked up, as they are looked up."""
+
+    def fake(*answers: str | list[str]) -> list[str]:
+        calls = iter(answers)
+        asked = []
+
+        def getaddrinfo(host, port, *args, **kwargs):
+            asked.append(host)
+            answer = next(calls)
+            family = {4: socket.AF_INET, 6: socket.AF_INET6}
+            return [
+                (family[6 if ":" in a else 4], socket.SOCK_STREAM, 6, "", (a, port))
+                for a in ([answer] if isinstance(answer, str) else answer)
+            ]
+
+        monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+        return asked
+
+    return fake
 
 
 @functools.cache

@@ -21,6 +21,7 @@ let rfb = null;
 let control = "agent";
 let gone = false; // the screen's connection ended: only a reload brings it back
 let shownState = {}; // the state last drawn, drawn again as the connection ends
+let drawn = ""; // and as the runner sent it, so a poll that brings the same again draws nothing
 
 // Scaled to fit a phone, the 1280 px screen's text is a few pixels high and nothing can be
 // tapped. So below NARROW, while the browser is yours, the view shows it at its own size and
@@ -49,7 +50,7 @@ function connect() {
   rfb.addEventListener("connect", () => refresh());
   rfb.addEventListener("disconnect", () => {
     gone = true;
-    render(shownState);
+    render(shownState, drawn);
   });
 }
 
@@ -142,27 +143,34 @@ async function act(doing, what, body) {
   return error;
 }
 
+// Cards kept by id in `box`: those gone go, new ones are made by `make` and added, and the
+// rest stay as they are (with what's being typed in them).
+function keyed(box, items, make) {
+  const keep = new Set(items.map((x) => x.id));
+  for (const old of [...box.children]) if (!keep.has(old.dataset.id)) old.remove();
+  for (const x of items) {
+    if (box.querySelector(`[data-id="${x.id}"]`)) continue;
+    const row = make(x);
+    row.dataset.id = x.id;
+    box.append(row);
+  }
+}
+
 // The agent's waits for your OK to use a saved login, one per chat, in the order asked.
 function showApprovals(approvals) {
-  const box = $("approvals");
-  const keep = new Set(approvals.map((a) => a.id));
-  for (const old of [...box.children]) if (!keep.has(old.dataset.id)) old.remove();
-  for (const a of approvals) {
-    if (box.querySelector(`[data-id="${a.id}"]`)) continue;
+  keyed($("approvals"), approvals, (a) => {
     const chat = a.chat ? `the chat browsing “${a.chat}”` : "one of this workspace's chats";
     const allow = el("button", { textContent: "Allow", className: "primary" });
     const deny = el("button", { textContent: "Don't allow", className: "quiet" });
-    const row = el(
+    allow.onclick = () => act("allow the request", `approve/${a.id}`);
+    deny.onclick = () => act("refuse the request", `deny/${a.id}`);
+    return el(
       "div",
       { className: "notice" },
       text(`The agent wants to use your ${a.kind} for ${who(a)}.`, `From ${chat}, on ${a.url}.`),
       el("div", { className: "acts" }, el("div", { className: "pair" }, allow, deny))
     );
-    row.dataset.id = a.id;
-    allow.onclick = () => act("allow the request", `approve/${a.id}`);
-    deny.onclick = () => act("refuse the request", `deny/${a.id}`);
-    box.append(row);
-  }
+  });
 }
 
 // The agent's requests for logins it has none of: each links to its own form.
@@ -186,17 +194,16 @@ function showAsked(asked) {
 }
 
 function showOffers(offers) {
-  const box = $("offers");
-  const keep = new Set(offers.map((o) => o.id));
-  for (const old of [...box.children]) if (!keep.has(old.dataset.id)) old.remove();
-  for (const o of offers) {
-    if (box.querySelector(`[data-id="${o.id}"]`)) continue; // keep what's being typed
+  keyed($("offers"), offers, (o) => {
     const name = el("input", { value: o.username, placeholder: "Username", autocomplete: "off" });
     name.setAttribute("aria-label", "Username");
     const ask = toggle("Ask me before each use", false);
     const save = el("button", { textContent: "Save login", className: "primary" });
     const drop = el("button", { textContent: "Not now", className: "quiet" });
-    const row = el(
+    save.onclick = () =>
+      act(`save the login for ${o.site}`, `offers/${o.id}/save`, { username: name.value, ask: isOn(ask) });
+    drop.onclick = () => act(`drop the login for ${o.site}`, `offers/${o.id}/drop`);
+    return el(
       "div",
       { className: "notice" },
       text(`Save the login you just used on ${o.site}?`),
@@ -208,12 +215,7 @@ function showOffers(offers) {
         el("div", { className: "pair" }, save, drop)
       )
     );
-    row.dataset.id = o.id;
-    save.onclick = () =>
-      act(`save the login for ${o.site}`, `offers/${o.id}/save`, { username: name.value, ask: isOn(ask) });
-    drop.onclick = () => act(`drop the login for ${o.site}`, `offers/${o.id}/drop`);
-    box.append(row);
-  }
+  });
 }
 
 function showLogins(logins) {
@@ -267,12 +269,15 @@ function showMaking(s) {
 async function refresh() {
   try {
     const r = await fetch(base + "state", { cache: "no-store" });
-    if (r.ok) render(await r.json());
+    if (!r.ok) return;
+    const raw = await r.text();
+    if (raw !== drawn) render(JSON.parse(raw), raw);
   } catch {}
 }
 
-function render(s) {
+function render(s, raw) {
   shownState = s;
+  drawn = raw;
   show(s);
   showApprovals(s.approvals || []);
   showAsked(s.asked || []);
@@ -299,7 +304,7 @@ async function post(what, body) {
   try {
     data = JSON.parse(raw);
   } catch {}
-  if (r.ok) render(data);
+  if (r.ok) render(data, raw);
   if (what === "take" && !$("typing").contains(document.activeElement)) rfb?.focus();
   return r.ok ? null : data.error || raw.trim() || `${r.status}`; // some refusals are plain text
 }
@@ -392,4 +397,7 @@ $("add").addEventListener("submit", async (e) => {
 place();
 connect();
 refresh();
-setInterval(refresh, 2000);
+// The state every 2 s while the page is in view, and as soon as it's back in view.
+const visible = () => document.visibilityState !== "hidden";
+setInterval(() => visible() && refresh(), 2000);
+document.addEventListener("visibilitychange", () => visible() && refresh());

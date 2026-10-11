@@ -52,7 +52,6 @@ notes}, snapshot.js's reading of the page (browser.page renders it).
   screenshot(thread)                {jpeg (base64), title, url}; the front tab's without a thread
   front(thread)                     bring the thread's tab to the front of the window -> {url}
   close(thread)                     close the thread's tab (and its popups)
-  tabs()                            [{thread, title, url}]
   capture(on)                       whether logins the user sends are offered for saving
   offers()                          [{id, site, username}] of those, for OFFER_SECONDS
   peek_offer(id)                    {site, username, password}, kept until dropped
@@ -1049,15 +1048,6 @@ class Driver(hostrpc.Service):
         if not self.context.pages:  # closing the last tab would close the window
             await self.context.new_page()
         return {}
-
-    async def op_tabs(self) -> list[dict[str, Any]]:
-        tabs = []
-        for thread in list(self.stacks):
-            if (page := self.current(thread)) is not None:
-                tabs.append(
-                    {"thread": thread, "title": await title_of(page), "url": page.url}
-                )
-        return tabs
 
 
 def site_of(url: str) -> str:

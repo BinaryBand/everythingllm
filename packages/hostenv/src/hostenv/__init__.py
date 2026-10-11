@@ -1,7 +1,8 @@
 """This host and the AnythingLLM on it, as the services and hostctl see them: where things
-are kept (`storage`, AnythingLLM's; `data_dir`, ours, laid out by kind; `site_dir`), a
-service's socket (`socket_path`), the pages site's address (`pages_url`), the user's time
-zone (`user_zone`), settings read from an env file (`env_values`), and the login for
+are kept (`storage`, AnythingLLM's, and its .env, `anythingllm_env`; `data_dir`, ours, laid
+out by kind; `site_dir`), a service's socket (`socket_path`), the pattern of a workspace's
+slug (`WORKSPACE`), the pages site's address (`pages_url`), the user's time zone
+(`user_zone`), settings read from an env file (`env_values`), and the login for
 AnythingLLM's internal API (`anythingllm_headers`). The EverythingLLM block of the system
 prompt is hostenv.prompt.
 
@@ -10,6 +11,7 @@ services do. Talking to a service is hostrpc's.
 
 Config (environment):
   ANYTHINGLLM_STORAGE  AnythingLLM's storage on the host (default /srv/anythingllm/storage)
+  ANYTHINGLLM_ENV      AnythingLLM's .env (default <storage>/.env)
   PUBLIC_HOST          the machine's HTTPS name, for pages_url ("" without it)
   USER_TIMEZONE        the user's time zone (default Europe/Stockholm)
 """
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from collections.abc import Iterable
@@ -27,6 +30,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 # The folder in storage that holds our services' sockets, apart from AnythingLLM's own:
 # a service's socket is <storage>/everythingllm/<folder>/runner.sock.
 SOCKETS = "everythingllm"
+SOCKET = "runner.sock"  # a service's socket file in its folder there
+
+# A workspace's slug in AnythingLLM, as the sandbox and the runners take it (thread ids too).
+WORKSPACE = r"[a-z0-9_][a-z0-9_-]{0,99}"
+WORKSPACE_RE = re.compile(WORKSPACE)  # use with fullmatch
 
 
 class LoginFailed(Exception):
@@ -114,6 +122,12 @@ def storage() -> Path:
     return Path(os.environ.get("ANYTHINGLLM_STORAGE", "/srv/anythingllm/storage"))
 
 
+def anythingllm_env() -> Path:
+    """AnythingLLM's .env (ANYTHINGLLM_ENV, else the one in its storage): its model keys and
+    the password its internal API logs in with."""
+    return Path(os.environ.get("ANYTHINGLLM_ENV") or storage() / ".env")
+
+
 def data_dir() -> Path:
     """EverythingLLM's own data on the host: what only host services read or write, kept
     out of AnythingLLM's storage, which the container mounts. By kind:
@@ -141,4 +155,4 @@ def site_dir() -> Path:
 
 def socket_path(folder: str, env: str) -> Path:
     """A service's socket on the host: $<env>, else <storage>/everythingllm/<folder>/runner.sock."""
-    return Path(os.environ.get(env) or storage() / SOCKETS / folder / "runner.sock")
+    return Path(os.environ.get(env) or storage() / SOCKETS / folder / SOCKET)

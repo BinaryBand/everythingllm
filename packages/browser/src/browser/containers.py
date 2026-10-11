@@ -15,9 +15,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import hostenv
 from hostrpc import RunnerError, safefs
 
-from browser.config import KEY_RE, Config
+from browser.config import Config
 from browser.tabs import Approval
 
 IMAGE = "localhost/everythingllm-browser"  # hostctl browser-images builds it
@@ -138,7 +139,7 @@ def collect_downloads(
     except FileNotFoundError:
         return told
     for thread in threads:
-        if not KEY_RE.fullmatch(thread):
+        if not hostenv.WORKSPACE_RE.fullmatch(thread):
             continue
         try:
             folder = safefs.open_dir(staging, (thread,))

@@ -2,7 +2,15 @@ import json
 import os
 import time
 
-from runs.runlog import MAX_EVENTS, STALE_MS, RunLog, iso, sweep_interrupted
+from runs.runlog import (
+    MAX_EVENTS,
+    STALE_MS,
+    RunLog,
+    find,
+    find_many,
+    iso,
+    sweep_interrupted,
+)
 
 
 def lines(dir, month="2026-10"):
@@ -77,3 +85,21 @@ def test_a_new_run_sweeps_only_markers_quiet_for_stale_ms(tmp_path):
     [line] = lines(tmp_path, iso(time.time())[:7])
     assert (line["question"], line["status"]) == ("quiet", "interrupted")
     assert len(list((tmp_path / "running").iterdir())) == 2
+
+
+def test_find_many_reads_the_log_once_for_several_runs(tmp_path):
+    lines = {
+        "2026-09.jsonl": [{"run_id": "a", "n": 1}, {"run_id": "b", "n": 1}],
+        "2026-10.jsonl": [{"run_id": "a", "n": 2}, 'not json "b"', {"run_id": ["b"]}],
+    }
+    for name, records in lines.items():
+        (tmp_path / name).write_text(
+            "".join(
+                (r if isinstance(r, str) else json.dumps(r)) + "\n" for r in records
+            )
+        )
+    found = find_many(tmp_path, ["a", "b", "c"])
+    assert found == {"a": {"run_id": "a", "n": 2}, "b": {"run_id": "b", "n": 1}}
+    assert found == {i: find(tmp_path, i) for i in "abc" if find(tmp_path, i)}
+    assert find_many(tmp_path, ["b"], months=1) == {}
+    assert find_many(tmp_path, []) == {}

@@ -52,7 +52,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import time
 import urllib.error
@@ -83,7 +82,7 @@ log = logging.getLogger("browser-runner")
 
 # A slug has no ".", so a thread can't be taken for card.jpg.
 ROUTE = re.compile(
-    r"(?:/_live/browser)?/chat/([a-z0-9_][a-z0-9_-]{0,99})(?:/([A-Za-z0-9_-]{1,64}))?(/card\.jpg|/give)?"
+    rf"(?:/_live/browser)?/chat/({hostenv.WORKSPACE})(?:/([A-Za-z0-9_-]{{1,64}}))?(/card\.jpg|/give)?"
 )
 MAIN = "default"  # the main chat's thread in the scopes skills give (_lib/scope.js)
 CORS = CLIENT_CORS
@@ -120,9 +119,7 @@ class ThreadIds:
         now=time.monotonic,
     ) -> None:
         self.api = (base_url or anythingllm_url()) + "/api"
-        self.env_file = env_file or Path(
-            os.environ.get("ANYTHINGLLM_ENV") or hostenv.storage() / ".env"
-        )
+        self.env_file = env_file or hostenv.anythingllm_env()
         self.now = now
         self.known: dict[
             str, tuple[float, dict[str, str]]

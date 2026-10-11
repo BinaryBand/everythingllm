@@ -374,9 +374,12 @@ def retire(old: list[Path], plan: list[Unit]) -> tuple[list[str], list[str]]:
     AnythingLLM's or the proxy's container (ESSENTIAL), which only a person retires."""
     containers = {u.service for u in plan if u.always}
     waiting = {}  # app name -> what one of its containers lacks
+    # Only an old host unit waits for its app's containers, so only then ask podman.
+    hosts = any(p.suffix != ".container" for p in old)
     for u in plan:
         if (
-            u.always
+            hosts
+            and u.always
             and (lacking := missing(u, plan))
             and (app := apps.app_of(u.service))
         ):

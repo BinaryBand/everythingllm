@@ -1,11 +1,10 @@
 """Chat completions on DeepSeek or Z.AI (GLM), for the servers that ask a model something
 themselves (deep research), with the usage and the API's error codes.
 
-The keys are AnythingLLM's own (its .env, at ANYTHINGLLM_ENV or the caller's default).
+The keys are AnythingLLM's own (its .env, at the path the caller gives).
 """
 
 import json
-import os
 import re
 import time
 from collections.abc import Callable
@@ -80,10 +79,10 @@ class Provider:
         return {"deepseek": "DeepSeek", "zai": "Z.AI"}.get(self.name, self.name)
 
 
-def provider(name: str, default_env: str) -> Provider:
-    """Where a provider's API is and the key for it, from AnythingLLM's .env (at
-    ANYTHINGLLM_ENV, else `default_env`); the same names in the environment win."""
-    env = env_values(os.environ.get("ANYTHINGLLM_ENV", default_env), PROVIDER_KEYS)
+def provider(name: str, env_file: str) -> Provider:
+    """Where a provider's API is and the key for it, from AnythingLLM's .env at
+    `env_file` (hostenv.anythingllm_env()); the same names in the environment win."""
+    env = env_values(env_file, PROVIDER_KEYS)
     if name == "deepseek":
         return Provider(
             "deepseek",

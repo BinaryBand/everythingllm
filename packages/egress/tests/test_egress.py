@@ -4,7 +4,6 @@ checked, which the test records."""
 
 import asyncio
 import logging
-import socket
 
 import pytest
 from egress import config as egress_config
@@ -161,25 +160,6 @@ def test_what_isnt_a_proxy_request_is_bad(head):
 # --- the proxy, running ---------------------------------------------------------------
 
 
-def fake_dns(monkeypatch, *answers: str | list[str]) -> list[str]:
-    """Each lookup gets the next answer (one address or several); returns the names
-    looked up."""
-    calls = iter(answers)
-    asked = []
-
-    def getaddrinfo(host, port, *args, **kwargs):
-        asked.append(host)
-        answer = next(calls)
-        family = {4: socket.AF_INET, 6: socket.AF_INET6}
-        return [
-            (family[6 if ":" in a else 4], socket.SOCK_STREAM, 6, "", (a, port))
-            for a in ([answer] if isinstance(answer, str) else answer)
-        ]
-
-    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
-    return asked
-
-
 def config_for(client: str = "127.0.0.1") -> Config:
     """research's profile, for connections from `client`."""
     research = loaded().profiles["research"]
@@ -241,9 +221,9 @@ def run(*args, **kwargs) -> bytes:
     return asyncio.run(through(*args, **kwargs))
 
 
-def test_plain_http_is_forwarded_to_the_address_checked(monkeypatch, caplog):
+def test_plain_http_is_forwarded_to_the_address_checked(fake_dns, caplog):
     caplog.set_level(logging.INFO, "egress")
-    asked = fake_dns(monkeypatch, PUBLIC)
+    asked = fake_dns(PUBLIC)
     up = Upstream()
     answer = run(
         config_for(),
@@ -260,8 +240,8 @@ def test_plain_http_is_forwarded_to_the_address_checked(monkeypatch, caplog):
     assert "secret" not in caplog.text and "token" not in caplog.text
 
 
-def test_connect_tunnels_both_ways(monkeypatch):
-    fake_dns(monkeypatch, PUBLIC)
+def test_connect_tunnels_both_ways(fake_dns):
+    fake_dns(PUBLIC)
     up = Upstream(answer=b"server hello")
     answer = run(
         config_for(),
@@ -291,9 +271,9 @@ def test_connect_tunnels_both_ways(monkeypatch):
         "::ffff:192.168.0.1",
     ],
 )
-def test_whatever_isnt_public_is_refused(monkeypatch, caplog, address):
+def test_whatever_isnt_public_is_refused(fake_dns, caplog, address):
     caplog.set_level(logging.INFO, "egress")
-    fake_dns(monkeypatch, address)
+    fake_dns(address)
     up = Upstream()
     answer = run(config_for(), up, b"CONNECT sneaky.example:443 HTTP/1.1\r\n\r\n")
     assert (
@@ -312,56 +292,56 @@ def test_an_address_literal_is_judged_the_same(monkeypatch):
         assert up.connected == []
 
 
-def test_a_name_with_one_private_answer_among_public_ones_is_refused(monkeypatch):
-    fake_dns(monkeypatch, [PUBLIC, "10.0.0.1"])
+def test_a_name_with_one_private_answer_among_public_ones_is_refused(fake_dns):
+    fake_dns([PUBLIC, "10.0.0.1"])
     up = Upstream()
     answer = run(config_for(), up, b"GET http://mixed.example/ HTTP/1.1\r\n\r\n")
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
 
 
-def test_rebinding_cant_win(monkeypatch):
+def test_rebinding_cant_win(fake_dns):
     # A name that answers public first and loopback after: it's looked up once, and the
     # proxy connects to the address it checked, never to a second answer.
-    asked = fake_dns(monkeypatch, PUBLIC, "127.0.0.1", "127.0.0.1")
+    asked = fake_dns(PUBLIC, "127.0.0.1", "127.0.0.1")
     up = Upstream()
     run(config_for(), up, b"CONNECT rebind.example:443 HTTP/1.1\r\n\r\n", b"x\r\n\r\n")
     assert asked == ["rebind.example"]
     assert up.connected == [(PUBLIC, 443)]
 
 
-def test_only_ports_80_and_443_are_open(monkeypatch):
+def test_only_ports_80_and_443_are_open(fake_dns):
     for target in (b"example.com:22", b"example.com:8080", b"example.com:25"):
-        fake_dns(monkeypatch, PUBLIC)
+        fake_dns(PUBLIC)
         up = Upstream()
         answer = run(config_for(), up, b"CONNECT " + target + b" HTTP/1.1\r\n\r\n")
         assert answer.startswith(b"HTTP/1.1 403") and b"isn't allowed" in answer
         assert up.connected == []
 
 
-def test_the_profiles_exceptions_reach_the_public_host(monkeypatch):
-    fake_dns(monkeypatch, HOST_IP)
+def test_the_profiles_exceptions_reach_the_public_host(fake_dns):
+    fake_dns(HOST_IP)
     up = Upstream(answer=b"tls")
     answer = run(config_for(), up, f"CONNECT {HOST}:8888 HTTP/1.1\r\n\r\n".encode())
     assert answer.endswith(b"tls") and up.connected == [(HOST_IP, 8888)]
     # Only on the ports named: the pages site on :8447 isn't one of research's.
-    fake_dns(monkeypatch, HOST_IP)
+    fake_dns(HOST_IP)
     up = Upstream()
     answer = run(config_for(), up, f"CONNECT {HOST}:8447 HTTP/1.1\r\n\r\n".encode())
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
     # And on 443 PUBLIC_HOST is just a name with a private address.
-    fake_dns(monkeypatch, HOST_IP)
+    fake_dns(HOST_IP)
     up = Upstream()
     answer = run(config_for(), up, f"CONNECT {HOST}:443 HTTP/1.1\r\n\r\n".encode())
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
 
 
-def test_the_public_port_takes_no_exceptions(monkeypatch, caplog):
+def test_the_public_port_takes_no_exceptions(fake_dns, caplog):
     """public_client's fetches (EGRESS_PROXY) come in on the public port: a page that links
     or redirects to AnythingLLM or SearXNG on PUBLIC_HOST gets nothing, as on the host,
     even from research, whose own clients may reach both on the other port."""
     caplog.set_level(logging.INFO, "egress")
     for port in (3001, 8888):
-        fake_dns(monkeypatch, HOST_IP)
+        fake_dns(HOST_IP)
         up = Upstream()
         answer = run(
             config_for(),
@@ -371,7 +351,7 @@ def test_the_public_port_takes_no_exceptions(monkeypatch, caplog):
         )
         assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
     assert "on the public port" in caplog.text
-    fake_dns(monkeypatch, HOST_IP)
+    fake_dns(HOST_IP)
     up = Upstream()
     answer = run(
         config_for(),
@@ -381,7 +361,7 @@ def test_the_public_port_takes_no_exceptions(monkeypatch, caplog):
     )
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
     # A public host is as it is on the other port.
-    fake_dns(monkeypatch, PUBLIC)
+    fake_dns(PUBLIC)
     up = Upstream(answer=b"tls")
     answer = run(
         config_for(), up, b"CONNECT example.com:443 HTTP/1.1\r\n\r\n", public_only=True
@@ -389,7 +369,7 @@ def test_the_public_port_takes_no_exceptions(monkeypatch, caplog):
     assert answer.endswith(b"tls") and up.connected == [(PUBLIC, 443)]
 
 
-def test_a_profile_without_public_access_gets_only_its_exceptions(monkeypatch):
+def test_a_profile_without_public_access_gets_only_its_exceptions(fake_dns):
     relay = loaded().profiles["relay"]
     only = Config(
         "egress-net",
@@ -398,19 +378,19 @@ def test_a_profile_without_public_access_gets_only_its_exceptions(monkeypatch):
         0,
         {"relay": Profile("relay", False, relay.allow, {"relay": "127.0.0.1"})},
     )
-    fake_dns(monkeypatch, PUBLIC)
+    fake_dns(PUBLIC)
     up = Upstream()
     answer = run(only, up, b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
     assert answer.startswith(b"HTTP/1.1 403") and up.connected == []
-    fake_dns(monkeypatch, "151.101.0.223")
+    fake_dns("151.101.0.223")
     up = Upstream(answer=b"tls")
     answer = run(only, up, b"CONNECT pypi.org:443 HTTP/1.1\r\n\r\n")
     assert answer.endswith(b"tls") and up.connected == [("151.101.0.223", 443)]
 
 
-def test_a_stranger_is_refused(monkeypatch, caplog):
+def test_a_stranger_is_refused(fake_dns, caplog):
     caplog.set_level(logging.INFO, "egress")
-    asked = fake_dns(monkeypatch, PUBLIC)
+    asked = fake_dns(PUBLIC)
     up = Upstream()
     answer = run(
         config_for("10.89.79.11"), up, b"CONNECT example.com:443 HTTP/1.1\r\n\r\n"
@@ -429,8 +409,8 @@ def test_a_bad_request_is_answered_and_closed():
     assert answer.startswith(b"HTTP/1.1 400") and up.connected == []
 
 
-def test_an_unreachable_host_is_a_502(monkeypatch):
-    fake_dns(monkeypatch, PUBLIC)
+def test_an_unreachable_host_is_a_502(fake_dns):
+    fake_dns(PUBLIC)
 
     async def refuse(address, port):
         raise ConnectionRefusedError("refused")
@@ -482,8 +462,8 @@ CHUNKS = 8  # one each 0.1 s: longer than QUIET
 
 
 @pytest.mark.xdist_group("timing")
-def test_a_download_keeps_the_quiet_way_up_open(monkeypatch):
-    fake_dns(monkeypatch, PUBLIC)
+def test_a_download_keeps_the_quiet_way_up_open(monkeypatch, fake_dns):
+    fake_dns(PUBLIC)
     monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)
     seen = {}
 
@@ -509,8 +489,8 @@ def test_a_download_keeps_the_quiet_way_up_open(monkeypatch):
 
 
 @pytest.mark.xdist_group("timing")
-def test_an_upload_keeps_the_quiet_way_down_open(monkeypatch):
-    fake_dns(monkeypatch, PUBLIC)
+def test_an_upload_keeps_the_quiet_way_down_open(monkeypatch, fake_dns):
+    fake_dns(PUBLIC)
     monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)
 
     async def upload(reader, writer):
@@ -530,8 +510,8 @@ def test_an_upload_keeps_the_quiet_way_down_open(monkeypatch):
 
 
 @pytest.mark.xdist_group("timing")
-def test_a_tunnel_quiet_both_ways_is_closed(monkeypatch):
-    fake_dns(monkeypatch, PUBLIC)
+def test_a_tunnel_quiet_both_ways_is_closed(monkeypatch, fake_dns):
+    fake_dns(PUBLIC)
     monkeypatch.setattr(proxy, "IDLE_SECONDS", QUIET)
     seen = {}
 

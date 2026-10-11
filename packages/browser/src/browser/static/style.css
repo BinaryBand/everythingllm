@@ -4,14 +4,14 @@
    while the agent has it, amber while you do (the screen is framed in it then), red once
    the view lost it. */
 :root {
-  --bg: oklch(0.982 0.008 75); --panel: oklch(0.995 0.003 75); --panel2: oklch(0.989 0.006 75);
+  --bg: oklch(0.982 0.008 75); --panel: oklch(0.995 0.003 75);
   --line: oklch(0.895 0.014 75); --line2: oklch(0.928 0.012 75);
   --ink: oklch(0.27 0.025 280); --ink2: oklch(0.4 0.025 280); --muted: oklch(0.5 0.02 280); --fade: oklch(0.62 0.02 280);
   --accent: oklch(0.52 0.16 272); --accentbg: oklch(0.94 0.028 272); --onaccent: oklch(1 0 0);
   --hover: oklch(0.925 0.016 75); --sel: oklch(0.93 0.028 272);
   --okfg: oklch(0.42 0.08 165); --okbg: oklch(0.945 0.04 165);
-  --warnfg: oklch(0.45 0.1 70); --warnbg: oklch(0.95 0.045 80);
-  --badfg: oklch(0.47 0.16 20); --badbg: oklch(0.95 0.025 20);
+  --warnfg: oklch(0.45 0.1 70);
+  --badfg: oklch(0.47 0.16 20);
   --scrim: oklch(0.25 0.03 280 / 0.4); --shadow: oklch(0.35 0.04 280 / 0.14);
   --tone: var(--accent);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -22,14 +22,14 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: oklch(0.215 0.018 280); --panel: oklch(0.26 0.02 280); --panel2: oklch(0.235 0.019 280);
+    --bg: oklch(0.215 0.018 280); --panel: oklch(0.26 0.02 280);
     --line: oklch(0.36 0.022 280); --line2: oklch(0.31 0.02 280);
     --ink: oklch(0.93 0.01 75); --ink2: oklch(0.81 0.014 75); --muted: oklch(0.72 0.018 280); --fade: oklch(0.6 0.018 280);
     --accent: oklch(0.78 0.1 272); --accentbg: oklch(0.33 0.06 272); --onaccent: oklch(0.2 0.03 280);
     --hover: oklch(0.29 0.02 280); --sel: oklch(0.33 0.045 272);
     --okfg: oklch(0.82 0.1 165); --okbg: oklch(0.32 0.05 165);
-    --warnfg: oklch(0.84 0.1 80); --warnbg: oklch(0.33 0.05 70);
-    --badfg: oklch(0.83 0.085 20); --badbg: oklch(0.33 0.06 20);
+    --warnfg: oklch(0.84 0.1 80);
+    --badfg: oklch(0.83 0.085 20);
     --scrim: oklch(0.1 0.02 280 / 0.6); --shadow: oklch(0 0 0 / 0.35);
     --off: oklch(0.42 0.02 280);
   }
@@ -160,8 +160,8 @@ body.gone #screen canvas { filter: brightness(0.55); }
   body.mine #dock { border-top-color: var(--line2); }
   .notice { min-height: 0; padding: 0; flex-direction: column; align-items: stretch; gap: 12px; background: none; border: 0; border-radius: 0; }
   .notice .text { flex: none; }
-  .notice .acts { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
-  .notice .acts .pair { display: flex; gap: 8px; margin-top: 8px; }
+  .notice .acts { flex-direction: column; align-items: stretch; gap: 4px; }
+  .notice .acts .pair { margin-top: 8px; }
   .notice .acts .pair > * { flex: 1; }
   .notice .primary, .notice .quiet { min-height: 48px; border-radius: 12px; font-size: 15px; justify-content: center; }
   .notice input { width: auto; font-size: 15px; background: var(--panel); }
@@ -177,7 +177,7 @@ body.gone #screen canvas { filter: brightness(0.55); }
   #give .long { display: none; }
   #give .short { display: inline; }
   #typing .row input { font-size: 16px; }
-  #typing .keys { flex: 1 1 100%; display: flex; gap: 8px; }
+  #typing .keys { flex: 1 1 100%; }
   #typing .keys .quiet { flex: 1; }
   #scrim { display: block; position: fixed; inset: 0; z-index: 2; background: var(--scrim); }
   #logins { position: fixed; top: 72px; left: 0; width: auto; z-index: 3; padding: 8px 20px 24px; border-left: 0; border-radius: 20px 20px 0 0; box-shadow: 0 -12px 32px -12px var(--shadow); }
@@ -191,11 +191,11 @@ body.gone #screen canvas { filter: brightness(0.55); }
 }
 
 /* A login request's form (/login/<id>/): one card. */
-body.ask-login { display: block; height: auto; min-height: 100%; padding: 24px 16px; background: var(--bg); }
+body.ask-login { display: block; height: auto; min-height: 100%; padding: 24px 16px; }
 .card { max-width: 25rem; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; background: var(--panel); border: 1px solid var(--line2); border-radius: 20px; box-shadow: 0 8px 24px -12px var(--shadow); }
 .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
 .intro { display: flex; flex-direction: column; gap: 4px; }
-.intro h1 { margin: 0; font-size: 1.2rem; font-weight: 600; line-height: 1.3; }
+.intro h1 { font-size: 1.2rem; font-weight: 600; line-height: 1.3; }
 .intro p { font-size: 0.875rem; line-height: 1.5; color: var(--ink2); }
 .intro strong { color: var(--ink); font-weight: 600; }
 .site { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--accentbg); }

@@ -50,13 +50,13 @@ from egress import config as egress_config
 
 from sandbox import appsweb
 from sandbox.errors import SandboxError
-from sandbox.names import KEY, SLUG
+from sandbox.names import SLUG
 
 log = logging.getLogger("sandbox-runner")
 
 PROFILE = "sandbox"  # egress.toml's profile, whose addresses the runs take
 WEB_PROFILE = "sandbox-web"  # its profile for the runs of a workspace with web access
-KEY_RE = re.compile(f"^{KEY}$")
+KEY_RE = hostenv.WORKSPACE_RE  # workspace slugs and thread ids, with fullmatch
 SLUG_RE = re.compile(f"^{SLUG}$")
 REPO = Path(__file__).resolve().parents[4]  # <repo>/packages/sandbox/src/sandbox/
 SYSTEM_THEMES = REPO / "packages" / "sandbox" / "zola" / "themes"  # the repo's themes
@@ -124,7 +124,7 @@ class Config:
             access_file=Path(
                 get("SANDBOX_ACCESS", hostenv.data_dir() / "sandbox" / "access.json")
             ),
-            model_env=Path(get("ANYTHINGLLM_ENV", hostenv.storage() / ".env")),
+            model_env=hostenv.anythingllm_env(),
             model_log=hostenv.data_dir() / "sandbox" / "models",
             model_sockets=hostenv.data_dir() / "sandbox" / "m",
             app_state=hostenv.data_dir() / "sandbox" / "apps",
@@ -134,10 +134,7 @@ class Config:
             ),
             system_themes=Path(get("SANDBOX_SYSTEM_THEMES", SYSTEM_THEMES)),
             site_dir=Path(get("SANDBOX_SITE_DIR", hostenv.site_dir())),
-            site_url=get(
-                "SANDBOX_SITE_URL",
-                f"https://{host}:8445/",
-            ),
+            site_url=get("SANDBOX_SITE_URL", hostenv.pages_url()),
             public_root=Path(
                 get("SANDBOX_PUBLIC", hostenv.data_dir() / "sandbox" / "public")
             ),
@@ -180,7 +177,7 @@ def make_scope(config: Config, scope: dict[str, Any]) -> Scope:
         str(scope.get("thread") or ""),
     )
     for what, key in (("workspace", workspace), ("thread", thread)):
-        if not KEY_RE.match(key):
+        if not KEY_RE.fullmatch(key):
             raise SandboxError(f"bad {what} '{key}'")
     s = Scope(
         workspace,

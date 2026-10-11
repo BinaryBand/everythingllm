@@ -1,4 +1,3 @@
-import socket
 import time
 
 import httpcore
@@ -118,23 +117,16 @@ def test_the_egress_proxy_carries_everything_and_checks_the_address(monkeypatch)
         "::ffff:10.0.0.1",
     ],
 )
-def test_public_address_refuses_whatever_isnt_public(monkeypatch, address):
-    fake_dns(monkeypatch, address)
+def test_public_address_refuses_whatever_isnt_public(fake_dns, address):
+    fake_dns(address)
     with pytest.raises(PermissionError, match="private or local"):
         public_address("anything.example", 443)
 
 
-def test_public_address_wants_every_answer_public(monkeypatch):
-    def getaddrinfo(host, port, *args, **kwargs):
-        return [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", port)),
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", port)),
-        ]
-
-    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+def test_public_address_wants_every_answer_public(fake_dns):
+    fake_dns(["93.184.215.14", "10.0.0.1"], "2606:4700::1")
     with pytest.raises(PermissionError, match="private or local"):
         public_address("mixed.example", 443)
-    fake_dns(monkeypatch, "2606:4700::1")
     assert public_address("v6.example", 443) == "2606:4700::1"
 
 
@@ -154,18 +146,8 @@ class Inner(httpcore.NetworkBackend):
         pass
 
 
-def fake_dns(monkeypatch, *answers):
-    """Each lookup returns the next answer: a rebinding name, public first and local next."""
-    calls = iter(answers)
-
-    def getaddrinfo(host, port, *args, **kwargs):
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(calls), port))]
-
-    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
-
-
-def test_backend_connects_to_the_address_it_checked(monkeypatch):
-    fake_dns(monkeypatch, "93.184.215.14", "127.0.0.1")
+def test_backend_connects_to_the_address_it_checked(fake_dns):
+    fake_dns("93.184.215.14", "127.0.0.1")
     backend = PublicBackend(PermissionError)
     backend.inner = inner = Inner()
     with pytest.raises(httpcore.ConnectError):
@@ -173,8 +155,8 @@ def test_backend_connects_to_the_address_it_checked(monkeypatch):
     assert inner.hosts == [("93.184.215.14", 443)]
 
 
-def test_backend_refuses_a_private_answer(monkeypatch):
-    fake_dns(monkeypatch, "127.0.0.1")
+def test_backend_refuses_a_private_answer(fake_dns):
+    fake_dns("127.0.0.1")
     backend = PublicBackend(PermissionError)
     backend.inner = inner = Inner()
     with pytest.raises(PermissionError, match="private or local"):
@@ -182,10 +164,10 @@ def test_backend_refuses_a_private_answer(monkeypatch):
     assert inner.hosts == []
 
 
-def test_connects_only_to_the_checked_address(monkeypatch):
+def test_connects_only_to_the_checked_address(fake_dns):
     # The request hook's lookup sees a public address and the connect's lookup sees
     # 127.0.0.1: the client must refuse rather than connect there.
-    fake_dns(monkeypatch, "93.184.215.14", "127.0.0.1")
+    fake_dns("93.184.215.14", "127.0.0.1")
     with public_client(PermissionError) as client:
         # httpx/httpcore internals still as expected
         transport = client._transport

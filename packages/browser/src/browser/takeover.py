@@ -70,6 +70,8 @@ from browser import websocket
 from browser.origin import registrable
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from browser.containers import Session
     from browser.runner import Runner
 
@@ -351,23 +353,14 @@ class Takeover:
                 "404 Not Found",
                 b"This browser isn't running (or the address is old).\n",
             )
-        if req.path == f"/{token}":  # the page's relative links need the slash
-            return await live.send(
-                writer, "302 Found", b"", headers={"Location": f"/{token}/"}
-            )
+        if req.path == f"/{token}":
+            return await self.slash(writer, f"/{token}/")
         if req.method == "POST":
-            if not req.same_origin():
-                return await live.send(writer, "403 Forbidden", b"Not from the page.\n")
-            try:
-                await req.read_body(reader)
-                done = await self.post(s, what, req.body)
-            except live.BadRequest as e:
-                return await live.send(writer, "400 Bad Request", f"{e}\n".encode())
-            except hostrpc.RunnerError as e:
-                return await self.json(writer, {"error": str(e)}, "400 Bad Request")
-            if not done:
-                return await live.send(writer, "404 Not Found", b"No such thing.\n")
-            return await self.json(writer, await self.state(s))
+
+            async def act(body: dict) -> dict | None:
+                return await self.state(s) if await self.post(s, what, body) else None
+
+            return await self.posted(req, reader, writer, act)
         if req.method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET or POST.\n")
         if what == "":
@@ -408,16 +401,11 @@ class Takeover:
                 b"This login request isn't known here (the browser service restarted "
                 b"since, or it's over a day old).\n",
             )
-        if not slash:  # the page's relative links need the slash
-            return await live.send(
-                writer, "302 Found", b"", headers={"Location": f"/login/{request}/"}
-            )
+        if not slash:
+            return await self.slash(writer, f"/login/{request}/")
         if req.method == "POST":
-            if not req.same_origin():
-                return await live.send(writer, "403 Forbidden", b"Not from the page.\n")
-            try:
-                await req.read_body(reader)
-                body = req.body
+
+            async def answer(body: dict) -> dict | None:
                 if rest == "save":
                     await r.login_requests.fulfil(
                         asked, text(body, "site"), text(body, "username"),
@@ -426,12 +414,10 @@ class Takeover:
                 elif rest == "drop":
                     r.login_requests.decline(asked)
                 else:
-                    return await live.send(writer, "404 Not Found", b"No such thing.\n")
-            except live.BadRequest as e:
-                return await live.send(writer, "400 Bad Request", f"{e}\n".encode())
-            except hostrpc.RunnerError as e:
-                return await self.json(writer, {"error": str(e)}, "400 Bad Request")
-            return await self.json(writer, self.asked_state(asked))
+                    return None
+                return self.asked_state(asked)
+
+            return await self.posted(req, reader, writer, answer)
         if req.method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET or POST.\n")
         if rest == "":
@@ -467,6 +453,33 @@ class Takeover:
         if rest == "state":
             return await self.json(writer, self.asked_state(asked))
         await live.send(writer, "404 Not Found", b"No such thing.\n")
+
+    async def slash(self, writer: asyncio.StreamWriter, to: str) -> None:
+        """To the page's address with its slash, which its relative links need."""
+        await live.send(writer, "302 Found", b"", headers={"Location": to})
+
+    async def posted(
+        self,
+        req: Request,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        act: Callable[[dict], Awaitable[dict | None]],
+    ) -> None:
+        """Answer a page's POST with what `act` on its body returns, the state as it is
+        after; or not from the page, a bad body, a refusal, or (None from `act`) a path
+        that isn't one."""
+        if not req.same_origin():
+            return await live.send(writer, "403 Forbidden", b"Not from the page.\n")
+        try:
+            await req.read_body(reader)
+            state = await act(req.body)
+        except live.BadRequest as e:
+            return await live.send(writer, "400 Bad Request", f"{e}\n".encode())
+        except hostrpc.RunnerError as e:
+            return await self.json(writer, {"error": str(e)}, "400 Bad Request")
+        if state is None:
+            return await live.send(writer, "404 Not Found", b"No such thing.\n")
+        await self.json(writer, state)
 
     def asked_state(self, asked) -> dict:
         state = self.runner.login_requests.asked_state(asked)
@@ -526,8 +539,13 @@ class Takeover:
             for t in self.runner.tabs.values()
             if t.workspace == s.workspace and t.open
         ]
-        if s.making:  # save what was made, and see whether they still can
-            await self.runner.save_made(s)
+
+        async def made() -> None:
+            if s.making:  # save what was made, and see whether they still can
+                await self.runner.save_made(s)
+
+        # The driver's two at once; the logins are read below, with what was made saved.
+        _, offers = await asyncio.gather(made(), self.runner.offers(s))
         self.runner.expire(s)
         approvals = [
             {
@@ -561,7 +579,7 @@ class Takeover:
             "tabs": tabs,
             "approvals": approvals,
             "asked": asked,
-            "offers": await self.runner.offers(s),
+            "offers": offers,
             "logins": logins,
             "making": s.making,
             "made": s.made,

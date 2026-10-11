@@ -85,6 +85,7 @@ def test_the_page_its_files_and_its_state(tmp_path):
         state = json.loads(body)
         assert state["control"] == "agent" and state["tabs"][0]["id"] == tab.id
         assert state["state"] == "idle"  # opened outside an op the agent sent
+        assert state["front"] == tab.id  # ?tab= brought it to the front
 
     test(tmp_path)
 
@@ -364,7 +365,7 @@ def test_the_form_for_a_login_the_agent_asked_for(tmp_path):
         )  # the page's address, as text
         assert 'name="site" value="accounts.example.com" checked><span>accounts' in page
         assert 'value="example.com"><span>All of example.com</span>' in page
-        assert 'id="ask-form">' in page and 'class="result waiting" hidden' in page
+        assert '<main class="card waiting">' in page  # the form, not how it ended
         for f in ("login.js", "style.css"):
             assert "200 OK" in (await answer(port, "GET", f"{base}/{f}"))[0]
         # The take-over view lists it, with no more than its site.
@@ -387,7 +388,7 @@ def test_the_form_for_a_login_the_agent_asked_for(tmp_path):
         head, body = await post(port, f"{base}/save", {**save, "password": "other"})
         assert "400" in head and "isn't waiting" in json.loads(body)["error"]
         head, body = await answer(port, "GET", f"{base}/")
-        assert 'id="ask-form" hidden' in body.decode() and b"Login saved" in body
+        assert b'<main class="card saved">' in body and b"Login saved" in body
         state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
         assert state["asked"] == []
         assert (

@@ -526,6 +526,7 @@ class Runner(hostrpc.Service):
         await self.capture(s, True)
         if tab.url:
             front = await self.call(s, "front", {"thread": thread})
+            s.front = tab.id
             # The page as it is now (a sign-in popup, say), not as the agent last read it.
             where = (front or {}).get("url") or tab.url
             if provider := sign_in_provider(where):

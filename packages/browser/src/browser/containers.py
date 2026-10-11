@@ -74,6 +74,7 @@ class Session:
     # Whether its pages can make a passkey, as the driver last said.
     making: bool = False
     made: str = ""  # what became of the last passkey made, for the take-over view
+    front: str = ""  # the id of the tab last brought to the front, which the view shows
 
     @property
     def name(self) -> str:

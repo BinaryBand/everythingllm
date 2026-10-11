@@ -17,6 +17,7 @@ const scheme = location.protocol === "https:" ? "wss://" : "ws://";
 let rfb = null;
 let control = "agent";
 let gone = false; // the screen's connection ended: only a reload brings it back
+let shownState = {}; // the state last drawn, drawn again as the connection ends
 
 // Scaled to fit a phone, the 1280 px screen's text is a few pixels high and nothing can be
 // tapped. So below NARROW the view shows it at its own size and a drag pans it (a tap still
@@ -44,12 +45,7 @@ function connect() {
   rfb.addEventListener("connect", () => refresh());
   rfb.addEventListener("disconnect", () => {
     gone = true;
-    document.body.className = "gone" + (document.body.classList.contains("fit") ? " fit" : "");
-    $("state").textContent = "Disconnected";
-    $("gone").hidden = false;
-    $("take").hidden = $("give").hidden = $("keyboard").hidden = $("typing").hidden = true;
-    $("reason").hidden = $("making").hidden = true;
-    $("caption").textContent = "The picture is the last one this view got.";
+    render(shownState);
   });
 }
 
@@ -61,13 +57,14 @@ const WHO = {
   user: "You have the tab",
 };
 
-// The tab the view is about: the one ?tab= brought to the front, or the only one open.
+// The tab the view is about: the one last brought to the front, or the only one open.
 function shown(s) {
   const tabs = s.tabs || [];
-  return tabs.find((t) => t.id === tab) || (tabs.length === 1 ? tabs[0] : null);
+  return tabs.find((t) => t.id === s.front) || (tabs.length === 1 ? tabs[0] : null);
 }
 
 function caption(s, t) {
+  if (gone) return "The picture is the last one this view got.";
   if (s.control === "user") return "Your clicks and typing go to this tab.";
   const last = t?.last ? ` Last step: ${t.last}` : "";
   if (s.state === "waiting") return "View only. The agent goes on once you answer.";
@@ -76,25 +73,23 @@ function caption(s, t) {
 }
 
 function show(s) {
-  if (gone) return;
   control = s.control;
   if (rfb) rfb.viewOnly = control !== "user";
-  const mine = control === "user";
-  $("state").textContent = WHO[mine ? "user" : s.state] || WHO.idle;
+  const mine = control === "user" && !gone;
+  $("state").textContent = gone ? "Disconnected" : WHO[mine ? "user" : s.state] || WHO.idle;
   const t = shown(s);
   const count = (s.tabs || []).length;
   $("url").textContent = t ? t.url || t.title : count ? `${count} tabs open` : "No page open";
   $("url").title = t?.url || "";
   $("caption").textContent = caption(s, t);
-  $("take").hidden = mine;
-  $("give").hidden = !mine;
-  $("keyboard").hidden = !mine;
-  $("typing").hidden = !mine;
+  $("take").hidden = mine || gone;
+  $("give").hidden = $("keyboard").hidden = $("typing").hidden = $("reason").hidden = !mine;
   $("reason").textContent =
-    mine && s.waiting && s.reason ? `The agent asked: ${s.reason}` : "The agent waits while you have the tab.";
-  $("reason").hidden = !mine;
+    s.waiting && s.reason ? `The agent asked: ${s.reason}` : "The agent waits while you have the tab.";
+  $("gone").hidden = !gone;
   document.body.classList.remove("connecting");
   document.body.classList.toggle("mine", mine);
+  document.body.classList.toggle("gone", gone);
 }
 
 function el(tag, props = {}, ...children) {
@@ -223,16 +218,19 @@ function showLogins(logins) {
 }
 
 // Making a passkey: only while you have the browser, and the site makes it on your click.
+// While the view waits for one, a line under the bar says so too, with the same button.
+const MAKING = "Waiting for the site to make one: add a passkey on its page now. It's saved here, asking first.";
 function showMaking(s) {
-  const mine = s.control === "user";
+  const mine = s.control === "user" && !gone;
   $("make").hidden = !mine;
   $("make").textContent = s.making ? "Stop waiting" : "Make a passkey";
-  $("make").onclick = () => act("make a passkey", "passkeys/make", { on: !s.making });
-  $("making").hidden = gone || !(mine && s.making);
+  $("make").onclick = $("stop").onclick = () => act("make a passkey", "passkeys/make", { on: !s.making });
+  $("making").hidden = !(mine && s.making);
+  $("making").firstElementChild.textContent = MAKING;
   $("make-note").textContent = !mine
     ? s.made || "Take over the browser to make a passkey for a site."
     : s.making
-      ? "Waiting for the site to make one: add a passkey on its page now. It's saved here, asking first."
+      ? MAKING
       : s.made || "Press this, then add a passkey on the site's page. It's kept here, on this machine alone.";
 }
 
@@ -244,6 +242,7 @@ async function refresh() {
 }
 
 function render(s) {
+  shownState = s;
   show(s);
   showApprovals(s.approvals || []);
   showAsked(s.asked || []);
@@ -314,7 +313,6 @@ $("fit").addEventListener("click", () => {
   fit = !(fit ?? !NARROW.matches);
   size();
 });
-$("stop").addEventListener("click", () => act("stop waiting for a passkey", "passkeys/make", { on: false }));
 
 // The buttons sit in the bar, or at the bottom on a phone.
 function place() {
@@ -326,23 +324,16 @@ NARROW.addEventListener("change", () => {
   size();
 });
 
-// The saved logins, a panel opened from the bar.
+// The saved logins, a panel opened from the bar; the focus goes with it.
 function logins(open) {
   $("logins").hidden = $("scrim").hidden = !open;
   $("logins-open").setAttribute("aria-expanded", String(open));
-  if (open) $("logins-close").focus();
+  $(open ? "logins-close" : "logins-open").focus();
 }
 $("logins-open").addEventListener("click", () => logins($("logins").hidden));
-$("logins-close").addEventListener("click", () => {
-  logins(false);
-  $("logins-open").focus();
-});
+$("logins-close").addEventListener("click", () => logins(false));
 $("scrim").addEventListener("click", () => logins(false));
-$("logins").addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
-  logins(false);
-  $("logins-open").focus();
-});
+$("logins").addEventListener("keydown", (e) => e.key === "Escape" && logins(false));
 $("give").addEventListener("click", () => act("hand back", "give"));
 $("add").addEventListener("submit", async (e) => {
   e.preventDefault();

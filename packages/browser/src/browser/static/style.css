@@ -14,6 +14,7 @@
   --scrim: oklch(0.25 0.03 280 / 0.4); --shadow: oklch(0.35 0.04 280 / 0.14);
   --tone: var(--accent); --tonebg: var(--accentbg);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --control: 32px; --field: 40px; /* a notice's buttons, and the fields and theirs: 44px on a phone */
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -65,6 +66,7 @@ h2, h3, p { margin: 0; }
 .tool { flex: none; min-height: 36px; padding: 0 12px; display: flex; align-items: center; gap: 6px; border-radius: 10px; background: var(--hover); font-size: 14px; font-weight: 500; }
 .tool[aria-expanded=true] { background: var(--sel); }
 #actions { flex: none; display: flex; align-items: center; gap: 6px; font-size: 14px; }
+#give .short { display: none; }
 
 /* What waits for you, a line each under the bar. */
 .notice { flex: none; min-height: 44px; padding: 8px 20px; border-bottom: 1px solid var(--line2); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; background: var(--panel2); color: var(--ink2); font-size: 13.5px; line-height: 1.4; }
@@ -72,10 +74,10 @@ h2, h3, p { margin: 0; }
 .notice.you { background: var(--warnbg); color: var(--warnfg); }
 .notice.ask { background: var(--accentbg); color: var(--ink); }
 .notice.bad { background: var(--badbg); color: var(--badfg); }
-.notice .primary, .notice .quiet { min-height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13.5px; }
+.notice .primary, .notice .quiet { min-height: var(--control); padding: 0 12px; border-radius: 8px; font-size: 13.5px; }
 .notice a.quiet { display: inline-flex; align-items: center; text-decoration: none; }
-.notice input:not([type=checkbox]) { width: 200px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 13.5px; }
-.notice label { display: flex; align-items: center; gap: 6px; min-height: 32px; }
+.notice input:not([type=checkbox]) { width: 200px; height: var(--control); padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 13.5px; }
+.notice label { display: flex; align-items: center; gap: 6px; min-height: var(--control); }
 
 /* The browser's screen, framed in --tone, and what it's doing under it. */
 #view { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -95,10 +97,9 @@ body.gone #screen canvas { filter: brightness(0.55); }
 #typing { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 #typing > label { flex-basis: 100%; font-size: 13px; font-weight: 600; color: var(--ink2); }
 #typing .row { flex: 1 1 16rem; display: flex; gap: 8px; align-items: center; }
-#typing .row input { flex: 1; min-width: 0; height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2); background: var(--panel); }
-#typing .row .primary { min-height: 40px; }
+#typing .row input { flex: 1; min-width: 0; height: var(--field); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2); background: var(--panel); }
+#typing .row .primary, #typing .keys .quiet { min-height: var(--field); }
 #typing .keys { flex: 0 1 auto; }
-#typing .keys .quiet { min-height: 40px; }
 #typing .note { flex-basis: 100%; }
 
 /* Saved logins: a panel at the side, a sheet on a phone. */
@@ -118,15 +119,16 @@ body.gone #screen canvas { filter: brightness(0.55); }
 #login-list button:hover { background: var(--hover); color: var(--badfg); }
 #add { display: flex; flex-direction: column; gap: 8px; }
 #add h3 { font-size: 13px; font-weight: 600; color: var(--ink2); }
-#add input:not([type=checkbox]) { height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
-#add label { min-height: 36px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink2); }
-#add .primary { align-self: flex-start; min-height: 40px; }
+#add input:not([type=checkbox]) { height: var(--field); padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
+#add label { min-height: var(--field); display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink2); }
+#add .primary { align-self: flex-start; min-height: var(--field); }
 #add .error { font-size: 13px; }
 #passkey { padding-top: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border-top: 1px solid var(--line2); }
-#passkey .quiet { min-height: 40px; padding: 0 14px; }
+#passkey .quiet { min-height: var(--field); padding: 0 14px; }
 
 /* A phone: who and the address in one block, the buttons at the bottom, a sheet. */
 @media (max-width: 800px) {
+  :root { --control: 44px; --field: 44px; }
   #bar { min-height: 60px; gap: 10px; }
   #title { flex: 1; min-width: 0; display: grid; grid-template-columns: 10px minmax(0, 1fr); column-gap: 10px; align-items: center; }
   #title::before { content: ""; grid-row: 1 / 3; width: 10px; height: 10px; border-radius: 50%; background: var(--tone); }
@@ -135,35 +137,30 @@ body.gone #screen canvas { filter: brightness(0.55); }
   #where { height: auto; padding: 0; border: 0; background: none; color: var(--muted); font-size: 11.5px; }
   #workspace { font-size: 12.5px; }
   .tool { width: 44px; height: 44px; margin-right: -10px; padding: 0; justify-content: center; background: none; color: var(--ink2); }
-  .tool[aria-expanded=true] { background: var(--sel); }
-  .tool .label { display: none; }
+  .tool .label, #give .long { display: none; }
+  #give .short { display: inline; }
   .notice { padding: 8px 16px; }
   .notice > span { flex-basis: 100%; }
-  .notice .primary, .notice .quiet, .notice a.quiet { min-height: 44px; }
-  .notice input:not([type=checkbox]) { flex: 1 1 100%; width: auto; height: 44px; font-size: 15px; }
-  .notice label { flex: 1 1 100%; min-height: 44px; }
+  .notice input:not([type=checkbox]) { flex: 1 1 100%; width: auto; font-size: 15px; }
+  .notice label { flex: 1 1 100%; }
   #stage { padding: 12px 12px 10px; }
   body:not(.fit) #stage { padding: 0 0 10px; }
-  body:not(.fit) #screen { outline: 2px solid var(--tone); outline-offset: -2px; }
-  body:not(.fit) #screen canvas { border-radius: 0; box-shadow: none; outline: 0 !important; }
+  body:not(.fit) #screen canvas { border-radius: 0; box-shadow: none; }
   #caption { padding: 0 16px; }
   #dock { padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
   #row { display: flex; }
   #actions { flex: 1; gap: 4px; }
   #actions .icon { width: 44px; height: 44px; }
   #actions .primary { flex: 1; min-height: 48px; margin-left: 4px; border-radius: 12px; font-size: 15px; }
-  #typing .row input { height: 44px; font-size: 16px; }
-  #typing .row .primary, #typing .keys .quiet { min-height: 44px; }
+  #typing .row input { font-size: 16px; }
   #typing .keys { flex: 1 1 100%; display: flex; gap: 8px; }
   #typing .keys .quiet { flex: 1; }
   #scrim { display: block; position: fixed; inset: 0; z-index: 2; background: var(--scrim); }
   #logins { position: fixed; top: 72px; left: 0; width: auto; z-index: 3; padding: 8px 20px 24px; border-left: 0; border-radius: 20px 20px 0 0; box-shadow: 0 -12px 32px -12px var(--shadow); }
   #logins h2 { font-size: 17px; }
-  #add input:not([type=checkbox]) { height: 44px; font-size: 16px; }
-  #add label { min-height: 44px; }
+  #add input:not([type=checkbox]) { font-size: 16px; }
   #add .primary { align-self: stretch; min-height: 48px; border-radius: 12px; font-size: 15px; }
   #passkey { align-items: stretch; }
-  #passkey .quiet { min-height: 44px; }
 }
 
 /* A login request's form (/login/<id>/): one card. */
@@ -200,18 +197,14 @@ body.ask-login { display: block; height: auto; min-height: 100%; padding: 24px 1
 .buttons .quiet { border: 0; background: var(--hover); }
 .foot { display: flex; gap: 8px; font-size: 0.75rem; line-height: 1.5; color: var(--muted); }
 .foot svg { margin-top: 2px; }
-.result { display: flex; align-items: flex-start; gap: 10px; }
-.result .mark { width: 22px; height: 22px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--hover); color: var(--ink2); }
-.result.saved .mark { background: var(--okbg); color: var(--okfg); }
-.result .mark .done, .result.saved .mark .not { display: none; }
-.result.saved .mark .done { display: block; }
-.result > span:last-child { flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.result strong { font-size: 0.95rem; font-weight: 600; }
-.result #result-text { font-size: 0.85rem; line-height: 1.5; color: var(--ink2); }
-.result #result-text:empty { display: none; }
+/* The card's class is how the request stands: the form while it waits, then how it ended. */
+.card:not(.waiting) :is(.intro, .warning, #ask-form), .card.waiting #result { display: none; }
+#result { display: flex; align-items: flex-start; gap: 10px; }
+#result .mark { width: 22px; height: 22px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--hover); color: var(--ink2); }
+.card.saved #result .mark { background: var(--okbg); color: var(--okfg); }
+#result > span:last-child { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+#result strong { font-size: 0.95rem; font-weight: 600; }
+#result strong + span { font-size: 0.85rem; line-height: 1.5; color: var(--ink2); }
+#result strong + span:empty { display: none; }
 .ask-login .error { font-size: 0.85rem; }
-#give .short { display: none; }
-@media (max-width: 800px) {
-  #give .long { display: none; }
-  #give .short { display: inline; }
-}
+

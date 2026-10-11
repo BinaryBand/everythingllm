@@ -1,20 +1,10 @@
 // The form for a login the agent asked for (browser.takeover, /login/<id>/): sends it to the
 // runner, which saves it in the workspace's vault, or turns the request down. Nothing comes
-// back but how the request stands, and that goes in as text.
+// back but how the request stands; once it's answered the page is drawn again by the runner,
+// which says how it ended.
 
 const base = location.pathname.replace(/[^/]*$/, ""); // /login/<id>/
 const $ = (id) => document.getElementById(id);
-
-function show(state) {
-  if (state.state === "waiting") return;
-  $("ask-form").hidden = true;
-  document.querySelector(".intro").hidden = true;
-  document.querySelector(".warning").hidden = true;
-  $("result").className = `result ${state.state}`;
-  $("result-title").textContent = state.title;
-  $("result-text").textContent = state.text;
-  $("result").hidden = false;
-}
 
 async function post(what, body) {
   $("error").hidden = true;
@@ -34,7 +24,9 @@ async function post(what, body) {
     data = JSON.parse(raw);
   } catch {}
   if (!r.ok) return problem(data.error || raw.trim() || `${r.status}`);
-  show(data);
+  if (data.state === "waiting") return;
+  $("ask-form").reset(); // so the reload keeps no password in the page
+  location.reload();
 }
 
 function problem(text) {
@@ -48,8 +40,6 @@ $("ask-form").addEventListener("submit", (e) => {
   post("save", {
     site: f.site.value, username: f.username.value, password: f.password.value,
     totp: f.totp.value, ask: f.ask.value === "yes",
-  }).then(() => {
-    if ($("ask-form").hidden) f.reset(); // saved: don't keep the password in the page
   });
 });
 $("decline").addEventListener("click", () => post("drop"));

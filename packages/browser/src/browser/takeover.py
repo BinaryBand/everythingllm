@@ -11,8 +11,9 @@ container, so a stopped browser's old address goes nowhere.
   GET  /<token>/app.js, style.css  the page's script and style (static/ beside this file)
   GET  /<token>/novnc/<path>     noVNC's core and vendor files (copied from the browser image
                                  into <data>/novnc by hostctl browser-images)
-  GET  /<token>/state            {workspace, control, state, reason, waiting, tabs, approvals,
-                                 asked, offers, logins, making, made}: `state` what's being done
+  GET  /<token>/state            {workspace, front, control, state, reason, waiting, tabs,
+                                 approvals, asked, offers, logins, making, made}: `front` the
+                                 open tab last brought to the front ("" for none), `state` what's being done
                                  with it (Runner.activity), `tabs` the open ones (id, title, url
                                  and the last step, as their cards say), `approvals` the agent's waits for
                                  the user's OK, one per chat in the order asked, each naming
@@ -37,8 +38,7 @@ container, so a stopped browser's old address goes nowhere.
                                  x11vnc socket (browser.websocket)
   GET  /login/<id>/              the form for a login the agent asked for (Runner.op_ask_login),
                                  which the request's card links to; login.js, style.css beside it
-  GET  /login/<id>/state         {state, site, sites, title, text}: `title` and `text` how
-                                 the form says it stands
+  GET  /login/<id>/state         {state, site, sites}
   POST /login/<id>/save {site, username, password, totp, ask}, /login/<id>/drop
                                  save the login in the vault, for the request's site or a
                                  parent of it the user picks; or turn the request down
@@ -108,10 +108,8 @@ GLOBE = ICON.format(
 )
 WARN = ICON.format(15, "M8 2.5 14 13H2z M8 6.5v3 M8 11.3v.2")
 PLUS = ICON.format(14, "M8 3v10M3 8h10")
-DONE = ICON.format(12, "M3.5 8.5 6.5 11.5 12.5 5").replace(
-    "<svg ", '<svg class="done" '
-)
-NOT = ICON.format(12, "M4 8h8").replace("<svg ", '<svg class="not" ')
+DONE = ICON.format(12, "M3.5 8.5 6.5 11.5 12.5 5")
+NOT = ICON.format(12, "M4 8h8")
 PAGE = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -138,11 +136,11 @@ PAGE = f"""<!doctype html>
 <div id="view">
 <p id="reason" class="notice you" hidden></p>
 <p id="gone" class="notice bad" hidden>Disconnected. Reload the page to see the browser again.</p>
-<p id="problem" class="notice bad error" hidden></p>
+<p id="problem" class="notice bad" hidden></p>
 <section id="approvals"></section>
 <section id="asked"></section>
 <section id="offers"></section>
-<p id="making" class="notice you" hidden><span>Waiting for the site to make one: add a passkey on its page now. It's saved here, asking first.</span><button id="stop" type="button" class="quiet">Stop waiting</button></p>
+<p id="making" class="notice you" hidden><span></span><button id="stop" type="button" class="quiet">Stop waiting</button></p>
 <main id="stage">
   <div id="screen"></div>
   <p id="caption"></p>
@@ -207,9 +205,9 @@ LOGIN_PAGE = f"""<!doctype html>
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="ask-login">
-<main class="card">
+<main class="card {{state}}">
 <p class="eyebrow">{LOCK}Secure login request</p>
-<div class="intro"{{form_hidden}}>
+<div class="intro">
   <h1>The agent needs your login</h1>
   <p>The agent in <strong>{{workspace}}</strong> has this page of <strong>{{owner}}</strong>
   open, and can't go further without signing in.</p>
@@ -221,7 +219,7 @@ LOGIN_PAGE = f"""<!doctype html>
 <p class="warning"{{new_hidden}}>{WARN}<span>No login in this workspace is for {{owner}} yet.
 Make sure that's the site you mean before you enter a password: a page can name itself after
 another.</span></p>
-<form id="ask-form"{{form_hidden}}>
+<form id="ask-form">
   <div class="fields">
     <label><span>Username</span><input name="username" placeholder="Name or email" autocomplete="off"></label>
     <label><span>Password</span><input name="password" type="password" placeholder="Required" autocomplete="new-password" required></label>
@@ -244,9 +242,9 @@ another.</span></p>
   <p class="foot">{LOCK}<span>The agent can use it but never read it, and only on the site you
   pick here. It stays in this workspace's logins, where you can remove it.</span></p>
 </form>
-<div id="result" class="result {{state}}"{{result_hidden}}>
-  <span class="mark">{DONE}{NOT}</span>
-  <span><strong id="result-title">{{result_title}}</strong><span id="result-text">{{result_text}}</span></span>
+<div id="result">
+  <span class="mark">{{mark}}</span>
+  <span><strong>{{result_title}}</strong><span>{{result_text}}</span></span>
 </div>
 <p id="error" class="error" hidden></p>
 </main>
@@ -372,6 +370,7 @@ class Takeover:
             if tab is not None and tab.workspace == s.workspace and tab.open:
                 with contextlib.suppress(hostrpc.RunnerError):
                     await self.runner.call(s, "front", {"thread": tab.thread})
+                    s.front = tab.id
             body = PAGE.format(workspace=html.escape(s.workspace)).encode()
             return await self.send(writer, body, "text/html; charset=utf-8")
         if what in ("app.js", "style.css"):
@@ -433,12 +432,12 @@ class Takeover:
         if rest == "":
             state = r.login_requests.asked_state(asked)
             owner = registrable(asked.site)
-            options = "".join(
+            options = "".join(  # the page's own site first, then its parents
                 f'<label><input type="radio" name="site" value="{html.escape(site)}"'
-                f"{' checked' if i == 0 else ''}><span>"
-                f"{html.escape(f'All of {owner}' if site == owner and i else site)}"
+                f"{' checked' if site == asked.site else ''}><span>"
+                f"{html.escape(f'All of {owner}' if site == owner != asked.site else site)}"
                 "</span></label>"
-                for i, site in enumerate(asked.sites)
+                for site in asked.sites
             )
             try:
                 logins = await asyncio.to_thread(r.vault.logins, asked.workspace)
@@ -452,9 +451,8 @@ class Takeover:
                 workspace=html.escape(asked.workspace),
                 url=html.escape(asked.url),
                 options=options,
-                form_hidden="" if state == "waiting" else " hidden",
-                result_hidden=" hidden" if state == "waiting" else "",
                 state=state,
+                mark=DONE if state == "saved" else NOT,
                 result_title=html.escape(title),
                 result_text=html.escape(line),
             ).encode()
@@ -471,8 +469,6 @@ class Takeover:
             "state": state,
             "site": asked.site,
             "sites": asked.sites,
-            "title": ASKED.get(state, ("", ""))[0],
-            "text": ASKED.get(state, ("", ""))[1],
         }
 
     async def post(self, s: Session, what: str, body: dict) -> bool:
@@ -552,6 +548,7 @@ class Takeover:
             logins = [{"error": str(e)}]
         return {
             "workspace": s.workspace,
+            "front": s.front if any(t["id"] == s.front for t in tabs) else "",
             "control": s.control,
             "state": self.runner.activity(s),
             "reason": s.reason,

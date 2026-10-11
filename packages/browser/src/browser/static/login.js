@@ -8,7 +8,11 @@ const $ = (id) => document.getElementById(id);
 function show(state) {
   if (state.state === "waiting") return;
   $("ask-form").hidden = true;
-  $("result").textContent = state.message;
+  document.querySelector(".intro").hidden = true;
+  document.querySelector(".warning").hidden = true;
+  $("result").className = `result ${state.state}`;
+  $("result-title").textContent = state.title;
+  $("result-text").textContent = state.text;
   $("result").hidden = false;
 }
 
@@ -43,9 +47,14 @@ $("ask-form").addEventListener("submit", (e) => {
   const f = e.target;
   post("save", {
     site: f.site.value, username: f.username.value, password: f.password.value,
-    totp: f.totp.value, ask: f.ask.checked,
+    totp: f.totp.value, ask: f.ask.value === "yes",
   }).then(() => {
     if ($("ask-form").hidden) f.reset(); // saved: don't keep the password in the page
   });
 });
 $("decline").addEventListener("click", () => post("drop"));
+$("add-totp").addEventListener("click", () => {
+  $("totp").hidden = false;
+  $("add-totp").remove();
+  $("ask-form").totp.focus();
+});

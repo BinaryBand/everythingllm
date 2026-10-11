@@ -357,14 +357,14 @@ def test_the_form_for_a_login_the_agent_asked_for(tmp_path):
             "Referrer-Policy: no-referrer" in head and "Cache-Control: no-store" in head
         )
         assert "<title>Log in to example.com</title>" in page
-        assert "a site of <strong>example.com</strong>" in page
+        assert "this page of <strong>example.com</strong>" in page
         assert 'class="warning">' in page  # no login for example.com yet
         assert (
             "next=&lt;b&gt;" in page and "<b>" not in page
         )  # the page's address, as text
-        assert '<option value="accounts.example.com">' in page
-        assert '<option value="example.com">' in page
-        assert 'id="ask-form">' in page and 'id="result" hidden' in page
+        assert 'name="site" value="accounts.example.com" checked><span>accounts' in page
+        assert 'value="example.com"><span>All of example.com</span>' in page
+        assert 'id="ask-form">' in page and 'class="result waiting" hidden' in page
         for f in ("login.js", "style.css"):
             assert "200 OK" in (await answer(port, "GET", f"{base}/{f}"))[0]
         # The take-over view lists it, with no more than its site.
@@ -387,7 +387,7 @@ def test_the_form_for_a_login_the_agent_asked_for(tmp_path):
         head, body = await post(port, f"{base}/save", {**save, "password": "other"})
         assert "400" in head and "isn't waiting" in json.loads(body)["error"]
         head, body = await answer(port, "GET", f"{base}/")
-        assert 'id="ask-form" hidden' in body.decode() and b"Saved." in body
+        assert 'id="ask-form" hidden' in body.decode() and b"Login saved" in body
         state = json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])
         assert state["asked"] == []
         assert (

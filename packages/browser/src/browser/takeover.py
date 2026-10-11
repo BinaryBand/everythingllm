@@ -13,7 +13,8 @@ container, so a stopped browser's old address goes nowhere.
                                  into <data>/novnc by hostctl browser-images)
   GET  /<token>/state            {workspace, control, state, reason, waiting, tabs, approvals,
                                  asked, offers, logins, making, made}: `state` what's being done
-                                 with it (Runner.activity), `approvals` the agent's waits for
+                                 with it (Runner.activity), `tabs` the open ones (id, title, url
+                                 and the last step, as their cards say), `approvals` the agent's waits for
                                  the user's OK, one per chat in the order asked, each naming
                                  its chat by its tab's page (`chat`, null without one), logins
                                  (and passkeys) and offers without their secrets
@@ -36,7 +37,8 @@ container, so a stopped browser's old address goes nowhere.
                                  x11vnc socket (browser.websocket)
   GET  /login/<id>/              the form for a login the agent asked for (Runner.op_ask_login),
                                  which the request's card links to; login.js, style.css beside it
-  GET  /login/<id>/state         {state, site, sites}
+  GET  /login/<id>/state         {state, site, sites, title, text}: `title` and `text` how
+                                 the form says it stands
   POST /login/<id>/save {site, username, password, totp, ask}, /login/<id>/drop
                                  save the login in the vault, for the request's site or a
                                  parent of it the user picks; or turn the request down
@@ -85,112 +87,179 @@ TYPES = {
     ".svg": "image/svg+xml",
     ".png": "image/png",
 }
-PAGE = """<!doctype html>
+# Line icons, drawn in the text's colour.
+ICON = (
+    '<svg width="{0}" height="{0}" viewBox="0 0 16 16" fill="none" stroke="currentColor" '
+    'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="{1}"></path></svg>'
+)
+KEY = ICON.format(
+    14, "M10.5 2.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M8.3 7.7 2.5 13.5 M4.5 11.5l1.5 1.5"
+)
+KEYBOARD = ICON.format(
+    16, "M1.8 4.5h12.4v7H1.8z M4.2 7h.1 M6.7 7h.1 M9.2 7h.1 M11.7 7h.1 M5 9.3h6"
+)
+FIT = ICON.format(16, "M2.5 6V2.5H6 M10 2.5h3.5V6 M13.5 10v3.5H10 M6 13.5H2.5V10")
+CLOSE = ICON.format(16, "M4 4l8 8M12 4l-8 8")
+LOCK = ICON.format(13, "M4 7.5h8v6H4z M5.8 7.5V5.2a2.2 2.2 0 0 1 4.4 0v2.3")
+GLOBE = ICON.format(
+    18,
+    "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2z M2 8h12 M8 2c-2 1.8-2 10.2 0 12 M8 2c2 1.8 2 10.2 0 12",
+)
+WARN = ICON.format(15, "M8 2.5 14 13H2z M8 6.5v3 M8 11.3v.2")
+PLUS = ICON.format(14, "M8 3v10M3 8h10")
+DONE = ICON.format(12, "M3.5 8.5 6.5 11.5 12.5 5").replace(
+    "<svg ", '<svg class="done" '
+)
+NOT = ICON.format(12, "M4 8h8").replace("<svg ", '<svg class="not" ')
+PAGE = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Browser · {workspace}</title>
+<title>Browser · {{workspace}}</title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
-<header>
-  <strong>Browser · {workspace}</strong>
-  <span id="state">Connecting…</span>
-  <button id="take" hidden>Take over</button>
-  <button id="give" hidden>Hand back to the agent</button>
-  <button id="keyboard" type="button" class="quiet" hidden>Keyboard</button>
-  <button id="fit" type="button" class="quiet">Actual size</button>
+<body class="connecting">
+<header id="bar">
+  <div id="title">
+    <span id="who"><span id="state">Connecting…</span></span>
+    <span id="where"><span id="url"></span></span>
+  </div>
+  <span id="workspace">{{workspace}}</span>
+  <button id="logins-open" type="button" class="tool" aria-expanded="false" aria-controls="logins" aria-label="Saved logins">{KEY}<span class="label">Saved logins</span></button>
+  <div id="actions">
+    <button id="keyboard" type="button" class="icon" aria-label="Keyboard" title="Keyboard" hidden>{KEYBOARD}</button>
+    <button id="fit" type="button" class="icon" aria-label="Fit the screen" title="Fit the screen" aria-pressed="true">{FIT}</button>
+    <button id="take" class="primary" hidden>Take over</button>
+    <button id="give" class="primary" hidden><span class="long">Hand back to the agent</span><span class="short">Hand back</span></button>
+  </div>
 </header>
-<p id="reason" hidden></p>
-<p id="problem" class="error" hidden></p>
+<div id="view">
+<p id="reason" class="notice you" hidden></p>
+<p id="gone" class="notice bad" hidden>Disconnected. Reload the page to see the browser again.</p>
+<p id="problem" class="notice bad error" hidden></p>
 <section id="approvals"></section>
 <section id="asked"></section>
 <section id="offers"></section>
-<details id="logins">
-  <summary>Saved logins</summary>
+<p id="making" class="notice you" hidden><span>Waiting for the site to make one: add a passkey on its page now. It's saved here, asking first.</span><button id="stop" type="button" class="quiet">Stop waiting</button></p>
+<main id="stage">
+  <div id="screen"></div>
+  <p id="caption"></p>
+</main>
+<footer id="dock">
+  <form id="typing" hidden>
+    <label for="type-text">Type into the browser</label>
+    <span class="row">
+      <input id="type-text" name="username" autocomplete="username" autocapitalize="off"
+        autocorrect="off" spellcheck="false" placeholder="Goes into the field in focus there">
+      <button type="button" class="primary" data-field="type-text">Send</button>
+    </span>
+    <span class="row">
+      <input id="type-password" name="password" type="password" autocomplete="current-password"
+        placeholder="Password">
+      <button type="button" class="primary" data-field="type-password">Send</button>
+    </span>
+    <span class="row keys">
+      <button type="button" class="quiet" data-key="Tab">Tab</button>
+      <button type="button" class="quiet" data-key="Backspace">Backspace</button>
+      <button type="button" class="quiet" data-key="Enter">Enter</button>
+    </span>
+    <span class="note">Tap a field in the browser, then send text to it here (Enter sends too); the
+    buttons press those keys there. Nothing you send is kept.</span>
+  </form>
+  <div id="row"></div>
+</footer>
+<div id="scrim" hidden></div>
+<aside id="logins" aria-label="Saved logins" hidden>
+  <div class="head">
+    <h2>Saved logins</h2>
+    <button id="logins-close" type="button" class="icon" aria-label="Close saved logins">{CLOSE}</button>
+  </div>
   <p class="note">The agent can use these on their own sites, but never read them.</p>
   <ul id="login-list"></ul>
   <form id="add">
-    <input name="site" placeholder="Site, like linkedin.com" required autocomplete="off">
-    <input name="username" placeholder="Username or email" autocomplete="off">
-    <input name="password" type="password" placeholder="Password" autocomplete="new-password">
-    <input name="totp" placeholder="2FA secret (optional)" autocomplete="off">
+    <h3>Add a login</h3>
+    <input name="site" aria-label="Site" placeholder="Site, like linkedin.com" required autocomplete="off">
+    <input name="username" aria-label="Username or email" placeholder="Username or email" autocomplete="off">
+    <input name="password" aria-label="Password" type="password" placeholder="Password" autocomplete="new-password">
+    <input name="totp" aria-label="2FA secret" placeholder="2FA secret (optional)" autocomplete="off">
     <label><input name="ask" type="checkbox"> Ask me before each use</label>
-    <button>Save login</button>
+    <button class="primary">Save login</button>
     <span id="add-error" class="error"></span>
   </form>
-  <p id="passkey">
-    <button id="make" type="button" hidden>Make a passkey</button>
-    <span id="make-note" class="note"></span>
-  </p>
-</details>
-<main id="screen"></main>
-<form id="typing" hidden>
-  <label for="type-text">Type into the browser</label>
-  <span class="row">
-    <input id="type-text" name="username" autocomplete="username" autocapitalize="off"
-      autocorrect="off" spellcheck="false" placeholder="Goes into the field in focus there">
-    <button type="button" data-field="type-text">Send</button>
-  </span>
-  <span class="row">
-    <input id="type-password" name="password" type="password" autocomplete="current-password"
-      placeholder="Password">
-    <button type="button" data-field="type-password">Send</button>
-  </span>
-  <span class="row">
-    <button type="button" class="quiet" data-key="Tab">Tab</button>
-    <button type="button" class="quiet" data-key="Backspace">Backspace</button>
-    <button type="button" class="quiet" data-key="Enter">Enter</button>
-  </span>
-  <span class="note">Tap a field in the browser, then send text to it here (Enter sends too); the
-  buttons press those keys there. Nothing you send is kept.</span>
-</form>
+  <div id="passkey">
+    <button id="make" type="button" class="quiet" hidden>Make a passkey</button>
+    <p id="make-note" class="note"></p>
+  </div>
+</aside>
+</div>
 <script type="module" src="app.js"></script>
 </body>
 </html>
 """
-LOGIN_PAGE = """<!doctype html>
+LOGIN_PAGE = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Log in to {owner}</title>
+<title>Log in to {{owner}}</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="ask-login">
-<h1>Log in to <span class="site">{owner}</span></h1>
-<p>The agent in <strong>{workspace}</strong> asked for your login for the page it has open,
-on <span class="site">{site}</span>, a site of <strong>{owner}</strong>:</p>
-<p class="url">{url}</p>
-<p class="warning"{new_hidden}>No login in this workspace is for {owner} yet. Make sure that's
-the site you mean to log in to before you enter a password: a page can name itself after
-another.</p>
-<p class="note">It's saved in this workspace's logins. The agent can have the browser fill it
-in on the site you pick here, never anywhere else, and can never read it. Only enter the login
-you use on that site.</p>
-<form id="ask-form"{form_hidden}>
-  <label>Site <select name="site">{options}</select></label>
-  <input name="username" placeholder="Username or email" autocomplete="off">
-  <input name="password" type="password" placeholder="Password" autocomplete="new-password" required>
-  <input name="totp" placeholder="2FA secret (optional)" autocomplete="off">
-  <label><input name="ask" type="checkbox"> Ask me before each use</label>
-  <div class="buttons">
-    <button>Save login</button>
-    <button type="button" id="decline" class="quiet">Not now</button>
+<main class="card">
+<p class="eyebrow">{LOCK}Secure login request</p>
+<div class="intro"{{form_hidden}}>
+  <h1>The agent needs your login</h1>
+  <p>The agent in <strong>{{workspace}}</strong> has this page of <strong>{{owner}}</strong>
+  open, and can't go further without signing in.</p>
+</div>
+<div class="site">
+  <span class="globe">{GLOBE}</span>
+  <span><strong>{{owner}}</strong><span class="url">{{url}}</span></span>
+</div>
+<p class="warning"{{new_hidden}}>{WARN}<span>No login in this workspace is for {{owner}} yet.
+Make sure that's the site you mean before you enter a password: a page can name itself after
+another.</span></p>
+<form id="ask-form"{{form_hidden}}>
+  <div class="fields">
+    <label><span>Username</span><input name="username" placeholder="Name or email" autocomplete="off"></label>
+    <label><span>Password</span><input name="password" type="password" placeholder="Required" autocomplete="new-password" required></label>
+    <label id="totp" hidden><span>2FA secret</span><input name="totp" placeholder="Optional" autocomplete="off"></label>
+    <button type="button" id="add-totp">{PLUS}Add a 2FA secret</button>
   </div>
+  <fieldset class="chips">
+    <legend>The browser may fill it in on</legend>
+    {{options}}
+  </fieldset>
+  <fieldset class="chips">
+    <legend>The agent may use it</legend>
+    <label><input type="radio" name="ask" value="no" checked><span>Whenever it needs to</span></label>
+    <label><input type="radio" name="ask" value="yes"><span>Only after asking me</span></label>
+  </fieldset>
+  <div class="buttons">
+    <button type="button" id="decline" class="quiet">Not now</button>
+    <button class="primary">Save login</button>
+  </div>
+  <p class="foot">{LOCK}<span>The agent can use it but never read it, and only on the site you
+  pick here. It stays in this workspace's logins, where you can remove it.</span></p>
 </form>
-<p id="result"{result_hidden}>{result}</p>
+<div id="result" class="result {{state}}"{{result_hidden}}>
+  <span class="mark">{DONE}{NOT}</span>
+  <span><strong id="result-title">{{result_title}}</strong><span id="result-text">{{result_text}}</span></span>
+</div>
 <p id="error" class="error" hidden></p>
+</main>
 <script type="module" src="login.js"></script>
 </body>
 </html>
 """
+# How a login request stands, as its form says it: a title and a line.
 ASKED = {
-    "saving": "Saving it…",
-    "saved": "Saved. Tell the agent in the chat, and it will log in with it.",
-    "declined": "You turned this request down.",
-    "expired": "This request ran out. Ask the agent to ask again.",
+    "saving": ("Saving it…", ""),
+    "saved": ("Login saved", "Tell the agent in the chat, and it will log in with it."),
+    "declined": ("Request declined", "Nothing was saved."),
+    "expired": ("This request ran out", "Ask the agent to ask again."),
 }
 
 
@@ -363,18 +432,21 @@ class Takeover:
             return await live.send(writer, "405 Method Not Allowed", b"GET or POST.\n")
         if rest == "":
             state = r.login_requests.asked_state(asked)
-            options = "".join(
-                f'<option value="{html.escape(site)}">{html.escape(site)}</option>'
-                for site in asked.sites
-            )
             owner = registrable(asked.site)
+            options = "".join(
+                f'<label><input type="radio" name="site" value="{html.escape(site)}"'
+                f"{' checked' if i == 0 else ''}><span>"
+                f"{html.escape(f'All of {owner}' if site == owner and i else site)}"
+                "</span></label>"
+                for i, site in enumerate(asked.sites)
+            )
             try:
                 logins = await asyncio.to_thread(r.vault.logins, asked.workspace)
             except hostrpc.RunnerError:
                 logins = []
             known = any(registrable(x.get("site", "")) == owner for x in logins)
+            title, line = ASKED.get(state, ("", ""))
             body = LOGIN_PAGE.format(
-                site=html.escape(asked.site),
                 owner=html.escape(owner),
                 new_hidden=" hidden" if known else "",
                 workspace=html.escape(asked.workspace),
@@ -382,7 +454,9 @@ class Takeover:
                 options=options,
                 form_hidden="" if state == "waiting" else " hidden",
                 result_hidden=" hidden" if state == "waiting" else "",
-                result=html.escape(ASKED.get(state, "")),
+                state=state,
+                result_title=html.escape(title),
+                result_text=html.escape(line),
             ).encode()
             return await self.send(writer, body, "text/html; charset=utf-8")
         if rest in ("login.js", "style.css"):
@@ -397,7 +471,8 @@ class Takeover:
             "state": state,
             "site": asked.site,
             "sites": asked.sites,
-            "message": ASKED.get(state, ""),
+            "title": ASKED.get(state, ("", ""))[0],
+            "text": ASKED.get(state, ("", ""))[1],
         }
 
     async def post(self, s: Session, what: str, body: dict) -> bool:
@@ -446,7 +521,7 @@ class Takeover:
 
     async def state(self, s: Session) -> dict:
         tabs = [
-            {"id": t.id, "title": t.title, "url": t.url}
+            {"id": t.id, "title": t.title, "url": t.url, "last": t.last}
             for t in self.runner.tabs.values()
             if t.workspace == s.workspace and t.open
         ]

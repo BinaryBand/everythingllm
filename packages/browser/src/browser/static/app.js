@@ -1,10 +1,12 @@
 // The take-over view's page (browser.takeover): noVNC showing the workspace's browser,
-// view-only while the agent has it, and the buttons that take it and hand it back; the
+// view-only while the agent has it, framed in the colour of who has it (the body's class),
+// with the page's address and its last step, and the buttons that take it and hand it back; the
 // agent's requests to use a saved login or for one it hasn't got, offers to save what you
 // logged in with, and the workspace's saved logins and passkeys. Everything from the server goes in as text, never as HTML: a
 // username can come from a web page. While the browser is yours, a field under the screen
 // types into it as text (POST type), so a phone's keyboard, a paste and a password manager
-// work where the canvas takes none of them; on a phone it's focused as you take over.
+// work where the canvas takes none of them; on a phone it's focused as you take over. On a
+// phone the buttons move from the bar to the bottom, and the saved logins open as a sheet.
 import RFB from "./novnc/core/rfb.js";
 
 const base = location.pathname.replace(/[^/]*$/, ""); // /<token>/
@@ -14,6 +16,7 @@ const scheme = location.protocol === "https:" ? "wss://" : "ws://";
 
 let rfb = null;
 let control = "agent";
+let gone = false; // the screen's connection ended: only a reload brings it back
 
 // Scaled to fit a phone, the 1280 px screen's text is a few pixels high and nothing can be
 // tapped. So below NARROW the view shows it at its own size and a drag pans it (a tap still
@@ -24,7 +27,8 @@ let fit = null; // the user's choice, once they've made one
 
 function size() {
   const scaled = fit ?? !NARROW.matches;
-  $("fit").textContent = scaled ? "Actual size" : "Fit the screen";
+  $("fit").setAttribute("aria-pressed", String(scaled));
+  document.body.classList.toggle("fit", scaled);
   if (!rfb) return;
   rfb.scaleViewport = scaled;
   rfb.clipViewport = !scaled;
@@ -35,35 +39,61 @@ function connect() {
   rfb = new RFB($("screen"), scheme + location.host + base + "websockify", { wsProtocols: ["binary"] });
   size();
   rfb.resizeSession = false;
+  rfb.background = "transparent";
   rfb.viewOnly = control !== "user";
   rfb.addEventListener("connect", () => refresh());
   rfb.addEventListener("disconnect", () => {
-    $("state").textContent = "Disconnected. Reload the page to see the browser again.";
-    $("take").hidden = $("give").hidden = true;
+    gone = true;
+    document.body.className = "gone" + (document.body.classList.contains("fit") ? " fit" : "");
+    $("state").textContent = "Disconnected";
+    $("gone").hidden = false;
+    $("take").hidden = $("give").hidden = $("keyboard").hidden = $("typing").hidden = true;
+    $("reason").hidden = $("making").hidden = true;
+    $("caption").textContent = "The picture is the last one this view got.";
   });
 }
 
-// What's being done with the browser now (Runner.activity).
-const STATES = {
-  working: "The agent is using the browser; you're watching.",
-  idle: "The agent has the browser but isn't using it now.",
-  waiting: "The agent is waiting for you.",
-  user: "You have the browser.",
+// Who has the browser, and what's being done with it (Runner.activity).
+const WHO = {
+  working: "The agent is browsing",
+  idle: "The agent has the tab, idle",
+  waiting: "The agent is waiting",
+  user: "You have the tab",
 };
 
+// The tab the view is about: the one ?tab= brought to the front, or the only one open.
+function shown(s) {
+  const tabs = s.tabs || [];
+  return tabs.find((t) => t.id === tab) || (tabs.length === 1 ? tabs[0] : null);
+}
+
+function caption(s, t) {
+  if (s.control === "user") return "Your clicks and typing go to this tab.";
+  const last = t?.last ? ` Last step: ${t.last}` : "";
+  if (s.state === "waiting") return "View only. The agent goes on once you answer.";
+  if (s.state === "idle") return `View only. The agent has the browser but isn't using it now.${last}`;
+  return `View only while the agent has the tab.${last}`;
+}
+
 function show(s) {
+  if (gone) return;
   control = s.control;
   if (rfb) rfb.viewOnly = control !== "user";
   const mine = control === "user";
-  const state = mine ? "user" : s.state;
-  $("state").textContent = STATES[state] || STATES.idle;
+  $("state").textContent = WHO[mine ? "user" : s.state] || WHO.idle;
+  const t = shown(s);
+  const count = (s.tabs || []).length;
+  $("url").textContent = t ? t.url || t.title : count ? `${count} tabs open` : "No page open";
+  $("url").title = t?.url || "";
+  $("caption").textContent = caption(s, t);
   $("take").hidden = mine;
   $("give").hidden = !mine;
   $("keyboard").hidden = !mine;
   $("typing").hidden = !mine;
-  const why = mine && s.waiting && s.reason ? `The agent asked: ${s.reason}` : "";
-  $("reason").textContent = why;
-  $("reason").hidden = !why;
+  $("reason").textContent =
+    mine && s.waiting && s.reason ? `The agent asked: ${s.reason}` : "The agent waits while you have the tab.";
+  $("reason").hidden = !mine;
+  document.body.classList.remove("connecting");
   document.body.classList.toggle("mine", mine);
 }
 
@@ -100,11 +130,11 @@ function showApprovals(approvals) {
   for (const a of approvals) {
     if (box.querySelector(`[data-id="${a.id}"]`)) continue;
     const chat = a.chat ? `the chat browsing “${a.chat}”` : "one of this workspace's chats";
-    const allow = el("button", { textContent: "Allow" });
+    const allow = el("button", { textContent: "Allow", className: "primary" });
     const deny = el("button", { textContent: "Don't allow", className: "quiet" });
     const row = el(
       "div",
-      { className: "ask" },
+      { className: "notice ask" },
       el("span", { textContent: `The agent in ${chat} wants to use your ${a.kind} for ${who(a)}, on ${a.url}.` }),
       allow,
       deny
@@ -122,9 +152,11 @@ function showAsked(asked) {
     ...asked.map((a) =>
       el(
         "div",
-        {},
-        el("span", { textContent: `The agent asked for your login for ${a.site}.` }),
-        el("a", { href: a.link, textContent: "Enter it", target: "_blank", rel: "noopener noreferrer" })
+        { className: "notice ask" },
+        el("span", { textContent: `The agent needs your login for ${a.site} to go on.` }),
+        el("a", {
+          href: a.link, textContent: "Enter login", className: "quiet", target: "_blank", rel: "noopener noreferrer",
+        })
       )
     )
   );
@@ -138,11 +170,11 @@ function showOffers(offers) {
     if (box.querySelector(`[data-id="${o.id}"]`)) continue; // keep what's being typed
     const name = el("input", { value: o.username, placeholder: "Username", autocomplete: "off" });
     const ask = el("input", { type: "checkbox" });
-    const save = el("button", { textContent: "Save login" });
+    const save = el("button", { textContent: "Save login", className: "primary" });
     const drop = el("button", { textContent: "Not now", className: "quiet" });
     const row = el(
       "div",
-      { className: "ask" },
+      { className: "notice you" },
       el("span", { textContent: `Save the login you just used on ${o.site}?` }),
       name,
       el("label", {}, ask, " Ask me before each use"),
@@ -177,13 +209,13 @@ function showLogins(logins) {
     remove.onclick = () =>
       confirm(`Delete the ${kind} for ${who(l)}?`) && act(`delete the ${kind} for ${who(l)}`, `logins/${l.id}/delete`);
     const extra = kind === "passkey" ? " · passkey" : l.totp ? " · 2FA" : "";
+    const line = `${l.username || "(no username)"}${extra}${l.used ? ` · used ${l.used}` : ""}`;
     list.append(
       el(
         "li",
         {},
-        el("strong", { textContent: l.site }),
-        ` ${l.username || "(no username)"}${extra}${l.used ? ` · used ${l.used}` : ""} `,
-        el("label", {}, ask, " ask first"),
+        el("div", { className: "who" }, el("strong", { textContent: l.site }), el("span", { textContent: line, title: line })),
+        el("label", {}, ask, "ask first"),
         remove
       )
     );
@@ -196,6 +228,7 @@ function showMaking(s) {
   $("make").hidden = !mine;
   $("make").textContent = s.making ? "Stop waiting" : "Make a passkey";
   $("make").onclick = () => act("make a passkey", "passkeys/make", { on: !s.making });
+  $("making").hidden = gone || !(mine && s.making);
   $("make-note").textContent = !mine
     ? s.made || "Take over the browser to make a passkey for a site."
     : s.making
@@ -281,7 +314,35 @@ $("fit").addEventListener("click", () => {
   fit = !(fit ?? !NARROW.matches);
   size();
 });
-NARROW.addEventListener("change", size);
+$("stop").addEventListener("click", () => act("stop waiting for a passkey", "passkeys/make", { on: false }));
+
+// The buttons sit in the bar, or at the bottom on a phone.
+function place() {
+  if (NARROW.matches) $("row").append($("actions"));
+  else $("logins-open").after($("actions"));
+}
+NARROW.addEventListener("change", () => {
+  place();
+  size();
+});
+
+// The saved logins, a panel opened from the bar.
+function logins(open) {
+  $("logins").hidden = $("scrim").hidden = !open;
+  $("logins-open").setAttribute("aria-expanded", String(open));
+  if (open) $("logins-close").focus();
+}
+$("logins-open").addEventListener("click", () => logins($("logins").hidden));
+$("logins-close").addEventListener("click", () => {
+  logins(false);
+  $("logins-open").focus();
+});
+$("scrim").addEventListener("click", () => logins(false));
+$("logins").addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  logins(false);
+  $("logins-open").focus();
+});
 $("give").addEventListener("click", () => act("hand back", "give"));
 $("add").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -293,6 +354,7 @@ $("add").addEventListener("submit", async (e) => {
   $("add-error").textContent = error || "";
   if (!error) f.reset();
 });
+place();
 connect();
 refresh();
 setInterval(refresh, 2000);

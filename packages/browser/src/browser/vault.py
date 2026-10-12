@@ -76,6 +76,19 @@ def entry(logins: list[dict[str, Any]], kind: str, **match: str) -> dict[str, An
     return new
 
 
+def checked(site: str, username: str, password: str) -> tuple[str, str, str]:
+    """A login's site by its name (normal_site), and its username and password as text
+    of at most MAX_FIELD characters."""
+    try:
+        site = normal_site(site)
+    except ValueError as e:
+        raise VaultError(str(e)) from None
+    username, password = str(username or ""), str(password or "")
+    if len(username) > MAX_FIELD or len(password) > MAX_FIELD:
+        raise VaultError("that's too long for a login")
+    return site, username, password
+
+
 def credential(passkey: dict[str, Any]) -> dict[str, Any]:
     """A saved passkey as Chromium's virtual authenticator takes it (without its rpId,
     which the driver sets to the site it checked)."""
@@ -238,15 +251,9 @@ class Vault:
         username. `ask` turns asking first on, never off: saving a new
         password keeps a login the user said to ask about asking (the list's toggle turns
         it off). Returns it, public."""
-        try:
-            site = normal_site(site)
-        except ValueError as e:
-            raise VaultError(str(e)) from None
-        username, password = str(username or ""), str(password or "")
+        site, username, password = checked(site, username, password)
         if not password:
             raise VaultError("a login needs a password")
-        if len(username) > MAX_FIELD or len(password) > MAX_FIELD:
-            raise VaultError("that's too long for a login")
         with self.changing(workspace) as logins:
             login = entry(logins, "login", site=site, username=username)
             login["password"] = password
@@ -304,6 +311,37 @@ class Vault:
             login.update(
                 {k: v for k, v in fields.items() if k in ("ask", "used", "sign_count")}
             )
+        return public(login)
+
+    def change(
+        self,
+        workspace: str,
+        login_id: str,
+        site: str,
+        username: str,
+        password: str = "",
+    ) -> dict[str, Any]:
+        """Change a login's site and username, and its password when one is given (an
+        empty one keeps the saved password). A passkey's are the site's, so it has none to
+        change. Returns it, public."""
+        site, username, password = checked(site, username, password)
+        with self.changing(workspace) as logins:
+            login = next((x for x in logins if x["id"] == login_id), None)
+            if login is None:
+                raise VaultError(f"there's no saved login '{login_id}'")
+            if login["kind"] != "login":
+                raise VaultError("a passkey's site and username are the site's own")
+            if any(
+                x is not login
+                and x["kind"] == "login"
+                and x["site"] == site
+                and x["username"] == username
+                for x in logins
+            ):
+                raise VaultError(f"there's a login for that username on {site} already")
+            login.update(site=site, username=username)
+            if password:
+                login["password"] = password
         return public(login)
 
     def delete(self, workspace: str, login_id: str) -> None:

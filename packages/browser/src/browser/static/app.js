@@ -4,19 +4,34 @@
 // screen, one card: what waits for you (the agent's requests to use a saved login or for one
 // it hasn't got, and offers to save what you logged in with), or the last step when nothing
 // does; while one waits, its buttons are the only way on, so take over and hand back aren't
-// drawn. The workspace's saved logins and passkeys open in a panel. Everything from the
-// server goes in as text, never as HTML: a username can come from a web page. While the
-// browser is yours, the keyboard button opens a field that types into it as text (POST
-// type), so a phone's keyboard, a paste and a password manager work where the canvas takes
-// none of them. On a phone the page fills the view under a header naming it: touching it
-// takes it, the cards float over its foot (the last step as a chip), the buttons are a bar
-// there while it's yours, and the saved logins open as a sheet.
+// drawn. The workspace's saved logins and passkeys open in a panel, where a row opens the
+// login to change or remove it. Everything from the server goes in as text, never as HTML: a
+// username can come from a web page. While the browser is yours, the keyboard button opens a
+// field that types into it as text (POST type), so a phone's keyboard, a paste and a password
+// manager work where the canvas takes none of them. On a phone the page fills the view under
+// a header naming it: touching it takes it, the cards float over its foot (the last step as a
+// chip), the buttons are a bar there while it's yours, and the saved logins open as a sheet.
+// Tapping the title edits the address; Go loads it in the tab and takes the browser (POST
+// open). A closed tab and a lost connection fill the screen's place with the way back.
+//
+// In AnywhereLLM's web view (a JavaScript channel named AnywhereLLM), the page is the app's
+// take-over screen: Back returns to the chat, and a message bar takes the place of the
+// buttons' bar. It opens as you take the tab, or from the round button while the agent has
+// it. Empty, its button is Hand back; with text it sends it into the chat through the app
+// (and hands back, while the tab is yours). A message sent while a request waits is held
+// until it's answered. The app says how a message went through window.anywhereLLM.said.
 import RFB from "./novnc/core/rfb.js";
 
 const base = location.pathname.replace(/[^/]*$/, ""); // /<token>/
-const tab = new URLSearchParams(location.search).get("tab") || ""; // the tab brought to the front
+const params = new URLSearchParams(location.search);
+const tab = params.get("tab") || ""; // the tab brought to the front
+const query = tab ? `?tab=${encodeURIComponent(tab)}` : ""; // so the state says how it stands
 const $ = (id) => document.getElementById(id);
 const scheme = location.protocol === "https:" ? "wss://" : "ws://";
+const app = window.AnywhereLLM; // the app's channel, in its web view
+const inApp = typeof app?.postMessage === "function";
+const theme = params.get("theme");
+if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
 
 let rfb = null;
 let control = "agent";
@@ -68,36 +83,53 @@ function shown(s) {
   return tabs.find((t) => t.id === s.front) || (tabs.length === 1 ? tabs[0] : null);
 }
 
+// Whether a request waits for your answer: then its buttons are the only way on.
+const waits = (s) => [s.approvals, s.asked, s.offers].some((x) => x?.length);
+const mine = () => control === "user" && !gone;
+// The tab ?tab= names, once it's closed.
+const closedTab = (s) => (!gone && s.tab && !s.tab.open ? s.tab : null);
+
 let typing = false; // the typing field is open (only while the browser is yours)
 
 function show(s) {
   control = s.control;
+  const closed = closedTab(s);
   if (rfb) rfb.viewOnly = control !== "user";
-  const mine = control === "user" && !gone;
-  if (!mine) typing = false;
-  $("state").textContent = gone ? "Disconnected" : WHO[mine ? "user" : s.state] || WHO.idle;
-  // On a phone, under the page's title, only who.
-  $("who").textContent = gone ? "Disconnected" : mine ? "You have it" : "Agent has it";
+  const yours = mine();
+  if (!yours) typing = false;
   const t = shown(s);
   const count = (s.tabs || []).length;
   const none = count ? `${count} tabs open` : "No page open";
-  $("page").textContent = t?.title || t?.url || none;
-  $("url").textContent = t ? address(t.url || t.title) : none;
-  $("url").title = t?.url || "";
-  says($("caption"), !mine && !gone && t?.last ? `Last step: ${t.last}` : "");
-  // A request waiting for your answer is the only way on.
-  const asked = [s.approvals, s.asked, s.offers].some((x) => x?.length);
-  $("take").hidden = $("touch").hidden = mine || gone || asked;
-  $("give").hidden = !mine || asked;
-  $("keyboard").hidden = $("fit").hidden = $("reason").hidden = !mine;
+  $("state").textContent = gone
+    ? "Disconnected"
+    : closed
+      ? "Tab closed"
+      : WHO[yours ? "user" : s.state] || WHO.idle;
+  // On a phone, under the page's title, only who.
+  $("who").textContent = gone ? "Disconnected" : closed ? "" : yours ? "You have it" : "Agent has it";
+  $("page").textContent = gone ? "Disconnected" : closed ? "Tab closed" : t?.title || t?.url || none;
+  const url = closed ? closed.url : t?.url;
+  $("url").textContent = url ? address(url) : t?.title || none;
+  $("url").title = url || "";
+  $("address-open").disabled = gone || !!closed || !t;
+  says($("caption"), !yours && !gone && !closed && t?.last ? `Last step: ${t.last}` : "");
+  const asked = waits(s);
+  $("take").hidden = $("touch").hidden = yours || gone || !!closed || asked;
+  $("give").hidden = !yours || asked;
+  $("keyboard").hidden = $("fit").hidden = $("reason").hidden = !yours;
   $("typing").hidden = !typing;
   const reason = s.waiting && s.reason;
   says($("reason"), reason ? `The agent asked: ${reason}` : "The agent waits.");
   $("reason").classList.toggle("plain", !reason); // drawn only while nothing else waits, never on a phone
-  $("gone").hidden = !gone;
+  $("ended").hidden = !(gone || closed);
+  $("ended").firstElementChild.textContent = gone
+    ? "The connection to the browser dropped."
+    : "The agent's tab is closed.";
+  $("ended").lastElementChild.textContent = gone ? "Reconnect" : "Open it again";
   document.body.classList.remove("connecting");
-  document.body.classList.toggle("mine", mine);
+  document.body.classList.toggle("mine", yours);
   document.body.classList.toggle("gone", gone);
+  document.body.classList.toggle("closed", !!closed);
   size();
 }
 
@@ -124,8 +156,10 @@ function toggle(label, on, onflip) {
 }
 const isOn = (b) => b.getAttribute("aria-checked") === "true";
 const set = (b, on) => b.setAttribute("aria-checked", String(!!on));
-const TRASH =
-  '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h11 M6 4.5V3h4v1.5 M4 4.5l.6 8.5h6.8l.6-8.5"></path></svg>';
+const svg = (d) =>
+  `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"></path></svg>`;
+const TRASH = svg("M2.5 4.5h11 M6 4.5V3h4v1.5 M4 4.5l.6 8.5h6.8l.6-8.5");
+const FORWARD = svg("M6 4l4 4-4 4");
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -242,39 +276,35 @@ function showLogins(logins) {
       if (await act(`change the login for ${who(l)}`, `logins/${l.id}/ask`, { ask: on })) set(b, !on);
     });
     const kind = l.kind;
-    const remove = el("button", { type: "button", className: "icon", title: "Delete", innerHTML: TRASH });
+    const remove = el("button", { type: "button", className: "icon remove", title: "Delete", innerHTML: TRASH });
     remove.setAttribute("aria-label", `Delete the ${kind} for ${who(l)}`);
     remove.onclick = () =>
       confirm(`Delete the ${kind} for ${who(l)}?`) && act(`delete the ${kind} for ${who(l)}`, `logins/${l.id}/delete`);
     const extra = kind === "passkey" ? " · passkey" : "";
     const line = `${l.username || "(no username)"}${extra}`;
     const used = l.used ? ` · used ${l.used}` : ""; // not on a phone
-    list.append(
-      el(
-        "li",
-        {},
-        el(
-          "div",
-          { className: "who" },
-          el("strong", { textContent: l.site }),
-          el("span", { title: line + used }, line, el("span", { className: "used", textContent: used }))
-        ),
-        ask,
-        remove
-      )
+    const open = el(
+      "button",
+      { type: "button", className: "who" },
+      el("strong", { textContent: l.site }),
+      el("span", { title: line + used }, line, el("span", { className: "used", textContent: used }))
     );
+    open.setAttribute("aria-label", `Edit the ${kind} for ${who(l)}`);
+    open.onclick = () => editLogin(l);
+    const more = el("span", { className: "more", innerHTML: FORWARD });
+    list.append(el("li", {}, open, ask, remove, more));
   }
 }
 
 // Making a passkey: only while you have the browser, and the site makes it on your click.
 // While the view waits for one, a card under the screen says so too, with the same button.
 function showMaking(s) {
-  const mine = s.control === "user" && !gone;
-  $("make").hidden = !mine;
+  const yours = mine();
+  $("make").hidden = !yours;
   $("make").textContent = s.making ? "Stop waiting" : "Make a passkey";
   $("make").onclick = $("stop").onclick = () => act("make a passkey", "passkeys/make", { on: !s.making });
-  $("making").hidden = !(mine && s.making);
-  $("make-note").textContent = !mine
+  $("making").hidden = !(yours && s.making);
+  $("make-note").textContent = !yours
     ? s.made || "Take over to make a passkey."
     : s.making
       ? "Add one on the site's page."
@@ -283,7 +313,7 @@ function showMaking(s) {
 
 async function refresh() {
   try {
-    const r = await fetch(base + "state", { cache: "no-store" });
+    const r = await fetch(base + "state" + query, { cache: "no-store" });
     if (!r.ok) return;
     const raw = await r.text();
     if (raw !== drawn) render(JSON.parse(raw), raw);
@@ -300,12 +330,13 @@ function render(s, raw) {
   showLogins(s.logins || []);
   showMaking(s);
   $("caption").hidden = !$("caption").textContent;
+  showTalk(s);
 }
 
 async function post(what, body) {
   let r;
   try {
-    r = await fetch(base + what, {
+    r = await fetch(base + what + query, {
       method: "POST",
       headers: body ? { "Content-Type": "application/json" } : {},
       body: body ? JSON.stringify(body) : undefined,
@@ -319,7 +350,7 @@ async function post(what, body) {
     data = JSON.parse(raw);
   } catch {}
   if (r.ok) render(data, raw);
-  if (what === "take" && !$("typing").contains(document.activeElement)) rfb?.focus();
+  if ((what === "take" || what === "open") && !$("typing").contains(document.activeElement)) rfb?.focus();
   return r.ok ? null : data.error || raw.trim() || `${r.status}`; // some refusals are plain text
 }
 
@@ -342,13 +373,141 @@ async function send(field) {
   if (error && !field.value) field.value = text;
 }
 
+// --- the message bar, in the app ---
+
+let talking = false; // the bar is open
+let wasMine = false; // the tab was yours as the bar was last drawn
+let held = []; // messages sent while a request waited, to go once it's answered
+let said = ""; // how the last message went, as the app says it
+
+function showTalk(s) {
+  if (!inApp) return;
+  const yours = mine();
+  const asked = waits(s);
+  const ended = gone || !!closedTab(s);
+  if (yours && !wasMine) talking = true; // taking the tab opens it
+  wasMine = yours;
+  if (asked) talking = true;
+  if (ended) talking = false;
+  if (!asked && held.length) {
+    const going = held;
+    held = [];
+    for (const text of going) say(text);
+    if (yours) give();
+  }
+  $("talk").hidden = !talking;
+  $("fab").hidden = talking || ended;
+  $("caption").hidden = talking || !$("caption").textContent;
+  const empty = !$("say").value.trim();
+  $("talk-give").hidden = !(yours && !asked && empty);
+  $("talk-send").hidden = !$("talk-give").hidden;
+  $("talk-send").setAttribute("aria-label", yours && !asked ? "Send and hand back" : "Send to the agent");
+  $("talk-close").hidden = asked;
+  $("say").placeholder = yours ? "Message the agent…" : "Tell the agent…";
+  $("say").setAttribute(
+    "aria-label",
+    yours ? "Message to the agent. Optional. Sending hands the tab back" : "Message to the agent"
+  );
+  $("said").textContent = held.length
+    ? held.length > 1
+      ? `${held.length} messages held until you answer`
+      : `Held until you answer: ${held[0]}`
+    : said;
+}
+
+// A message for the agent, into the chat through the app.
+function say(text) {
+  said = `Sent: ${text}`;
+  app.postMessage(JSON.stringify({ say: text }));
+}
+
+async function give() {
+  talking = false;
+  await act("hand back", "give");
+  showTalk(shownState);
+}
+
+if (inApp) {
+  window.anywhereLLM = {
+    // How the app took the last message, in its words.
+    said(line) {
+      said = String(line || "");
+      showTalk(shownState);
+    },
+  };
+  $("back").hidden = false;
+  $("back").addEventListener("click", () => app.postMessage(JSON.stringify({ back: true })));
+  $("fab").addEventListener("click", () => {
+    talking = true;
+    showTalk(shownState);
+    $("say").focus(); // in the tap's own handler, so a phone opens its keyboard
+  });
+  $("talk-close").addEventListener("click", () => {
+    talking = false;
+    showTalk(shownState);
+  });
+  $("say").addEventListener("input", () => showTalk(shownState));
+  $("talk").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = $("say").value.trim();
+    if (waits(shownState)) {
+      // Typed text never answers a request: it waits for the answer.
+      if (!text) return;
+      held.push(text);
+      $("say").value = "";
+      showTalk(shownState);
+      return;
+    }
+    if (!text && !mine()) return;
+    $("say").value = "";
+    if (text) say(text);
+    if (mine()) give();
+    else showTalk(shownState);
+  });
+}
+document.body.classList.toggle("in-app", inApp);
+
+// --- the address ---
+
+function editAddress() {
+  const t = shown(shownState);
+  if (!t || gone || closedTab(shownState)) return;
+  $("address-field").value = t.url || "";
+  $("title").hidden = true;
+  $("address").hidden = false;
+  $("address-field").focus();
+  $("address-field").select();
+}
+
+function leaveAddress() {
+  $("address").hidden = true;
+  $("title").hidden = false;
+}
+
+$("address-open").addEventListener("click", editAddress);
+$("address").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const url = $("address-field").value.trim();
+  const t = shown(shownState);
+  leaveAddress();
+  if (url) act("open the page", "open", { url, tab: t?.id || tab });
+});
+$("address-field").addEventListener("keydown", (e) => e.key === "Escape" && leaveAddress());
+// Leaving the field keeps the tab where it was.
+$("address-field").addEventListener("blur", () => setTimeout(leaveAddress, 0));
+
+$("ended").lastElementChild.addEventListener("click", () => {
+  const closed = closedTab(shownState);
+  if (gone) location.reload();
+  else if (closed) act("open the tab again", "open", { tab: closed.id });
+});
+
 $("take").addEventListener("click", () => {
   if (TOUCH.matches) keyboard();
   act("take over", "take");
 });
 // On a phone there's no button: touching the page takes it.
 $("touch").addEventListener("click", () => act("take over", "take"));
-$("reconnect").addEventListener("click", () => location.reload());
 $("keyboard").addEventListener("click", keyboard);
 $("typing").addEventListener("submit", (e) => e.preventDefault());
 for (const field of [$("type-text"), $("type-password")]) {
@@ -369,8 +528,14 @@ $("fit").addEventListener("click", () => {
   size();
 });
 
-// The buttons sit in the header, or in a bar at the foot on a phone.
+// The buttons sit in the header, or in a bar at the foot on a phone; in the app, the
+// keyboard and fit buttons go in the message bar, which hands back.
 function place() {
+  if (inApp && NARROW.matches) {
+    $("tools").append($("keyboard"), $("fit"));
+    return;
+  }
+  $("actions").prepend($("keyboard"), $("fit"));
   if (NARROW.matches) $("row").append($("actions"));
   else $("logins-open").after($("actions"));
 }
@@ -379,21 +544,56 @@ NARROW.addEventListener("change", () => {
   size();
 });
 
-// The saved logins, a panel opened from the bar, showing their list or the form that adds
-// one; the focus goes with it.
-function logins(open, adding = false) {
+// --- the saved logins ---
+
+// The saved logins, a panel opened from the bar, showing their list, the form that adds one
+// or the one that changes one; the focus goes with it.
+function logins(open, view = "list") {
   $("logins").hidden = $("scrim").hidden = !open;
   $("logins-open").setAttribute("aria-expanded", String(open));
-  $("logins-list").hidden = adding;
-  $("add").hidden = !adding;
+  $("logins-list").hidden = view !== "list";
+  $("add").hidden = view !== "add";
+  $("edit").hidden = view !== "edit";
   if (!open) $("logins-open").focus();
-  else if (adding) $("add").site.focus();
+  else if (view === "add") $("add").site.focus();
+  else if (view === "edit") $("edit").querySelector(".back").focus();
   else $("logins-list").querySelector(".close").focus();
 }
+
+let editing = null; // the login the edit form changes
+
+// A login's site, username and password to change, or to remove; a passkey's are the
+// site's own, so it can only be removed.
+function editLogin(l) {
+  editing = l;
+  const f = $("edit");
+  const passkey = l.kind === "passkey";
+  $("edit-title").textContent = l.site;
+  f.site.value = l.site;
+  f.username.value = l.username || "";
+  f.password.value = "";
+  f.site.disabled = f.username.disabled = passkey;
+  $("edit-password").hidden = passkey;
+  $("edit-save").hidden = passkey;
+  $("edit-note").textContent = passkey
+    ? "Signs in with a passkey, so there is no password to change."
+    : "The saved password is never shown.";
+  sure(false);
+  $("edit-error").textContent = "";
+  logins(true, "edit");
+}
+
+function sure(asking) {
+  $("edit-sure").hidden = !asking;
+  $("edit-buttons").hidden = asking;
+  if (asking) $("edit-sure").firstElementChild.textContent = `Remove the ${editing.kind} for ${who(editing)}?`;
+}
+
 $("logins-open").addEventListener("click", () => logins($("logins").hidden));
 for (const close of $("logins").querySelectorAll(".close")) close.addEventListener("click", () => logins(false));
-$("add-open").addEventListener("click", () => logins(true, true));
+$("add-open").addEventListener("click", () => logins(true, "add"));
 $("add-back").addEventListener("click", () => logins(true));
+$("edit-back").addEventListener("click", () => logins(true));
 $("add-ask").addEventListener("click", (e) => set(e.currentTarget, !isOn(e.currentTarget)));
 $("scrim").addEventListener("click", () => logins(false));
 $("logins").addEventListener("keydown", (e) => e.key === "Escape" && logins(false));
@@ -411,6 +611,23 @@ $("add").addEventListener("submit", async (e) => {
   set($("add-ask"), false);
   logins(true);
 });
+$("edit").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const error = await post(`logins/${editing.id}`, {
+    site: f.site.value, username: f.username.value, password: f.password.value,
+  });
+  $("edit-error").textContent = error || "";
+  if (!error) logins(true);
+});
+$("edit-remove").addEventListener("click", () => sure(true));
+$("edit-keep").addEventListener("click", () => sure(false));
+$("edit-delete").addEventListener("click", async () => {
+  const error = await post(`logins/${editing.id}/delete`);
+  $("edit-error").textContent = error || "";
+  if (!error) logins(true);
+});
+
 place();
 connect();
 refresh();

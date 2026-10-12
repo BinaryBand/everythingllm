@@ -359,7 +359,7 @@ def test_the_form_for_a_login_the_agent_asked_for(tmp_path):
             "Referrer-Policy: no-referrer" in head and "Cache-Control: no-store" in head
         )
         assert "<title>Log in to example.com</title>" in page
-        assert "<span><strong>example.com</strong><span class=\"url\">" in page
+        assert '<span><strong>example.com</strong><span class="url">' in page
         assert 'class="warning">' in page  # no login for example.com yet
         assert (
             "next=&lt;b&gt;" in page and "<b>" not in page
@@ -468,4 +468,100 @@ def test_the_field_types_into_the_browser_only_while_its_yours_and_says_it_nowhe
         )
 
     caplog.set_level("DEBUG")
+    test(tmp_path)
+
+
+def test_the_app_screens_parts_and_the_pages_fonts(tmp_path):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        body = (await answer(port, "GET", f"/{s.token}/"))[1]
+        # Back and the message bar, which the page shows only in AnywhereLLM's web view.
+        assert b'<button id="back"' in body and b'<form id="talk"' in body
+        assert b'<button id="fab"' in body and b'<form id="address" hidden>' in body
+        assert b'<form id="edit" hidden>' in body
+        script = (await answer(port, "GET", f"/{s.token}/app.js"))[1]
+        assert b"window.AnywhereLLM" in script and b"anywhereLLM" in script
+        for font in takeover.FONTS:
+            head, body = await answer(port, "GET", f"/{s.token}/{font}")
+            assert "200 OK" in head and "font/ttf" in head and body, font
+        assert "font-src 'self'" in takeover.CSP
+
+    test(tmp_path)
+
+
+def test_the_address_loads_a_page_and_takes_the_browser(tmp_path):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        tab = r.threads[("career", "7")]
+        driver = podman.drivers[s.name]
+        head, body = await post(
+            port,
+            f"/{s.token}/open?tab={tab.id}",
+            {"url": "https://example.org/prices", "tab": tab.id},
+        )
+        state = json.loads(body)
+        assert "200 OK" in head and state["control"] == "user" and s.control == "user"
+        assert ("open", {"thread": "7", "url": "https://example.org/prices"}) in (
+            driver.calls
+        )
+        assert state["front"] == tab.id and state["tab"]["open"]
+        assert tab.last == "You opened https://example.org/prices"
+        # Only from the page's own origin.
+        head, _ = await post(
+            port,
+            f"/{s.token}/open",
+            {"url": "https://x.example"},
+            "https://evil.example",
+        )
+        assert "403" in head
+        head, body = await post(port, f"/{s.token}/open", {"url": "x", "tab": "bw-0"})
+        assert "400" in head and "no tab" in json.loads(body)["error"]
+
+    test(tmp_path)
+
+
+def test_a_closed_tab_is_said_closed_and_opens_again(tmp_path):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        tab = r.threads[("career", "7")]
+        await r.op_close(scope())
+        state = json.loads(
+            (await answer(port, "GET", f"/{s.token}/state?tab={tab.id}"))[1]
+        )
+        assert state["tabs"] == [] and state["tab"]["id"] == tab.id
+        assert (
+            not state["tab"]["open"] and state["tab"]["url"] == "https://example.com/"
+        )
+        assert (
+            json.loads((await answer(port, "GET", f"/{s.token}/state"))[1])["tab"]
+            is None
+        )
+        head, body = await post(port, f"/{s.token}/open?tab={tab.id}", {"tab": tab.id})
+        state = json.loads(body)
+        assert "200 OK" in head and state["tab"]["open"] and tab.open
+        assert [t["id"] for t in state["tabs"]] == [tab.id]
+
+    test(tmp_path)
+
+
+def test_the_view_changes_a_login_but_never_shows_its_password(tmp_path):
+    @with_view
+    async def test(r, port, podman, tmp_path):
+        s = r.sessions["career"]
+        login = r.vault.add("career", "linkedin.com", "alice", "hunter2")
+        head, body = await post(port, f"/{s.token}/logins/{login['id']}", {
+            "site": "github.com", "username": "alice", "password": "",
+        })  # fmt: skip
+        assert "200 OK" in head and b"hunter2" not in body
+        [changed] = json.loads(body)["logins"]
+        assert changed["site"] == "github.com"
+        assert r.vault.get("career", login["id"])["password"] == "hunter2"
+        head, body = await post(port, f"/{s.token}/logins/{login['id']}", {
+            "site": "localhost", "username": "alice",
+        })  # fmt: skip
+        assert "400" in head and "isn't a site's name" in json.loads(body)["error"]
+
     test(tmp_path)

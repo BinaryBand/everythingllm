@@ -890,6 +890,24 @@ class Runner(hostrpc.Service):
             await self.capture(s, True, user=True)
             self.tell(s, "You took over the browser")
 
+    async def open_for_user(self, s: Session, url: str, tab: str = "") -> None:
+        """The user loads `url` from the take-over view's address into the tab `tab` (the
+        one in front without it), opening it again if it was closed; or, `url` empty, the
+        tab's own page, which is how a closed tab comes back. They take the browser first,
+        so the page is theirs to use."""
+        found = self.workspace_tab(s, tab or s.front)
+        if found is None:
+            raise RunnerError("there's no tab to open it in")
+        url = (url or found.url or "").strip()
+        if not url:
+            raise RunnerError("there's no address to open")
+        await self.take(s)
+        view = await self.call(s, "open", {"thread": found.thread, "url": url})
+        self.tab(s.workspace, found.thread)  # open again, if it was closed
+        await self.call(s, "front", {"thread": found.thread})
+        s.front = found.id
+        found.moved(f"You opened {view.get('url') or url}", view)
+
     async def type_text(
         self, s: Session, text: str, secret: bool = False, tab: str = ""
     ) -> None:
@@ -918,10 +936,15 @@ class Runner(hostrpc.Service):
         if s.control != "user":
             raise RunnerError("take over the browser first: the agent has it")
         s.used = self.now()
-        found = self.tabs.get(tab) if tab else None
-        if found is None or found.workspace != s.workspace or not found.open:
+        found = self.workspace_tab(s, tab)
+        if found is None or not found.open:
             return ""
         return found.thread
+
+    def workspace_tab(self, s: Session, tab: str) -> Tab | None:
+        """The tab `tab` of the session's workspace, open or closed; None for any other."""
+        found = self.tabs.get(tab) if tab else None
+        return found if found is not None and found.workspace == s.workspace else None
 
     def by_token(self, token: str) -> Session | None:
         return next(

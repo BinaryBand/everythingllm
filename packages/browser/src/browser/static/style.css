@@ -1,8 +1,11 @@
 /* The take-over view (browser.takeover) and a login request's form, after the design
-   canvas's browser boards: its colour tokens, light or dark as the device is, and the
-   system's fonts. --tone is the colour of who has the browser, in the header's dot and only
-   there: the accent while the agent has it, amber while you do, red once the view lost it.
-   While it's yours the screen is outlined in ink. */
+   canvas's browser boards: its colour tokens, light or dark as the device is (or as
+   AnywhereLLM's ?theme= says), in Instrument Sans with JetBrains Mono for addresses. --tone
+   is the colour of who has the browser, in the header's dot and only there: the accent while
+   the agent has it, amber while you do (ink on a phone), red once the view lost it (muted on
+   a phone). While it's yours the screen is outlined in ink. */
+@font-face { font-family: "Instrument Sans"; src: url("InstrumentSans.ttf") format("truetype"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("JetBrainsMono.ttf") format("truetype"); font-weight: 400 700; font-display: swap; }
 :root {
   --bg: oklch(0.982 0.008 75); --panel: oklch(0.995 0.003 75);
   --line: oklch(0.895 0.014 75); --line2: oklch(0.928 0.012 75);
@@ -14,13 +17,14 @@
   --badfg: oklch(0.47 0.16 20);
   --scrim: oklch(0.25 0.03 280 / 0.4); --shadow: oklch(0.35 0.04 280 / 0.14);
   --tone: var(--accent);
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --off: oklch(0.84 0.012 75); /* a switch that's off */
   --control: 36px; --field: 40px; /* a card's buttons, and the fields and theirs: 44px on a phone */
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme=light]) {
     --bg: oklch(0.215 0.018 280); --panel: oklch(0.26 0.02 280);
     --line: oklch(0.36 0.022 280); --line2: oklch(0.31 0.02 280);
     --ink: oklch(0.93 0.01 75); --ink2: oklch(0.81 0.014 75); --muted: oklch(0.72 0.018 280); --fade: oklch(0.6 0.018 280);
@@ -33,13 +37,27 @@
     --off: oklch(0.42 0.02 280);
   }
 }
+:root[data-theme=dark] {
+  --bg: oklch(0.215 0.018 280); --panel: oklch(0.26 0.02 280);
+  --line: oklch(0.36 0.022 280); --line2: oklch(0.31 0.02 280);
+  --ink: oklch(0.93 0.01 75); --ink2: oklch(0.81 0.014 75); --muted: oklch(0.72 0.018 280); --fade: oklch(0.6 0.018 280);
+  --accent: oklch(0.78 0.1 272); --accentbg: oklch(0.33 0.06 272); --onaccent: oklch(0.2 0.03 280);
+  --hover: oklch(0.29 0.02 280); --sel: oklch(0.33 0.045 272);
+  --okfg: oklch(0.82 0.1 165); --okbg: oklch(0.32 0.05 165);
+  --warnfg: oklch(0.84 0.1 80);
+  --badfg: oklch(0.83 0.085 20);
+  --scrim: oklch(0.1 0.02 280 / 0.6); --shadow: oklch(0 0 0 / 0.35);
+  --off: oklch(0.42 0.02 280);
+  color-scheme: dark;
+}
+:root[data-theme=light] { color-scheme: light; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
-body { display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.4 var(--sans); }
 body.mine { --tone: var(--warnfg); }
 body.gone { --tone: var(--badfg); }
-body.connecting { --tone: var(--muted); }
+body.connecting, body.closed { --tone: var(--muted); }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 input { font: inherit; color: var(--ink); }
 input::placeholder { color: var(--fade); }
@@ -55,6 +73,9 @@ h1, h2, h3, p { margin: 0; }
 .icon { width: 44px; height: 44px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--ink2); }
 .icon:hover { background: var(--hover); }
 .icon[aria-pressed=true], .icon[aria-expanded=true] { background: var(--sel); color: var(--ink); }
+.bad { color: var(--badfg); }
+.pair { display: flex; gap: 8px; }
+.pair > * { flex: 1; }
 /* A switch: a button with role=switch, drawn as a track and its knob. */
 .switch { width: 56px; height: 44px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .switch::before { content: ""; width: 34px; height: 20px; border-radius: 99px; background: var(--off) radial-gradient(circle 8px at 10px 50%, var(--panel) 98%, transparent) no-repeat; transition: background-position 0.15s; }
@@ -65,7 +86,13 @@ h1, h2, h3, p { margin: 0; }
    phone names the page instead, with who has it beside the address. */
 #bar { flex: none; min-height: 64px; padding: 8px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line2); }
 #dot { width: 10px; height: 10px; flex: none; margin-right: 4px; border-radius: 50%; background: var(--tone); }
-#title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-weight: 400; }
+#title { flex: 1; min-width: 0; font-weight: 400; }
+/* The title is a button: a tap edits the address in its place. */
+#address-open { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 1px; border-radius: 12px; text-align: left; }
+#address-open:disabled { cursor: default; }
+#address { flex: 1; min-width: 0; display: flex; }
+#address-field { width: 100%; min-width: 0; min-height: 40px; padding: 0 14px; border-radius: 22px; border: 1px solid var(--line2); background: var(--panel); font: 15px var(--mono); }
+#address-field:focus { outline: 0; border-color: var(--ink); }
 #state, #page { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #state { font-size: 22px; line-height: 1.15; letter-spacing: -0.3px; }
 #page, #who { display: none; }
@@ -88,6 +115,10 @@ h1, h2, h3, p { margin: 0; }
 #screen canvas { border-radius: 16px; outline: none !important; box-shadow: 0 0 0 1px var(--line), 0 16px 40px -20px var(--shadow); }
 body.mine #screen canvas { outline: 2px solid var(--ink) !important; outline-offset: -2px; }
 body.gone #screen canvas { filter: brightness(0.55); }
+/* A closed tab, or a lost connection, in the screen's place, with the way back. */
+#ended { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; background: var(--bg); }
+#ended p { font-size: 17px; color: var(--ink2); }
+#ended .primary { min-width: 200px; min-height: 52px; border-radius: 16px; font-size: 16px; }
 
 /* Under the screen, one card: what waits for you, or the last step when nothing does; and
    the typing field once you open it. */
@@ -114,12 +145,29 @@ body.gone #screen canvas { filter: brightness(0.55); }
 #typing .keys { flex: 0 1 auto; }
 #typing .note { flex-basis: 100%; }
 
+/* In the app: the message bar, which hands back, and the round button that opens it while
+   the agent has the tab. The buttons' bar isn't drawn. */
+body.in-app #row, body.in-app #give { display: none !important; }
+#talk { display: flex; flex-direction: column; gap: 2px; padding: 8px 6px 6px 20px; border-radius: 28px; background: var(--panel); border: 1px solid var(--line2); box-shadow: 0 12px 32px -10px var(--shadow); }
+#talk .top { display: flex; align-items: center; }
+#talk .top:has(#said:empty):not(:has(#tools > :not([hidden]))) { display: none; }
+#said { flex: 1; min-width: 0; padding-top: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#tools { flex: none; display: flex; }
+#tools .icon { width: 40px; height: 40px; }
+#talk .row { display: flex; align-items: center; }
+#say { flex: 1; min-width: 0; min-height: 44px; padding: 0; border: 0; background: none; font-size: 16px; }
+#say:focus { outline: 0; }
+#talk-give { flex: none; min-height: 40px; padding: 0 16px; border-radius: 20px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+#talk-send { width: 44px; height: 44px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+#talk-send span { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--onaccent); }
+#fab { position: absolute; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 1; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--onaccent); box-shadow: 0 10px 24px -8px var(--shadow); }
+
 /* Saved logins: a panel at the side, a sheet on a phone, its list or the form that adds one. */
 #logins { position: absolute; top: 0; right: 0; bottom: 0; z-index: 2; width: 400px; max-width: 100%; padding: 16px 20px 20px; overflow: auto; background: var(--panel); border-left: 1px solid var(--line); box-shadow: -12px 0 32px -16px var(--shadow); }
-#logins-list, #add { display: flex; flex-direction: column; gap: 14px; }
-#add { gap: 8px; }
+#logins-list, #add, #edit { display: flex; flex-direction: column; gap: 14px; }
+#add, #edit { gap: 8px; }
 #logins .head { display: flex; align-items: center; gap: 8px; }
-#add .head { margin-bottom: 6px; }
+#add .head, #edit .head { margin-bottom: 6px; }
 #logins h2 { flex: 1; font-size: 16px; font-weight: 600; }
 #logins .close { margin-right: -10px; }
 #logins .back { margin-left: -10px; }
@@ -129,13 +177,21 @@ body.gone #screen canvas { filter: brightness(0.55); }
 #login-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line2); }
 #login-list li { padding: 8px 0; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line2); }
 #login-list li.note, #login-list li.error { padding: 12px 0; font-size: 13px; }
-#login-list .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+#login-list .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+#login-list .more { display: none; }
 #login-list strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 #login-list .who > span { font-size: 12.5px; color: var(--ink2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #login-list .icon { margin-right: -10px; }
-#login-list .icon:hover { color: var(--badfg); }
+#login-list .remove:hover { color: var(--badfg); }
 #add-open, #make { align-self: flex-start; min-height: var(--field); }
-#add input { height: var(--field); padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field span { font-size: 12.5px; color: var(--muted); }
+#logins .field input { height: var(--field); padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
+#edit input:disabled { color: var(--muted); }
+#edit .pair button { min-height: var(--field); }
+#edit-sure { display: flex; flex-direction: column; gap: 8px; }
+#edit-sure p { font-size: 14.5px; }
+#edit .error { font-size: 13px; }
 #add .ask { min-height: 44px; display: flex; align-items: center; font-size: 13.5px; color: var(--ink2); }
 #add .ask span { flex: 1; }
 #add .primary { align-self: flex-start; min-height: var(--field); }
@@ -150,7 +206,14 @@ body.gone #screen canvas { filter: brightness(0.55); }
 @media (max-width: 800px) {
   :root { --control: 44px; --field: 44px; }
   #bar { padding: 0 10px 0 16px; gap: 6px; border-bottom: 0; }
-  #title { margin: 0 2px; gap: 0; line-height: 1.2; }
+  body.in-app #bar { padding-left: 10px; }
+  body.in-app #actions { display: none; } /* a touch takes the tab, the message bar hands it back */
+  body.in-app #dot { margin: 0 0 0 6px; }
+  body.mine { --tone: var(--ink); }
+  body.gone { --tone: var(--muted); }
+  #title, #address { margin: 0 2px 0 8px; line-height: 1.2; }
+  #address-open { width: calc(100% + 16px); min-height: 48px; margin: 0 -8px; padding: 0 8px; justify-content: center; gap: 0; }
+  #address-field { min-height: 44px; font-size: 16px; }
   #state, #workspace { display: none; }
   #page { display: block; font-size: 15.5px; }
   #who { display: inline; flex: none; }
@@ -177,6 +240,8 @@ body.gone #screen canvas { filter: brightness(0.55); }
   .notice .primary, .notice .quiet { min-height: 52px; border-radius: 16px; font-size: 16px; display: inline-flex; align-items: center; justify-content: center; }
   .notice .acts { flex-wrap: nowrap; }
   .notice .acts > .primary { flex: 1; }
+  /* While the round button shows, the last step sits beside it. */
+  #view:has(#fab:not([hidden])) #dock { right: 88px; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
   #caption { align-self: flex-start; max-width: 100%; padding: 10px 14px; border-radius: 20px; box-shadow: none; pointer-events: none; }
   #caption .text { font-size: 13px; }
   #caption .text > span:first-child { font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -192,16 +257,31 @@ body.gone #screen canvas { filter: brightness(0.55); }
   #give .long { display: none; }
   #give .short { display: inline; }
   #scrim { display: block; position: fixed; inset: 0; z-index: 2; background: var(--scrim); }
-  #logins { position: fixed; top: 72px; left: 0; width: auto; z-index: 3; padding: 8px 20px 24px; border-left: 0; border-radius: 28px 28px 0 0; box-shadow: 0 -12px 32px -12px var(--shadow); }
-  #logins-list { gap: 12px; }
-  #logins h2 { font-size: 17px; }
+  #logins { position: fixed; top: 72px; left: 0; width: auto; z-index: 3; padding: 10px 16px 24px; border-left: 0; border-radius: 28px 28px 0 0; box-shadow: 0 -12px 32px -12px var(--shadow); }
+  #logins::before { content: ""; display: block; width: 40px; height: 4px; margin: 0 auto 10px; border-radius: 99px; background: var(--line); }
+  #logins-list { gap: 16px; }
+  #logins .head { padding-left: 8px; }
+  #logins .head .icon { background: var(--hover); color: var(--ink); }
+  #logins .back { margin-left: 0; }
+  #logins h2 { font-size: 19px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #logins .note { padding: 0 8px; font-size: 13px; }
   /* A phone's list names each login and whether it's a passkey; asking first and the last
      use are the desktop's. */
   #logins .columns, #login-list .switch, #login-list .used, #add .ask { display: none; }
-  #login-list li { min-height: 56px; padding: 6px 0; gap: 8px; }
-  #add-open, #make { align-self: stretch; }
-  #add input { border-color: var(--line2); font-size: 16px; }
-  #add .primary { align-self: stretch; min-height: 48px; border-radius: 16px; font-size: 15px; }
+  #login-list { padding: 0 20px; border: 1px solid var(--line2); border-radius: 24px; background: var(--bg); }
+  #login-list li { min-height: 64px; padding: 6px 0; gap: 8px; border-bottom: 0; border-top: 1px solid var(--line2); }
+  #login-list li:first-child { border-top: 0; }
+  #login-list strong { font-size: 17px; font-weight: 500; }
+  #login-list .who > span { font-size: 13px; color: var(--muted); }
+  #login-list .remove { display: none; }
+  #login-list .more { display: flex; color: var(--muted); }
+  #add-open, #make { align-self: stretch; min-height: 52px; border-radius: 16px; font-size: 16px; }
+  .field { gap: 6px; }
+  .field span { padding: 0 8px; font-size: 13px; }
+  #logins .field input { height: 48px; padding: 0 16px; border-radius: 16px; border-color: var(--line2); font-size: 16px; }
+  #add .primary { align-self: stretch; min-height: 52px; border-radius: 16px; font-size: 16px; }
+  #edit .pair button { min-height: 52px; border-radius: 16px; font-size: 16px; }
+  #edit-sure p { padding: 0 8px; font-size: 15.5px; }
 }
 
 /* A login request's form (/login/<id>/): one card. */

@@ -8,22 +8,30 @@ container, so a stopped browser's old address goes nowhere.
 
   GET  /<token>/                 the page: noVNC showing the browser's screen, view-only
                                  while the agent has it; ?tab=<id> brings that tab to the front
-  GET  /<token>/app.js, style.css  the page's script and style (static/ beside this file)
+  GET  /<token>/app.js, style.css  the page's script and style (static/ beside this file),
+                                 and its fonts (Instrument Sans, JetBrains Mono)
   GET  /<token>/novnc/<path>     noVNC's core and vendor files (copied from the browser image
                                  into <data>/novnc by hostctl browser-images)
-  GET  /<token>/state            {workspace, front, control, state, reason, waiting, tabs,
-                                 approvals, asked, offers, logins, making, made}: `front` the
+  GET  /<token>/state?tab=<id>   {workspace, front, control, state, reason, waiting, tabs,
+                                 tab, approvals, asked, offers, logins, making, made}: `front` the
                                  open tab last brought to the front ("" for none), `state` what's being done
                                  with it (Runner.activity), `tabs` the open ones (id, title, url
-                                 and the last step, as their cards say), `approvals` the agent's waits for
+                                 and the last step, as their cards say), `tab` the one ?tab=
+                                 names (id, title, url, open), open or closed, or null,
+                                 `approvals` the agent's waits for
                                  the user's OK, one per chat in the order asked, each naming
                                  its chat by its tab's page (`chat`, null without one) and how
                                  many minutes an OK lasts (`minutes`), logins
                                  (and passkeys) and offers without their secrets
   POST /<token>/take             the user takes the browser
   POST /<token>/give             the user hands it back to the agent
+  POST /<token>/open {url, tab}  the user takes the browser and loads url in tab `tab` (the
+                                 one in front without it), opening it again if it's closed;
+                                 without url, the tab's own page
   POST /<token>/approve/<id>, deny/<id>   answer the agent's wish to use a saved login
   POST /<token>/logins           save a login {site, username, password, ask}
+  POST /<token>/logins/<id> {site, username, password}  change a login (an empty password
+                                 keeps the saved one)
   POST /<token>/logins/<id>/delete, logins/<id>/ask {ask}
   POST /<token>/offers/<id>/save {username, ask}, offers/<id>/drop
                                  save, or not, a login the user just sent in the browser
@@ -52,6 +60,13 @@ page was on. Nothing here ever sends a password back:
 the page can save and delete logins, not read them. Nor what the user types: it goes on to
 the driver, and is in no answer or log line. Connections are taken only from loopback or the
 server's own address (hostrpc.local_peer), where the machine's HTTPS routes deliver them.
+
+In AnywhereLLM's own web view, which gives the page a JavaScript channel named AnywhereLLM,
+the page is the app's take-over screen: a Back button posts {"back": true} to the app, and
+a message bar posts {"say": text}, which the app sends into the chat (the agent ended its
+reply when it handed the browser over, so the chat is where it reads); the app tells the
+page how it went through window.anywhereLLM.said(line). ?theme=light or dark sets the
+page's colours to the app's.
 """
 
 from __future__ import annotations
@@ -82,7 +97,8 @@ STATIC = Path(__file__).with_name("static")
 MAX_BODY = 16 * 1024
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-    "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    "font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'none'"
 )
 TYPES = {
     ".js": "text/javascript; charset=utf-8",
@@ -90,7 +106,10 @@ TYPES = {
     ".json": "application/json",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".ttf": "font/ttf",
 }
+# The page's fonts, served from static/ for the take-over view and a login request's form.
+FONTS = ("InstrumentSans.ttf", "JetBrainsMono.ttf")
 # Line icons, drawn in the text's colour.
 ICON = (
     '<svg width="{0}" height="{0}" viewBox="0 0 16 16" fill="none" stroke="currentColor" '
@@ -106,6 +125,8 @@ KEYBOARD = ICON.format(
 FIT = ICON.format(16, "M2.5 6V2.5H6 M10 2.5h3.5V6 M13.5 10v3.5H10 M6 13.5H2.5V10")
 CLOSE = ICON.format(16, "M4 4l8 8M12 4l-8 8")
 BACK = ICON.format(16, "M9.5 3.5 5 8l4.5 4.5")
+SEND = ICON.format(16, "M8 13V3M3.5 7.5 8 3l4.5 4.5")
+CHAT = ICON.format(22, "M3 3.5h10V11H7.5L4.5 13.5V11H3z")
 LOCK = ICON.format(13, "M4 7.5h8v6H4z M5.8 7.5V5.2a2.2 2.2 0 0 1 4.4 0v2.3")
 GLOBE = ICON.format(
     18,
@@ -124,12 +145,14 @@ PAGE = f"""<!doctype html>
 </head>
 <body class="connecting">
 <header id="bar">
+  <button id="back" type="button" class="icon" aria-label="Back to the chat" title="Back to the chat" hidden>{BACK}</button>
   <span id="dot" aria-hidden="true"></span>
-  <h1 id="title">
+  <h1 id="title"><button id="address-open" type="button" title="Edit the address">
     <span id="state">Connecting…</span>
     <span id="page"></span>
     <span id="where"><span id="workspace">{{workspace}}</span><span id="who"></span><span id="url"></span></span>
-  </h1>
+  </button></h1>
+  <form id="address" hidden><input id="address-field" aria-label="Address" inputmode="url" enterkeyhint="go" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></form>
   <button id="logins-open" type="button" class="icon" aria-expanded="false" aria-controls="logins" aria-label="Saved logins" title="Saved logins">{KEY}</button>
   <div id="actions">
     <button id="keyboard" type="button" class="icon" aria-label="Keyboard" title="Keyboard" hidden>{KEYBOARD}</button>
@@ -139,11 +162,11 @@ PAGE = f"""<!doctype html>
   </div>
 </header>
 <div id="view">
-<main id="stage"><div id="screen"></div><button id="touch" type="button" aria-label="Take over" hidden></button></main>
+<main id="stage"><div id="screen"></div><button id="touch" type="button" aria-label="Take over" hidden></button>
+  <div id="ended" hidden><p></p><button type="button" class="primary"></button></div></main>
 <footer id="dock">
   <div id="notices" role="status">
     <div id="reason" class="notice" hidden><span class="text"><span></span></span></div>
-    <div id="gone" class="notice" hidden><span class="text"><span>The connection to the browser dropped.</span></span><button id="reconnect" type="button" class="quiet">Reconnect</button></div>
     <div id="problem" class="notice bad" hidden><span class="text"><span></span></span></div>
     <div id="approvals"></div>
     <div id="asked"></div>
@@ -172,7 +195,17 @@ PAGE = f"""<!doctype html>
     buttons press those keys there. Nothing you send is kept.</span>
   </form>
   <div id="row"></div>
+  <form id="talk" aria-label="Message the agent" hidden>
+    <span class="top"><span id="said" role="status"></span><span id="tools"></span></span>
+    <span class="row">
+      <input id="say" aria-label="Message to the agent" autocomplete="off" enterkeyhint="send">
+      <button id="talk-give" class="primary">Hand back</button>
+      <button id="talk-send" class="send" aria-label="Send to the agent"><span>{SEND}</span></button>
+      <button id="talk-close" type="button" class="icon" aria-label="Close">{CLOSE}</button>
+    </span>
+  </form>
 </footer>
+<button id="fab" type="button" aria-label="Message the agent" title="Message the agent" hidden>{CHAT}</button>
 <div id="scrim" hidden></div>
 <aside id="logins" aria-label="Saved logins" hidden>
   <div id="logins-list">
@@ -195,13 +228,27 @@ PAGE = f"""<!doctype html>
       <h2>Add a login</h2>
       <button type="button" class="icon close" aria-label="Close saved logins">{CLOSE}</button>
     </div>
-    <input name="site" aria-label="Site" placeholder="Site, like linkedin.com" required autocomplete="off">
-    <input name="username" aria-label="Username or email" placeholder="Username or email" autocomplete="off">
-    <input name="password" aria-label="Password" type="password" placeholder="Password" autocomplete="new-password" required>
+    <label class="field"><span>Website</span><input name="site" placeholder="Site, like linkedin.com" required autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url"></label>
+    <label class="field"><span>Username</span><input name="username" placeholder="Username or email" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" required></label>
     <div class="ask"><span>Ask me before each use</span><button id="add-ask" type="button" class="switch" role="switch" aria-checked="false" aria-label="Ask me before each use"></button></div>
     <p class="note">The saved password is never shown.</p>
     <button class="primary">Save login</button>
     <span id="add-error" class="error"></span>
+  </form>
+  <form id="edit" hidden>
+    <div class="head">
+      <button id="edit-back" type="button" class="icon back" aria-label="Back to saved logins">{BACK}</button>
+      <h2 id="edit-title"></h2>
+      <button type="button" class="icon close" aria-label="Close saved logins">{CLOSE}</button>
+    </div>
+    <label class="field"><span>Website</span><input name="site" required autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url"></label>
+    <label class="field"><span>Username</span><input name="username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <label class="field" id="edit-password"><span>New password</span><input name="password" type="password" placeholder="Leave empty to keep the saved one" autocomplete="new-password"></label>
+    <p id="edit-note" class="note"></p>
+    <div id="edit-buttons" class="pair"><button id="edit-remove" type="button" class="quiet bad">Remove</button><button id="edit-save" class="primary">Save</button></div>
+    <div id="edit-sure" hidden><p></p><div class="pair"><button id="edit-keep" type="button" class="quiet">Keep</button><button id="edit-delete" type="button" class="quiet bad">Remove</button></div></div>
+    <span id="edit-error" class="error"></span>
   </form>
 </aside>
 </div>
@@ -358,30 +405,33 @@ class Takeover:
             )
         if req.path == f"/{token}":
             return await self.slash(writer, f"/{token}/")
+        asked_tab = req.query.get("tab", "")
         if req.method == "POST":
 
             async def act(body: dict) -> dict | None:
-                return await self.state(s) if await self.post(s, what, body) else None
+                if not await self.post(s, what, body):
+                    return None
+                return await self.state(s, asked_tab)
 
             return await self.posted(req, reader, writer, act)
         if req.method != "GET":
             return await live.send(writer, "405 Method Not Allowed", b"GET or POST.\n")
         if what == "":
-            tab = self.runner.tabs.get(req.query.get("tab", ""))
-            if tab is not None and tab.workspace == s.workspace and tab.open:
+            tab = self.runner.workspace_tab(s, asked_tab)
+            if tab is not None and tab.open:
                 with contextlib.suppress(hostrpc.RunnerError):
                     await self.runner.call(s, "front", {"thread": tab.thread})
                     s.front = tab.id
             body = PAGE.format(workspace=html.escape(s.workspace)).encode()
             return await self.send(writer, body, "text/html; charset=utf-8")
-        if what in ("app.js", "style.css"):
+        if what in ("app.js", "style.css", *FONTS):
             return await self.file(writer, STATIC / what)
         if what.startswith("novnc/"):
             return await self.file(
                 writer, self.novnc / what.removeprefix("novnc/"), self.novnc
             )
         if what == "state":
-            return await self.json(writer, await self.state(s))
+            return await self.json(writer, await self.state(s, asked_tab))
         if what == "websockify":
             return await self.bridge(req, reader, writer, s)
         await live.send(writer, "404 Not Found", b"No such thing.\n")
@@ -451,7 +501,7 @@ class Takeover:
                 result_text=html.escape(line),
             ).encode()
             return await self.send(writer, body, "text/html; charset=utf-8")
-        if rest in ("login.js", "style.css"):
+        if rest in ("login.js", "style.css", *FONTS):
             return await self.file(writer, STATIC / rest)
         if rest == "state":
             return await self.json(writer, self.asked_state(asked))
@@ -501,12 +551,19 @@ class Takeover:
                 await r.take(s)
             case ["give"]:
                 await r.give_back(s)
+            case ["open"]:
+                await r.open_for_user(s, text(body, "url"), text(body, "tab"))
             case ["approve" | "deny" as answer, approval]:
                 r.answer(s, approval, answer == "approve")
             case ["logins"]:
                 await asyncio.to_thread(
                     r.vault.add, ws, text(body, "site"), text(body, "username"),
                     text(body, "password"), body.get("ask") is True,
+                )  # fmt: skip
+            case ["logins", login]:
+                await asyncio.to_thread(
+                    r.vault.change, ws, login, text(body, "site"),
+                    text(body, "username"), text(body, "password"),
                 )  # fmt: skip
             case ["logins", login, "delete"]:
                 await asyncio.to_thread(r.vault.delete, ws, login)
@@ -536,7 +593,10 @@ class Takeover:
                 return False
         return True
 
-    async def state(self, s: Session) -> dict:
+    async def state(self, s: Session, asked_tab: str = "") -> dict:
+        """How the workspace's browser stands, for the page; `asked_tab` the tab its ?tab=
+        names, said open or closed."""
+        named = self.runner.workspace_tab(s, asked_tab)
         tabs = [
             {"id": t.id, "title": t.title, "url": t.url, "last": t.last}
             for t in self.runner.tabs.values()
@@ -581,6 +641,14 @@ class Takeover:
             "reason": s.reason,
             "waiting": s.asked and s.control == "user",
             "tabs": tabs,
+            "tab": None
+            if named is None
+            else {
+                "id": named.id,
+                "title": named.title,
+                "url": named.url,
+                "open": named.open,
+            },
             "approvals": approvals,
             "asked": asked,
             "offers": offers,
@@ -595,6 +663,7 @@ class Takeover:
         body: bytes,
         kind: str,
         status: str = "200 OK",
+        cache: str = "no-store",
     ) -> None:
         await live.send(
             writer,
@@ -605,7 +674,7 @@ class Takeover:
                 "Content-Security-Policy": CSP,
                 "X-Content-Type-Options": "nosniff",
                 "Referrer-Policy": "no-referrer",
-                "Cache-Control": "no-store",
+                "Cache-Control": cache,
             },
         )
 
@@ -631,7 +700,10 @@ class Takeover:
             or not target.is_file()
         ):
             return await live.send(writer, "404 Not Found", b"No such file.\n")
-        await self.send(writer, await asyncio.to_thread(target.read_bytes), kind)
+        # A font, unlike the page's script and style, changes only with its name.
+        cache = "max-age=604800" if target.suffix == ".ttf" else "no-store"
+        body = await asyncio.to_thread(target.read_bytes)
+        await self.send(writer, body, kind, cache=cache)
 
     async def bridge(
         self,

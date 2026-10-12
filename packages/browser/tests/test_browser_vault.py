@@ -303,3 +303,22 @@ def test_listing_opens_the_file_again_only_once_it_changed(vault, monkeypatch):
             vault.logins("career")
     vault.file("career").unlink()
     assert vault.logins("career") == []
+
+
+def test_a_login_is_changed_but_a_passkey_keeps_its_sites_name(vault):
+    first = vault.add("career", "linkedin.com", "alice", "old")
+    vault.add("career", "linkedin.com", "bob", "pw")
+    changed = vault.change("career", first["id"], "www.github.com", "alice2")
+    assert changed["site"] == "github.com" and changed["username"] == "alice2"
+    assert vault.get("career", first["id"])["password"] == "old"  # empty keeps it
+    vault.change("career", first["id"], "github.com", "alice2", "new")
+    assert vault.get("career", first["id"])["password"] == "new"
+    with pytest.raises(VaultError, match="already"):
+        vault.change("career", first["id"], "linkedin.com", "bob")
+    with pytest.raises(VaultError, match="isn't a site's name"):
+        vault.change("career", first["id"], "localhost", "alice2")
+    with pytest.raises(VaultError, match="no saved login"):
+        vault.change("career", "nope", "github.com", "x")
+    key = vault.add_passkey("career", passkey())
+    with pytest.raises(VaultError, match="passkey"):
+        vault.change("career", key["id"], "example.com", "mallory")

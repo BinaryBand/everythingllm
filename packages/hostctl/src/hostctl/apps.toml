@@ -108,8 +108,11 @@ why_not_installed = "it needs a developer API key in ~/.config/everythingllm/age
 skills = ["delegate", "memories", "remind-once", "schedule-job", "scheduled-jobs", "update-prompt"]
 
 [memory]
-summary = "memory-runner, the long-term memory: facts and ingested sandbox files, recalled by meaning with a local model"
+summary = "memory-runner, the long-term memory: facts and ingested sandbox files, recalled by meaning with a local model (client route at :8445/_live/memory)"
 runner = "memory-runner.service"
 units = { "memory-runner.service" = "long-term memory" }
+# Its client route (memory.clientweb): a client's view of the facts and files, by key.
+serve = [{ https = 8445, path = "/_live/memory", port = 8456 }]
+health = { "memory client route" = "http://127.0.0.1:8456/_live/memory/" }
 install = true
 skills = ["long-memory"]

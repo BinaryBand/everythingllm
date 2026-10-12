@@ -822,6 +822,7 @@ name = "memory"
 version = "0.1.0"
 source = { editable = "packages/memory" }
 dependencies = [
+    { name = "chatimage" },
     { name = "fastembed" },
     { name = "hostenv" },
     { name = "hostrpc" },
@@ -830,6 +831,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "chatimage", editable = "packages/chatimage" },
     { name = "fastembed", specifier = ">=0.7" },
     { name = "hostenv", editable = "packages/hostenv" },
     { name = "hostrpc", editable = "packages/hostrpc" },

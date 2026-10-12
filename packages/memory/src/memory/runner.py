@@ -40,6 +40,8 @@ Config (environment):
   MEMORY_SOCKET       socket to listen on (default <storage>/everythingllm/memory/runner.sock)
   MEMORY_DIR          the store and the model (default ~/.local/share/everythingllm/memory)
   MEMORY_EMBED_MODEL  fastembed's name for the model (default BAAI/bge-small-en-v1.5)
+  MEMORY_CLIENT_PORT  port on 127.0.0.1 for the client route, memory.clientweb (default
+                      8456)
   SANDBOX_ROOT        the sandbox's workspace folders, which ingest reads
                       (hostenv.sandbox_root)
 """
@@ -57,6 +59,7 @@ from pathlib import Path
 from typing import Any
 
 import hostenv
+import hostenv.keys
 import numpy as np
 from hostenv import JOBS, WORKSPACE_RE, fact_text, one_line, whole_number
 from hostrpc import RunnerError, Service, serve
@@ -75,6 +78,7 @@ SHOW_CHARS = 700  # of a chunk, in what recall answers
 SHOW_NAMES = 10  # files a reply names
 LOAD_WAIT = 30.0  # seconds an op waits for the model
 INGEST_WAIT = 600.0  # seconds the ingest queue waits for the model
+CLIENT_PORT = 8456  # memory.clientweb's
 
 
 class Model:
@@ -116,6 +120,10 @@ class Model:
         except Exception as e:
             log.exception("model %s failed to load", self.name)
             self.error = f"{type(e).__name__}: {e}"
+
+    @property
+    def ready(self) -> bool:
+        return self._ready.is_set()
 
     def wait(self, timeout: float = LOAD_WAIT) -> None:
         """Return once the model is ready, or raise RunnerError saying why not."""
@@ -262,14 +270,8 @@ class MemoryService(Service):
             if kind == "workspace"
             else GLOBAL
         )
-        # Before the model: a fact already kept needs no vector.
-        if (found := self.store.same([target, GLOBAL], text)) is not None:
-            return already(found)
-        self.model.wait()
         try:
-            fact, new = self.store.add(
-                target, text, self.model.embed([text])[0], MAX_FACTS
-            )
+            fact, new = self.keep(target, text)
         except Full:
             raise RunnerError(
                 f"{where(target)} has {MAX_FACTS} facts, the most it keeps; forget some first"
@@ -277,6 +279,16 @@ class MemoryService(Service):
         if not new:
             return already(fact)
         return {"text": f"Remembered {describe(fact)}", "id": fact.id}
+
+    def keep(self, target: str, text: str) -> tuple[Fact, bool]:
+        """Keep fact `text` (checked with fact_text) in scope `target`: the fact, and
+        whether it's new rather than one that already says it, in `target` or globally.
+        Raises Full, and RunnerError while the model can't embed it."""
+        # Before the model: a fact already kept needs no vector.
+        if (found := self.store.same([target, GLOBAL], text)) is not None:
+            return found, False
+        self.model.wait()
+        return self.store.add(target, text, self.model.embed([text])[0], MAX_FACTS)
 
     def op_recall(
         self, scope: dict, query: Any = None, k: Any = None, only: Any = None
@@ -489,4 +501,16 @@ def main() -> None:
     service = build()
     service.model.start()
     service.ingester.start()
-    asyncio.run(serve(service, hostenv.socket_path("memory", "MEMORY_SOCKET")))
+    port = int(os.environ.get("MEMORY_CLIENT_PORT") or CLIENT_PORT)
+    asyncio.run(run(service, port))
+
+
+async def run(service: MemoryService, port: int) -> None:
+    """The runner's socket, and the client route on `port` beside it."""
+    from memory.clientweb import ClientWeb  # which imports this module
+
+    web = await ClientWeb(service, hostenv.keys.KeyCheck()).serve(port)
+    try:
+        await serve(service, hostenv.socket_path("memory", "MEMORY_SOCKET"))
+    finally:
+        web.close()

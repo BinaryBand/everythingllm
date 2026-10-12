@@ -3,7 +3,7 @@ name = "memory"
 version = "0.1.0"
 description = "Long-term memory on the host: facts the agent remembers and sandbox files it ingests, recalled by meaning with a local embedding model, past AnythingLLM's 25 saved memories"
 requires-python = ">=3.12"
-dependencies = ["fastembed>=0.7", "hostenv", "hostrpc", "numpy>=1.26"]
+dependencies = ["chatimage", "fastembed>=0.7", "hostenv", "hostrpc", "numpy>=1.26"]
 
 [project.scripts]
 memory-runner = "memory.runner:main"

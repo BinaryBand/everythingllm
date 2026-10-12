@@ -7,7 +7,9 @@ An app is a workspace's folder /project/apps/<name>/ (docs/.proposals/sandbox-ap
               renders the page to /public/apps/<name>/index.html, beside CLIENT as app.js;
               each CLIENT_TAG in it is rendered as the client itself, so opening the page
               takes one request
-  data.json   {"title", "version", "card", "data"}: `data` is the page's, any JSON; `card`
+  data.json   {"title", "version", "card", "data", "kind"?}: `kind` is the starter it was made
+              from, when it was (a client names the app's kind by it); `data` is the page's,
+              any JSON; `card`
               is what the chat's card shows until a picture of the page is taken, or when
               one can't be (card.py, sandbox.appshot): {"summary"?, "lines": [text]} or
               {"summary"?, "items": "/<a list in the data>", "text"?: key, "done"?: key,
@@ -110,6 +112,7 @@ def new(title: str, name: str = "") -> dict[str, Any]:
             "version": 0,
             "card": first["card"],
             "data": copy.deepcopy(first["data"]),
+            "kind": name,
         }
     )
 
@@ -180,6 +183,7 @@ def validate(app: Any) -> dict[str, Any]:
         "version": version if whole and version >= 0 else 0,
         "card": valid_card(app.get("card")),
         "data": app["data"],
+        **({"kind": app["kind"]} if app.get("kind") in STARTERS else {}),
     }
 
 

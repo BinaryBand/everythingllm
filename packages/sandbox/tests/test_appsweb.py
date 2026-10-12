@@ -315,7 +315,7 @@ def test_sync_answers_when_the_app_changes_or_after_its_wait(r, monkeypatch):
                 and body["version"] == 2
                 and len(body["data"]["items"]) == 2
             )
-            assert set(body) == {"title", "version", "card", "data"}
+            assert set(body) == {"title", "version", "card", "data", "kind"}
             # Up to date and nothing happens: the version, after the wait.
             status, body, _ = await post(
                 port, path, json.dumps({"token": token, "since": 2}).encode()

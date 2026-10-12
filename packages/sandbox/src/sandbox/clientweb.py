@@ -15,16 +15,21 @@ workspace's access on answered here (sandbox.accessreq):
       applies (or drops) the change the request asked for, once: the request as it now
       stands, or 404 for none, 409 for one answered or expired.
 
-and the workspace's created files (sandbox.created) are listed and managed:
+and the workspace's created files (sandbox.created) and apps (sandbox.apps) are listed and
+managed:
 
   GET  /_live/sandbox/files/<workspace>
       {workspace, used, warn, limit, truncated, files: [{id, name, dir, size, modified,
-      area, thread?, expires?, url?}]}, newest first: `area` is project, work (a chat's
-      working file, which goes at `expires`), public (on the web, at `url`) or shared.
+      area, thread?, expires?, url?}], apps: [{id, name, title, kind?, summary, modified,
+      page, card, link} or {id, name, title, modified, error}]}, each newest first: `area`
+      is project, work (a chat's working file, which goes at `expires`), public (on the
+      web, at `url`) or shared; an app's id is apps/<name>, `kind` the starter it was made
+      from, `card` its live card and `link` where the card leads (Runner.app_listing).
   GET  /_live/sandbox/files/<workspace>/download?path=<id>
       the file, as an attachment (at most created.MAX_READ, else 413).
   POST /_live/sandbox/files/<workspace>/keep?path=<id>      a working file moved to /project
-  POST /_live/sandbox/files/<workspace>/delete?path=<id>    one file deleted
+  POST /_live/sandbox/files/<workspace>/delete?path=<id>    one file, or one app (its page,
+      data and write-back token, Runner.delete_app), deleted
       both 409 while a run holds the workspace; a file id that names nothing is 404.
 
 All with `Authorization: Bearer <key>`, an AnythingLLM developer API key (hostenv.keys:
@@ -47,8 +52,8 @@ from chatimage import live
 from sandbox import created
 from sandbox.access import read_access
 from sandbox.accessreq import NoRequest, NotWaiting
-from sandbox.errors import SandboxError
-from sandbox.names import KEY
+from sandbox.errors import NoSuchApp, SandboxError
+from sandbox.names import KEY, SLUG
 
 if TYPE_CHECKING:
     from sandbox.runner import Runner
@@ -58,6 +63,7 @@ ACCESS = re.compile(
 )
 PREFIX = "/_live/sandbox/"
 FILES = re.compile(rf"(?:/_live/sandbox)?/files/({KEY})(?:/(download|keep|delete))?")
+APP_ID = re.compile(rf"apps/({SLUG})")  # an app's id in the files' routes
 CORS = hostenv.keys.CLIENT_CORS
 
 
@@ -178,7 +184,13 @@ class ClientWeb:
         try:
             if action is None:
                 body = await asyncio.to_thread(created.listing, self.runner.config, s)
+                body["apps"] = await asyncio.to_thread(self.runner.app_listing, s)
                 return await reply(writer, "200 OK", body)
+            if action == "delete" and (app := APP_ID.fullmatch(file_id)):
+                async with self.runner.exclusive(workspace):
+                    await asyncio.to_thread(self.runner.delete_app, s, app[1])
+                await self.runner.app_changed()
+                return await reply(writer, "200 OK", {"id": file_id, "deleted": True})
             if action == "download":
                 name, data = await asyncio.to_thread(created.read, s, file_id)
                 disposition = "attachment; filename*=UTF-8''" + quote(name)
@@ -195,7 +207,7 @@ class ClientWeb:
             return await reply(writer, "200 OK", done)
         except created.TooBig as e:
             return await reply(writer, "413 Content Too Large", {"error": str(e)})
-        except created.NoSuchFile as e:
+        except (created.NoSuchFile, NoSuchApp) as e:
             return await reply(writer, "404 Not Found", {"error": str(e)})
         except SandboxError as e:  # Busy too: a run holds the workspace
             return await reply(writer, "409 Conflict", {"error": str(e)})

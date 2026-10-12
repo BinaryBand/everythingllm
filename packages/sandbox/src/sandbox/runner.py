@@ -1094,13 +1094,17 @@ class Runner(hostrpc.Service):
         held = safefs.read_regular(s.public, ("apps", name, "app.js"), len(client) + 1)
         return held == client
 
-    def app_reply(
-        self, s: Scope, name: str, data: dict[str, Any], did: str = ""
-    ) -> dict[str, Any]:
-        live = (
+    def app_live(self, s: Scope, name: str) -> str:
+        """The app's live card without its `.png`, which is also the card's link."""
+        return (
             f"{self.config.site_url.rstrip('/')}/_live/apps/"
             f"{quote(s.workspace)}/{quote(name)}"
         )
+
+    def app_reply(
+        self, s: Scope, name: str, data: dict[str, Any], did: str = ""
+    ) -> dict[str, Any]:
+        live = self.app_live(s, name)
         return {
             "name": name,
             "title": data["title"],
@@ -1164,9 +1168,9 @@ class Runner(hostrpc.Service):
                 data,
             )
         try:
-            changed = apps.validate(
-                {**app_patch.apply(data, patch), "version": data["version"]}
-            )
+            # A patch changes only the owned parts; the version and kind stay the app's.
+            kept = {k: data[k] for k in ("version", "kind") if k in data}
+            changed = apps.validate({**app_patch.apply(data, patch), **kept})
         except ValueError as e:
             raise SandboxError(str(e)) from None
         n = len(patch)
@@ -1218,6 +1222,37 @@ class Runner(hostrpc.Service):
                 found.append(self.app_reply(s, name, self.read_app(s, name)))
             except SandboxError as e:
                 found.append({"name": name, "error": str(e)})
+        return found
+
+    def app_listing(self, s: Scope) -> list[dict[str, Any]]:
+        """The workspace's apps as a client lists them beside its created files
+        (sandbox.clientweb), last changed first: each one's id (`apps/<name>`), title, the
+        starter it was made from when that's known (`kind`), a line about it now, when its
+        data last changed, its page, and its live card (`card`) with the card's link. One
+        whose data can't be read is listed with its `error`, so it can still be deleted."""
+        found: list[dict[str, Any]] = []
+        for name in self.app_names(s):
+            entry: dict[str, Any] = {"id": f"apps/{name}", "name": name}
+            try:
+                data = self.read_app(s, name)
+                changed = os.lstat(s.roots["/project"] / "apps" / name / "data.json")
+            except (SandboxError, OSError) as e:
+                found.append({**entry, "title": name, "modified": 0, "error": str(e)})
+                continue
+            live = self.app_live(s, name)
+            found.append(
+                {
+                    **entry,
+                    "title": data["title"],
+                    **({"kind": data["kind"]} if "kind" in data else {}),
+                    "summary": apps.summary(data),
+                    "modified": int(changed.st_mtime),
+                    "page": self.public_url(s.workspace, f"apps/{quote(name)}/"),
+                    "card": live + ".png",
+                    "link": live,
+                }
+            )
+        found.sort(key=lambda e: (-e["modified"], e["id"]))
         return found
 
     def delete_app(self, s: Scope, name: str) -> None:

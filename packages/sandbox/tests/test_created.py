@@ -237,3 +237,72 @@ def test_the_machines_route_strips_the_prefix_and_the_paths_still_answer(r, cfg)
     assert go(call(r, "GET", "/files/career", key=None))[0] == 302  # an app's page
     assert go(call(r, "GET", "/files/career", key="BAD"))[0] == 403
     assert go(call(r, "OPTIONS", "/files/career", key=None))[0] == 204
+
+
+def make_app(r, name="groceries", title="Groceries", starter="list"):
+    go(r.op_app(A, "create", name, title=title, starter=starter))
+    item = {"text": "Oat milk", "done": False}
+    go(
+        r.op_app(
+            A, "do", name, patch=[{"op": "add", "path": "/items/-", "value": item}]
+        )
+    )
+
+
+def test_lists_the_apps_beside_the_files_with_their_kind_and_state(r, cfg):  # noqa: F811
+    make_app(r)
+    got = files(r, cfg)
+    assert not any(
+        f["id"].startswith(("project/apps", "public/apps")) for f in got["files"]
+    )
+    [app] = got["apps"]
+    assert app["id"] == "apps/groceries"
+    assert app["name"] == "groceries"
+    assert app["title"] == "Groceries"
+    assert app["kind"] == "list"
+    assert app["summary"] == "1 of 1 left"
+    assert app["modified"] > 0
+    assert app["page"].endswith("/career/apps/groceries/")
+    assert app["card"].endswith("/_live/apps/career/groceries.png")
+    assert app["link"] == app["card"].removesuffix(".png")
+
+
+def test_an_app_made_without_a_starter_has_no_kind(r, cfg):  # noqa: F811
+    put(
+        project(cfg, A) / "apps" / "notes" / "page.html",
+        b"<script>/*APP*/null</script>",
+    )
+    go(r.op_app(A, "create", "notes", title="Notes"))
+    [app] = files(r, cfg)["apps"]
+    assert "kind" not in app
+
+
+def test_an_app_whose_data_cannot_be_read_is_listed_to_delete(r, cfg):  # noqa: F811
+    make_app(r)
+    put(project(cfg, A) / "apps" / "groceries" / "data.json", b"not json")
+    [app] = files(r, cfg)["apps"]
+    assert app["title"] == "groceries" and "error" in app
+
+
+def test_delete_takes_an_app_whole_and_an_unknown_app_is_404(r, cfg):  # noqa: F811
+    make_app(r)
+    path = "/_live/sandbox/files/career/delete?path=apps/groceries"
+    status, body, _ = go(call(r, "POST", path))
+    assert status == 200 and json.loads(body) == {
+        "id": "apps/groceries",
+        "deleted": True,
+    }
+    assert not (project(cfg, A) / "apps" / "groceries").exists()
+    assert not (cfg.public_root / "career" / "apps" / "groceries").exists()
+    assert files(r, cfg)["apps"] == []
+    status, _, _ = go(call(r, "POST", path))
+    assert status == 404
+
+
+@pytest.mark.parametrize("action", ["keep", "download"])
+def test_an_app_is_not_a_file_to_keep_or_download(r, cfg, action):  # noqa: F811
+    make_app(r)
+    method = "GET" if action == "download" else "POST"
+    path = f"/_live/sandbox/files/career/{action}?path=apps/groceries"
+    status, _, _ = go(call(r, method, path))
+    assert status == 404
